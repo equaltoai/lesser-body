@@ -23,6 +23,12 @@ func New(name, version string) (*Server, error) {
 	if err := registerTools(srv.Registry()); err != nil {
 		return nil, err
 	}
+	if err := registerResources(srv); err != nil {
+		return nil, err
+	}
+	if err := registerPrompts(srv); err != nil {
+		return nil, err
+	}
 
 	return srv, nil
 }

@@ -307,6 +307,9 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *mcpruntime.Reques
 		if strings.HasPrefix(err.Error(), "resource not found:") {
 			return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeInvalidParams, err.Error())
 		}
+		if isInvalidParams(err) {
+			return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeInvalidParams, "Invalid params: "+err.Error())
+		}
 		return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeServerError, err.Error())
 	}
 
@@ -337,6 +340,9 @@ func (s *Server) handlePromptsGet(ctx context.Context, req *mcpruntime.Request) 
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "prompt not found:") {
 			return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeInvalidParams, err.Error())
+		}
+		if isInvalidParams(err) {
+			return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeInvalidParams, "Invalid params: "+err.Error())
 		}
 		return mcpruntime.NewErrorResponse(req.ID, mcpruntime.CodeServerError, err.Error())
 	}
