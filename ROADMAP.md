@@ -157,6 +157,10 @@ Deliverables (minimal changes to `lesser`):
 - Publish required lesser → SSM exports (`table_name`, `domain`, etc.) if not already present.
 - Remove/disable any `/soul/*` CloudFront → Lambda URL routing assumptions when `soulEnabled=true`.
 
+Implementation note:
+- This milestone is implemented in `equaltoai/lesser` **v1.1.16+**.
+- `lesser-body` exports `mcp_endpoint_url` as `https://api.<stageDomain>/mcp` by composing the `/${app}/${stage}/lesser/exports/v1/domain` SSM parameter.
+
 Acceptance criteria:
 - With `soulEnabled=false`, no `/mcp` route is available.
 - With `soulEnabled=true` and SSM param present:

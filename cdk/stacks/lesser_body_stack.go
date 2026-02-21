@@ -5,11 +5,9 @@ import (
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsssm"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -18,10 +16,9 @@ import (
 
 type LesserBodyStackProps struct {
 	awscdk.StackProps
-	AppName      string
-	Stage        string // dev|staging|live
-	BaseDomain   string // optional; enables custom domain
-	HostedZoneId string // optional; speeds up hosted zone lookup
+	AppName    string
+	Stage      string // dev|staging|live
+	BaseDomain string // optional; if set, compute api.<stageDomain> without SSM lookup
 }
 
 type LesserBodyStack struct {
@@ -89,39 +86,9 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	}))
 
-	// Optional custom domain: mcp.<stageDomain>.
-	var mcpEndpoint *string
-	if props.BaseDomain != "" {
-		stageDomain := stageDomainFor(stage, props.BaseDomain)
-		mcpDomain := fmt.Sprintf("mcp.%s", stageDomain)
-
-		zone := lookupHostedZone(stack, props.BaseDomain, props.HostedZoneId)
-		if zone != nil {
-			cert := awscertificatemanager.NewCertificate(stack, jsii.String("McpCertificate"), &awscertificatemanager.CertificateProps{
-				DomainName:                 jsii.String(mcpDomain),
-				Validation:                 awscertificatemanager.CertificateValidation_FromDns(zone),
-				TransparencyLoggingEnabled: jsii.Bool(true),
-			})
-			mcpProps.Domain = &apptheorycdk.AppTheoryMcpServerDomainOptions{
-				DomainName:  jsii.String(mcpDomain),
-				Certificate: cert,
-				HostedZone:  zone,
-			}
-			mcpEndpoint = jsii.String(fmt.Sprintf("https://%s/mcp", mcpDomain))
-		}
-	}
-
 	server := apptheorycdk.NewAppTheoryMcpServer(stack, jsii.String("McpServer"), mcpProps)
 
-	// Prefer the custom domain endpoint when configured; otherwise include the stage path for execute-api.
-	if mcpEndpoint == nil {
-		mcpEndpoint = awscdk.Fn_Join(jsii.String(""), &[]*string{
-			server.Api().ApiEndpoint(),
-			jsii.String("/"),
-			jsii.String(stage),
-			jsii.String("/mcp"),
-		})
-	}
+	mcpEndpoint := publicMcpEndpoint(stack, appName, stage, props.BaseDomain)
 
 	// Ensure the runtime sees the correct endpoint and TTL minutes (older CDK bindings may not set these).
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), mcpEndpoint, nil)
@@ -146,6 +113,21 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 	return &LesserBodyStack{Stack: stack}
 }
 
+func publicMcpEndpoint(stack awscdk.Stack, appName string, stage string, baseDomain string) *string {
+	if strings.TrimSpace(baseDomain) != "" {
+		stageDomain := stageDomainFor(stage, baseDomain)
+		return jsii.String(fmt.Sprintf("https://api.%s/mcp", stageDomain))
+	}
+
+	paramName := fmt.Sprintf("/%s/%s/lesser/exports/v1/domain", appName, stage)
+	domainParam := awsssm.StringParameter_FromStringParameterName(stack, jsii.String("LesserStageDomainParamLookup"), jsii.String(paramName))
+	return awscdk.Fn_Join(jsii.String(""), &[]*string{
+		jsii.String("https://api."),
+		domainParam.StringValue(),
+		jsii.String("/mcp"),
+	})
+}
+
 func stageDomainFor(stage string, baseDomain string) string {
 	base := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(baseDomain)), ".")
 	if base == "" {
@@ -155,20 +137,4 @@ func stageDomainFor(stage string, baseDomain string) string {
 		return base
 	}
 	return fmt.Sprintf("%s.%s", stage, base)
-}
-
-func lookupHostedZone(scope constructs.Construct, zoneDomain string, zoneId string) awsroute53.IHostedZone {
-	zoneName := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(zoneDomain)), ".")
-	if zoneName == "" {
-		return nil
-	}
-	if strings.TrimSpace(zoneId) != "" {
-		return awsroute53.HostedZone_FromHostedZoneAttributes(scope, jsii.String("HostedZone"), &awsroute53.HostedZoneAttributes{
-			HostedZoneId: jsii.String(zoneId),
-			ZoneName:     jsii.String(zoneName),
-		})
-	}
-	return awsroute53.HostedZone_FromLookup(scope, jsii.String("HostedZone"), &awsroute53.HostedZoneProviderProps{
-		DomainName: jsii.String(zoneName),
-	})
 }
