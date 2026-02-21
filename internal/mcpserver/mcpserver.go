@@ -74,5 +74,9 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 		return err
 	}
 
-	return registerSocialTools(r)
+	if err := registerSocialTools(r); err != nil {
+		return err
+	}
+
+	return registerMemoryTools(r)
 }

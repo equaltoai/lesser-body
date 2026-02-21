@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.9
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/theory-cloud/apptheory v0.11.0
 	github.com/theory-cloud/tabletheory v1.4.0
 )

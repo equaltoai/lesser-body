@@ -111,6 +111,44 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), mcpEndpoint, nil)
 	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
+	// Memory tools use Lesser's main table. Import the table name from SSM and grant minimal DynamoDB access.
+	lesserTableParamName := fmt.Sprintf("/%s/%s/lesser/exports/v1/table_name", appName, stage)
+	lesserTableParam := awsssm.StringParameter_FromStringParameterName(
+		stack,
+		jsii.String("LesserTableNameParamLookup"),
+		jsii.String(lesserTableParamName),
+	)
+	handler.AddEnvironment(jsii.String("LESSER_TABLE_NAME"), lesserTableParam.StringValue(), nil)
+	tableName := lesserTableParam.StringValue()
+	tableArn := stack.FormatArn(&awscdk.ArnComponents{
+		Service:      jsii.String("dynamodb"),
+		Resource:     jsii.String("table"),
+		ResourceName: tableName,
+	})
+	indexArn := stack.FormatArn(&awscdk.ArnComponents{
+		Service:  jsii.String("dynamodb"),
+		Resource: jsii.String("table"),
+		ResourceName: awscdk.Fn_Join(jsii.String("/"), &[]*string{
+			tableName,
+			jsii.String("index/*"),
+		}),
+	})
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("dynamodb:BatchGetItem"),
+			jsii.String("dynamodb:Query"),
+			jsii.String("dynamodb:GetItem"),
+			jsii.String("dynamodb:Scan"),
+			jsii.String("dynamodb:ConditionCheckItem"),
+			jsii.String("dynamodb:BatchWriteItem"),
+			jsii.String("dynamodb:PutItem"),
+			jsii.String("dynamodb:UpdateItem"),
+			jsii.String("dynamodb:DeleteItem"),
+			jsii.String("dynamodb:DescribeTable"),
+		},
+		Resources: &[]*string{tableArn, indexArn},
+	}))
+
 	paramPrefix := fmt.Sprintf("/%s/%s/lesser-body/exports/v1", appName, stage)
 	awsssm.NewStringParameter(stack, jsii.String("McpLambdaArnParam"), &awsssm.StringParameterProps{
 		ParameterName: jsii.String(fmt.Sprintf("%s/mcp_lambda_arn", paramPrefix)),
