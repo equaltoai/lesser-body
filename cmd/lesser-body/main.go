@@ -5,9 +5,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-
-	"github.com/equaltoai/lesser-body/internal/mcpserver"
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 )
 
 func serviceVersion() string {
@@ -18,13 +16,10 @@ func serviceVersion() string {
 }
 
 func main() {
-	srv, err := mcpserver.New("lesser-body", serviceVersion())
+	app, err := mcpapp.New("lesser-body", serviceVersion())
 	if err != nil {
 		panic(err)
 	}
-
-	app := apptheory.New()
-	app.Post("/mcp", srv.Handler())
 
 	lambda.Start(app.HandleLambda)
 }

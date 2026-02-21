@@ -52,6 +52,23 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	})
 
+	// Share Lesser auth configuration via well-known SSM parameters (no CFN exports/imports).
+	jwtSecretArnParamName := fmt.Sprintf("/%s/shared/secrets/jwt-secret-arn", appName)
+	jwtSecretArnParam := awsssm.StringParameter_FromStringParameterName(
+		stack,
+		jsii.String("JWTSecretArnParamLookup"),
+		jsii.String(jwtSecretArnParamName),
+	)
+	handler.AddEnvironment(jsii.String("JWT_SECRET_ARN"), jwtSecretArnParam.StringValue(), nil)
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("secretsmanager:GetSecretValue"),
+		},
+		Resources: &[]*string{
+			jwtSecretArnParam.StringValue(),
+		},
+	}))
+
 	mcpProps := &apptheorycdk.AppTheoryMcpServerProps{
 		Handler:            handler,
 		ApiName:            jsii.String(fmt.Sprintf("%s-%s-mcp", appName, stage)),

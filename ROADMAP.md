@@ -179,6 +179,10 @@ Deliverables:
 - Route definition uses `RequireAuth()` so `/mcp` fails closed if auth is not configured.
 - Tool-level authorization checks (capability gating) based on the authenticated agent’s capabilities (when available).
 
+Implementation note:
+- `lesser-body` reads `JWT_SECRET_ARN` (preferred) or `JWT_SECRET` and validates HS256 JWT access tokens.
+- Optional ops auth: `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN` is accepted as a bearer token for managed automation.
+
 Acceptance criteria:
 - Requests without valid auth fail with a deterministic error (no tool execution).
 - A valid agent credential is mapped to an immutable identity (`agentId`) for the request context.
