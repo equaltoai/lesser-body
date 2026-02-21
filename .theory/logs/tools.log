@@ -1,0 +1,103 @@
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Creating new ToolRegistry"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"ToolRegistry created successfully"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Creating new ToolExecutor","details":{"timeout":30000000000}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"ToolExecutor created successfully","details":{"timeout":600000000000}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Registering tool"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"Validating tool definition","details":{"tool_name":"search_files"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"Tool registered successfully","details":{"tool_name":"search_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0cf8def8ee392b5f006999011a58e881948cf9cf551de53e05","has_args":true,"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0cf8def8ee392b5f006999011a58e881948cf9cf551de53e05","tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0cf8def8ee392b5f006999011a58e881948cf9cf551de53e05","timeout":600000000000,"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:30Z","level":"INFO","event":"Tool execution completed successfully - tool_name: list_files, call_id: fc_0cf8def8ee392b5f006999011a58e881948cf9cf551de53e05, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:49:30Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0cf8def8ee392b5f006999011a58e881948cf9cf551de53e05","result_content_length":280,"tool_name":"list_files"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":1,"call_id":"fc_0399685e211d8f98006999011f0b9c819794df669bdf5f6de6","has_args":true,"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0399685e211d8f98006999011f0b9c819794df669bdf5f6de6","tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0399685e211d8f98006999011f0b9c819794df669bdf5f6de6","timeout":600000000000,"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:49:35Z","level":"INFO","event":"Tool execution completed successfully - tool_name: create_directory, call_id: fc_0399685e211d8f98006999011f0b9c819794df669bdf5f6de6, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:49:35Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0399685e211d8f98006999011f0b9c819794df669bdf5f6de6","result_content_length":42,"tool_name":"create_directory"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0129ab8fd471db22006999013b457c81948deb584643c61a22","has_args":true,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0129ab8fd471db22006999013b457c81948deb584643c61a22","tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0129ab8fd471db22006999013b457c81948deb584643c61a22","timeout":600000000000,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"INFO","event":"Tool execution completed successfully - tool_name: create_file, call_id: fc_0129ab8fd471db22006999013b457c81948deb584643c61a22, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0129ab8fd471db22006999013b457c81948deb584643c61a22","result_content_length":45,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0129ab8fd471db22006999013b459481948e49b2f1984842af","has_args":true,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0129ab8fd471db22006999013b459481948e49b2f1984842af","tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0129ab8fd471db22006999013b459481948e49b2f1984842af","timeout":600000000000,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:03Z","level":"INFO","event":"Tool execution completed successfully - tool_name: create_file, call_id: fc_0129ab8fd471db22006999013b459481948e49b2f1984842af, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:03Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0129ab8fd471db22006999013b459481948e49b2f1984842af","result_content_length":46,"tool_name":"create_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0a567a254632ece8006999013da3588195bc157be43054aef6","has_args":true,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0a567a254632ece8006999013da3588195bc157be43054aef6","tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0a567a254632ece8006999013da3588195bc157be43054aef6","timeout":600000000000,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"INFO","event":"Tool execution completed successfully - tool_name: read_file, call_id: fc_0a567a254632ece8006999013da3588195bc157be43054aef6, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0a567a254632ece8006999013da3588195bc157be43054aef6","result_content_length":5509,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0a567a254632ece8006999013da364819589c94ab2892166d8","has_args":true,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0a567a254632ece8006999013da364819589c94ab2892166d8","tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0a567a254632ece8006999013da364819589c94ab2892166d8","timeout":600000000000,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:06Z","level":"INFO","event":"Tool execution completed successfully - tool_name: read_file, call_id: fc_0a567a254632ece8006999013da364819589c94ab2892166d8, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:06Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0a567a254632ece8006999013da364819589c94ab2892166d8","result_content_length":697,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":4,"call_id":"fc_001a758c007e4c55006999014364208190b0b4262efd7a55bc","has_args":true,"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_001a758c007e4c55006999014364208190b0b4262efd7a55bc","tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_001a758c007e4c55006999014364208190b0b4262efd7a55bc","timeout":600000000000,"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:13Z","level":"INFO","event":"Tool execution completed successfully - tool_name: edit_file, call_id: fc_001a758c007e4c55006999014364208190b0b4262efd7a55bc, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:13Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_001a758c007e4c55006999014364208190b0b4262efd7a55bc","result_content_length":44,"tool_name":"edit_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_0bc5a8e314c8e24a006999014714688197ab19b6051390b351","has_args":true,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_0bc5a8e314c8e24a006999014714688197ab19b6051390b351","tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_0bc5a8e314c8e24a006999014714688197ab19b6051390b351","timeout":600000000000,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:16Z","level":"INFO","event":"Tool execution completed successfully - tool_name: read_file, call_id: fc_0bc5a8e314c8e24a006999014714688197ab19b6051390b351, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:16Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_0bc5a8e314c8e24a006999014714688197ab19b6051390b351","result_content_length":5002,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"WARN","event":"🔨 ExecuteTool called","details":{"arg_count":3,"call_id":"fc_05facccdf2d09db6006999014aa58c8197a6f96eb538e78815","has_args":true,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"WARN","event":"🔨 Executing tool via Executor","details":{"call_id":"fc_05facccdf2d09db6006999014aa58c8197a6f96eb538e78815","tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"DEBUG","event":"Executing tool call","details":{"call_id":"fc_05facccdf2d09db6006999014aa58c8197a6f96eb538e78815","timeout":600000000000,"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"DEBUG","event":"Getting tool from registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"DEBUG","event":"Tool found in registry","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"DEBUG","event":"Calling tool Execute method","details":{"tool_name":"read_file"}}
+{"timestamp":"2026-02-21T00:50:19Z","level":"INFO","event":"Tool execution completed successfully - tool_name: read_file, call_id: fc_05facccdf2d09db6006999014aa58c8197a6f96eb538e78815, duration_ms: 0"}
+{"timestamp":"2026-02-21T00:50:19Z","level":"WARN","event":"✅ Tool execution succeeded","details":{"call_id":"fc_05facccdf2d09db6006999014aa58c8197a6f96eb538e78815","result_content_length":500,"tool_name":"read_file"}}

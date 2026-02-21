@@ -1,0 +1,13 @@
+{"timestamp":"2026-02-21T00:49:15Z","level":"DEBUG","event":"selecting credential store","details":{"configured_type":"file"}}
+{"timestamp":"2026-02-21T00:49:15Z","level":"DEBUG","event":"using encrypted file storage for credentials"}
+{"timestamp":"2026-02-21T00:49:15Z","level":"DEBUG","event":"loaded authentication session","details":{"auth_type":"clerk","user_id":"user_36hqgk7EpRGsqtEtk7xtUDNLt6k"}}
+{"timestamp":"2026-02-21T00:49:15Z","level":"DEBUG","event":"loaded authentication session","details":{"auth_type":"clerk","user_id":"user_36hqgk7EpRGsqtEtk7xtUDNLt6k"}}
+{"timestamp":"2026-02-21T00:49:15Z","level":"DEBUG","event":"exchanging Clerk JWT for PTToken","details":{"jwt_len":929,"jwt_prefix":"eyJhbGciOiJSUzI1NiIs","origin":"native","public_key_prefix":"BGSebyGSBvZH","url":"https://api.paicodes.com/token/exchange"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"token exchange successful"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"loaded authentication session","details":{"auth_type":"clerk","user_id":"user_36hqgk7EpRGsqtEtk7xtUDNLt6k"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"saved authentication session","details":{"auth_type":"clerk","path":"/home/aron/.theory/auth/session.enc","user_id":"user_36hqgk7EpRGsqtEtk7xtUDNLt6k"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"PTToken updated successfully","details":{"expires_at":"2026-02-20 19:54:18.832005227 -0500 EST m=+303.683312150"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"INFO","event":"PTToken refreshed successfully","details":{"expires_at":"2026-02-20 19:54:18.832005227 -0500 EST m=+303.683312150"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"selecting credential store","details":{"configured_type":"file"}}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"using encrypted file storage for credentials"}
+{"timestamp":"2026-02-21T00:49:18Z","level":"DEBUG","event":"loaded authentication session","details":{"auth_type":"clerk","user_id":"user_36hqgk7EpRGsqtEtk7xtUDNLt6k"}}

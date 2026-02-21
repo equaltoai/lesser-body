@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "frameworks": {
+    "apptheory": {
+      "module": "github.com/theory-cloud/apptheory",
+      "version": "v0.8.0",
+      "docs": [
+        "docs/getting-started.md",
+        "docs/migration/from-lift.md"
+      ]
+    },
+    "tabletheory": {
+      "module": "github.com/theory-cloud/tabletheory",
+      "version": "v1.3.0",
+      "docs": [
+        "docs/getting-started.md",
+        "docs/api-reference.md",
+        "docs/migration-guide.md"
+      ]
+    }
+  },
+  "cdk": {
+    "dir": "cdk",
+    "up": "AWS_PROFILE={{AWS_PROFILE}} npm ci && npx cdk deploy --all -c stage={{STAGE}}",
+    "down": "AWS_PROFILE={{AWS_PROFILE}} npm ci && npx cdk destroy --all -c stage={{STAGE}}"
+  }
+}
