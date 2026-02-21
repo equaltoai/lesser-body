@@ -3,15 +3,17 @@
   "frameworks": {
     "apptheory": {
       "module": "github.com/theory-cloud/apptheory",
-      "version": "v0.8.0",
+      "version": "v0.11.0",
       "docs": [
         "docs/getting-started.md",
+        "docs/agentcore-mcp.md",
+        "docs/mcp.md",
         "docs/migration/from-lift.md"
       ]
     },
     "tabletheory": {
       "module": "github.com/theory-cloud/tabletheory",
-      "version": "v1.3.0",
+      "version": "v1.4.0",
       "docs": [
         "docs/getting-started.md",
         "docs/api-reference.md",

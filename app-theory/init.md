@@ -19,32 +19,36 @@ This action writes exactly:
 This section defines the **pinned destination frameworks**. These values are **constants** provided by the GovTheory pack.
 
 ### AppTheory (pinned)
-- Go module: `github.com/theory-cloud/apptheory@v0.8.0`
+- Go module: `github.com/theory-cloud/apptheory@v0.11.0`
 - Go runtime import: `github.com/theory-cloud/apptheory/runtime`
-- Docs entrypoints (for tag `v0.8.0`):
+- Docs entrypoints (for tag `v0.11.0`):
   - `docs/getting-started.md`
+  - `docs/agentcore-mcp.md`
+  - `docs/mcp.md`
   - `docs/migration/from-lift.md`
 - Copy/paste dependency command:
-  - `go get github.com/theory-cloud/apptheory@v0.8.0`
+  - `go get github.com/theory-cloud/apptheory@v0.11.0`
 - Recommended pinned docs links:
-  - `https://github.com/theory-cloud/AppTheory/blob/v0.8.0/docs/getting-started.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v0.8.0/docs/migration/from-lift.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/docs/getting-started.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/docs/agentcore-mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/docs/mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/docs/migration/from-lift.md`
 - Recommended pinned CDK docs links:
-  - `https://github.com/theory-cloud/AppTheory/blob/v0.8.0/cdk/docs/getting-started.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v0.8.0/cdk/docs/api-reference.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/cdk/docs/getting-started.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v0.11.0/cdk/docs/api-reference.md`
 
 ### TableTheory (pinned)
-- Go module: `github.com/theory-cloud/tabletheory@v1.3.0`
-- Docs entrypoints (for tag `v1.3.0`):
+- Go module: `github.com/theory-cloud/tabletheory@v1.4.0`
+- Docs entrypoints (for tag `v1.4.0`):
   - `docs/getting-started.md`
   - `docs/api-reference.md`
   - `docs/migration-guide.md`
 - Copy/paste dependency command:
-  - `go get github.com/theory-cloud/tabletheory@v1.3.0`
+  - `go get github.com/theory-cloud/tabletheory@v1.4.0`
 - Recommended pinned docs links:
-  - `https://github.com/theory-cloud/TableTheory/blob/v1.3.0/docs/getting-started.md`
-  - `https://github.com/theory-cloud/TableTheory/blob/v1.3.0/docs/api-reference.md`
-  - `https://github.com/theory-cloud/TableTheory/blob/v1.3.0/docs/migration-guide.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v1.4.0/docs/getting-started.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v1.4.0/docs/api-reference.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v1.4.0/docs/migration-guide.md`
 
 ## Local agent execution plan
 
@@ -60,8 +64,8 @@ The goal is to produce a repository that:
    - `internal/` (implementation)
    - `pkg/` (optional public packages)
 2) Initialize the Go module (if not already) and add pinned framework dependencies:
-   - Add AppTheory at `v0.8.0`.
-   - Add TableTheory at `v1.3.0` if the app uses DynamoDB tables.
+   - Add AppTheory at `v0.11.0`.
+   - Add TableTheory at `v1.4.0` if the app uses DynamoDB tables.
 3) Follow AppTheory runtime/bootstrap docs and wire your entrypoints.
 
 **Acceptance criteria**
