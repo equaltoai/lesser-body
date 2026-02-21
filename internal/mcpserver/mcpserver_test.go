@@ -5,11 +5,46 @@ import (
 	"encoding/json"
 	"testing"
 
+	apptheory "github.com/theory-cloud/apptheory/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
-	mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
 )
+
+func invokeRPC(t testing.TB, env *testkit.Env, app *apptheory.App, sessionID string, req *mcpruntime.Request) (*mcpruntime.Response, string) {
+	t.Helper()
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	headers := map[string][]string{
+		"content-type": {"application/json"},
+	}
+	if sessionID != "" {
+		headers["mcp-session-id"] = []string{sessionID}
+	}
+
+	httpResp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method:  "POST",
+		Path:    "/mcp",
+		Headers: headers,
+		Body:    body,
+	})
+
+	nextSessionID := sessionID
+	if ids := httpResp.Headers["mcp-session-id"]; len(ids) > 0 && ids[0] != "" {
+		nextSessionID = ids[0]
+	}
+
+	var rpcResp mcpruntime.Response
+	if err := json.Unmarshal(httpResp.Body, &rpcResp); err != nil {
+		t.Fatalf("unmarshal response: %v (status=%d)", err, httpResp.Status)
+	}
+	return &rpcResp, nextSessionID
+}
 
 func TestEchoTool(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
@@ -20,18 +55,21 @@ func TestEchoTool(t *testing.T) {
 	}
 
 	env := testkit.New()
-	client := mcptest.NewClient(srv, env)
+	app := env.App()
+	app.Post("/mcp", srv.Handler())
 
-	initResp, err := client.Initialize(context.Background())
-	if err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-	if client.SessionID() == "" {
+	initResp, sessionID := invokeRPC(t, env, app, "", &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if sessionID == "" {
 		t.Fatalf("expected non-empty session id")
 	}
 	if initResp.Error != nil {
 		t.Fatalf("initialize error: %+v", initResp.Error)
 	}
+
 	{
 		b, marshalErr := json.Marshal(initResp.Result)
 		if marshalErr != nil {
@@ -48,17 +86,63 @@ func TestEchoTool(t *testing.T) {
 		}
 	}
 
-	tools, err := client.ListTools(context.Background())
-	if err != nil {
-		t.Fatalf("list tools: %v", err)
+	toolsResp, sessionID := invokeRPC(t, env, app, sessionID, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/list",
+	})
+	if toolsResp.Error != nil {
+		t.Fatalf("tools/list error: %+v", toolsResp.Error)
 	}
-	mcptest.AssertHasTools(t, tools, "echo")
 
-	out, err := client.CallTool(context.Background(), "echo", map[string]any{"message": "hi"})
-	if err != nil {
-		t.Fatalf("call tool: %v", err)
+	var toolsResult struct {
+		Tools []mcpruntime.ToolDef `json:"tools"`
 	}
-	if len(out.Content) != 1 || out.Content[0].Type != "text" || out.Content[0].Text != "hi" {
-		t.Fatalf("unexpected tool result: %+v", out)
+	{
+		b, marshalErr := json.Marshal(toolsResp.Result)
+		if marshalErr != nil {
+			t.Fatalf("marshal tools/list result: %v", marshalErr)
+		}
+		if err := json.Unmarshal(b, &toolsResult); err != nil {
+			t.Fatalf("unmarshal tools/list result: %v", err)
+		}
+	}
+	foundEcho := false
+	for _, tool := range toolsResult.Tools {
+		if tool.Name == "echo" {
+			foundEcho = true
+			break
+		}
+	}
+	if !foundEcho {
+		t.Fatalf("expected echo tool in tools/list, have: %+v", toolsResult.Tools)
+	}
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "echo",
+		"arguments": json.RawMessage(`{"message":"hi"}`),
+	})
+	callResp, _ := invokeRPC(t, env, app, sessionID, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "tools/call",
+		Params:  callParams,
+	})
+	if callResp.Error != nil {
+		t.Fatalf("tools/call error: %+v", callResp.Error)
+	}
+
+	var toolResult mcpruntime.ToolResult
+	{
+		b, marshalErr := json.Marshal(callResp.Result)
+		if marshalErr != nil {
+			t.Fatalf("marshal tools/call result: %v", marshalErr)
+		}
+		if err := json.Unmarshal(b, &toolResult); err != nil {
+			t.Fatalf("unmarshal tool result: %v", err)
+		}
+	}
+	if len(toolResult.Content) != 1 || toolResult.Content[0].Type != "text" || toolResult.Content[0].Text != "hi" {
+		t.Fatalf("unexpected tool result: %+v", toolResult)
 	}
 }

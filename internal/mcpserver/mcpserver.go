@@ -6,20 +6,20 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/theory-cloud/apptheory/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/tabletheory"
 	"github.com/theory-cloud/tabletheory/pkg/session"
 )
 
 const envMcpSessionTable = "MCP_SESSION_TABLE"
 
-func New(name, version string) (*mcp.Server, error) {
+func New(name, version string) (*Server, error) {
 	opts, err := buildServerOptionsFromEnv()
 	if err != nil {
 		return nil, err
 	}
 
-	srv := mcp.NewServer(name, version, opts...)
+	srv := NewServer(name, version, opts...)
 	if err := registerTools(srv.Registry()); err != nil {
 		return nil, err
 	}
@@ -27,7 +27,7 @@ func New(name, version string) (*mcp.Server, error) {
 	return srv, nil
 }
 
-func buildServerOptionsFromEnv() ([]mcp.ServerOption, error) {
+func buildServerOptionsFromEnv() ([]ServerOption, error) {
 	if os.Getenv(envMcpSessionTable) == "" {
 		return nil, nil
 	}
@@ -39,17 +39,17 @@ func buildServerOptionsFromEnv() ([]mcp.ServerOption, error) {
 		return nil, fmt.Errorf("create tabletheory client: %w", err)
 	}
 
-	return []mcp.ServerOption{
-		mcp.WithSessionStore(mcp.NewDynamoSessionStore(db)),
+	return []ServerOption{
+		WithSessionStore(mcpruntime.NewDynamoSessionStore(db)),
 	}, nil
 }
 
-func registerTools(r *mcp.ToolRegistry) error {
+func registerTools(r *mcpruntime.ToolRegistry) error {
 	if r == nil {
 		return fmt.Errorf("tool registry is nil")
 	}
 
-	return r.RegisterTool(mcp.ToolDef{
+	if err := r.RegisterTool(mcpruntime.ToolDef{
 		Name:        "echo",
 		Description: "Echo back the provided message.",
 		InputSchema: json.RawMessage(`{
@@ -59,16 +59,20 @@ func registerTools(r *mcp.ToolRegistry) error {
 			},
 			"required": ["message"]
 		}`),
-	}, func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+	}, func(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 		var in struct {
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+			return nil, invalidParams("invalid args: " + err.Error())
 		}
 
-		return &mcp.ToolResult{
-			Content: []mcp.ContentBlock{{Type: "text", Text: in.Message}},
+		return &mcpruntime.ToolResult{
+			Content: []mcpruntime.ContentBlock{{Type: "text", Text: in.Message}},
 		}, nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	return registerSocialTools(r)
 }

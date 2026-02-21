@@ -64,6 +64,16 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 		return nil
 	}
 
+	var params struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(req.Params, &params)
+	toolName := strings.TrimSpace(params.Name)
+	if toolName == "" {
+		// Let the MCP runtime return Invalid params.
+		return nil
+	}
+
 	p := auth.PrincipalFromContext(ctx)
 	if p == nil {
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
@@ -75,9 +85,20 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 	}
 
-	// For now: any MCP tool call requires at least read/write/admin scope.
-	if hasAnyScope(p.Claims.Scopes, "admin", "write", "read") {
+	// M5 tool policy: read tools require read (or write/admin), write tools require write (or admin).
+	if hasAnyScope(p.Claims.Scopes, "admin") {
 		return nil
+	}
+
+	switch toolName {
+	case "post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update":
+		if hasAnyScope(p.Claims.Scopes, "write") {
+			return nil
+		}
+	default:
+		if hasAnyScope(p.Claims.Scopes, "write", "read") {
+			return nil
+		}
 	}
 
 	return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
