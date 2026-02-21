@@ -20,6 +20,8 @@ func New(name, version string) (*apptheory.App, error) {
 		apptheory.WithAuthHook(auth.Hook(logger)),
 	)
 
+	app.Get("/.well-known/mcp.json", WellKnownMcpHandler(srv, name, version))
+
 	handler := WithAudit(srv.Handler(), logger)
 	app.Post("/mcp", handler, apptheory.RequireAuth())
 
