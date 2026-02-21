@@ -130,8 +130,9 @@ Acceptance criteria:
 Deliverables:
 - CDK app under `cdk/` (stage-aware stack names).
 - Stack provisions:
-  - lesser-body Lambda (ARM64, timeouts aligned with lesser API defaults)
-  - (recommended) DynamoDB session table with TTL attribute
+  - lesser-body MCP Lambda (ARM64, timeouts aligned with lesser API defaults)
+  - **AppTheoryMcpServer** (API Gateway **HTTP API v2** `POST /mcp` → Lambda)
+  - DynamoDB session table with TTL attribute (via `AppTheoryMcpServer.enableSessionTable`)
   - IAM permissions:
     - session table read/write
     - read-only access to required SSM params

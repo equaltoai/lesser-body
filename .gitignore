@@ -1,2 +1,5 @@
 .theory
 reference/
+cdk/cdk.out/
+cdk/node_modules/
+dist/

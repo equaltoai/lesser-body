@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
+	mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
 )

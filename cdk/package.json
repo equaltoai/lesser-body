@@ -1,0 +1,14 @@
+{
+  "name": "lesser-body-cdk",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all",
+    "destroy": "cdk destroy --all"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1104.0"
+  }
+}
+

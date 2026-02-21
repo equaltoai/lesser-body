@@ -1,0 +1,7 @@
+{
+  "app": "../scripts/build.sh && go mod download && go run main.go",
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true
+  }
+}
+

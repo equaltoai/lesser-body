@@ -72,4 +72,3 @@ func registerTools(r *mcp.ToolRegistry) error {
 		}, nil
 	})
 }
-
