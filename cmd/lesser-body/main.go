@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
+	"github.com/equaltoai/lesser-body/internal/lambdaentry"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 )
 
@@ -21,5 +24,6 @@ func main() {
 		panic(err)
 	}
 
-	lambda.Start(app.HandleLambda)
+	handler := lambdaentry.NewAPIGatewayHandler(app)
+	lambda.Start(func(ctx context.Context, event events.APIGatewayProxyRequest) (any, error) { return handler(ctx, event) })
 }
