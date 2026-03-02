@@ -61,6 +61,30 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 	}
 }
 
+func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	handler := NewAPIGatewayHandler(app)
+	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "DELETE",
+		Path:       "/mcp",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if _, ok := out.(events.APIGatewayProxyResponse); !ok {
+		t.Fatalf("expected APIGatewayProxyResponse for DELETE /mcp, got %T", out)
+	}
+}
+
 func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -89,4 +113,3 @@ func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
 	}
 }
-

@@ -19,7 +19,7 @@ func New(name, version string) (*Server, error) {
 		return nil, err
 	}
 
-	srv := NewServer(name, version, opts...)
+	srv := mcpruntime.NewServer(name, version, opts...)
 	if err := registerTools(srv.Registry()); err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 	}
 
 	return []ServerOption{
-		WithSessionStore(mcpruntime.NewDynamoSessionStore(db)),
+		mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)),
 	}, nil
 }
 
