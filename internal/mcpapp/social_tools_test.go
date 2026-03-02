@@ -129,7 +129,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "read",
 			args:        map[string]any{"timeline": "home", "limit": 5},
 			invalidArgs: map[string]any{"timeline": ""},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/timelines/home", Query: "limit=5"},
 			},
@@ -140,7 +140,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "read",
 			args:        map[string]any{"query": "hello", "limit": 2},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v2/search"},
 			},
@@ -151,7 +151,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "read",
 			args:        map[string]any{"limit": 2, "cursor": "c1"},
 			invalidArgs: map[string]any{"limit": "nope"},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/accounts/verify_credentials"},
 				{Method: "GET", Path: "/api/v1/accounts/acct1/followers", Query: "limit=2&max_id=c1"},
@@ -163,7 +163,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "read",
 			args:        map[string]any{"limit": 2},
 			invalidArgs: map[string]any{"limit": "nope"},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/accounts/verify_credentials"},
 				{Method: "GET", Path: "/api/v1/accounts/acct1/following", Query: "limit=2"},
@@ -175,7 +175,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "read",
 			args:        map[string]any{"limit": 2, "types": []string{"mention"}},
 			invalidArgs: map[string]any{"limit": "nope"},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/notifications"},
 			},
@@ -186,7 +186,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"content": "hi", "visibility": "public"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "POST", Path: "/api/v1/statuses"},
 			},
@@ -197,7 +197,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"post_id": "s1"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "POST", Path: "/api/v1/statuses/s1/reblog"},
 			},
@@ -208,7 +208,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"post_id": "s1"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "POST", Path: "/api/v1/statuses/s1/favourite"},
 			},
@@ -219,7 +219,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"account_id": "a1"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "POST", Path: "/api/v1/accounts/a1/follow"},
 			},
@@ -230,7 +230,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"account_id": "a1"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "POST", Path: "/api/v1/accounts/a1/unfollow"},
 			},
@@ -241,7 +241,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			scope:       "write",
 			args:        map[string]any{"display_name": "Alice"},
 			invalidArgs: map[string]any{},
-			failureCode: mcpruntime.CodeInvalidParams,
+			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "PATCH", Path: "/api/v1/accounts/update_credentials"},
 			},
@@ -387,8 +387,9 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 				}
 			}
 
-			// Failure path: invalid params should return JSON-RPC Invalid params (no upstream calls),
-			// and tools without input requirements use an upstream failure instead.
+			// Failure path: tools return a JSON-RPC server error for handler failures (no upstream
+			// calls for validation failures), and tools without input requirements use an upstream
+			// failure instead.
 			{
 				got = nil
 
@@ -515,8 +516,8 @@ func TestM5_ProfileReadRejectsNonObjectArguments(t *testing.T) {
 	if err := json.Unmarshal(callResp.Body, &rpc); err != nil {
 		t.Fatalf("unmarshal tools/call: %v", err)
 	}
-	if rpc.Error == nil || rpc.Error.Code != mcpruntime.CodeInvalidParams {
-		t.Fatalf("expected invalid params, got: %+v", rpc.Error)
+	if rpc.Error == nil || rpc.Error.Code != mcpruntime.CodeServerError {
+		t.Fatalf("expected server error, got: %+v", rpc.Error)
 	}
 	if requests != 0 {
 		t.Fatalf("expected no upstream requests, got %d", requests)

@@ -4,8 +4,8 @@ This roadmap converts `SPEC.md` into an **AppTheory-first**, **AgentCore-compati
 
 ## Hard constraints (non-negotiable)
 
-- **AppTheory:** `github.com/theory-cloud/apptheory@v0.11.0`
-- **TableTheory:** `github.com/theory-cloud/tabletheory@v1.4.0`
+- **AppTheory:** `github.com/theory-cloud/apptheory@v0.15.1`
+- **TableTheory:** `github.com/theory-cloud/tabletheory@v1.4.1`
 - **MCP transport:** AppTheory MCP runtime (`github.com/theory-cloud/apptheory/runtime/mcp`)
 - **No Lambda Function URLs.**
 - **No CloudFront required for MCP routing** (AgentCore calls API Gateway directly).
@@ -88,7 +88,7 @@ Acceptance criteria for the contract:
 
 ## Milestones
 
-### M0 — Alignment + version pins (AppTheory 0.11.0 / TableTheory 1.4.0)
+### M0 — Alignment + version pins (AppTheory 0.15.1 / TableTheory 1.4.1)
 
 Deliverables:
 - `ROADMAP.md` (this document) is the source of truth for implementation sequencing.
@@ -98,7 +98,7 @@ Deliverables:
   - `https://api.<stageDomain>/mcp` (primary)
 
 Acceptance criteria:
-- No files in `lesser-body/` reference AppTheory != `v0.11.0` or TableTheory != `v1.4.0`.
+- No files in `lesser-body/` reference AppTheory != `v0.15.1` or TableTheory != `v1.4.1`.
 - The roadmap contains enough detail to implement without re-interpreting `SPEC.md`.
 
 ---
@@ -107,8 +107,8 @@ Acceptance criteria:
 
 Deliverables:
 - Go module for `lesser-body` with pinned deps:
-  - `github.com/theory-cloud/apptheory@v0.11.0`
-  - `github.com/theory-cloud/tabletheory@v1.4.0`
+  - `github.com/theory-cloud/apptheory@v0.15.1`
+  - `github.com/theory-cloud/tabletheory@v1.4.1`
 - Lambda entrypoint `cmd/lesser-body/main.go`:
   - AppTheory app
   - `POST /mcp` handler via `mcp.NewServer(...)`
@@ -121,7 +121,7 @@ Acceptance criteria:
   - `initialize` returns capabilities containing `tools`
   - `tools/list` includes `echo`
   - `tools/call` succeeds for `echo`
-  - server issues/echoes `mcp-session-id` header
+  - server issues `mcp-session-id` header on `initialize`
 
 ---
 
@@ -131,8 +131,8 @@ Deliverables:
 - CDK app under `cdk/` (stage-aware stack names).
 - Stack provisions:
   - lesser-body MCP Lambda (ARM64, timeouts aligned with lesser API defaults)
-  - **AppTheoryMcpServer** (API Gateway **HTTP API v2** `POST /mcp` → Lambda)
-  - DynamoDB session table with TTL attribute (via `AppTheoryMcpServer.enableSessionTable`)
+  - **AppTheoryRemoteMcpServer** (API Gateway **REST API v1** + Lambda response streaming for `POST/GET /mcp`)
+  - DynamoDB session table with TTL attribute (via `AppTheoryRemoteMcpServer.enableSessionTable`)
   - IAM permissions:
     - session table read/write
     - read-only access to required SSM params
@@ -265,7 +265,7 @@ Acceptance criteria:
 
 ---
 
-### M9 — Full MCP (resources + prompts) (available in AppTheory v0.11.0; optional for non-AgentCore clients)
+### M9 — Full MCP (resources + prompts) (available in AppTheory v0.15.1; optional for non-AgentCore clients)
 
 Deliverables:
 - Implement `SPEC.md` resources/prompts using AppTheory’s `runtime/mcp` registries:

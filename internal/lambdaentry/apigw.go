@@ -27,10 +27,10 @@ func NewAPIGatewayHandler(app *apptheory.App) func(context.Context, events.APIGa
 		req := requestFromAPIGatewayProxy(event)
 		resp := app.Serve(ctx, req)
 
-		// /mcp is wired as a streaming integration in Lesser. Always return a
-		// streaming response type so non-SSE JSON-RPC methods don't fail with
-		// an API Gateway integration error.
-		if isMcpPath(req.Path) && !resp.IsBase64 {
+		// /mcp POST + GET are wired as response-streaming integrations. Always return
+		// a streaming response type for those methods so non-SSE JSON-RPC calls
+		// (e.g. initialize/tools/list) don't fail with an API Gateway integration error.
+		if isMcpPath(req.Path) && isStreamingMcpMethod(req.Method) && !resp.IsBase64 {
 			return apigatewayProxyStreamingResponseFromResponse(resp), nil
 		}
 
@@ -45,6 +45,11 @@ func isMcpPath(path string) bool {
 	}
 	path = strings.TrimSuffix(path, "/")
 	return path == "/mcp" || strings.HasSuffix(path, "/mcp")
+}
+
+func isStreamingMcpMethod(method string) bool {
+	method = strings.TrimSpace(method)
+	return strings.EqualFold(method, "POST") || strings.EqualFold(method, "GET")
 }
 
 func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) apptheory.Request {
@@ -153,4 +158,3 @@ func apigatewayProxyStreamingResponseFromResponse(resp apptheory.Response) *even
 
 	return out
 }
-

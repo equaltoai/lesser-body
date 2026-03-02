@@ -69,15 +69,15 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	}))
 
-	mcpProps := &apptheorycdk.AppTheoryMcpServerProps{
+	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
 		Handler:            handler,
 		ApiName:            jsii.String(fmt.Sprintf("%s-%s-mcp", appName, stage)),
 		EnableSessionTable: jsii.Bool(true),
 		SessionTableName:   jsii.String(fmt.Sprintf("%s-%s-mcp-sessions", appName, stage)),
 		SessionTtlMinutes:  jsii.Number(60),
-		Stage: &apptheorycdk.AppTheoryMcpServerStageOptions{
+		Stage: &apptheorycdk.AppTheoryRestApiRouterStageOptions{
 			StageName:          jsii.String(stage),
-			AccessLogging:      jsii.Bool(true),
+			AccessLogging:      true,
 			AccessLogRetention: awslogs.RetentionDays_ONE_WEEK,
 		},
 	}
@@ -103,9 +103,17 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	}))
 
-	server := apptheorycdk.NewAppTheoryMcpServer(stack, jsii.String("McpServer"), mcpProps)
+	server := apptheorycdk.NewAppTheoryRemoteMcpServer(stack, jsii.String("McpServer"), mcpProps)
 
-	mcpEndpoint := publicMcpEndpoint(stack, appName, stage, props.BaseDomain)
+	// Expose /.well-known/mcp.json from the same handler (non-streaming).
+	server.Router().AddLambdaIntegration(
+		jsii.String("/.well-known/mcp.json"),
+		&[]*string{jsii.String("GET")},
+		handler,
+		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
+	)
+
+	mcpEndpoint := server.Endpoint()
 
 	// Ensure the runtime sees the correct endpoint and TTL minutes (older CDK bindings may not set these).
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), mcpEndpoint, nil)
