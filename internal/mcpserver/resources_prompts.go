@@ -115,6 +115,44 @@ func registerPrompts(srv *Server) error {
 			},
 			Handler: promptMemoryReflect,
 		},
+		{
+			Def: mcpruntime.PromptDef{
+				Name:        "compose_email",
+				Title:       "Compose email",
+				Description: "Compose an email while respecting boundaries and preferences.",
+				Arguments: []mcpruntime.PromptArgument{
+					{Name: "to", Description: "Recipient email address.", Required: true},
+					{Name: "subject", Description: "Email subject."},
+					{Name: "context", Description: "Relevant context to include."},
+					{Name: "tone", Description: "Desired tone (e.g. friendly, formal, concise)."},
+				},
+			},
+			Handler: promptComposeEmail,
+		},
+		{
+			Def: mcpruntime.PromptDef{
+				Name:        "handle_inbound",
+				Title:       "Handle inbound",
+				Description: "Handle an inbound email/SMS/voicemail while respecting boundaries and preferences.",
+				Arguments: []mcpruntime.PromptArgument{
+					{Name: "channel", Description: "email|sms|voice", Required: true},
+					{Name: "messageId", Description: "Inbound message identifier.", Required: true},
+					{Name: "intent", Description: "What you are trying to accomplish (optional)."},
+				},
+			},
+			Handler: promptHandleInbound,
+		},
+		{
+			Def: mcpruntime.PromptDef{
+				Name:        "respect_preferences",
+				Title:       "Respect preferences",
+				Description: "Choose how to contact a target agent based on their declared contact preferences.",
+				Arguments: []mcpruntime.PromptArgument{
+					{Name: "query", Description: "ENS name, agentId, or email address.", Required: true},
+				},
+			},
+			Handler: promptRespectPreferences,
+		},
 	} {
 		if err := r.RegisterPrompt(p.Def, p.Handler); err != nil {
 			return err
