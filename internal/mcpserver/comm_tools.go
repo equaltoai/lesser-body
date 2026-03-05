@@ -26,8 +26,8 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: smsReadDef(), Handler: handleNotImplemented},
 		{Def: phoneCallDef(), Handler: handleNotImplemented},
 		{Def: voicemailReadDef(), Handler: handleNotImplemented},
-		{Def: identityWhoamiDef(), Handler: handleNotImplemented},
-		{Def: identityLookupDef(), Handler: handleNotImplemented},
+		{Def: identityWhoamiDef(), Handler: handleIdentityWhoami},
+		{Def: identityLookupDef(), Handler: handleIdentityLookup},
 		{Def: identityVerifyDef(), Handler: handleNotImplemented},
 	} {
 		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
