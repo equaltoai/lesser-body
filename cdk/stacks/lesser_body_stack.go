@@ -113,10 +113,10 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
 	)
 
-	mcpEndpoint := server.Endpoint()
+	publicEndpoint := publicMcpEndpoint(stack, appName, stage, props.BaseDomain)
 
 	// Ensure the runtime sees the correct endpoint and TTL minutes (older CDK bindings may not set these).
-	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), mcpEndpoint, nil)
+	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), publicEndpoint, nil)
 	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
 	// Memory tools use Lesser's main table. Import the table name from SSM and grant minimal DynamoDB access.
@@ -164,7 +164,7 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 	})
 	awsssm.NewStringParameter(stack, jsii.String("McpEndpointParam"), &awsssm.StringParameterProps{
 		ParameterName: jsii.String(fmt.Sprintf("%s/mcp_endpoint_url", paramPrefix)),
-		StringValue:   mcpEndpoint,
+		StringValue:   publicEndpoint,
 	})
 	if server.SessionTable() != nil {
 		awsssm.NewStringParameter(stack, jsii.String("McpSessionTableParam"), &awsssm.StringParameterProps{

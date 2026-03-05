@@ -84,5 +84,9 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 		return err
 	}
 
-	return registerMemoryTools(r)
+	if err := registerMemoryTools(r); err != nil {
+		return err
+	}
+
+	return registerCommunicationTools(r)
 }
