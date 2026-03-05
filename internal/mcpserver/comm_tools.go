@@ -17,10 +17,10 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		Def     mcpruntime.ToolDef
 		Handler mcpruntime.ToolHandler
 	}{
-		{Def: emailSendDef(), Handler: handleNotImplemented},
+		{Def: emailSendDef(), Handler: handleEmailSend},
 		{Def: emailReadDef(), Handler: handleNotImplemented},
 		{Def: emailSearchDef(), Handler: handleNotImplemented},
-		{Def: emailReplyDef(), Handler: handleNotImplemented},
+		{Def: emailReplyDef(), Handler: handleEmailReply},
 		{Def: emailDeleteDef(), Handler: handleNotImplemented},
 		{Def: smsSendDef(), Handler: handleNotImplemented},
 		{Def: smsReadDef(), Handler: handleNotImplemented},
