@@ -30,31 +30,12 @@ func handleEmailSend(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		return toolErrorResult("invalid_request", "to, subject, and body are required", 400, nil)
 	}
 
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
-		return toolErrorResult("unauthorized", err.Error(), 401, nil)
+	deps, res, err := loadCommSendDependencies(ctx, "email")
+	if res != nil || err != nil {
+		return res, err
 	}
-
-	identity, err := whoamiChannelsPayload(ctx, token)
-	if err != nil {
-		return identityToolResultFromError(err)
-	}
-	agentID, _ := identity["agentId"].(string)
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return toolErrorResult("upstream_error", "unable to resolve agentId", 502, nil)
-	}
-
-	client, err := soulapi.Default()
-	if err != nil {
-		return toolErrorResult("not_configured", err.Error(), 500, nil)
-	}
-
-	advisory := commBoundaryAdvisoryForEmail(ctx, client, agentID)
 
 	body := map[string]any{
-		"channel": "email",
-		"agentId": agentID,
 		"to":      in.To,
 		"subject": in.Subject,
 		"body":    in.Body,
@@ -72,13 +53,10 @@ func handleEmailSend(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		delete(body, "replyTo")
 	}
 
-	out, err := client.DoJSON(ctx, "POST", "/api/v1/soul/comm/send", nil, token, body)
+	normalized, err := sendOutboundComm(ctx, deps, "email", body)
 	if err != nil {
 		return commToolResultFromError(err)
 	}
-
-	normalized := normalizeCommSendResult(out, advisory)
-	_ = maybeHydrateCommStatus(ctx, client, token, normalized)
 	return toolJSONResult(normalized)
 }
 
@@ -97,43 +75,21 @@ func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 		return toolErrorResult("invalid_request", "messageId and body are required", 400, nil)
 	}
 
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
-		return toolErrorResult("unauthorized", err.Error(), 401, nil)
+	deps, res, err := loadCommSendDependencies(ctx, "email")
+	if res != nil || err != nil {
+		return res, err
 	}
-
-	identity, err := whoamiChannelsPayload(ctx, token)
-	if err != nil {
-		return identityToolResultFromError(err)
-	}
-	agentID, _ := identity["agentId"].(string)
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return toolErrorResult("upstream_error", "unable to resolve agentId", 502, nil)
-	}
-
-	client, err := soulapi.Default()
-	if err != nil {
-		return toolErrorResult("not_configured", err.Error(), 500, nil)
-	}
-
-	advisory := commBoundaryAdvisoryForEmail(ctx, client, agentID)
 
 	body := map[string]any{
-		"channel":   "email",
-		"agentId":   agentID,
 		"body":      in.Body,
 		"inReplyTo": in.MessageID,
 		"replyAll":  in.ReplyAll,
 	}
 
-	out, err := client.DoJSON(ctx, "POST", "/api/v1/soul/comm/send", nil, token, body)
+	normalized, err := sendOutboundComm(ctx, deps, "email", body)
 	if err != nil {
 		return commToolResultFromError(err)
 	}
-
-	normalized := normalizeCommSendResult(out, advisory)
-	_ = maybeHydrateCommStatus(ctx, client, token, normalized)
 	return toolJSONResult(normalized)
 }
 
@@ -192,46 +148,6 @@ func maybeHydrateCommStatus(ctx context.Context, client *soulapi.Client, bearerT
 	}
 	payload["delivery"] = m
 	return nil
-}
-
-func commBoundaryAdvisoryForEmail(ctx context.Context, client *soulapi.Client, agentID string) map[string]any {
-	if client == nil || strings.TrimSpace(agentID) == "" {
-		return nil
-	}
-
-	regAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(strings.TrimSpace(agentID))+"/registration", nil, "", nil)
-	if err != nil {
-		return nil
-	}
-	reg, _ := regAny.(map[string]any)
-	boundaries, _ := reg["boundaries"].([]any)
-	if len(boundaries) == 0 {
-		return nil
-	}
-
-	relevant := make([]any, 0, len(boundaries))
-	for _, b := range boundaries {
-		m, _ := b.(map[string]any)
-		category, _ := m["category"].(string)
-		category = strings.ToLower(strings.TrimSpace(category))
-		if category != "communication_policy" {
-			continue
-		}
-		channel, _ := m["channel"].(string)
-		channel = strings.ToLower(strings.TrimSpace(channel))
-		if channel != "" && channel != "email" {
-			continue
-		}
-		relevant = append(relevant, m)
-	}
-
-	if len(relevant) == 0 {
-		return nil
-	}
-
-	return map[string]any{
-		"communicationPolicyBoundaries": relevant,
-	}
 }
 
 func normalizeStringSlice(in []string) []string {

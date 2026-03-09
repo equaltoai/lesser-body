@@ -90,4 +90,31 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	if !strings.Contains(combined, "identity_whoami") || !strings.Contains(combined, "agent://channels/preferences") {
 		t.Fatalf("expected compose_email prompt to reference identity_whoami and agent://channels/preferences, got: %s", combined)
 	}
+
+	getParams, _ = json.Marshal(map[string]any{
+		"name":      "handle_inbound",
+		"arguments": map[string]any{"channel": "sms", "messageId": "comm-msg-123"},
+	})
+	getResp = invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 4, Method: "prompts/get", Params: getParams})
+	if getResp.Status != 200 {
+		t.Fatalf("prompts/get handle_inbound: status=%d body=%s", getResp.Status, string(getResp.Body))
+	}
+	_ = json.Unmarshal(getResp.Body, &rpcGet)
+	if rpcGet.Error != nil {
+		t.Fatalf("prompts/get handle_inbound error: %+v", rpcGet.Error)
+	}
+	{
+		b, _ := json.Marshal(rpcGet.Result)
+		_ = json.Unmarshal(b, &prompt)
+	}
+	combined = ""
+	for _, m := range prompt.Messages {
+		combined += "\n" + m.Content.Text
+	}
+	if !strings.Contains(combined, "Pass messageId=comm-msg-123") {
+		t.Fatalf("expected handle_inbound prompt to instruct reply threading, got: %s", combined)
+	}
 }

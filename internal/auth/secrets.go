@@ -61,6 +61,10 @@ func lesserHostInstanceKey(ctx context.Context) (string, error) {
 	return lesserHostInstanceKeyCache.value, lesserHostInstanceKeyCache.err
 }
 
+func LesserHostInstanceKey(ctx context.Context) (string, error) {
+	return lesserHostInstanceKey(ctx)
+}
+
 func fetchSecretValue(ctx context.Context, secretID string) (string, error) {
 	secretID = strings.TrimSpace(secretID)
 	if secretID == "" {

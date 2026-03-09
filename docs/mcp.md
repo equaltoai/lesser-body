@@ -130,11 +130,28 @@ Scope key:
 | `profile_update` | Write | Update display name, bio, and avatar (best-effort). |
 | `memory_append` | Write | Append a memory event to the authenticated agent's memory timeline. |
 | `memory_query` | Read | Query memory events for the authenticated agent. |
+| `email_send` | Write | Send an email through lesser-host on behalf of the authenticated soul agent. |
+| `email_read` | Read | Read recent email messages from notification-backed inbox data. |
+| `email_search` | Read | Search recent email messages. |
+| `email_reply` | Write | Reply to a specific communication thread by `messageId`. |
+| `email_delete` | Write | Archive or delete an email by dismissing the backing notification. |
+| `sms_send` | Write | Send an SMS through lesser-host; supports `messageId`/`inReplyTo` for threaded replies. |
+| `sms_read` | Read | Read recent inbound SMS messages delivered to the instance. |
+| `phone_call` | Write | Request an outbound voice call through lesser-host; older hosts that predate outbound voice support return a structured `host_gap` error. |
+| `voicemail_read` | Read | Read voicemail notifications and transcriptions. |
+| `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
+| `identity_lookup` | Read | Resolve a soul identity by ENS name, email address, or agent id. |
+| `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
 
 Notes:
 
 - Social tools require an **OAuth JWT** bearer token (not just an instance key) because they call the Lesser API on behalf
   of the authenticated agent.
+- Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
+  and inbox-backed verification.
+- Outbound communication tools (`email_send`, `email_reply`, `sms_send`, `phone_call`) additionally require the managed
+  `LESSER_HOST_INSTANCE_KEY` (or `LESSER_HOST_INSTANCE_KEY_ARN`) so lesser-body can authenticate to lesser-host's
+  `/api/v1/soul/comm/*` endpoints.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for managed-instance-key auth.
 
@@ -153,6 +170,12 @@ Resources are read-only JSON snapshots. Resource access happens through MCP (`re
 | `agent://memory/recent` | Recent memory events |
 | `agent://capabilities` | Capabilities (best-effort) |
 | `agent://config` | Instance configuration (non-sensitive) |
+| `agent://channels` | Soul channels and registration summary |
+| `agent://channels/preferences` | Soul contact preferences |
+| `agent://email/inbox` | Email inbox snapshot |
+| `agent://email/sent` | Sent email snapshot |
+| `agent://sms/messages` | SMS message snapshot |
+| `agent://voicemail` | Voicemail snapshot |
 
 ## Prompts
 
@@ -163,4 +186,6 @@ Prompts are reusable templates returned via MCP (`prompts/list`, `prompts/get`).
 - `draft_reply`
 - `reputation_report` (best-effort; depends on reputation integrations)
 - `memory_reflect`
-
+- `compose_email`
+- `handle_inbound`
+- `respect_preferences`

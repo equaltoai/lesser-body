@@ -22,13 +22,13 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: emailSearchDef(), Handler: handleEmailSearch},
 		{Def: emailReplyDef(), Handler: handleEmailReply},
 		{Def: emailDeleteDef(), Handler: handleEmailDelete},
-		{Def: smsSendDef(), Handler: handleNotImplemented},
+		{Def: smsSendDef(), Handler: handleSmsSend},
 		{Def: smsReadDef(), Handler: handleSmsRead},
-		{Def: phoneCallDef(), Handler: handleNotImplemented},
+		{Def: phoneCallDef(), Handler: handlePhoneCall},
 		{Def: voicemailReadDef(), Handler: handleVoicemailRead},
 		{Def: identityWhoamiDef(), Handler: handleIdentityWhoami},
 		{Def: identityLookupDef(), Handler: handleIdentityLookup},
-		{Def: identityVerifyDef(), Handler: handleNotImplemented},
+		{Def: identityVerifyDef(), Handler: handleIdentityVerify},
 	} {
 		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
 			return err
@@ -132,7 +132,9 @@ func smsSendDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"to":{"type":"string"},
-				"body":{"type":"string"}
+				"body":{"type":"string"},
+				"messageId":{"type":"string"},
+				"inReplyTo":{"type":"string"}
 			},
 			"required":["to","body"]
 		}`),
@@ -163,7 +165,9 @@ func phoneCallDef() mcpruntime.ToolDef {
 			"properties":{
 				"to":{"type":"string"},
 				"purpose":{"type":"string"},
-				"maxDurationMinutes":{"type":"integer","minimum":1,"maximum":180}
+				"maxDurationMinutes":{"type":"integer","minimum":1,"maximum":180},
+				"messageId":{"type":"string"},
+				"inReplyTo":{"type":"string"}
 			},
 			"required":["to","purpose"]
 		}`),

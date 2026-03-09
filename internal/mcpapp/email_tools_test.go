@@ -19,6 +19,7 @@ import (
 func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
 	auth.ResetForTests()
 	soulapi.ResetForTests()
 
@@ -98,8 +99,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("email_send: status=%d body=%s", resp.Status, string(resp.Body))
 		}
-		if gotAuth != authHeader {
-			t.Fatalf("expected comm api Authorization=%q, got %q", authHeader, gotAuth)
+		if gotAuth != "Bearer instance-key-123" {
+			t.Fatalf("expected comm api Authorization=%q, got %q", "Bearer instance-key-123", gotAuth)
 		}
 		if gotBody["channel"] != "email" || gotBody["agentId"] != agentID {
 			t.Fatalf("unexpected comm api body: %+v", gotBody)
@@ -144,8 +145,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("email_reply: status=%d body=%s", resp.Status, string(resp.Body))
 		}
-		if gotAuth != authHeader {
-			t.Fatalf("expected comm api Authorization=%q, got %q", authHeader, gotAuth)
+		if gotAuth != "Bearer instance-key-123" {
+			t.Fatalf("expected comm api Authorization=%q, got %q", "Bearer instance-key-123", gotAuth)
 		}
 		if gotBody["inReplyTo"] != "comm-msg-000" {
 			t.Fatalf("expected inReplyTo=comm-msg-000, got %+v", gotBody)

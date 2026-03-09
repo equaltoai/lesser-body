@@ -104,6 +104,7 @@ func promptHandleInbound(_ context.Context, args json.RawMessage) (*mcpruntime.P
 		"2) Assess urgency, safety, and whether it conflicts with any boundaries (especially communication_policy).",
 		"3) If replying, write a respectful response and then call the appropriate outbound tool:",
 		fmt.Sprintf("   - %s (preferred for this channel).", replyTool),
+		fmt.Sprintf("   - Pass messageId=%s so the host can treat it as an in-thread reply.", messageID),
 		"4) If you should not reply, explain why and consider archiving via email_delete when applicable.",
 	}, "\n")
 
