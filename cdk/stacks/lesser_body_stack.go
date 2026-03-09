@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awssecretsmanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsssm"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -60,14 +61,12 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		jsii.String(jwtSecretArnParamName),
 	)
 	handler.AddEnvironment(jsii.String("JWT_SECRET_ARN"), jwtSecretArnParam.StringValue(), nil)
-	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Actions: &[]*string{
-			jsii.String("secretsmanager:GetSecretValue"),
-		},
-		Resources: &[]*string{
-			jwtSecretArnParam.StringValue(),
-		},
-	}))
+	jwtSecret := awssecretsmanager.Secret_FromSecretCompleteArn(
+		stack,
+		jsii.String("ImportedJWTSecret"),
+		jwtSecretArnParam.StringValue(),
+	)
+	jwtSecret.GrantRead(handler, nil)
 
 	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
 		Handler:            handler,
