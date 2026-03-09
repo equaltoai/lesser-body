@@ -11,6 +11,7 @@ import (
 	"github.com/theory-cloud/apptheory/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 )
@@ -19,6 +20,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
+	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -60,6 +62,34 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"languages":["en"]
 				}
 			}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/channels":
+			_, _ = w.Write([]byte(`{
+				"agentId":"` + agentID + `",
+				"channels":{
+					"ens":{"name":"agent-alice.lessersoul.eth"},
+					"email":{"address":"agent-alice@lessersoul.ai","capabilities":["receive","send"],"verified":true},
+					"phone":{"number":"+15550142","capabilities":["sms-receive"],"verified":false}
+				},
+				"contactPreferences":{"preferred":"email"},
+				"updatedAt":"2026-03-09T12:00:00Z"
+			}`))
+		case r.URL.Path == "/api/v1/soul/resolve/email/agent-alice@lessersoul.ai":
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/resolve/ens/agent-alice.lessersoul.eth":
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/notifications":
+			_, _ = w.Write([]byte(`[
+				{
+					"id":"n1",
+					"type":"communication:inbound",
+					"channel":"email",
+					"messageId":"comm-msg-001",
+					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"subject":"Hi",
+					"body":"Hello there",
+					"receivedAt":"2026-03-09T12:00:00Z"
+				}
+			]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
@@ -68,6 +98,8 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")
@@ -188,6 +220,77 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 5, Method: "resources/read", Params: params})
 		if resp.Status != 200 {
 			t.Fatalf("resources/read channel preferences: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+	}
+
+	// identity_verify should resolve the identity and verify a concrete inbound message.
+	{
+		callParams, _ := json.Marshal(map[string]any{
+			"name": "identity_verify",
+			"arguments": map[string]any{
+				"channel":    "email",
+				"identifier": "agent-alice@lessersoul.ai",
+				"messageId":  "comm-msg-001",
+			},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 6, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_verify email: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_verify email rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data["verified"] != true {
+			t.Fatalf("expected verified identity match, got %+v", data)
+		}
+		if data["matchedBy"] != "sender.agentId" && data["matchedBy"] != "sender.email" {
+			t.Fatalf("expected sender provenance match, got %+v", data)
+		}
+	}
+
+	// identity_verify should also work when resolving the sender by ENS and using the same message provenance.
+	{
+		callParams, _ := json.Marshal(map[string]any{
+			"name": "identity_verify",
+			"arguments": map[string]any{
+				"channel":    "ens",
+				"identifier": "agent-alice.lessersoul.eth",
+				"messageId":  "comm-msg-001",
+			},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 7, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_verify ens: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_verify ens rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data["verified"] != true {
+			t.Fatalf("expected ENS verification to succeed, got %+v", data)
 		}
 	}
 }

@@ -168,6 +168,20 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 	}
 
 	{
+		s := mustSchema(t, toolsByName["sms_send"])
+		if s.Type != "object" {
+			t.Fatalf("sms_send schema type: want object got %q", s.Type)
+		}
+		if !reflect.DeepEqual(s.Required, []string{"to", "body"}) {
+			t.Fatalf("sms_send required: want [to body], got %#v", s.Required)
+		}
+		expectPropType(t, s, "to", "string")
+		expectPropType(t, s, "body", "string")
+		expectPropType(t, s, "messageId", "string")
+		expectPropType(t, s, "inReplyTo", "string")
+	}
+
+	{
 		s := mustSchema(t, toolsByName["phone_call"])
 		if s.Type != "object" {
 			t.Fatalf("phone_call schema type: want object got %q", s.Type)
@@ -178,6 +192,8 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "to", "string")
 		expectPropType(t, s, "purpose", "string")
 		expectPropType(t, s, "maxDurationMinutes", "integer")
+		expectPropType(t, s, "messageId", "string")
+		expectPropType(t, s, "inReplyTo", "string")
 	}
 
 	{
@@ -186,5 +202,15 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 			t.Fatalf("identity_lookup required: want [query], got %#v", s.Required)
 		}
 		expectPropType(t, s, "query", "string")
+	}
+
+	{
+		s := mustSchema(t, toolsByName["identity_verify"])
+		if !reflect.DeepEqual(s.Required, []string{"channel", "identifier"}) {
+			t.Fatalf("identity_verify required: want [channel identifier], got %#v", s.Required)
+		}
+		expectPropType(t, s, "channel", "string")
+		expectPropType(t, s, "identifier", "string")
+		expectPropType(t, s, "messageId", "string")
 	}
 }
