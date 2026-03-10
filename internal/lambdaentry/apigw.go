@@ -57,6 +57,7 @@ func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) apptheory.R
 	if path == "" {
 		path = event.RequestContext.Path
 	}
+	path = normalizeGatewayPath(path)
 
 	method := event.HTTPMethod
 	if method == "" {
@@ -70,6 +71,18 @@ func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) apptheory.R
 		Headers:  headersFromProxyEvent(event.Headers, event.MultiValueHeaders),
 		Body:     []byte(event.Body),
 		IsBase64: event.IsBase64Encoded,
+	}
+}
+
+func normalizeGatewayPath(path string) string {
+	path = strings.TrimSpace(path)
+	switch {
+	case path == "/mcp/" || strings.HasSuffix(path, "/mcp/"):
+		return strings.TrimSuffix(path, "/")
+	case path == "/.well-known/mcp.json/" || strings.HasSuffix(path, "/.well-known/mcp.json/"):
+		return strings.TrimSuffix(path, "/")
+	default:
+		return path
 	}
 }
 

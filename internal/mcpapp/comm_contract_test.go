@@ -149,6 +149,23 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 			t.Fatalf("email_send bcc.items.type: want string got %q", bccItemsType)
 		}
 		expectPropType(t, s, "replyTo", "string")
+		expectPropType(t, s, "messageId", "string")
+		expectPropType(t, s, "inReplyTo", "string")
+	}
+
+	{
+		s := mustSchema(t, toolsByName["email_reply"])
+		if s.Type != "object" {
+			t.Fatalf("email_reply schema type: want object got %q", s.Type)
+		}
+		if !reflect.DeepEqual(s.Required, []string{"messageId", "body"}) {
+			t.Fatalf("email_reply required: want [messageId body], got %#v", s.Required)
+		}
+		expectPropType(t, s, "messageId", "string")
+		expectPropType(t, s, "body", "string")
+		expectPropType(t, s, "to", "string")
+		expectPropType(t, s, "subject", "string")
+		expectPropType(t, s, "replyAll", "boolean")
 	}
 
 	{

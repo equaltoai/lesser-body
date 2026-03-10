@@ -65,31 +65,11 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 	if isSoulAgentID(q) {
 		agentIDs = append(agentIDs, normalizeSoulAgentID(q))
 	} else {
-		searchQ := normalizeSoulLookupQuery(q)
-		query := url.Values{}
-		query.Set("q", searchQ)
-		query.Set("limit", "5")
-		out, err := client.DoJSON(ctx, "GET", "/api/v1/soul/search", query, "", nil)
+		resolvedAgentIDs, err := lookupAgentIDs(ctx, client, q)
 		if err != nil {
 			return identityToolResultFromError(err)
 		}
-
-		resp, ok := out.(map[string]any)
-		if !ok {
-			return toolErrorResult("upstream_error", "unexpected soul search response", 502, nil)
-		}
-		results, _ := resp["results"].([]any)
-		for _, r := range results {
-			rm, _ := r.(map[string]any)
-			id, _ := rm["agent_id"].(string)
-			id = normalizeSoulAgentID(id)
-			if id != "" {
-				agentIDs = append(agentIDs, id)
-			}
-			if len(agentIDs) >= 3 {
-				break
-			}
-		}
+		agentIDs = append(agentIDs, resolvedAgentIDs...)
 		if len(agentIDs) == 0 {
 			return toolErrorResult("not_found", "no matching agent found", 404, map[string]any{"query": q})
 		}
@@ -253,50 +233,7 @@ func normalizeSoulLookupQuery(q string) string {
 	if q == "" {
 		return ""
 	}
-
-	lower := strings.ToLower(q)
-	if localID, ok := localIDFromManagedEmail(lower); ok {
-		return localID
-	}
-	if localID, ok := localIDFromManagedENS(lower); ok {
-		return localID
-	}
 	return q
-}
-
-func localIDFromManagedEmail(q string) (string, bool) {
-	parts := strings.Split(q, "@")
-	if len(parts) != 2 {
-		return "", false
-	}
-	localPart := strings.TrimSpace(parts[0])
-	domain := strings.TrimSpace(parts[1])
-	if localPart == "" || domain != "lessersoul.ai" {
-		return "", false
-	}
-	localPart = strings.Split(localPart, "+")[0]
-	localPart = strings.TrimSpace(localPart)
-	if localPart == "" {
-		return "", false
-	}
-	return localPart, true
-}
-
-func localIDFromManagedENS(q string) (string, bool) {
-	if !strings.HasSuffix(q, ".lessersoul.eth") {
-		return "", false
-	}
-	localID := strings.TrimSuffix(q, ".lessersoul.eth")
-	localID = strings.TrimSuffix(localID, ".")
-	localID = strings.TrimSpace(localID)
-	if localID == "" {
-		return "", false
-	}
-	if strings.Contains(localID, ".") {
-		parts := strings.Split(localID, ".")
-		localID = strings.TrimSpace(parts[0])
-	}
-	return localID, localID != ""
 }
 
 func isSoulAgentID(q string) bool {
@@ -330,4 +267,91 @@ func stringFromMap(m map[string]any, key string) string {
 	}
 	raw, _ := m[key].(string)
 	return strings.TrimSpace(raw)
+}
+
+func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]string, error) {
+	if client == nil {
+		return nil, errors.New("soul api client is nil")
+	}
+
+	if agentID, err := resolveAgentIDByIdentifier(ctx, client, q); err == nil && agentID != "" {
+		return []string{agentID}, nil
+	} else if err != nil {
+		var apiErr *soulapi.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != 404 {
+			return nil, err
+		}
+	}
+
+	searchQ := normalizeSoulLookupQuery(q)
+	query := url.Values{}
+	query.Set("q", searchQ)
+	query.Set("limit", "5")
+	out, err := client.DoJSON(ctx, "GET", "/api/v1/soul/search", query, "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, ok := out.(map[string]any)
+	if !ok {
+		return nil, errors.New("unexpected soul search response")
+	}
+	results, _ := resp["results"].([]any)
+	agentIDs := make([]string, 0, len(results))
+	for _, r := range results {
+		rm, _ := r.(map[string]any)
+		id, _ := rm["agent_id"].(string)
+		id = normalizeSoulAgentID(id)
+		if id == "" {
+			continue
+		}
+		agentIDs = append(agentIDs, id)
+		if len(agentIDs) >= 3 {
+			break
+		}
+	}
+	return agentIDs, nil
+}
+
+func resolveAgentIDByIdentifier(ctx context.Context, client *soulapi.Client, q string) (string, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", nil
+	}
+
+	var path string
+	switch {
+	case looksLikeEmail(q):
+		path = "/api/v1/soul/resolve/email/" + url.PathEscape(q)
+	case looksLikeENSName(q):
+		path = "/api/v1/soul/resolve/ens/" + url.PathEscape(q)
+	default:
+		return "", nil
+	}
+
+	out, err := client.DoJSON(ctx, "GET", path, nil, "", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, _ := out.(map[string]any)
+	agent, _ := resp["agent"].(map[string]any)
+	return normalizeSoulAgentID(stringFromMap(agent, "agent_id")), nil
+}
+
+func looksLikeEmail(q string) bool {
+	q = strings.TrimSpace(q)
+	if q == "" || strings.Contains(q, " ") {
+		return false
+	}
+	parts := strings.Split(q, "@")
+	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != ""
+}
+
+func looksLikeENSName(q string) bool {
+	q = strings.TrimSpace(strings.TrimSuffix(q, "."))
+	if q == "" || strings.Contains(q, " ") {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(q), ".eth")
 }
