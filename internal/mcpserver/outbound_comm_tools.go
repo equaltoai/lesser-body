@@ -116,13 +116,12 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 }
 
 func loadCommSendDependencies(ctx context.Context, channel string) (*commSendDependencies, *mcpruntime.ToolResult, error) {
-	oauthToken, err := requireOAuthBearer(ctx)
-	if err != nil {
+	if _, err := requireOAuthBearer(ctx); err != nil {
 		res, resErr := toolErrorResult("unauthorized", err.Error(), 401, nil)
 		return nil, res, resErr
 	}
 
-	identity, err := whoamiChannelsPayload(ctx, oauthToken)
+	identity, err := whoamiChannelsPayload(ctx)
 	if err != nil {
 		res, resErr := identityToolResultFromError(err)
 		return nil, res, resErr

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
+	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
+	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -32,12 +32,11 @@ func handleIdentityWhoami(ctx context.Context, args json.RawMessage) (*mcpruntim
 		return toolErrorResult("invalid_request", "no arguments expected", 400, nil)
 	}
 
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
+	if _, err := requireOAuthBearer(ctx); err != nil {
 		return toolErrorResult("unauthorized", err.Error(), 401, nil)
 	}
 
-	payload, err := whoamiChannelsPayload(ctx, token)
+	payload, err := whoamiChannelsPayload(ctx)
 	if err != nil {
 		return identityToolResultFromError(err)
 	}
@@ -112,78 +111,18 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 	})
 }
 
-func whoamiChannelsPayload(ctx context.Context, bearerToken string) (map[string]any, error) {
-	lesserClient, err := lesser(ctx)
-	if err != nil {
-		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
-	}
-
+func whoamiChannelsPayload(ctx context.Context) (map[string]any, error) {
 	client, err := soulapi.Default()
 	if err != nil {
 		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
 	}
 
-	mineAny, err := lesserClient.DoJSON(ctx, "GET", "/api/v1/souls/mine", nil, bearerToken, nil)
+	agentID, err := authenticatedAgentID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	mine, ok := mineAny.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected souls/mine response")
-	}
-
-	items, _ := mine["souls"].([]any)
-	if len(items) == 0 {
-		return nil, &toolUserError{Code: "not_found", Message: "no soul agents found for this identity", Status: 404}
-	}
-
-	instanceDomain := inferInstanceDomain()
-	candidates := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		im, _ := item.(map[string]any)
-		agent, _ := im["agent"].(map[string]any)
-		if agent == nil {
-			continue
-		}
-		domain, _ := agent["domain"].(string)
-		domain = strings.ToLower(strings.TrimSpace(domain))
-		if instanceDomain != "" && domain != "" && domain == instanceDomain {
-			candidates = append(candidates, im)
-		}
-	}
-
-	chosen := map[string]any{}
-	switch {
-	case len(candidates) == 1:
-		chosen, _ = candidates[0]["agent"].(map[string]any)
-	case len(candidates) > 1:
-		details := map[string]any{"instanceDomain": instanceDomain}
-		return nil, &toolUserError{Code: "ambiguous_agent", Message: "multiple soul agents match this instance domain", Status: 400, Details: details}
-	case len(items) == 1:
-		im, _ := items[0].(map[string]any)
-		chosen, _ = im["agent"].(map[string]any)
-	default:
-		available := []string{}
-		for _, item := range items {
-			im, _ := item.(map[string]any)
-			agent, _ := im["agent"].(map[string]any)
-			domain, _ := agent["domain"].(string)
-			domain = strings.TrimSpace(domain)
-			if domain != "" {
-				available = append(available, domain)
-			}
-		}
-		details := map[string]any{
-			"instanceDomain":    instanceDomain,
-			"availableDomains":  available,
-			"resolutionHintEnv": []string{"LESSER_API_BASE_URL", "MCP_ENDPOINT"},
-		}
-		return nil, &toolUserError{Code: "ambiguous_agent", Message: "multiple soul agents found; unable to infer the correct one for this instance", Status: 400, Details: details}
-	}
-
-	agentID := normalizeSoulAgentID(stringFromMap(chosen, "agent_id"))
 	if agentID == "" {
-		return nil, fmt.Errorf("souls/mine missing agent_id")
+		return nil, &toolUserError{Code: "not_found", Message: "no bound soul found for this agent", Status: 404}
 	}
 
 	payload, err := agentChannelsPayload(ctx, client, agentID)
@@ -191,6 +130,27 @@ func whoamiChannelsPayload(ctx context.Context, bearerToken string) (map[string]
 		return nil, err
 	}
 	return payload, nil
+}
+
+func authenticatedAgentID(ctx context.Context) (string, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken {
+		return "", &toolUserError{Code: "unauthorized", Message: "oauth token required", Status: 401}
+	}
+
+	username := strings.TrimSpace(principal.Identity)
+	if username == "" && principal.Claims != nil {
+		username = strings.TrimSpace(principal.Claims.GetUsername())
+	}
+	if username == "" {
+		return "", &toolUserError{Code: "unauthorized", Message: "missing authenticated agent identity", Status: 401}
+	}
+
+	agentID, err := soulbinding.ResolveAgentID(ctx, username)
+	if err != nil {
+		return "", &toolUserError{Code: "upstream_error", Message: err.Error(), Status: 500}
+	}
+	return normalizeSoulAgentID(agentID), nil
 }
 
 func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {
@@ -286,27 +246,6 @@ func identityErrorCodeForStatus(status int) string {
 		}
 		return "unknown_error"
 	}
-}
-
-func inferInstanceDomain() string {
-	for _, envKey := range []string{"LESSER_API_BASE_URL", "MCP_ENDPOINT"} {
-		raw := strings.TrimSpace(os.Getenv(envKey))
-		if raw == "" {
-			continue
-		}
-		u, err := url.Parse(raw)
-		if err != nil || strings.TrimSpace(u.Host) == "" {
-			continue
-		}
-		host := strings.ToLower(strings.TrimSpace(u.Hostname()))
-		if strings.HasPrefix(host, "api.") {
-			host = strings.TrimPrefix(host, "api.")
-		}
-		if host != "" {
-			return host
-		}
-	}
-	return ""
 }
 
 func normalizeSoulLookupQuery(q string) string {

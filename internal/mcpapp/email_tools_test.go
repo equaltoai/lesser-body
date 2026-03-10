@@ -21,6 +21,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+	installSoulBindingLookup(t, "agent1", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
@@ -35,11 +36,6 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{
-				"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}],
-				"count":1
-			}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
