@@ -4,42 +4,53 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
+	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
+	"github.com/equaltoai/lesser-body/internal/soulbinding"
 )
 
 func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
+	soulbinding.ResetForTests()
 	soulapi.ResetForTests()
+	defer soulbinding.ResetForTests()
 
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const tokenUser = "agent1"
 
-	var gotMineAuth string
+	var gotBindingPK string
+	var gotBindingSK string
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				gotBindingPK, _ = where["PK"].(string)
+				gotBindingSK, _ = where["SK"].(string)
+				return setStructFields(dest, map[string]string{
+					"AgentID":  agentID,
+					"Username": tokenUser,
+				})
+			},
+		}, nil
+	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.URL.Path == "/api/v1/soul/agents/mine":
-			gotMineAuth = r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{
-				"agents":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}],
-				"count":1
-			}`))
 		case r.URL.Path == "/api/v1/soul/search":
-			q := strings.TrimSpace(r.URL.Query().Get("q"))
+			q := r.URL.Query().Get("q")
 			if q == "agent-alice" {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
@@ -98,6 +109,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
@@ -118,9 +130,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
-	// identity_whoami should call /agents/mine with our bearer token and return channels + preferences.
+	// identity_whoami should resolve the authenticated local agent via the soul binding and return channels + preferences.
 	{
-		gotMineAuth = ""
+		gotBindingPK = ""
+		gotBindingSK = ""
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_whoami",
 			"arguments": map[string]any{},
@@ -132,8 +145,11 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("identity_whoami: status=%d body=%s", resp.Status, string(resp.Body))
 		}
-		if gotMineAuth != authHeader {
-			t.Fatalf("expected soul api Authorization=%q, got %q", authHeader, gotMineAuth)
+		if gotBindingPK != "SOUL_BODY_BINDING_USERNAME#"+tokenUser {
+			t.Fatalf("expected binding lookup PK, got %q", gotBindingPK)
+		}
+		if gotBindingSK != "SOUL_BODY_BINDING" {
+			t.Fatalf("expected binding lookup SK, got %q", gotBindingSK)
 		}
 
 		var rpc mcpruntime.Response

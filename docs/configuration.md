@@ -43,6 +43,8 @@ Variables:
   - If set, enables bearer-token auth for the managed instance key (timing-safe compare).
 - `LESSER_HOST_INSTANCE_KEY_ARN` (string, optional)
   - If set, fetches the managed instance key from Secrets Manager.
+  - If not set in a managed deployment, lesser-body falls back to the persisted Lesser `TRUST_CONFIG.instanceKeySecretARN`
+    record in `LESSER_TABLE_NAME`.
 
 ### MCP session persistence
 
@@ -60,8 +62,14 @@ Variables:
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
   - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp`.
 - `LESSER_SOUL_API_BASE_URL` (string, optional)
-  - Base URL used by identity and communication tools when calling the soul API (for example: `https://api.dev.example.com`).
-  - If not set, it falls back to `LESSER_API_BASE_URL`, then to `MCP_ENDPOINT` with `/mcp` stripped.
+  - Base URL used by identity and communication tools when calling the soul API (for example: `https://lab.lesser.host`).
+  - In managed deployments, if not set, lesser-body resolves it from the persisted Lesser `TRUST_CONFIG.baseURL` record
+    in `LESSER_TABLE_NAME` and fails closed if that managed config is missing.
+  - For local/manual runs, it falls back to `LESSER_HOST_URL`, then `LESSER_API_BASE_URL`, then `MCP_ENDPOINT` with
+    `/mcp` stripped.
+- `LESSER_HOST_URL` (string, optional)
+  - Manual override for the lesser-host control-plane base URL.
+  - Primarily useful for local/manual runs; managed deployments should prefer persisted `TRUST_CONFIG`.
 - `LESSER_API_TIMEOUT_SECONDS` (string, optional)
   - HTTP timeout for Lesser API calls (default: `10`).
 
@@ -74,6 +82,7 @@ Variables:
   - `memory`: in-memory store (useful for unit tests / local deterministic runs)
 - `LESSER_TABLE_NAME` (string, required for `dynamo`)
   - The Lesser stage DynamoDB table name.
+  - Also used to resolve managed trust configuration (`TRUST_CONFIG`) for soul API base URL and instance-key secret ARN.
 
 ### Misc
 

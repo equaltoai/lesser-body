@@ -11,6 +11,7 @@ import (
 	"github.com/theory-cloud/apptheory/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 )
@@ -19,7 +20,9 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+	installSoulBindingLookup(t, "agent1", "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
 	auth.ResetForTests()
+	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
 	const agentID = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -34,11 +37,6 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
-		case "/api/v1/soul/agents/mine":
-			_, _ = w.Write([]byte(`{
-				"agents":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-carol","status":"active"}}],
-				"count":1
-			}`))
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-carol","status":"active"}}`))
 		case "/api/v1/soul/agents/" + agentID + "/registration":
@@ -67,7 +65,9 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 	}))
 	defer server.Close()
 
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
 	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")

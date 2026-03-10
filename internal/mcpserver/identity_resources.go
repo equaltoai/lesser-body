@@ -9,8 +9,7 @@ import (
 )
 
 func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
+	if _, err := requireOAuthBearer(ctx); err != nil {
 		return resourceJSON("agent://channels", map[string]any{
 			"error": map[string]any{
 				"code":    "unauthorized",
@@ -20,7 +19,7 @@ func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error)
 		})
 	}
 
-	payload, err := whoamiChannelsPayload(ctx, token)
+	payload, err := whoamiChannelsPayload(ctx)
 	if err != nil {
 		return resourceJSON("agent://channels", map[string]any{
 			"error": identityErrorPayload(err),
@@ -31,8 +30,7 @@ func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error)
 }
 
 func resourceChannelPreferences(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
+	if _, err := requireOAuthBearer(ctx); err != nil {
 		return resourceJSON("agent://channels/preferences", map[string]any{
 			"error": map[string]any{
 				"code":    "unauthorized",
@@ -42,7 +40,7 @@ func resourceChannelPreferences(ctx context.Context) ([]mcpruntime.ResourceConte
 		})
 	}
 
-	payload, err := whoamiChannelsPayload(ctx, token)
+	payload, err := whoamiChannelsPayload(ctx)
 	if err != nil {
 		return resourceJSON("agent://channels/preferences", map[string]any{
 			"error": identityErrorPayload(err),
