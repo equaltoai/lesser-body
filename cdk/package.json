@@ -1,5 +1,6 @@
 {
   "name": "lesser-body-cdk",
+  "license": "AGPL-3.0-only",
   "private": true,
   "version": "0.0.0",
   "scripts": {

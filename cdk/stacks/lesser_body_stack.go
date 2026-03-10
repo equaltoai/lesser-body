@@ -60,6 +60,11 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		jsii.String("JWTSecretArnParamLookup"),
 		jsii.String(jwtSecretArnParamName),
 	)
+	jwtSecretKeyArnParam := awsssm.StringParameter_FromStringParameterName(
+		stack,
+		jsii.String("JWTSecretKeyArnParamLookup"),
+		jsii.String(fmt.Sprintf("/%s/shared/kms/encryption-key-arn", appName)),
+	)
 	handler.AddEnvironment(jsii.String("JWT_SECRET_ARN"), jwtSecretArnParam.StringValue(), nil)
 	jwtSecret := awssecretsmanager.Secret_FromSecretCompleteArn(
 		stack,
@@ -67,10 +72,37 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		jwtSecretArnParam.StringValue(),
 	)
 	jwtSecret.GrantRead(handler, nil)
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("kms:Decrypt"),
+			jsii.String("kms:DescribeKey"),
+		},
+		Resources: &[]*string{
+			jwtSecretKeyArnParam.StringValue(),
+		},
+	}))
 
 	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
-		Handler:            handler,
-		ApiName:            jsii.String(fmt.Sprintf("%s-%s-mcp", appName, stage)),
+		Handler: handler,
+		ApiName: jsii.String(fmt.Sprintf("%s-%s-mcp", appName, stage)),
+		Cors: &apptheorycdk.AppTheoryRestApiRouterCorsOptions{
+			AllowOrigins: &[]*string{
+				jsii.String("*"),
+			},
+			AllowHeaders: &[]*string{
+				jsii.String("authorization"),
+				jsii.String("content-type"),
+				jsii.String("mcp-protocol-version"),
+				jsii.String("mcp-session-id"),
+				jsii.String("last-event-id"),
+			},
+			AllowMethods: &[]*string{
+				jsii.String("GET"),
+				jsii.String("POST"),
+				jsii.String("DELETE"),
+				jsii.String("OPTIONS"),
+			},
+		},
 		EnableSessionTable: jsii.Bool(true),
 		SessionTableName:   jsii.String(fmt.Sprintf("%s-%s-mcp-sessions", appName, stage)),
 		SessionTtlMinutes:  jsii.Number(60),
@@ -112,10 +144,12 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
 	)
 
-	publicEndpoint := publicMcpEndpoint(stack, appName, stage, props.BaseDomain)
+	stageDomain := resolvedStageDomain(stack, appName, stage, props.BaseDomain)
+	publicEndpoint := publicMcpEndpoint(stageDomain)
 
 	// Ensure the runtime sees the correct endpoint and TTL minutes (older CDK bindings may not set these).
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), publicEndpoint, nil)
+	handler.AddEnvironment(jsii.String("MCP_ALLOWED_ORIGINS"), mcpAllowedOrigins(stageDomain), nil)
 	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
 	// Memory tools use Lesser's main table. Import the table name from SSM and grant minimal DynamoDB access.
@@ -175,18 +209,31 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 	return &LesserBodyStack{Stack: stack}
 }
 
-func publicMcpEndpoint(stack awscdk.Stack, appName string, stage string, baseDomain string) *string {
+func resolvedStageDomain(stack awscdk.Stack, appName string, stage string, baseDomain string) *string {
 	if strings.TrimSpace(baseDomain) != "" {
-		stageDomain := stageDomainFor(stage, baseDomain)
-		return jsii.String(fmt.Sprintf("https://api.%s/mcp", stageDomain))
+		return jsii.String(stageDomainFor(stage, baseDomain))
 	}
-
 	paramName := fmt.Sprintf("/%s/%s/lesser/exports/v1/domain", appName, stage)
 	domainParam := awsssm.StringParameter_FromStringParameterName(stack, jsii.String("LesserStageDomainParamLookup"), jsii.String(paramName))
+	return domainParam.StringValue()
+}
+
+func publicMcpEndpoint(stageDomain *string) *string {
 	return awscdk.Fn_Join(jsii.String(""), &[]*string{
 		jsii.String("https://api."),
-		domainParam.StringValue(),
+		stageDomain,
 		jsii.String("/mcp"),
+	})
+}
+
+func mcpAllowedOrigins(stageDomain *string) *string {
+	return awscdk.Fn_Join(jsii.String(""), &[]*string{
+		jsii.String("https://claude.ai,https://claude.com,https://"),
+		stageDomain,
+		jsii.String(",https://app."),
+		stageDomain,
+		jsii.String(",https://api."),
+		stageDomain,
 	})
 }
 
