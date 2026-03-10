@@ -97,7 +97,6 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
 	t.Setenv("LESSER_API_BASE_URL", server.URL)
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
