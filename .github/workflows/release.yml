@@ -24,12 +24,12 @@ jobs:
       RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -69,10 +69,22 @@ jobs:
         run: bash scripts/build_release_assets.sh "${RELEASE_VERSION}" dist/release
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          files: |
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          files=(
             dist/release/lesser-body.zip
             dist/release/checksums.txt
             dist/release/lesser-body-release.json
+          )
+
+          if gh release view "${RELEASE_VERSION}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_VERSION}" "${files[@]}" --clobber
+          else
+            gh release create "${RELEASE_VERSION}" "${files[@]}" \
+              --title "${RELEASE_VERSION}" \
+              --notes "" \
+              --verify-tag
+          fi
