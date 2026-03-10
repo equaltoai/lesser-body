@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 var jwtSecretCache struct {
@@ -44,12 +45,17 @@ var lesserHostInstanceKeyCache struct {
 	err   error
 }
 
+var loadEffectiveTrustConfig = trustconfig.Default
+
 func lesserHostInstanceKey(ctx context.Context) (string, error) {
 	if v := strings.TrimSpace(os.Getenv("LESSER_HOST_INSTANCE_KEY")); v != "" {
 		return v, nil
 	}
 
-	secretID := strings.TrimSpace(os.Getenv("LESSER_HOST_INSTANCE_KEY_ARN"))
+	secretID, err := lesserHostInstanceKeySecretID(ctx)
+	if err != nil {
+		return "", err
+	}
 	if secretID == "" {
 		return "", nil
 	}
@@ -63,6 +69,28 @@ func lesserHostInstanceKey(ctx context.Context) (string, error) {
 
 func LesserHostInstanceKey(ctx context.Context) (string, error) {
 	return lesserHostInstanceKey(ctx)
+}
+
+func lesserHostInstanceKeySecretID(ctx context.Context) (string, error) {
+	if secretID := strings.TrimSpace(os.Getenv("LESSER_HOST_INSTANCE_KEY_ARN")); secretID != "" {
+		return secretID, nil
+	}
+
+	if strings.TrimSpace(os.Getenv("LESSER_TABLE_NAME")) == "" {
+		return "", nil
+	}
+
+	cfg, err := loadEffectiveTrustConfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve trust config: %w", err)
+	}
+	if cfg != nil && strings.TrimSpace(cfg.InstanceKeySecretARN) != "" {
+		return strings.TrimSpace(cfg.InstanceKeySecretARN), nil
+	}
+	if cfg != nil && cfg.Present {
+		return "", errors.New("managed TRUST_CONFIG.instanceKeySecretARN is required for outbound communication")
+	}
+	return "", errors.New("managed TRUST_CONFIG is required for outbound communication")
 }
 
 func fetchSecretValue(ctx context.Context, secretID string) (string, error) {

@@ -378,7 +378,8 @@ func identityVerifyNotificationResultFromError(err error) (*mcpruntime.ToolResul
 		return toolErrorResult(code, message, apiErr.Status, details)
 	}
 
-	if strings.Contains(strings.ToLower(err.Error()), "LESSER_API_BASE_URL") || strings.Contains(strings.ToLower(err.Error()), "MCP_ENDPOINT") {
+	lowerErr := strings.ToLower(err.Error())
+	if strings.Contains(lowerErr, "lesser_api_base_url") || strings.Contains(lowerErr, "mcp_endpoint") {
 		return toolErrorResult("not_configured", err.Error(), 500, nil)
 	}
 

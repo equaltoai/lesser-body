@@ -53,6 +53,29 @@ Fix:
 - Ensure `MCP_ENDPOINT` is `https://api.<stageDomain>/mcp`.
 - Or set `LESSER_API_BASE_URL` explicitly to `https://api.<stageDomain>`.
 
+## Identity / communication tools fail (`not_found`, `not_configured`, or soul API 404)
+
+Symptoms:
+
+- `tools/list` works, but soul-backed tools like `identity_whoami`, `identity_lookup`, `identity_verify`, `email_send`,
+  `sms_send`, or `phone_call` fail.
+- Errors include public `app.not_found` for `/api/v1/soul/*` or configuration messages mentioning
+  `LESSER_SOUL_API_BASE_URL` / managed `TRUST_CONFIG`.
+
+Common causes:
+
+- `LESSER_SOUL_API_BASE_URL` points at the Lesser instance API (`https://api.<stageDomain>`) instead of lesser-host.
+- In a managed deployment, Lesser `TRUST_CONFIG` is missing `baseURL` and/or `instanceKeySecretARN`.
+
+Fix:
+
+- In managed AWS deployments, make sure `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` in `LESSER_TABLE_NAME` has:
+  - `managed.baseURL`
+  - `managed.instanceKeySecretARN` for outbound communication tools
+- For local/manual runs, set:
+  - `LESSER_SOUL_API_BASE_URL=https://<stage>.lesser.host`
+  - optionally `LESSER_HOST_INSTANCE_KEY` or `LESSER_HOST_INSTANCE_KEY_ARN` for outbound comm tools
+
 ## Memory tools fail (`LESSER_TABLE_NAME is required`)
 
 Symptoms:
@@ -100,4 +123,3 @@ Fix:
 
 - Deploy Lesser first (shared + stage). Then deploy lesser-body.
 - Only enable `soulEnabled=true` in Lesser after `mcp_lambda_arn` exists.
-

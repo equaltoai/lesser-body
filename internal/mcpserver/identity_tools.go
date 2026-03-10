@@ -113,21 +113,26 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 }
 
 func whoamiChannelsPayload(ctx context.Context, bearerToken string) (map[string]any, error) {
+	lesserClient, err := lesser(ctx)
+	if err != nil {
+		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
+	}
+
 	client, err := soulapi.Default()
 	if err != nil {
 		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
 	}
 
-	mineAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/mine", nil, bearerToken, nil)
+	mineAny, err := lesserClient.DoJSON(ctx, "GET", "/api/v1/souls/mine", nil, bearerToken, nil)
 	if err != nil {
 		return nil, err
 	}
 	mine, ok := mineAny.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("unexpected agents/mine response")
+		return nil, fmt.Errorf("unexpected souls/mine response")
 	}
 
-	items, _ := mine["agents"].([]any)
+	items, _ := mine["souls"].([]any)
 	if len(items) == 0 {
 		return nil, &toolUserError{Code: "not_found", Message: "no soul agents found for this identity", Status: 404}
 	}
@@ -178,7 +183,7 @@ func whoamiChannelsPayload(ctx context.Context, bearerToken string) (map[string]
 
 	agentID := normalizeSoulAgentID(stringFromMap(chosen, "agent_id"))
 	if agentID == "" {
-		return nil, fmt.Errorf("agents/mine missing agent_id")
+		return nil, fmt.Errorf("souls/mine missing agent_id")
 	}
 
 	payload, err := agentChannelsPayload(ctx, client, agentID)

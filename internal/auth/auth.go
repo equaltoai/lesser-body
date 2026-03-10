@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
@@ -186,4 +187,5 @@ func ResetForTests() {
 		value string
 		err   error
 	}{}
+	loadEffectiveTrustConfig = trustconfig.Default
 }

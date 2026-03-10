@@ -32,10 +32,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.URL.Path == "/api/v1/soul/agents/mine":
+		case r.URL.Path == "/api/v1/souls/mine":
 			gotMineAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{
-				"agents":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}],
+				"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}],
 				"count":1
 			}`))
 		case r.URL.Path == "/api/v1/soul/search":
@@ -98,6 +98,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
 
@@ -118,7 +119,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
-	// identity_whoami should call /agents/mine with our bearer token and return channels + preferences.
+	// identity_whoami should call Lesser /souls/mine with our bearer token and return channels + preferences.
 	{
 		gotMineAuth = ""
 		callParams, _ := json.Marshal(map[string]any{

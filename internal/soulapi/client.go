@@ -13,13 +13,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 const (
-	envBaseURL      = "LESSER_SOUL_API_BASE_URL"
-	envLesserAPIURL = "LESSER_API_BASE_URL"
-	envMcpURL       = "MCP_ENDPOINT"
-	envTimeoutS     = "LESSER_SOUL_API_TIMEOUT_SECONDS"
+	envBaseURL       = "LESSER_SOUL_API_BASE_URL"
+	envLesserHostURL = "LESSER_HOST_URL"
+	envLesserAPIURL  = "LESSER_API_BASE_URL"
+	envMcpURL        = "MCP_ENDPOINT"
+	envTimeoutS      = "LESSER_SOUL_API_TIMEOUT_SECONDS"
 )
 
 type Client struct {
@@ -33,9 +36,11 @@ var defaultClient struct {
 	err  error
 }
 
+var loadEffectiveTrustConfig = trustconfig.Default
+
 func Default() (*Client, error) {
 	defaultClient.once.Do(func() {
-		base, err := resolveBaseURL()
+		base, err := resolveBaseURL(context.Background())
 		if err != nil {
 			defaultClient.err = err
 			return
@@ -59,6 +64,7 @@ func ResetForTests() {
 		c    *Client
 		err  error
 	}{}
+	loadEffectiveTrustConfig = trustconfig.Default
 }
 
 type APIError struct {
@@ -160,8 +166,24 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 	return out, nil
 }
 
-func resolveBaseURL() (*url.URL, error) {
+func resolveBaseURL(ctx context.Context) (*url.URL, error) {
 	if raw := strings.TrimSpace(os.Getenv(envBaseURL)); raw != "" {
+		return parseBaseURL(raw)
+	}
+	if strings.TrimSpace(os.Getenv("LESSER_TABLE_NAME")) != "" {
+		cfg, err := loadEffectiveTrustConfig(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resolve trust config: %w", err)
+		}
+		if cfg != nil && strings.TrimSpace(cfg.TrustBaseURL) != "" {
+			return parseBaseURL(cfg.TrustBaseURL)
+		}
+		if raw := strings.TrimSpace(os.Getenv(envLesserHostURL)); raw != "" {
+			return parseBaseURL(raw)
+		}
+		return nil, fmt.Errorf("%s is required or managed TRUST_CONFIG.baseURL must be set in %s", envBaseURL, "LESSER_TABLE_NAME")
+	}
+	if raw := strings.TrimSpace(os.Getenv(envLesserHostURL)); raw != "" {
 		return parseBaseURL(raw)
 	}
 	if raw := strings.TrimSpace(os.Getenv(envLesserAPIURL)); raw != "" {
@@ -178,7 +200,7 @@ func resolveBaseURL() (*url.URL, error) {
 		}
 		return u, nil
 	}
-	return nil, fmt.Errorf("%s, %s, or %s is required", envBaseURL, envLesserAPIURL, envMcpURL)
+	return nil, fmt.Errorf("%s, %s, %s, or %s is required", envBaseURL, envLesserHostURL, envLesserAPIURL, envMcpURL)
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
