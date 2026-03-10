@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/tabletheory"
 	"github.com/theory-cloud/tabletheory/pkg/session"
 )
 
-const envMcpSessionTable = "MCP_SESSION_TABLE"
+const (
+	envMcpAllowedOrigins = "MCP_ALLOWED_ORIGINS"
+	envMcpSessionTable   = "MCP_SESSION_TABLE"
+)
 
 func New(name, version string) (*Server, error) {
 	opts, err := buildServerOptionsFromEnv()
@@ -34,20 +38,64 @@ func New(name, version string) (*Server, error) {
 }
 
 func buildServerOptionsFromEnv() ([]ServerOption, error) {
-	if os.Getenv(envMcpSessionTable) == "" {
+	var opts []ServerOption
+
+	if validator := originValidatorFromEnv(); validator != nil {
+		opts = append(opts, mcpruntime.WithOriginValidator(validator))
+	}
+
+	if os.Getenv(envMcpSessionTable) != "" {
+		db, err := tabletheory.NewBasic(session.Config{
+			Region: os.Getenv("AWS_REGION"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create tabletheory client: %w", err)
+		}
+
+		opts = append(opts, mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)))
+	}
+
+	if len(opts) == 0 {
 		return nil, nil
 	}
 
-	db, err := tabletheory.NewBasic(session.Config{
-		Region: os.Getenv("AWS_REGION"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create tabletheory client: %w", err)
+	return opts, nil
+}
+
+func originValidatorFromEnv() mcpruntime.OriginValidator {
+	origins := splitCommaSeparatedEnv(os.Getenv(envMcpAllowedOrigins))
+	if len(origins) == 0 {
+		return nil
+	}
+	for _, origin := range origins {
+		if origin == "*" {
+			return func(origin string) bool {
+				return strings.TrimSpace(origin) != ""
+			}
+		}
+	}
+	return mcpruntime.AllowOrigins(origins...)
+}
+
+func splitCommaSeparatedEnv(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
 	}
 
-	return []ServerOption{
-		mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)),
-	}, nil
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
 }
 
 func registerTools(r *mcpruntime.ToolRegistry) error {

@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,5 +290,42 @@ func TestMcpAuth_InstanceKey(t *testing.T) {
 	})
 	if callResp.Status != 200 {
 		t.Fatalf("expected 200, got %d (%s)", callResp.Status, string(callResp.Body))
+	}
+}
+
+func TestMcpAuth_AuthorizedJwt_AllowsConfiguredBrowserOrigin(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ALLOWED_ORIGINS", "https://dev.example.com,https://app.dev.example.com")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+		"origin":        {"https://dev.example.com"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", initResp.Status, string(initResp.Body))
+	}
+	if ids := initResp.Headers["mcp-session-id"]; len(ids) == 0 || ids[0] == "" {
+		t.Fatalf("expected non-empty mcp-session-id header")
+	}
+	exposeHeaders := ""
+	if values := initResp.Headers["access-control-expose-headers"]; len(values) > 0 {
+		exposeHeaders = values[0]
+	}
+	if !strings.Contains(strings.ToLower(exposeHeaders), "mcp-session-id") {
+		t.Fatalf("expected access-control-expose-headers to include mcp-session-id, got %q", exposeHeaders)
 	}
 }

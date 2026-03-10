@@ -22,7 +22,7 @@ func New(name, version string) (*apptheory.App, error) {
 
 	app.Get("/.well-known/mcp.json", WellKnownMcpHandler(srv, name, version))
 
-	handler := WithAudit(WithToolContext(srv.Handler()), logger)
+	handler := WithClientCompatibilityHeaders(WithAudit(WithToolContext(srv.Handler()), logger))
 	app.Post("/mcp", handler, apptheory.RequireAuth())
 	app.Get("/mcp", handler, apptheory.RequireAuth())
 	app.Delete("/mcp", handler, apptheory.RequireAuth())
