@@ -54,7 +54,9 @@ func emailSendDef() mcpruntime.ToolDef {
 				"body":{"type":"string"},
 				"cc":{"type":"array","items":{"type":"string"}},
 				"bcc":{"type":"array","items":{"type":"string"}},
-				"replyTo":{"type":"string"}
+				"replyTo":{"type":"string"},
+				"messageId":{"type":"string"},
+				"inReplyTo":{"type":"string"}
 			},
 			"required":["to","subject","body"]
 		}`),
@@ -102,6 +104,8 @@ func emailReplyDef() mcpruntime.ToolDef {
 			"properties":{
 				"messageId":{"type":"string"},
 				"body":{"type":"string"},
+				"to":{"type":"string"},
+				"subject":{"type":"string"},
 				"replyAll":{"type":"boolean"}
 			},
 			"required":["messageId","body"]

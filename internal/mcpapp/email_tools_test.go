@@ -40,6 +40,20 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
 			_, _ = w.Write([]byte(`{"version":"3","channels":{},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
+		case r.URL.Path == "/api/v1/notifications" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`[
+				{
+					"id":"notif-1",
+					"type":"communication:inbound",
+					"channel":"email",
+					"messageId":"comm-msg-000",
+					"from":{"address":"alice@example.com"},
+					"to":{"address":"agent-bob@lessersoul.ai"},
+					"subject":"Hello",
+					"body":"Original email",
+					"receivedAt":"2026-03-10T21:00:00Z"
+				}
+			]`))
 		case r.URL.Path == "/api/v1/soul/comm/send" && r.Method == http.MethodPost:
 			gotAuth = r.Header.Get("Authorization")
 			body, _ := io.ReadAll(r.Body)
@@ -87,9 +101,10 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "email_send",
 			"arguments": map[string]any{
-				"to":      "alice@example.com",
-				"subject": "Hello",
-				"body":    "Hi there",
+				"to":        "alice@example.com",
+				"subject":   "Hello",
+				"body":      "Hi there",
+				"inReplyTo": "comm-msg-prev",
 			},
 		})
 		resp := invokeJSON(t, env, app, map[string][]string{
@@ -108,6 +123,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if gotBody["to"] != "alice@example.com" || gotBody["subject"] != "Hello" || gotBody["body"] != "Hi there" {
 			t.Fatalf("unexpected comm api payload fields: %+v", gotBody)
 		}
+		if gotBody["inReplyTo"] != "comm-msg-prev" {
+			t.Fatalf("expected inReplyTo=comm-msg-prev, got %+v", gotBody)
+		}
 
 		var rpc mcpruntime.Response
 		_ = json.Unmarshal(resp.Body, &rpc)
@@ -122,6 +140,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		if data["messageId"] != "comm-msg-001" || data["status"] != "sent" {
 			t.Fatalf("unexpected tool data: %+v", data)
+		}
+		if data["inReplyTo"] != "comm-msg-prev" {
+			t.Fatalf("expected tool data to include inReplyTo, got %+v", data)
 		}
 	}
 
@@ -150,6 +171,12 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		}
 		if gotBody["inReplyTo"] != "comm-msg-000" {
 			t.Fatalf("expected inReplyTo=comm-msg-000, got %+v", gotBody)
+		}
+		if gotBody["to"] != "alice@example.com" {
+			t.Fatalf("expected reply to original sender, got %+v", gotBody)
+		}
+		if gotBody["subject"] != "Re: Hello" {
+			t.Fatalf("expected derived reply subject, got %+v", gotBody)
 		}
 
 		var rpc mcpruntime.Response

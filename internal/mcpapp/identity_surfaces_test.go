@@ -32,6 +32,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 
 	var gotBindingPK string
 	var gotBindingSK string
+	var searchQueries []string
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
 		return &fakeTableTheoryDB{
 			firstFn: func(dest any, where map[string]any) error {
@@ -51,6 +52,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/soul/search":
 			q := r.URL.Query().Get("q")
+			searchQueries = append(searchQueries, q)
 			if q == "agent-alice" {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
@@ -180,7 +182,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 	}
 
-	// identity_lookup should resolve managed email/ENS by deriving localId and searching.
+	// identity_lookup should resolve managed email/ENS directly without stripping them to bare localIds.
 	for _, q := range []string{"agent-alice@lessersoul.ai", "agent-alice.lessersoul.eth"} {
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_lookup",
@@ -213,6 +215,9 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if match["agentId"] != agentID {
 			t.Fatalf("identity_lookup(%q): agentId want %s got %v", q, agentID, match["agentId"])
 		}
+	}
+	if len(searchQueries) != 0 {
+		t.Fatalf("identity_lookup for managed identifiers should resolve directly, got search queries %+v", searchQueries)
 	}
 
 	// agent://channels + agent://channels/preferences should read successfully.

@@ -12,12 +12,14 @@ import (
 
 func handleEmailSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		To      string   `json:"to"`
-		Subject string   `json:"subject"`
-		Body    string   `json:"body"`
-		CC      []string `json:"cc,omitempty"`
-		BCC     []string `json:"bcc,omitempty"`
-		ReplyTo string   `json:"replyTo,omitempty"`
+		To        string   `json:"to"`
+		Subject   string   `json:"subject"`
+		Body      string   `json:"body"`
+		CC        []string `json:"cc,omitempty"`
+		BCC       []string `json:"bcc,omitempty"`
+		ReplyTo   string   `json:"replyTo,omitempty"`
+		MessageID string   `json:"messageId,omitempty"`
+		InReplyTo string   `json:"inReplyTo,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
@@ -26,6 +28,10 @@ func handleEmailSend(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	in.Subject = strings.TrimSpace(in.Subject)
 	in.Body = strings.TrimSpace(in.Body)
 	in.ReplyTo = strings.TrimSpace(in.ReplyTo)
+	replyRef, err := resolveCommReplyReference(in.MessageID, in.InReplyTo)
+	if err != nil {
+		return toolErrorResult("invalid_request", err.Error(), 400, nil)
+	}
 	if in.To == "" || in.Subject == "" || in.Body == "" {
 		return toolErrorResult("invalid_request", "to, subject, and body are required", 400, nil)
 	}
@@ -52,10 +58,16 @@ func handleEmailSend(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if strings.TrimSpace(in.ReplyTo) == "" {
 		delete(body, "replyTo")
 	}
+	if replyRef != "" {
+		body["inReplyTo"] = replyRef
+	}
 
 	normalized, err := sendOutboundComm(ctx, deps, "email", body)
 	if err != nil {
 		return commToolResultFromError(err)
+	}
+	if replyRef != "" {
+		normalized["inReplyTo"] = replyRef
 	}
 	return toolJSONResult(normalized)
 }
@@ -64,6 +76,8 @@ func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	var in struct {
 		MessageID string `json:"messageId"`
 		Body      string `json:"body"`
+		To        string `json:"to,omitempty"`
+		Subject   string `json:"subject,omitempty"`
 		ReplyAll  bool   `json:"replyAll,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
@@ -71,8 +85,33 @@ func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	}
 	in.MessageID = strings.TrimSpace(in.MessageID)
 	in.Body = strings.TrimSpace(in.Body)
+	in.To = strings.TrimSpace(in.To)
+	in.Subject = strings.TrimSpace(in.Subject)
 	if in.MessageID == "" || in.Body == "" {
 		return toolErrorResult("invalid_request", "messageId and body are required", 400, nil)
+	}
+
+	if in.To == "" || in.Subject == "" {
+		bearerToken, err := requireOAuthBearer(ctx)
+		if err != nil {
+			return toolErrorResult("unauthorized", err.Error(), 401, nil)
+		}
+
+		notification, err := findCommunicationNotification(ctx, bearerToken, in.MessageID)
+		if err != nil {
+			return identityVerifyNotificationResultFromError(err)
+		}
+		if notification != nil {
+			if in.To == "" {
+				in.To = emailReplyRecipient(notification)
+			}
+			if in.Subject == "" {
+				in.Subject = emailReplySubject(notification)
+			}
+		}
+	}
+	if in.To == "" || in.Subject == "" {
+		return toolErrorResult("invalid_request", "unable to resolve reply recipient and subject; provide to and subject explicitly", 400, nil)
 	}
 
 	deps, res, err := loadCommSendDependencies(ctx, "email")
@@ -81,16 +120,43 @@ func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	}
 
 	body := map[string]any{
+		"to":        in.To,
+		"subject":   in.Subject,
 		"body":      in.Body,
 		"inReplyTo": in.MessageID,
-		"replyAll":  in.ReplyAll,
 	}
 
 	normalized, err := sendOutboundComm(ctx, deps, "email", body)
 	if err != nil {
 		return commToolResultFromError(err)
 	}
+	normalized["inReplyTo"] = in.MessageID
+	if in.ReplyAll {
+		normalized["replyAllRequested"] = true
+	}
 	return toolJSONResult(normalized)
+}
+
+func emailReplyRecipient(notification map[string]any) string {
+	from := commFrom(notification)
+	for _, key := range []string{"address", "email", "identifier"} {
+		if value, _ := from[key].(string); strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func emailReplySubject(notification map[string]any) string {
+	subject := strings.TrimSpace(commSubject(notification))
+	if subject == "" {
+		return "Re: (no subject)"
+	}
+	lower := strings.ToLower(subject)
+	if strings.HasPrefix(lower, "re:") {
+		return subject
+	}
+	return "Re: " + subject
 }
 
 func normalizeCommSendResult(raw any, advisory map[string]any) map[string]any {
