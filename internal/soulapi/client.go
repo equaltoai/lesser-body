@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	envBaseURL  = "LESSER_SOUL_API_BASE_URL"
-	envTimeoutS = "LESSER_SOUL_API_TIMEOUT_SECONDS"
+	envBaseURL      = "LESSER_SOUL_API_BASE_URL"
+	envLesserAPIURL = "LESSER_API_BASE_URL"
+	envMcpURL       = "MCP_ENDPOINT"
+	envTimeoutS     = "LESSER_SOUL_API_TIMEOUT_SECONDS"
 )
 
 type Client struct {
@@ -159,11 +161,24 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 }
 
 func resolveBaseURL() (*url.URL, error) {
-	raw := strings.TrimSpace(os.Getenv(envBaseURL))
-	if raw == "" {
-		return nil, fmt.Errorf("%s is required", envBaseURL)
+	if raw := strings.TrimSpace(os.Getenv(envBaseURL)); raw != "" {
+		return parseBaseURL(raw)
 	}
-	return parseBaseURL(raw)
+	if raw := strings.TrimSpace(os.Getenv(envLesserAPIURL)); raw != "" {
+		return parseBaseURL(raw)
+	}
+	if raw := strings.TrimSpace(os.Getenv(envMcpURL)); raw != "" {
+		u, err := parseBaseURL(raw)
+		if err != nil {
+			return nil, err
+		}
+		u.Path = strings.TrimSuffix(u.Path, "/mcp")
+		if u.Path == "/mcp" {
+			u.Path = ""
+		}
+		return u, nil
+	}
+	return nil, fmt.Errorf("%s, %s, or %s is required", envBaseURL, envLesserAPIURL, envMcpURL)
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {

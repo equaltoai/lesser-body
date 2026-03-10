@@ -59,6 +59,9 @@ Variables:
 - `LESSER_API_BASE_URL` (string, optional)
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
   - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp`.
+- `LESSER_SOUL_API_BASE_URL` (string, optional)
+  - Base URL used by identity and communication tools when calling the soul API (for example: `https://api.dev.example.com`).
+  - If not set, it falls back to `LESSER_API_BASE_URL`, then to `MCP_ENDPOINT` with `/mcp` stripped.
 - `LESSER_API_TIMEOUT_SECONDS` (string, optional)
   - HTTP timeout for Lesser API calls (default: `10`).
 
@@ -102,4 +105,3 @@ Published by this repo’s CDK stack:
   - Convenience value intended to equal `https://api.<stageDomain>/mcp`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name`
   - Session table name (if provisioned).
-
