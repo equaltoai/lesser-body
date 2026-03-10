@@ -82,6 +82,25 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	}))
 
+	// Managed lesser-host stores the instance key in the instance account under
+	// a stable secret name: <app>/instance-key. The runtime resolves the exact
+	// ARN from TRUST_CONFIG, so the Lambda only needs permission to read the
+	// matching secret resource in this account.
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("secretsmanager:GetSecretValue"),
+			jsii.String("secretsmanager:DescribeSecret"),
+		},
+		Resources: &[]*string{
+			stack.FormatArn(&awscdk.ArnComponents{
+				Service:      jsii.String("secretsmanager"),
+				Resource:     jsii.String("secret"),
+				ArnFormat:    awscdk.ArnFormat_COLON_RESOURCE_NAME,
+				ResourceName: jsii.String(fmt.Sprintf("%s/instance-key*", appName)),
+			}),
+		},
+	}))
+
 	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
 		Handler: handler,
 		ApiName: jsii.String(fmt.Sprintf("%s-%s-mcp", appName, stage)),
