@@ -339,7 +339,7 @@ func notificationChannel(n map[string]any) string {
 			return strings.ToLower(strings.TrimSpace(v))
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			if v, _ := m["channel"].(string); strings.TrimSpace(v) != "" {
 				return strings.ToLower(strings.TrimSpace(v))
@@ -355,7 +355,7 @@ func commMessageID(n map[string]any) string {
 			return strings.TrimSpace(v)
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			for _, key := range []string{"messageId", "message_id"} {
 				if v, _ := m[key].(string); strings.TrimSpace(v) != "" {
@@ -373,7 +373,7 @@ func commFrom(n map[string]any) map[string]any {
 			return m
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			if from, ok := m["from"].(map[string]any); ok {
 				return from
@@ -389,7 +389,7 @@ func commTo(n map[string]any) any {
 			return v
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			if v, ok := m["to"]; ok && v != nil {
 				return v
@@ -405,7 +405,7 @@ func commSubject(n map[string]any) string {
 			return strings.TrimSpace(v)
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			if v, _ := m["subject"].(string); strings.TrimSpace(v) != "" {
 				return strings.TrimSpace(v)
@@ -421,7 +421,7 @@ func commBody(n map[string]any) string {
 			return strings.TrimSpace(v)
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			if v, _ := m["body"].(string); strings.TrimSpace(v) != "" {
 				return strings.TrimSpace(v)
@@ -437,7 +437,7 @@ func commReceivedAt(n map[string]any) string {
 			return strings.TrimSpace(v)
 		}
 	}
-	for _, container := range []string{"data", "payload"} {
+	for _, container := range []string{"communication", "data", "payload"} {
 		if m, ok := n[container].(map[string]any); ok {
 			for _, key := range []string{"receivedAt", "received_at"} {
 				if v, _ := m[key].(string); strings.TrimSpace(v) != "" {

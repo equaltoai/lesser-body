@@ -30,12 +30,15 @@ func TestLBM3_InboxToolsFilterNotifications(t *testing.T) {
 				{
 					"id":"n1",
 					"type":"communication:inbound",
-					"channel":"email",
-					"messageId":"comm-msg-001",
-					"from":{"address":"alice@example.com"},
-					"subject":"Hi",
-					"body":"Hello",
-					"receivedAt":"2026-03-04T12:00:00Z"
+					"communication":{
+						"channel":"email",
+						"message_id":"comm-msg-001",
+						"from":{"address":"alice@example.com"},
+						"to":{"address":"agent1@lessersoul.ai"},
+						"subject":"Hi",
+						"body":"Hello",
+						"received_at":"2026-03-04T12:00:00Z"
+					}
 				},
 				{
 					"id":"n2",
