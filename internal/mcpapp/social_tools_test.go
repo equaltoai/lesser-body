@@ -463,43 +463,46 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
-	var gotQuery string
+	var gotQueries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/notifications" {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
 		}
-		gotQuery = r.URL.RawQuery
+		gotQueries = append(gotQueries, r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{
-				"id":"n-follow",
-				"type":"follow",
-				"created_at":"2026-03-16T10:00:00Z",
-				"account":{"id":"acct-follow","username":"bob","acct":"bob@example.com"}
-			},
-			{
-				"id":"n-reply",
-				"type":"mention",
-				"created_at":"2026-03-16T09:00:00Z",
-				"account":{"id":"acct-reply","username":"alice","acct":"alice@example.com","display_name":"Alice"},
-				"status":{
-					"id":"post-1",
-					"content":"@agent1 thanks!",
-					"created_at":"2026-03-16T08:59:00Z",
-					"in_reply_to_id":"root-1",
-					"visibility":"public"
+		switch r.URL.RawQuery {
+		case "limit=5&max_id=n0&types%5B%5D=reply":
+			// Current Lesser instances may still emit mention here; lesser-body should not relabel it.
+			_, _ = w.Write([]byte(`[
+				{
+					"id":"n-reply-like-mention",
+					"type":"mention",
+					"created_at":"2026-03-16T09:00:00Z",
+					"account":{"id":"acct-reply","username":"alice","acct":"alice@example.com","display_name":"Alice"},
+					"status":{
+						"id":"post-1",
+						"content":"@agent1 thanks!",
+						"created_at":"2026-03-16T08:59:00Z",
+						"in_reply_to_id":"root-1",
+						"visibility":"public"
+					}
 				}
-			},
-			{
-				"id":"n-fav",
-				"type":"favourite",
-				"created_at":"2026-03-16T08:00:00Z",
-				"account":{"id":"acct-fav","username":"carol","acct":"carol@example.com"},
-				"status":{"id":"post-2","content":"Great post","visibility":"public"}
-			}
-		]`))
+			]`))
+		case "limit=5&max_id=n0&types%5B%5D=favourite":
+			_, _ = w.Write([]byte(`[
+				{
+					"id":"n-fav",
+					"type":"favourite",
+					"created_at":"2026-03-16T08:00:00Z",
+					"account":{"id":"acct-fav","username":"carol","acct":"carol@example.com"},
+					"status":{"id":"post-2","content":"Great post","visibility":"public"}
+				}
+			]`))
+		default:
+			t.Fatalf("unexpected notifications query: %q", r.URL.RawQuery)
+		}
 	}))
 	defer server.Close()
 
@@ -548,8 +551,11 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 		t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
 	}
 
-	if gotQuery != "limit=5&max_id=n0&types%5B%5D=mention&types%5B%5D=favourite" {
-		t.Fatalf("unexpected notifications query: %q", gotQuery)
+	if len(gotQueries) != 2 {
+		t.Fatalf("expected 2 notifications queries, got %v", gotQueries)
+	}
+	if gotQueries[0] != "limit=5&max_id=n0&types%5B%5D=reply" || gotQueries[1] != "limit=5&max_id=n0&types%5B%5D=favourite" {
+		t.Fatalf("unexpected notifications queries: %v", gotQueries)
 	}
 
 	var rpc mcpruntime.Response
@@ -566,32 +572,19 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 		_ = json.Unmarshal(b, &out)
 	}
 	data, _ := out.StructuredContent["data"].(map[string]any)
-	if data["count"] != float64(2) {
-		t.Fatalf("expected filtered count=2, got %+v", data)
+	if data["count"] != float64(1) {
+		t.Fatalf("expected filtered count=1, got %+v", data)
 	}
 	if data["nextSince"] != "n-fav" {
 		t.Fatalf("expected nextSince=n-fav, got %+v", data)
 	}
 
 	notifications, _ := data["notifications"].([]any)
-	if len(notifications) != 2 {
-		t.Fatalf("expected 2 notifications, got %+v", notifications)
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %+v", notifications)
 	}
 
-	reply, _ := notifications[0].(map[string]any)
-	if reply["type"] != "reply" {
-		t.Fatalf("expected reply notification type, got %+v", reply)
-	}
-	actor, _ := reply["actor"].(map[string]any)
-	if actor["username"] != "alice" {
-		t.Fatalf("expected actor.username=alice, got %+v", actor)
-	}
-	targetPost, _ := reply["targetPost"].(map[string]any)
-	if targetPost["id"] != "post-1" || targetPost["inReplyToId"] != "root-1" {
-		t.Fatalf("unexpected targetPost: %+v", targetPost)
-	}
-
-	favourite, _ := notifications[1].(map[string]any)
+	favourite, _ := notifications[0].(map[string]any)
 	if favourite["type"] != "favourite" {
 		t.Fatalf("expected favourite notification type, got %+v", favourite)
 	}
