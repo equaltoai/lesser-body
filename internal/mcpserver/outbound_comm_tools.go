@@ -19,6 +19,8 @@ type commSendDependencies struct {
 	advisory   map[string]any
 }
 
+const botDisclosurePrefix = "[bot] "
+
 func handleSmsSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		To        string `json:"to"`
@@ -39,6 +41,7 @@ func handleSmsSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 	if in.To == "" || in.Body == "" {
 		return toolErrorResult("invalid_request", "to and body are required", 400, nil)
 	}
+	in.Body = ensureBotDisclosurePrefix(in.Body)
 
 	deps, res, err := loadCommSendDependencies(ctx, "sms")
 	if res != nil || err != nil {
@@ -239,6 +242,32 @@ func normalizeCommPhoneE164(raw string) string {
 	raw = strings.ReplaceAll(raw, ")", "")
 	raw = strings.ReplaceAll(raw, ".", "")
 	return raw
+}
+
+func ensureBotDisclosurePrefix(value string) string {
+	value = strings.TrimSpace(value)
+	if hasBotDisclosurePrefix(value) {
+		return value
+	}
+	return botDisclosurePrefix + value
+}
+
+func hasBotDisclosurePrefix(value string) bool {
+	value = strings.TrimSpace(value)
+	for value != "" {
+		lower := strings.ToLower(value)
+		switch {
+		case strings.HasPrefix(lower, "re:"):
+			value = strings.TrimSpace(value[3:])
+		case strings.HasPrefix(lower, "fw:"):
+			value = strings.TrimSpace(value[3:])
+		case strings.HasPrefix(lower, "fwd:"):
+			value = strings.TrimSpace(value[4:])
+		default:
+			return strings.HasPrefix(strings.ToLower(value), strings.ToLower(botDisclosurePrefix))
+		}
+	}
+	return false
 }
 
 func resolveCommReplyReference(messageID string, inReplyTo string) (string, error) {

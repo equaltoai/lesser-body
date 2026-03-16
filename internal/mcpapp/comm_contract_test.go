@@ -78,7 +78,6 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		"email_delete",
 		"sms_send",
 		"sms_read",
-		"phone_call",
 		"voicemail_read",
 		"identity_whoami",
 		"identity_lookup",
@@ -194,21 +193,6 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		}
 		expectPropType(t, s, "to", "string")
 		expectPropType(t, s, "body", "string")
-		expectPropType(t, s, "messageId", "string")
-		expectPropType(t, s, "inReplyTo", "string")
-	}
-
-	{
-		s := mustSchema(t, toolsByName["phone_call"])
-		if s.Type != "object" {
-			t.Fatalf("phone_call schema type: want object got %q", s.Type)
-		}
-		if !reflect.DeepEqual(s.Required, []string{"to", "purpose"}) {
-			t.Fatalf("phone_call required: want [to purpose], got %#v", s.Required)
-		}
-		expectPropType(t, s, "to", "string")
-		expectPropType(t, s, "purpose", "string")
-		expectPropType(t, s, "maxDurationMinutes", "integer")
 		expectPropType(t, s, "messageId", "string")
 		expectPropType(t, s, "inReplyTo", "string")
 	}

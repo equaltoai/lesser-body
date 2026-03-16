@@ -137,7 +137,6 @@ Scope key:
 | `email_delete` | Write | Archive or delete an email by dismissing the backing notification. |
 | `sms_send` | Write | Send an SMS through lesser-host; supports `messageId`/`inReplyTo` for threaded replies. |
 | `sms_read` | Read | Read recent inbound SMS messages delivered to the instance. |
-| `phone_call` | Write | Request an outbound voice call through lesser-host; older hosts that predate outbound voice support return a structured `host_gap` error. |
 | `voicemail_read` | Read | Read voicemail notifications and transcriptions. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
 | `identity_lookup` | Read | Resolve a soul identity by ENS name, email address, or agent id. |
@@ -149,9 +148,10 @@ Notes:
   of the authenticated agent.
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
   and inbox-backed verification.
-- Outbound communication tools (`email_send`, `email_reply`, `sms_send`, `phone_call`) additionally require the managed
+- Outbound communication tools (`email_send`, `email_reply`, `sms_send`) additionally require the managed
   `LESSER_HOST_INSTANCE_KEY` (or `LESSER_HOST_INSTANCE_KEY_ARN`) so lesser-body can authenticate to lesser-host's
   `/api/v1/soul/comm/*` endpoints.
+- Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for managed-instance-key auth.
 
