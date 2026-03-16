@@ -89,22 +89,34 @@ func promptHandleInbound(_ context.Context, args json.RawMessage) (*mcpruntime.P
 
 	readTool := "email_read"
 	replyTool := "email_reply"
+	replyStep := strings.Join([]string{
+		"3) If replying, write a respectful response and then call the appropriate outbound tool:",
+		fmt.Sprintf("   - %s (preferred for this channel).", replyTool),
+		fmt.Sprintf("   - Pass messageId=%s so the host can treat it as an in-thread reply.", messageID),
+	}, "\n")
 	if channel == "sms" {
 		readTool = "sms_read"
 		replyTool = "sms_send"
+		replyStep = strings.Join([]string{
+			"3) If replying, write a respectful response and then call the appropriate outbound tool:",
+			fmt.Sprintf("   - %s (preferred for this channel).", replyTool),
+			fmt.Sprintf("   - Pass messageId=%s so the host can treat it as an in-thread reply.", messageID),
+		}, "\n")
 	}
 	if channel == "voice" {
 		readTool = "voicemail_read"
-		replyTool = "phone_call"
+		replyStep = strings.Join([]string{
+			"3) If replying, do not place an outbound voice call; that capability is disabled.",
+			"   - Use identity_lookup when possible to find an alternate channel.",
+			"   - Prefer email_send or sms_send only when the sender's preferences and available identifiers support it.",
+		}, "\n")
 	}
 
 	user := strings.Join([]string{
 		fmt.Sprintf("Handle an inbound %s message with messageId=%s.", channel, messageID),
 		fmt.Sprintf("1) Use %s to fetch the message (search for messageId if needed).", readTool),
 		"2) Assess urgency, safety, and whether it conflicts with any boundaries (especially communication_policy).",
-		"3) If replying, write a respectful response and then call the appropriate outbound tool:",
-		fmt.Sprintf("   - %s (preferred for this channel).", replyTool),
-		fmt.Sprintf("   - Pass messageId=%s so the host can treat it as an in-thread reply.", messageID),
+		replyStep,
 		"4) If you should not reply, explain why and consider archiving via email_delete when applicable.",
 	}, "\n")
 
@@ -143,7 +155,8 @@ func promptRespectPreferences(_ context.Context, args json.RawMessage) (*mcprunt
 	user := strings.Join([]string{
 		"Determine the best way to contact the target agent while respecting their preferences.",
 		"1) Call identity_lookup with the provided query to resolve their channels and contactPreferences.",
-		"2) Recommend the best channel (email/sms/voice/activitypub/mcp) and timing based on availability schedule, languages, and first-contact settings.",
+		"2) Recommend the best channel (email/sms/activitypub/mcp) and timing based on availability schedule, languages, and first-contact settings.",
+		"   - Treat voice as receive-only because outbound phone_call is intentionally disabled.",
 		"3) If preferences suggest constraints (e.g., requireSoul/requireReputation), explain what is missing and what to do next.",
 		"Query: " + q,
 	}, "\n")

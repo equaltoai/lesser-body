@@ -51,13 +51,19 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	}
 
 	foundEcho := false
+	foundPhoneCall := false
 	for _, tool := range out.Tools {
 		if tool["name"] == "echo" {
 			foundEcho = true
-			break
+		}
+		if tool["name"] == "phone_call" {
+			foundPhoneCall = true
 		}
 	}
 	if !foundEcho {
 		t.Fatalf("expected echo tool in well-known doc")
+	}
+	if foundPhoneCall {
+		t.Fatalf("phone_call should not appear in well-known doc")
 	}
 }

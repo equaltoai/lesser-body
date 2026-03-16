@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -27,11 +28,10 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 
 	const agentID = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	const tokenUser = "agent1"
+	const expectedSMSBody = "[bot] On it."
 
 	var gotAuth string
 	var gotBody map[string]any
-	voiceStatusCode := http.StatusOK
-	voiceResponseBody := `{"messageId":"comm-msg-call-001","status":"accepted","provider":"telnyx"}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -52,11 +52,6 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 			gotAuth = r.Header.Get("Authorization")
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &gotBody)
-			if gotBody["channel"] == "voice" {
-				w.WriteHeader(voiceStatusCode)
-				_, _ = w.Write([]byte(voiceResponseBody))
-				return
-			}
 			_, _ = w.Write([]byte(`{"messageId":"comm-msg-sms-001","status":"queued"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -111,7 +106,7 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		if gotBody["channel"] != "sms" || gotBody["agentId"] != agentID {
 			t.Fatalf("unexpected comm api body: %+v", gotBody)
 		}
-		if gotBody["to"] != "+15550143" || gotBody["inReplyTo"] != "comm-msg-prev" || gotBody["body"] != "On it." {
+		if gotBody["to"] != "+15550143" || gotBody["inReplyTo"] != "comm-msg-prev" || gotBody["body"] != expectedSMSBody {
 			t.Fatalf("unexpected sms payload: %+v", gotBody)
 		}
 
@@ -131,59 +126,32 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		}
 	})
 
-	t.Run("phone call succeeds when host supports voice", func(t *testing.T) {
-		gotAuth = ""
-		gotBody = nil
-		voiceStatusCode = http.StatusOK
-		voiceResponseBody = `{"messageId":"comm-msg-call-001","status":"accepted","provider":"telnyx"}`
-
-		callParams, _ := json.Marshal(map[string]any{
-			"name": "phone_call",
-			"arguments": map[string]any{
-				"to":                 "+1 (555) 0143",
-				"purpose":            "Call back to confirm details",
-				"maxDurationMinutes": 15,
-				"messageId":          "comm-msg-prev",
-			},
-		})
-		resp := invokeJSON(t, env, app, map[string][]string{
+	t.Run("phone call is no longer registered", func(t *testing.T) {
+		listResp := invokeJSON(t, env, app, map[string][]string{
 			"authorization":  {authHeader},
 			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 3, Method: "tools/call", Params: callParams})
-		if resp.Status != 200 {
-			t.Fatalf("phone_call: status=%d body=%s", resp.Status, string(resp.Body))
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 3, Method: "tools/list"})
+		if listResp.Status != 200 {
+			t.Fatalf("tools/list: status=%d body=%s", listResp.Status, string(listResp.Body))
 		}
-		if gotAuth != "Bearer instance-key-123" {
-			t.Fatalf("expected comm api Authorization=%q, got %q", "Bearer instance-key-123", gotAuth)
-		}
-		if gotBody["channel"] != "voice" || gotBody["inReplyTo"] != "comm-msg-prev" {
-			t.Fatalf("unexpected voice payload: %+v", gotBody)
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(listResp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("tools/list rpc error: %+v", rpc.Error)
 		}
 
-		var rpc mcpruntime.Response
-		_ = json.Unmarshal(resp.Body, &rpc)
-		if rpc.Error != nil {
-			t.Fatalf("phone_call rpc error: %+v", rpc.Error)
+		var out struct {
+			Tools []mcpruntime.ToolDef `json:"tools"`
 		}
-		var out mcpruntime.ToolResult
 		{
 			b, _ := json.Marshal(rpc.Result)
 			_ = json.Unmarshal(b, &out)
 		}
-		if out.IsError {
-			t.Fatalf("expected success tool result, got %+v", out)
+		for _, tool := range out.Tools {
+			if tool.Name == "phone_call" {
+				t.Fatalf("phone_call should not appear in tools/list: %+v", out.Tools)
+			}
 		}
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		if data["messageId"] != "comm-msg-call-001" || data["status"] != "accepted" {
-			t.Fatalf("unexpected phone_call result: %+v", data)
-		}
-	})
-
-	t.Run("phone call preserves host gap fallback for older hosts", func(t *testing.T) {
-		gotAuth = ""
-		gotBody = nil
-		voiceStatusCode = http.StatusServiceUnavailable
-		voiceResponseBody = `{"error":{"message":"channel not supported"}}`
 
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "phone_call",
@@ -199,29 +167,18 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 			"mcp-session-id": {sessionID},
 		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 4, Method: "tools/call", Params: callParams})
 		if resp.Status != 200 {
-			t.Fatalf("phone_call legacy gap: status=%d body=%s", resp.Status, string(resp.Body))
+			t.Fatalf("phone_call: status=%d body=%s", resp.Status, string(resp.Body))
 		}
 
-		var rpc mcpruntime.Response
 		_ = json.Unmarshal(resp.Body, &rpc)
-		if rpc.Error != nil {
-			t.Fatalf("phone_call legacy gap rpc error: %+v", rpc.Error)
+		if rpc.Error == nil {
+			t.Fatalf("expected rpc error for unregistered phone_call, got %+v", rpc)
 		}
-		var out mcpruntime.ToolResult
-		{
-			b, _ := json.Marshal(rpc.Result)
-			_ = json.Unmarshal(b, &out)
+		if !strings.Contains(rpc.Error.Message, "tool not found: phone_call") {
+			t.Fatalf("expected unknown tool error, got %+v", rpc.Error)
 		}
-		if !out.IsError {
-			t.Fatalf("expected isError tool result, got %+v", out)
-		}
-		errPayload, _ := out.StructuredContent["error"].(map[string]any)
-		if errPayload["code"] != "host_gap" {
-			t.Fatalf("expected host_gap, got %+v", errPayload)
-		}
-		details, _ := errPayload["details"].(map[string]any)
-		if details["gap"] != "outbound_voice_not_supported" {
-			t.Fatalf("expected outbound voice gap details, got %+v", details)
+		if gotBody != nil && gotBody["channel"] == "voice" {
+			t.Fatalf("phone_call should not reach comm api: %+v", gotBody)
 		}
 	})
 }

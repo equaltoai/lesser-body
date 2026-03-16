@@ -58,7 +58,7 @@ Fix:
 Symptoms:
 
 - `tools/list` works, but soul-backed tools like `identity_whoami`, `identity_lookup`, `identity_verify`, `email_send`,
-  `sms_send`, or `phone_call` fail.
+  or `sms_send` fail.
 - Errors include public `app.not_found` for `/api/v1/soul/*` or configuration messages mentioning
   `LESSER_SOUL_API_BASE_URL` / managed `TRUST_CONFIG`.
 

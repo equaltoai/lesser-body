@@ -24,7 +24,6 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: emailDeleteDef(), Handler: handleEmailDelete},
 		{Def: smsSendDef(), Handler: handleSmsSend},
 		{Def: smsReadDef(), Handler: handleSmsRead},
-		{Def: phoneCallDef(), Handler: handlePhoneCall},
 		{Def: voicemailReadDef(), Handler: handleVoicemailRead},
 		{Def: identityWhoamiDef(), Handler: handleIdentityWhoami},
 		{Def: identityLookupDef(), Handler: handleIdentityLookup},

@@ -92,7 +92,7 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 
 	switch toolName {
 	case "post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "memory_append",
-		"email_send", "email_reply", "email_delete", "sms_send", "phone_call":
+		"email_send", "email_reply", "email_delete", "sms_send":
 		if hasAnyScope(p.Claims.Scopes, "write") {
 			return nil
 		}

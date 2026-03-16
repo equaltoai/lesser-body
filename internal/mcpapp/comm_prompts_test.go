@@ -117,4 +117,34 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	if !strings.Contains(combined, "Pass messageId=comm-msg-123") {
 		t.Fatalf("expected handle_inbound prompt to instruct reply threading, got: %s", combined)
 	}
+
+	getParams, _ = json.Marshal(map[string]any{
+		"name":      "handle_inbound",
+		"arguments": map[string]any{"channel": "voice", "messageId": "comm-msg-voice-123"},
+	})
+	getResp = invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 5, Method: "prompts/get", Params: getParams})
+	if getResp.Status != 200 {
+		t.Fatalf("prompts/get voice handle_inbound: status=%d body=%s", getResp.Status, string(getResp.Body))
+	}
+	_ = json.Unmarshal(getResp.Body, &rpcGet)
+	if rpcGet.Error != nil {
+		t.Fatalf("prompts/get voice handle_inbound error: %+v", rpcGet.Error)
+	}
+	{
+		b, _ := json.Marshal(rpcGet.Result)
+		_ = json.Unmarshal(b, &prompt)
+	}
+	combined = ""
+	for _, m := range prompt.Messages {
+		combined += "\n" + m.Content.Text
+	}
+	if strings.Contains(combined, "phone_call") {
+		t.Fatalf("voice inbound prompt should not reference phone_call, got: %s", combined)
+	}
+	if !strings.Contains(combined, "outbound voice call") {
+		t.Fatalf("voice inbound prompt should explain outbound voice is disabled, got: %s", combined)
+	}
 }
