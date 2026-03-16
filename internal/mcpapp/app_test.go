@@ -20,12 +20,18 @@ func newTestToken(t testing.TB, secret string, username string, scopes []string)
 	t.Helper()
 
 	now := time.Now().UTC()
+	return newTestTokenWithTimes(t, secret, username, scopes, now, now.Add(time.Hour))
+}
+
+func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time) string {
+	t.Helper()
+
 	claims := &auth.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   username,
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			NotBefore: jwt.NewNumericDate(issuedAt),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        "jti_test",
 		},
 		Username: username,
@@ -62,6 +68,60 @@ func invokeJSON(t testing.TB, env *testkit.Env, app *apptheory.App, headers map[
 		Headers: reqHeaders,
 		Body:    body,
 	})
+}
+
+func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	now := time.Now().UTC()
+	token := newTestTokenWithTimes(t, "test", "agent1", []string{"read"}, now.Add(-7*24*time.Hour), now.Add(time.Hour))
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 200 {
+		t.Fatalf("expected 200 for old but unexpired token, got %d (%s)", resp.Status, string(resp.Body))
+	}
+}
+
+func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	now := time.Now().UTC()
+	token := newTestTokenWithTimes(t, "test", "agent1", []string{"read"}, now.Add(-2*time.Hour), now.Add(-time.Minute))
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 401 {
+		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
+	}
 }
 
 func TestMcpAuth_Unauthorized(t *testing.T) {
