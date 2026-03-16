@@ -177,7 +177,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			invalidArgs: map[string]any{"limit": "nope"},
 			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
-				{Method: "GET", Path: "/api/v1/notifications"},
+				{Method: "GET", Path: "/api/v1/notifications", Query: "limit=2&types%5B%5D=mention"},
 			},
 		},
 		{
@@ -455,6 +455,145 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/notifications" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"n-follow",
+				"type":"follow",
+				"created_at":"2026-03-16T10:00:00Z",
+				"account":{"id":"acct-follow","username":"bob","acct":"bob@example.com"}
+			},
+			{
+				"id":"n-reply",
+				"type":"mention",
+				"created_at":"2026-03-16T09:00:00Z",
+				"account":{"id":"acct-reply","username":"alice","acct":"alice@example.com","display_name":"Alice"},
+				"status":{
+					"id":"post-1",
+					"content":"@agent1 thanks!",
+					"created_at":"2026-03-16T08:59:00Z",
+					"in_reply_to_id":"root-1",
+					"visibility":"public"
+				}
+			},
+			{
+				"id":"n-fav",
+				"type":"favourite",
+				"created_at":"2026-03-16T08:00:00Z",
+				"account":{"id":"acct-fav","username":"carol","acct":"carol@example.com"},
+				"status":{"id":"post-2","content":"Great post","visibility":"public"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "notifications_read",
+		"arguments": map[string]any{
+			"limit": 5,
+			"since": "n0",
+			"types": []string{"reply", "favorite"},
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params:  callParams,
+	})
+	if resp.Status != 200 {
+		t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	if gotQuery != "limit=5&max_id=n0&types%5B%5D=mention&types%5B%5D=favourite" {
+		t.Fatalf("unexpected notifications query: %q", gotQuery)
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal notifications_read: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+	}
+
+	var out mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+	}
+	data, _ := out.StructuredContent["data"].(map[string]any)
+	if data["count"] != float64(2) {
+		t.Fatalf("expected filtered count=2, got %+v", data)
+	}
+	if data["nextSince"] != "n-fav" {
+		t.Fatalf("expected nextSince=n-fav, got %+v", data)
+	}
+
+	notifications, _ := data["notifications"].([]any)
+	if len(notifications) != 2 {
+		t.Fatalf("expected 2 notifications, got %+v", notifications)
+	}
+
+	reply, _ := notifications[0].(map[string]any)
+	if reply["type"] != "reply" {
+		t.Fatalf("expected reply notification type, got %+v", reply)
+	}
+	actor, _ := reply["actor"].(map[string]any)
+	if actor["username"] != "alice" {
+		t.Fatalf("expected actor.username=alice, got %+v", actor)
+	}
+	targetPost, _ := reply["targetPost"].(map[string]any)
+	if targetPost["id"] != "post-1" || targetPost["inReplyToId"] != "root-1" {
+		t.Fatalf("unexpected targetPost: %+v", targetPost)
+	}
+
+	favourite, _ := notifications[1].(map[string]any)
+	if favourite["type"] != "favourite" {
+		t.Fatalf("expected favourite notification type, got %+v", favourite)
 	}
 }
 
