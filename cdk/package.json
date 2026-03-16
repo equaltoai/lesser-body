@@ -9,6 +9,6 @@
     "destroy": "cdk destroy --all"
   },
   "devDependencies": {
-    "aws-cdk": "2.1108.0"
+    "aws-cdk": "2.1111.0"
   }
 }
