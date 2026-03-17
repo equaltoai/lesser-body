@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
@@ -164,13 +163,6 @@ func validateAccessToken(ctx context.Context, tokenString string) (*Claims, erro
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
 		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
-	}
-
-	// Match Lesser’s maximum token age safety check (independent of exp).
-	if claims.IssuedAt != nil {
-		if time.Since(claims.IssuedAt.Time) > 24*time.Hour {
-			return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
-		}
 	}
 
 	return claims, nil
