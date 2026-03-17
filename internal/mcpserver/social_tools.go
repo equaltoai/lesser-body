@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
@@ -296,6 +298,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
+	requestedTypes, upstreamTypes := normalizeRequestedNotificationTypes(in.Types)
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
@@ -306,25 +309,33 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		return nil, err
 	}
 
-	query := url.Values{}
-	if in.Limit > 0 {
-		query.Set("limit", strconv.Itoa(in.Limit))
-	}
-	if strings.TrimSpace(in.Since) != "" {
-		query.Set("max_id", strings.TrimSpace(in.Since))
-	}
-	for _, typ := range in.Types {
-		typ = strings.TrimSpace(typ)
-		if typ != "" {
-			query.Add("types[]", typ)
-		}
-	}
-
-	out, err := client.DoJSON(ctx, "GET", "/api/v1/notifications", query, token, nil)
+	list, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, in.Since)
 	if err != nil {
 		return nil, err
 	}
-	return toolJSONResult(out)
+
+	notifications := socialNotificationsFromAPI(list)
+	if len(requestedTypes) > 0 {
+		notifications = filterSocialNotificationsByType(notifications, requestedTypes)
+	}
+	if in.Limit > 0 && len(notifications) > in.Limit {
+		notifications = notifications[:in.Limit]
+	}
+
+	nextSince := ""
+	if len(notifications) > 0 {
+		if item, ok := notifications[len(notifications)-1].(map[string]any); ok {
+			nextSince = strings.TrimSpace(firstNonEmptyStringMap(item, "id"))
+		}
+	}
+
+	return toolJSONResult(map[string]any{
+		"since":         strings.TrimSpace(in.Since),
+		"nextSince":     nextSince,
+		"count":         len(notifications),
+		"types":         requestedTypes,
+		"notifications": notifications,
+	})
 }
 
 func handlePostCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -595,7 +606,7 @@ func followingListDef() mcpruntime.ToolDef {
 func notificationsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "notifications_read",
-		Description: "Read recent notifications.",
+		Description: "Read recent social notifications with normalized actor and target post data.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -605,6 +616,263 @@ func notificationsReadDef() mcpruntime.ToolDef {
 			}
 		}`),
 	}
+}
+
+func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+
+	requested := make([]string, 0, len(in))
+	upstream := make([]string, 0, len(in))
+	seenRequested := make(map[string]struct{}, len(in))
+	seenUpstream := make(map[string]struct{}, len(in))
+
+	for _, typ := range in {
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		switch typ {
+		case "", "all":
+			continue
+		case "favorite":
+			typ = "favourite"
+		}
+		if _, ok := seenRequested[typ]; !ok {
+			seenRequested[typ] = struct{}{}
+			requested = append(requested, typ)
+		}
+		if _, ok := seenUpstream[typ]; !ok {
+			seenUpstream[typ] = struct{}{}
+			upstream = append(upstream, typ)
+		}
+	}
+
+	return requested, upstream
+}
+
+func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, since string) ([]any, error) {
+	if client == nil {
+		return nil, fmt.Errorf("lesser api client not initialized")
+	}
+
+	queries := upstreamTypes
+	if len(queries) == 0 {
+		queries = nil
+	}
+
+	if len(queries) <= 1 {
+		return readSocialNotificationsByType(ctx, client, token, firstString(queries), limit, since)
+	}
+
+	combined := make([]map[string]any, 0, len(queries)*max(1, limit))
+	seenIDs := make(map[string]struct{}, len(queries)*max(1, limit))
+	for _, typ := range queries {
+		items, err := readSocialNotificationsByType(ctx, client, token, typ, limit, since)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			raw, ok := item.(map[string]any)
+			if !ok || raw == nil {
+				continue
+			}
+			id := strings.TrimSpace(stringFromMap(raw, "id"))
+			if id != "" {
+				if _, ok := seenIDs[id]; ok {
+					continue
+				}
+				seenIDs[id] = struct{}{}
+			}
+			combined = append(combined, raw)
+		}
+	}
+
+	sort.SliceStable(combined, func(i, j int) bool {
+		leftTime, leftOK := notificationCreatedAt(combined[i])
+		rightTime, rightOK := notificationCreatedAt(combined[j])
+		switch {
+		case leftOK && rightOK && !leftTime.Equal(rightTime):
+			return leftTime.After(rightTime)
+		case leftOK != rightOK:
+			return leftOK
+		}
+		return strings.TrimSpace(stringFromMap(combined[i], "id")) > strings.TrimSpace(stringFromMap(combined[j], "id"))
+	})
+
+	out := make([]any, 0, len(combined))
+	for _, item := range combined {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func readSocialNotificationsByType(ctx context.Context, client *lesserapi.Client, token string, notificationType string, limit int, since string) ([]any, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(since) != "" {
+		query.Set("max_id", strings.TrimSpace(since))
+	}
+	if strings.TrimSpace(notificationType) != "" {
+		query.Add("types[]", strings.TrimSpace(notificationType))
+	}
+
+	out, err := client.DoJSON(ctx, "GET", "/api/v1/notifications", query, token, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	list, ok := out.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected notifications response")
+	}
+	return list, nil
+}
+
+func socialNotificationsFromAPI(items []any) []any {
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			continue
+		}
+		out = append(out, normalizeSocialNotification(raw))
+	}
+	return out
+}
+
+func filterSocialNotificationsByType(items []any, want []string) []any {
+	if len(want) == 0 {
+		return items
+	}
+
+	allowed := make(map[string]struct{}, len(want))
+	for _, typ := range want {
+		allowed[strings.ToLower(strings.TrimSpace(typ))] = struct{}{}
+	}
+
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		notification, _ := item.(map[string]any)
+		typ, _ := notification["type"].(string)
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(typ))]; ok {
+			out = append(out, notification)
+		}
+	}
+	return out
+}
+
+func normalizeSocialNotification(raw map[string]any) map[string]any {
+	out := map[string]any{
+		"id":   strings.TrimSpace(stringFromMap(raw, "id")),
+		"type": normalizeSocialNotificationType(raw),
+		"raw":  raw,
+	}
+
+	if createdAt := firstNonEmptyStringMap(raw, "created_at", "createdAt"); createdAt != "" {
+		out["createdAt"] = createdAt
+	}
+	if actor := normalizeSocialNotificationActor(firstMap(raw, "account", "actor")); actor != nil {
+		out["actor"] = actor
+	}
+	if post := normalizeSocialNotificationPost(firstMap(raw, "status", "post", "targetPost")); post != nil {
+		out["targetPost"] = post
+	}
+
+	return out
+}
+
+func normalizeSocialNotificationType(raw map[string]any) string {
+	rawType := strings.ToLower(strings.TrimSpace(firstNonEmptyStringMap(raw, "type", "notificationType")))
+	switch rawType {
+	case "favorite":
+		return "favourite"
+	}
+	return rawType
+}
+
+func normalizeSocialNotificationActor(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+
+	out := map[string]any{}
+	putIfNotEmpty(out, "id", firstNonEmptyStringMap(raw, "id"))
+	putIfNotEmpty(out, "username", firstNonEmptyStringMap(raw, "username"))
+	putIfNotEmpty(out, "acct", firstNonEmptyStringMap(raw, "acct"))
+	putIfNotEmpty(out, "displayName", firstNonEmptyStringMap(raw, "display_name", "displayName"))
+	putIfNotEmpty(out, "url", firstNonEmptyStringMap(raw, "url"))
+	putIfNotEmpty(out, "avatar", firstNonEmptyStringMap(raw, "avatar", "avatar_static", "avatarStatic"))
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeSocialNotificationPost(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+
+	out := map[string]any{}
+	putIfNotEmpty(out, "id", firstNonEmptyStringMap(raw, "id"))
+	putIfNotEmpty(out, "url", firstNonEmptyStringMap(raw, "url", "uri"))
+	putIfNotEmpty(out, "content", firstNonEmptyStringMap(raw, "content", "text"))
+	putIfNotEmpty(out, "createdAt", firstNonEmptyStringMap(raw, "created_at", "createdAt"))
+	putIfNotEmpty(out, "inReplyToId", firstNonEmptyStringMap(raw, "in_reply_to_id", "inReplyToId"))
+	putIfNotEmpty(out, "visibility", firstNonEmptyStringMap(raw, "visibility"))
+	if author := normalizeSocialNotificationActor(firstMap(raw, "account")); author != nil {
+		out["author"] = author
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func firstMap(raw map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		value, _ := raw[key].(map[string]any)
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyStringMap(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringFromMap(raw, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func putIfNotEmpty(dest map[string]any, key string, value string) {
+	if dest == nil || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+		return
+	}
+	dest[key] = strings.TrimSpace(value)
+}
+
+func notificationCreatedAt(raw map[string]any) (time.Time, bool) {
+	value := firstNonEmptyStringMap(raw, "created_at", "createdAt")
+	if value == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }
 
 func postCreateDef() mcpruntime.ToolDef {
