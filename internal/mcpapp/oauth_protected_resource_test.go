@@ -3,6 +3,7 @@ package mcpapp
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -58,8 +59,8 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://lesser.example" {
 		t.Fatalf("unexpected authorization_servers: %#v", out.AuthorizationServers)
 	}
-	if got, want := len(out.ScopesSupported), 3; got != want {
-		t.Fatalf("expected %d scopes, got %d (%#v)", want, got, out.ScopesSupported)
+	if want := []string{"read", "write", "follow"}; !reflect.DeepEqual(out.ScopesSupported, want) {
+		t.Fatalf("unexpected scopes_supported: got %#v want %#v", out.ScopesSupported, want)
 	}
 	if len(out.BearerMethodsSupported) != 1 || out.BearerMethodsSupported[0] != "header" {
 		t.Fatalf("unexpected bearer_methods_supported: %#v", out.BearerMethodsSupported)
