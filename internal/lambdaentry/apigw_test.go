@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -14,6 +15,7 @@ import (
 
 func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -58,6 +60,12 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 	}
 	if len(b) == 0 {
 		t.Fatalf("expected non-empty body")
+	}
+	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+	if expose := streaming.Headers["access-control-expose-headers"]; !strings.Contains(strings.ToLower(expose), "www-authenticate") {
+		t.Fatalf("expected access-control-expose-headers to include www-authenticate, got %q", expose)
 	}
 }
 
@@ -178,5 +186,14 @@ func TestNewAPIGatewayHandler_WellKnownTrailingSlashNormalizes(t *testing.T) {
 	}
 	if proxy.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
+	}
+}
+
+func TestNormalizeGatewayPath_OAuthProtectedResourceTrailingSlash(t *testing.T) {
+	if got := normalizeGatewayPath("/.well-known/oauth-protected-resource/"); got != "/.well-known/oauth-protected-resource" {
+		t.Fatalf("unexpected normalized path: %q", got)
+	}
+	if got := normalizeGatewayPath("/prod/.well-known/oauth-protected-resource/"); got != "/prod/.well-known/oauth-protected-resource" {
+		t.Fatalf("unexpected normalized nested path: %q", got)
 	}
 }

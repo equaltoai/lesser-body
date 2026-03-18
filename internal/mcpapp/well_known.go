@@ -1,14 +1,17 @@
 package mcpapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 type mcpWellKnownDoc struct {
@@ -25,12 +28,11 @@ type mcpWellKnownToolHint struct {
 	Description string `json:"description,omitempty"`
 }
 
+var loadEffectiveTrustConfig = trustconfig.Default
+
 func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		endpoint := strings.TrimSpace(os.Getenv("MCP_ENDPOINT"))
-		if endpoint == "" {
-			endpoint = inferMcpEndpointFromRequest(ctx)
-		}
+		endpoint := mcpEndpointForRequest(ctx)
 
 		doc := mcpWellKnownDoc{
 			Name:     strings.TrimSpace(name),
@@ -68,6 +70,79 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 		}
 		return &apptheory.Response{Status: 200, Headers: headers, Body: b}, nil
 	}
+}
+
+func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		endpoint := mcpEndpointForRequest(ctx)
+		if endpoint == "" {
+			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
+		}
+
+		cfg, err := loadEffectiveTrustConfig(trustConfigContext(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("load trust config: %w", err)
+		}
+
+		issuer := ""
+		if cfg != nil {
+			issuer = strings.TrimSpace(cfg.TrustBaseURL)
+		}
+		if issuer == "" {
+			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
+		}
+
+		md, err := oauthruntime.NewProtectedResourceMetadata(endpoint, []string{issuer})
+		if err != nil {
+			return nil, fmt.Errorf("build protected resource metadata: %w", err)
+		}
+		md.ScopesSupported = []string{"read", "write", "admin"}
+		md.BearerMethodsSupported = []string{"header"}
+
+		body, err := md.MarshalJSONBytes()
+		if err != nil {
+			return nil, fmt.Errorf("marshal protected resource metadata: %w", err)
+		}
+
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"application/json"},
+				"cache-control": {"public, max-age=60"},
+			},
+			Body: body,
+		}, nil
+	}
+}
+
+func mcpEndpointForRequest(ctx *apptheory.Context) string {
+	endpoint := strings.TrimSpace(os.Getenv("MCP_ENDPOINT"))
+	if endpoint != "" {
+		return endpoint
+	}
+	return inferMcpEndpointFromRequest(ctx)
+}
+
+func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
+	endpoint := mcpEndpointForRequest(ctx)
+	if url, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(endpoint); ok {
+		return url
+	}
+	if ctx == nil {
+		return ""
+	}
+	url, ok := oauthruntime.ProtectedResourceMetadataURLForRequest(ctx.Request.Headers)
+	if !ok {
+		return ""
+	}
+	return url
+}
+
+func trustConfigContext(ctx *apptheory.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx.Context()
 }
 
 func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {
