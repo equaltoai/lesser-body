@@ -96,7 +96,7 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 		if err != nil {
 			return nil, fmt.Errorf("build protected resource metadata: %w", err)
 		}
-		md.ScopesSupported = []string{"read", "write", "admin"}
+		md.ScopesSupported = []string{"read", "write", "follow"}
 		md.BearerMethodsSupported = []string{"header"}
 
 		body, err := md.MarshalJSONBytes()
