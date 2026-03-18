@@ -99,6 +99,7 @@ func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
 
 func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -122,10 +123,14 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
 }
 
 func TestMcpAuth_Unauthorized(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -154,6 +159,12 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	}
 	if out.Error.Code != "app.unauthorized" {
 		t.Fatalf("expected app.unauthorized, got %q", out.Error.Code)
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+	if expose := firstHeader(resp.Headers, "access-control-expose-headers"); !strings.Contains(strings.ToLower(expose), "www-authenticate") {
+		t.Fatalf("expected access-control-expose-headers to include www-authenticate, got %q", expose)
 	}
 }
 
@@ -388,4 +399,17 @@ func TestMcpAuth_AuthorizedJwt_AllowsConfiguredBrowserOrigin(t *testing.T) {
 	if !strings.Contains(strings.ToLower(exposeHeaders), "mcp-session-id") {
 		t.Fatalf("expected access-control-expose-headers to include mcp-session-id, got %q", exposeHeaders)
 	}
+}
+
+func firstHeader(headers map[string][]string, key string) string {
+	for candidate, values := range headers {
+		if !strings.EqualFold(candidate, key) {
+			continue
+		}
+		if len(values) == 0 {
+			return ""
+		}
+		return values[0]
+	}
+	return ""
 }

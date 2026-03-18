@@ -81,6 +81,8 @@ func normalizeGatewayPath(path string) string {
 		return strings.TrimSuffix(path, "/")
 	case path == "/.well-known/mcp.json/" || strings.HasSuffix(path, "/.well-known/mcp.json/"):
 		return strings.TrimSuffix(path, "/")
+	case path == "/.well-known/oauth-protected-resource/" || strings.HasSuffix(path, "/.well-known/oauth-protected-resource/"):
+		return strings.TrimSuffix(path, "/")
 	default:
 		return path
 	}

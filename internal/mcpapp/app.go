@@ -21,11 +21,12 @@ func New(name, version string) (*apptheory.App, error) {
 	)
 
 	app.Get("/.well-known/mcp.json", WellKnownMcpHandler(srv, name, version))
+	app.Get("/.well-known/oauth-protected-resource", WellKnownOAuthProtectedResourceHandler())
 
-	handler := WithClientCompatibilityHeaders(WithAudit(WithToolContext(srv.Handler()), logger))
-	app.Post("/mcp", handler, apptheory.RequireAuth())
-	app.Get("/mcp", handler, apptheory.RequireAuth())
-	app.Delete("/mcp", handler, apptheory.RequireAuth())
+	handler := WithClientCompatibilityHeaders(WithMCPAuthorization(WithAudit(WithToolContext(srv.Handler()), logger)))
+	app.Post("/mcp", handler)
+	app.Get("/mcp", handler)
+	app.Delete("/mcp", handler)
 
 	return app, nil
 }
