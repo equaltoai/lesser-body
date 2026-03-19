@@ -306,6 +306,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`{"statuses":[{"id":"s1"}],"accounts":[],"hashtags":[]}`))
 				case "/api/v1/notifications":
 					_, _ = w.Write([]byte(`[{"id":"n1"}]`))
+				case "/api/v1/notifications/n1/dismiss":
+					_, _ = w.Write([]byte(`{}`))
 				case "/api/v1/statuses":
 					_, _ = w.Write([]byte(`{"id":"new1"}`))
 				case "/api/v1/statuses/s1/reblog":

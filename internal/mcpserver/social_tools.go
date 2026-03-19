@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
+	"github.com/oklog/ulid/v2"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -22,6 +25,13 @@ const (
 	notificationCursorMemoryPrefix = "notification_cursor:"
 	notificationCursorMemoryTag    = "notification_cursor"
 )
+
+var notificationCursorEventIDs = struct {
+	mu      sync.Mutex
+	entropy *ulid.MonotonicEntropy
+}{
+	entropy: ulid.Monotonic(rand.Reader, 0),
+}
 
 func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 	if r == nil {
@@ -745,8 +755,13 @@ func writeNotificationCursor(ctx context.Context, cursor string) error {
 	if err != nil {
 		return err
 	}
+	eventID, err := nextNotificationCursorEventID()
+	if err != nil {
+		return err
+	}
 
 	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+		EventID: eventID,
 		Content: notificationCursorMemoryPrefix + cursor,
 		Tags:    []string{notificationCursorMemoryTag},
 	})
@@ -763,8 +778,13 @@ func clearNotificationCursor(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	eventID, err := nextNotificationCursorEventID()
+	if err != nil {
+		return err
+	}
 
 	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+		EventID: eventID,
 		Content: notificationCursorMemoryPrefix,
 		Tags:    []string{notificationCursorMemoryTag},
 	})
@@ -777,6 +797,17 @@ func parseNotificationCursorContent(content string) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimPrefix(content, notificationCursorMemoryPrefix))
+}
+
+func nextNotificationCursorEventID() (string, error) {
+	notificationCursorEventIDs.mu.Lock()
+	defer notificationCursorEventIDs.mu.Unlock()
+
+	id, err := ulid.New(ulid.Timestamp(time.Now().UTC()), notificationCursorEventIDs.entropy)
+	if err != nil {
+		return "", fmt.Errorf("generate notification cursor event id: %w", err)
+	}
+	return id.String(), nil
 }
 
 func ternaryString(cond bool, yes string, no string) string {
