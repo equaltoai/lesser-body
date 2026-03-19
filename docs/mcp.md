@@ -7,6 +7,7 @@
 ## Endpoints
 
 - Public discovery: `GET /.well-known/mcp.json`
+- OAuth protected-resource metadata: `GET /.well-known/oauth-protected-resource`
 - MCP (authenticated): `POST /mcp`
   - `GET /mcp` and `DELETE /mcp` are also supported for MCP Streamable HTTP compatibility.
 
@@ -65,6 +66,20 @@ curl -sS -i \
 ```
 
 Copy the `mcp-session-id` response header for subsequent calls.
+
+### Inspect OAuth protected-resource metadata
+
+```bash
+curl -sS \
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+```
+
+Expected fields:
+
+- `resource`
+- `authorization_servers`
+- `scopes_supported`
+- `bearer_methods_supported`
 
 ### List tools
 

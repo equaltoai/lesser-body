@@ -36,6 +36,7 @@ export CDK_DEFAULT_REGION="us-east-1"
 cd cdk
 npm ci
 npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+bash ../scripts/check_cdk_discovery_routes.sh
 ```
 
 ## Local MCP invocation (deterministic)
@@ -71,4 +72,3 @@ export JWT_SECRET="..." # only if you're minting test tokens locally; deployed a
 ```
 
 See `docs/mcp.md` for the MCP request format.
-

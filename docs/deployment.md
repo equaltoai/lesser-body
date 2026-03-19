@@ -6,6 +6,7 @@
 API domain as:
 
 - `GET /.well-known/mcp.json` (public discovery)
+- `GET /.well-known/oauth-protected-resource` (public OAuth protected-resource metadata)
 - `POST /mcp` (authenticated MCP JSON-RPC)
 
 ## Prerequisites
@@ -52,7 +53,8 @@ safe sequence is:
 
 1) Deploy Lesser with `soulEnabled=false` (so it does **not** try to import lesser-body yet)
 2) Deploy `lesser-body` (this repo)
-3) Re-deploy Lesser with `soulEnabled=true` (so `/mcp` and `/.well-known/mcp.json` route to the lesser-body Lambda)
+3) Re-deploy Lesser with `soulEnabled=true` (so `/mcp`, `/.well-known/mcp.json`, and
+   `/.well-known/oauth-protected-resource` route to the lesser-body Lambda)
 
 If you already have `mcp_lambda_arn` present for the target stage, you can deploy Lesser with `soulEnabled=true`
 immediately.
@@ -106,11 +108,19 @@ aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint
 
 ## Verify (HTTP)
 
-Once Lesser is deployed with `soulEnabled=true`, verify the public discovery doc:
+Once Lesser is deployed with `soulEnabled=true`, verify both public discovery docs:
 
 ```bash
 curl -sS "https://api.<stageDomain>/.well-known/mcp.json" | jq .
+curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource" | jq .
 ```
+
+Expected protected-resource fields:
+
+- `resource`
+- `authorization_servers`
+- `scopes_supported`
+- `bearer_methods_supported`
 
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 

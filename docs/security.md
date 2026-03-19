@@ -7,6 +7,7 @@ This doc describes the implemented security posture of `lesser-body`.
 ## Public surface
 
 - **Public:** `GET /.well-known/mcp.json`
+- **Public:** `GET /.well-known/oauth-protected-resource`
 - **Auth required:** `POST /mcp` (also `GET /mcp`, `DELETE /mcp`)
 
 ## Authentication model
@@ -69,4 +70,3 @@ At a minimum, the MCP Lambda needs:
 
 - Treat `/mcp` as a powerful tool surface. Only grant tokens with the minimum scopes required.
 - Prefer short-lived OAuth tokens and avoid embedding long-lived secrets in client apps.
-

@@ -109,7 +109,8 @@ Published by the Lesser shared/stage stacks:
 Published by this repo’s CDK stack:
 
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn`
-  - Imported by Lesser to wire `POST /mcp` and `GET /.well-known/mcp.json`.
+  - Imported by Lesser to wire `POST /mcp`, `GET /.well-known/mcp.json`, and
+    `GET /.well-known/oauth-protected-resource`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
   - Convenience value intended to equal `https://api.<stageDomain>/mcp`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name`
