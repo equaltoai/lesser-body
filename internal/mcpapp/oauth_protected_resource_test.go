@@ -23,6 +23,11 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	t.Cleanup(func() {
 		loadEffectiveTrustConfig = previous
 	})
+	previousProbe := probeAuthorizationServerMetadata
+	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	t.Cleanup(func() {
+		probeAuthorizationServerMetadata = previousProbe
+	})
 
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
@@ -77,6 +82,11 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	}
 	t.Cleanup(func() {
 		loadEffectiveTrustConfig = previous
+	})
+	previousProbe := probeAuthorizationServerMetadata
+	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	t.Cleanup(func() {
+		probeAuthorizationServerMetadata = previousProbe
 	})
 
 	t.Setenv("MCP_SESSION_TABLE", "")

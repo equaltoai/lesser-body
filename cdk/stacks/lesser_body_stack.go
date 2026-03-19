@@ -162,6 +162,12 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		handler,
 		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
 	)
+	server.Router().AddLambdaIntegration(
+		jsii.String("/.well-known/oauth-protected-resource"),
+		&[]*string{jsii.String("GET")},
+		handler,
+		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
+	)
 
 	stageDomain := resolvedStageDomain(stack, appName, stage, props.BaseDomain)
 	publicEndpoint := publicMcpEndpoint(stageDomain)

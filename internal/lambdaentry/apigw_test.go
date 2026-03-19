@@ -11,6 +11,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T) {
@@ -160,6 +161,45 @@ func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
 	}
 }
 
+func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+
+	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	})
+	t.Cleanup(restore)
+	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) error { return nil })
+	t.Cleanup(restoreProbe)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	handler := NewAPIGatewayHandler(app)
+	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "GET",
+		Path:       "/.well-known/oauth-protected-resource",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	proxy, ok := out.(events.APIGatewayProxyResponse)
+	if !ok {
+		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource, got %T", out)
+	}
+	if proxy.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
+	}
+}
+
 func TestNewAPIGatewayHandler_WellKnownTrailingSlashNormalizes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -183,6 +223,45 @@ func TestNewAPIGatewayHandler_WellKnownTrailingSlashNormalizes(t *testing.T) {
 	proxy, ok := out.(events.APIGatewayProxyResponse)
 	if !ok {
 		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/mcp.json/, got %T", out)
+	}
+	if proxy.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
+	}
+}
+
+func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+
+	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	})
+	t.Cleanup(restore)
+	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) error { return nil })
+	t.Cleanup(restoreProbe)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	handler := NewAPIGatewayHandler(app)
+	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "GET",
+		Path:       "/.well-known/oauth-protected-resource/",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	proxy, ok := out.(events.APIGatewayProxyResponse)
+	if !ok {
+		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource/, got %T", out)
 	}
 	if proxy.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)

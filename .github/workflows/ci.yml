@@ -30,6 +30,8 @@ jobs:
             cdk/go.sum
 
       - name: Go test
+        env:
+          GOTOOLCHAIN: auto
         run: go test ./...
 
       - name: Set up Node
@@ -45,4 +47,11 @@ jobs:
 
       - name: CDK synth
         working-directory: cdk
-        run: npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+        env:
+          GOTOOLCHAIN: auto
+        run: ./node_modules/.bin/cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+
+      - name: Verify discovery routes
+        env:
+          GOTOOLCHAIN: auto
+        run: bash scripts/check_cdk_discovery_routes.sh

@@ -121,7 +121,7 @@ func handleProfileRead(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -172,7 +172,7 @@ func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.
 
 	out, err := client.DoJSON(ctx, "GET", path, query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -208,7 +208,7 @@ func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 
 	out, err := client.DoJSON(ctx, "GET", "/api/v2/search", query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -233,7 +233,7 @@ func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	account, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	accountMap, ok := account.(map[string]any)
 	if !ok {
@@ -255,7 +255,7 @@ func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	out, err := client.DoJSON(ctx, "GET", fmt.Sprintf("/api/v1/accounts/%s/followers", id), query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -280,7 +280,7 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	account, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	accountMap, ok := account.(map[string]any)
 	if !ok {
@@ -302,7 +302,7 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	out, err := client.DoJSON(ctx, "GET", fmt.Sprintf("/api/v1/accounts/%s/following", id), query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -340,7 +340,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 	list, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, effectiveSince)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 
 	notifications := socialNotificationsFromAPI(list)
@@ -401,7 +401,7 @@ func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpr
 			}
 			return nil, fmt.Errorf("notifications not found")
 		}
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 
 	if in.ID == "" {
@@ -452,7 +452,7 @@ func handlePostCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 
 	out, err := client.DoJSON(ctx, "POST", "/api/v1/statuses", nil, token, body)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -480,7 +480,7 @@ func handlePostBoost(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 
 	out, err := client.DoJSON(ctx, "POST", fmt.Sprintf("/api/v1/statuses/%s/reblog", url.PathEscape(in.PostID)), nil, token, map[string]any{})
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -508,7 +508,7 @@ func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.
 
 	out, err := client.DoJSON(ctx, "POST", fmt.Sprintf("/api/v1/statuses/%s/favourite", url.PathEscape(in.PostID)), nil, token, map[string]any{})
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -536,7 +536,7 @@ func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolRe
 
 	out, err := client.DoJSON(ctx, "POST", fmt.Sprintf("/api/v1/accounts/%s/follow", url.PathEscape(in.AccountID)), nil, token, map[string]any{})
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -564,7 +564,7 @@ func handleUnfollow(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 
 	out, err := client.DoJSON(ctx, "POST", fmt.Sprintf("/api/v1/accounts/%s/unfollow", url.PathEscape(in.AccountID)), nil, token, map[string]any{})
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }
@@ -608,7 +608,7 @@ func handleProfileUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	out, err := client.DoJSON(ctx, "PATCH", "/api/v1/accounts/update_credentials", nil, token, body)
 	if err != nil {
-		return nil, err
+		return lesserToolResultFromError(err)
 	}
 	return toolJSONResult(out)
 }

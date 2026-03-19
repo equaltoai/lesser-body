@@ -7,6 +7,7 @@
 ## Endpoints
 
 - Public discovery: `GET /.well-known/mcp.json`
+- OAuth protected-resource metadata: `GET /.well-known/oauth-protected-resource`
 - MCP (authenticated): `POST /mcp`
   - `GET /mcp` and `DELETE /mcp` are also supported for MCP Streamable HTTP compatibility.
 
@@ -17,6 +18,10 @@ Canonical base URL for a Lesser stage:
 So the MCP endpoint is:
 
 - `https://api.<stageDomain>/mcp`
+
+Protected-resource discovery depends on Lesser OAuth metadata being reachable at:
+
+- `https://api.<stageDomain>/.well-known/oauth-authorization-server`
 
 ## Authentication
 
@@ -31,6 +36,21 @@ Supported bearer tokens:
 - Lesser OAuth access token (HS256 JWT validated via `JWT_SECRET` / `JWT_SECRET_ARN`)
 - Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`)
 
+## Discovery and registration chain
+
+Protected-resource discovery in `lesser-body` only publishes:
+
+- the MCP `resource` URL
+- the Lesser OAuth `authorization_servers` URL
+
+Client registration remains a Lesser concern. Today the Lesser API exposes public app registration at:
+
+- `POST https://api.<stageDomain>/api/v1/apps`
+
+`lesser-body` does not proxy or emulate client registration. If your MCP client specifically expects RFC 7591 dynamic
+client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
+its credentials out of band.
+
 ## Sessions
 
 MCP uses stateless HTTP requests, with optional session continuity via a header:
@@ -39,6 +59,14 @@ MCP uses stateless HTTP requests, with optional session continuity via a header:
 - Server issues/refreshes: `mcp-session-id: <id>` in responses
 
 If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are in-memory (best-effort).
+
+`lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
+initialization:
+
+- tools return MCP error results with `isError=true` and `structuredContent.error`
+- Lesser-backed resources return JSON content with a top-level `error` object
+
+Clients should refresh or re-authorize, then retry the MCP operation.
 
 ## JSON-RPC methods
 
@@ -65,6 +93,20 @@ curl -sS -i \
 ```
 
 Copy the `mcp-session-id` response header for subsequent calls.
+
+### Inspect OAuth protected-resource metadata
+
+```bash
+curl -sS \
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+```
+
+Expected fields:
+
+- `resource`
+- `authorization_servers`
+- `scopes_supported`
+- `bearer_methods_supported`
 
 ### List tools
 

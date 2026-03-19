@@ -194,7 +194,7 @@ func resourceProfile(ctx context.Context) ([]mcpruntime.ResourceContent, error) 
 	}
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://profile", err)
 	}
 	return resourceJSON("agent://profile", out)
 }
@@ -233,7 +233,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 
 		out, err := client.DoJSON(ctx, "GET", path, query, token, nil)
 		if err != nil {
-			return nil, err
+			return lesserResourceContentsFromError("agent://timeline/"+kind, err)
 		}
 		return resourceJSON("agent://timeline/"+kind, out)
 	}
@@ -251,7 +251,7 @@ func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error
 
 	account, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://followers", err)
 	}
 	accountMap, ok := account.(map[string]any)
 	if !ok {
@@ -267,7 +267,7 @@ func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error
 	query.Set("limit", strconv.Itoa(20))
 	out, err := client.DoJSON(ctx, "GET", fmt.Sprintf("/api/v1/accounts/%s/followers", id), query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://followers", err)
 	}
 	return resourceJSON("agent://followers", out)
 }
@@ -284,7 +284,7 @@ func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error
 
 	account, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://following", err)
 	}
 	accountMap, ok := account.(map[string]any)
 	if !ok {
@@ -300,7 +300,7 @@ func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error
 	query.Set("limit", strconv.Itoa(20))
 	out, err := client.DoJSON(ctx, "GET", fmt.Sprintf("/api/v1/accounts/%s/following", id), query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://following", err)
 	}
 	return resourceJSON("agent://following", out)
 }
@@ -319,7 +319,7 @@ func resourceNotifications(ctx context.Context) ([]mcpruntime.ResourceContent, e
 	query.Set("limit", strconv.Itoa(20))
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/notifications", query, token, nil)
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://notifications", err)
 	}
 	return resourceJSON("agent://notifications", out)
 }

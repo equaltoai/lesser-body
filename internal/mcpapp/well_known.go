@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -32,7 +31,10 @@ var loadEffectiveTrustConfig = trustconfig.Default
 
 func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		endpoint := mcpEndpointForRequest(ctx)
+		endpoint, err := validatedMcpEndpointForRequest(ctx)
+		if err != nil {
+			return invalidDiscoveryConfigResponse(err), nil
+		}
 
 		doc := mcpWellKnownDoc{
 			Name:     strings.TrimSpace(name),
@@ -74,7 +76,10 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 
 func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		endpoint := mcpEndpointForRequest(ctx)
+		endpoint, err := validatedMcpEndpointForRequest(ctx)
+		if err != nil {
+			return invalidDiscoveryConfigResponse(err), nil
+		}
 		if endpoint == "" {
 			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
 		}
@@ -89,7 +94,7 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 			issuer = strings.TrimSpace(cfg.TrustBaseURL)
 		}
 		if issuer == "" {
-			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
+			return invalidDiscoveryConfigResponse(fmt.Errorf("TRUST_CONFIG.TrustBaseURL is required for OAuth discovery")), nil
 		}
 
 		md, err := oauthruntime.NewProtectedResourceMetadata(endpoint, []string{issuer})
@@ -116,11 +121,11 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 }
 
 func mcpEndpointForRequest(ctx *apptheory.Context) string {
-	endpoint := strings.TrimSpace(os.Getenv("MCP_ENDPOINT"))
-	if endpoint != "" {
-		return endpoint
+	endpoint, err := validatedMcpEndpointForRequest(ctx)
+	if err != nil {
+		return ""
 	}
-	return inferMcpEndpointFromRequest(ctx)
+	return endpoint
 }
 
 func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
@@ -168,6 +173,20 @@ func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {
 	}
 
 	return fmt.Sprintf("%s://%s/mcp", proto, strings.TrimSpace(host))
+}
+
+func invalidDiscoveryConfigResponse(err error) *apptheory.Response {
+	message := "invalid discovery configuration"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		message = strings.TrimSpace(err.Error())
+	}
+
+	return apptheory.MustJSON(500, map[string]any{
+		"error": map[string]any{
+			"code":    "app.config_invalid",
+			"message": message,
+		},
+	})
 }
 
 func firstHeaderValue(headers map[string][]string, key string) string {

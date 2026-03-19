@@ -58,6 +58,12 @@ Variables:
 - `MCP_ENDPOINT` (string, optional but recommended)
   - The public MCP endpoint URL clients should use (for example: `https://api.dev.example.com/mcp`).
   - Used by `GET /.well-known/mcp.json` and by the `agent://config` resource.
+  - When set, discovery validates that inbound requests are arriving on the same public MCP URL instead of emitting
+    mismatched `resource` metadata.
+- `MCP_ALLOWED_ORIGINS` (string, optional but recommended for browser clients)
+  - Comma-separated list of allowed browser origins for discovery and MCP responses.
+  - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.
+  - Example: `https://claude.ai,https://app.dev.example.com,https://api.dev.example.com`
 - `LESSER_API_BASE_URL` (string, optional)
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
   - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp`.
@@ -83,6 +89,8 @@ Variables:
 - `LESSER_TABLE_NAME` (string, required for `dynamo`)
   - The Lesser stage DynamoDB table name.
   - Also used to resolve managed trust configuration (`TRUST_CONFIG`) for soul API base URL and instance-key secret ARN.
+  - The managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` must resolve to a reachable Lesser OAuth metadata surface at
+    `/.well-known/oauth-authorization-server` for protected-resource discovery to start.
 
 ### Misc
 
@@ -109,7 +117,8 @@ Published by the Lesser shared/stage stacks:
 Published by this repo’s CDK stack:
 
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn`
-  - Imported by Lesser to wire `POST /mcp` and `GET /.well-known/mcp.json`.
+  - Imported by Lesser to wire `POST /mcp`, `GET /.well-known/mcp.json`, and
+    `GET /.well-known/oauth-protected-resource`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
   - Convenience value intended to equal `https://api.<stageDomain>/mcp`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name`

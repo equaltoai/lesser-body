@@ -20,6 +20,24 @@ Fix:
 - For local/unit runs, set `JWT_SECRET` and mint a token with HS256.
 - For deployed runs, ensure `JWT_SECRET_ARN` points to the same secret Lesser uses.
 
+## Mid-session OAuth failures on tools or resources
+
+Symptoms:
+
+- `initialize` succeeds, but later social or inbox-backed MCP operations fail.
+- Tool calls return `isError=true` with `structuredContent.error.code=unauthorized|forbidden`.
+- Resource reads return JSON content whose top-level payload is `{ "error": ... }`.
+
+Cause:
+
+- `lesser-body` passes the caller bearer token through to Lesser and does not own refresh.
+- Lesser rejected the token later in the flow with `401` (expired/revoked) or `403` (insufficient access).
+
+Fix:
+
+- Refresh or re-authorize the OAuth token in the MCP client, then retry the request.
+- Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
+
 ## 403 `app.forbidden` on `tools/call`
 
 Symptoms:
@@ -52,6 +70,27 @@ Fix:
 
 - Ensure `MCP_ENDPOINT` is `https://api.<stageDomain>/mcp`.
 - Or set `LESSER_API_BASE_URL` explicitly to `https://api.<stageDomain>`.
+
+## Discovery fails with `500 app.config_invalid`
+
+Symptoms:
+
+- `GET /.well-known/mcp.json` or `GET /.well-known/oauth-protected-resource` returns HTTP `500`.
+- The response mentions `MCP_ENDPOINT` or `TRUST_CONFIG.TrustBaseURL`.
+
+Common causes:
+
+- `MCP_ENDPOINT` is malformed or does not end in `/mcp`.
+- Clients are reaching a different public host than the one configured in `MCP_ENDPOINT`.
+- Managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is empty or points at the wrong Lesser environment.
+- Lesser OAuth metadata is not reachable at `/.well-known/oauth-authorization-server`.
+
+Fix:
+
+- Ensure `MCP_ENDPOINT` exactly matches the public URL clients use, for example `https://api.<stageDomain>/mcp`.
+- Verify `curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server"` returns `200`.
+- In managed deployments, confirm `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` contains the correct Lesser trust base URL.
+- If a browser client is involved, ensure `MCP_ALLOWED_ORIGINS` includes the browser origin (for example `https://claude.ai`).
 
 ## Identity / communication tools fail (`not_found`, `not_configured`, or soul API 404)
 

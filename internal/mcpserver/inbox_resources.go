@@ -13,7 +13,7 @@ func resourceEmailInbox(ctx context.Context) ([]mcpruntime.ResourceContent, erro
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://email/inbox", err)
 	}
 	messages := commMessagesFromNotifications(items, "email")
 	return resourceJSON("agent://email/inbox", map[string]any{
@@ -31,7 +31,7 @@ func resourceEmailSent(ctx context.Context) ([]mcpruntime.ResourceContent, error
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "outbound", 20, "")
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://email/sent", err)
 	}
 	messages := commMessagesFromNotifications(items, "email")
 	return resourceJSON("agent://email/sent", map[string]any{
@@ -52,7 +52,7 @@ func resourceSmsMessages(ctx context.Context) ([]mcpruntime.ResourceContent, err
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://sms/messages", err)
 	}
 	messages := commMessagesFromNotifications(items, "sms")
 	return resourceJSON("agent://sms/messages", map[string]any{
@@ -70,7 +70,7 @@ func resourceVoicemail(ctx context.Context) ([]mcpruntime.ResourceContent, error
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {
-		return nil, err
+		return lesserResourceContentsFromError("agent://voicemail", err)
 	}
 	messages := commMessagesFromNotifications(items, "voicemail")
 	return resourceJSON("agent://voicemail", map[string]any{
