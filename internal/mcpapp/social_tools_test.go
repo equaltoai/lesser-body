@@ -13,6 +13,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/memory"
 )
 
 func TestM5_ToolsListContainsCoreTools(t *testing.T) {
@@ -80,6 +81,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"followers_list",
 		"following_list",
 		"notifications_read",
+		"notification_dismiss",
 		"post_create",
 		"post_boost",
 		"post_favorite",
@@ -178,6 +180,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/notifications", Query: "limit=2&types%5B%5D=mention"},
+			},
+		},
+		{
+			name:        "notification_dismiss",
+			tool:        "notification_dismiss",
+			scope:       "write",
+			args:        map[string]any{"id": "n1"},
+			invalidArgs: map[string]any{"id": 123},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "POST", Path: "/api/v1/notifications/n1/dismiss"},
 			},
 		},
 		{
@@ -293,6 +306,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`{"statuses":[{"id":"s1"}],"accounts":[],"hashtags":[]}`))
 				case "/api/v1/notifications":
 					_, _ = w.Write([]byte(`[{"id":"n1"}]`))
+				case "/api/v1/notifications/n1/dismiss":
+					_, _ = w.Write([]byte(`{}`))
 				case "/api/v1/statuses":
 					_, _ = w.Write([]byte(`{"id":"new1"}`))
 				case "/api/v1/statuses/s1/reblog":
@@ -653,5 +668,406 @@ func TestM5_ProfileReadRejectsNonObjectArguments(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("expected no upstream requests, got %d", requests)
+	}
+}
+
+func TestM5_NotificationsReadPersistsCursor(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	auth.ResetForTests()
+	memory.ResetForTests()
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.RawQuery {
+		case "limit=5":
+			_, _ = w.Write([]byte(`[
+				{"id":"n3","type":"mention","created_at":"2026-03-01T03:00:00Z","account":{"id":"acct-3","acct":"agent3","display_name":"Agent 3"},"status":{"id":"post-3","content":"Newest","visibility":"public"}},
+				{"id":"n2","type":"mention","created_at":"2026-03-01T02:00:00Z","account":{"id":"acct-2","acct":"agent2","display_name":"Agent 2"},"status":{"id":"post-2","content":"Older","visibility":"public"}}
+			]`))
+		case "limit=5&max_id=n3":
+			_, _ = w.Write([]byte(`[
+				{"id":"n4","type":"mention","created_at":"2026-03-01T04:00:00Z","account":{"id":"acct-4","acct":"agent4","display_name":"Agent 4"},"status":{"id":"post-4","content":"After cursor","visibility":"public"}}
+			]`))
+		case "limit=5&max_id=n1":
+			_, _ = w.Write([]byte(`[
+				{"id":"n5","type":"mention","created_at":"2026-03-01T05:00:00Z","account":{"id":"acct-5","acct":"agent5","display_name":"Agent 5"},"status":{"id":"post-5","content":"Explicit override","visibility":"public"}}
+			]`))
+		default:
+			t.Fatalf("unexpected notifications query: %q", r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read", "write"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callTool := func(id int, name string, arguments map[string]any) map[string]any {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{
+			JSONRPC: "2.0",
+			ID:      id,
+			Method:  "tools/call",
+			Params:  callParams,
+		})
+		if resp.Status != 200 {
+			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal %s: %v", name, err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("%s error: %+v", name, rpc.Error)
+		}
+
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		return data
+	}
+
+	readCursor := func(id int) string {
+		data := callTool(id, "memory_query", map[string]any{
+			"query": "notification_cursor:",
+			"limit": 1,
+			"order": "desc",
+		})
+		events, _ := data["events"].([]any)
+		if len(events) == 0 {
+			return ""
+		}
+		event, _ := events[0].(map[string]any)
+		content, _ := event["content"].(string)
+		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
+	}
+
+	first := callTool(2, "notifications_read", map[string]any{"limit": 5})
+	if first["since"] != "" {
+		t.Fatalf("expected empty since on first call, got %+v", first)
+	}
+	if readCursor(3) != "n3" {
+		t.Fatalf("expected cursor n3 after first call")
+	}
+
+	second := callTool(4, "notifications_read", map[string]any{"limit": 5})
+	if second["since"] != "n3" {
+		t.Fatalf("expected stored since n3 on second call, got %+v", second)
+	}
+	if readCursor(5) != "n4" {
+		t.Fatalf("expected cursor n4 after second call")
+	}
+
+	override := callTool(6, "notifications_read", map[string]any{"limit": 5, "since": "n1"})
+	if override["since"] != "n1" {
+		t.Fatalf("expected explicit since n1, got %+v", override)
+	}
+	if readCursor(7) != "n5" {
+		t.Fatalf("expected cursor n5 after explicit override")
+	}
+
+	reset := callTool(8, "notifications_read", map[string]any{"limit": 5, "since": ""})
+	if reset["since"] != "" {
+		t.Fatalf("expected empty since on reset call, got %+v", reset)
+	}
+	if reset["count"] != float64(2) {
+		t.Fatalf("expected reset call to return full list, got %+v", reset)
+	}
+
+	wantQueries := []string{"limit=5", "limit=5&max_id=n3", "limit=5&max_id=n1", "limit=5"}
+	if len(gotQueries) != len(wantQueries) {
+		t.Fatalf("expected %d notifications queries, got %v", len(wantQueries), gotQueries)
+	}
+	for i, want := range wantQueries {
+		if gotQueries[i] != want {
+			t.Fatalf("query %d: want %q, got %q", i, want, gotQueries[i])
+		}
+	}
+}
+
+func TestM5_NotificationDismissClearsCursorOnDismissAll(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	auth.ResetForTests()
+	memory.ResetForTests()
+
+	var gotRequests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequests = append(gotRequests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications":
+			_, _ = w.Write([]byte(`[
+				{"id":"n7","type":"mention","created_at":"2026-03-01T07:00:00Z","account":{"id":"acct-7","acct":"agent7","display_name":"Agent 7"},"status":{"id":"post-7","content":"Seed cursor","visibility":"public"}}
+			]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/notifications/clear":
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read", "write"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callTool := func(id int, name string, arguments map[string]any) map[string]any {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{
+			JSONRPC: "2.0",
+			ID:      id,
+			Method:  "tools/call",
+			Params:  callParams,
+		})
+		if resp.Status != 200 {
+			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal %s: %v", name, err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("%s error: %+v", name, rpc.Error)
+		}
+
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		return data
+	}
+
+	readCursor := func(id int) string {
+		data := callTool(id, "memory_query", map[string]any{
+			"query": "notification_cursor:",
+			"limit": 1,
+			"order": "desc",
+		})
+		events, _ := data["events"].([]any)
+		if len(events) == 0 {
+			return ""
+		}
+		event, _ := events[0].(map[string]any)
+		content, _ := event["content"].(string)
+		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
+	}
+
+	_ = callTool(2, "notifications_read", map[string]any{"limit": 5})
+	if readCursor(3) != "n7" {
+		t.Fatalf("expected cursor n7 after seed read")
+	}
+
+	out := callTool(4, "notification_dismiss", map[string]any{})
+	if out["ok"] != true || out["dismiss"] != "all" {
+		t.Fatalf("unexpected dismiss-all response: %+v", out)
+	}
+	if readCursor(5) != "" {
+		t.Fatalf("expected dismiss-all to clear cursor")
+	}
+
+	wantRequests := []string{"GET /api/v1/notifications", "POST /api/v1/notifications/clear"}
+	if len(gotRequests) != len(wantRequests) {
+		t.Fatalf("expected requests %v, got %v", wantRequests, gotRequests)
+	}
+	for i, want := range wantRequests {
+		if gotRequests[i] != want {
+			t.Fatalf("request %d: want %q, got %q", i, want, gotRequests[i])
+		}
+	}
+}
+
+func TestM5_NotificationDismissSingleKeepsCursorAndHandlesNotFound(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	auth.ResetForTests()
+	memory.ResetForTests()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications":
+			_, _ = w.Write([]byte(`[
+				{"id":"n9","type":"mention","created_at":"2026-03-01T09:00:00Z","account":{"id":"acct-9","acct":"agent9","display_name":"Agent 9"},"status":{"id":"post-9","content":"Seed cursor","visibility":"public"}}
+			]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/notifications/n9/dismiss":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/notifications/missing/dismiss":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read", "write"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callTool := func(id int, name string, arguments map[string]any) (*mcpruntime.Response, *mcpruntime.ToolResult) {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{
+			JSONRPC: "2.0",
+			ID:      id,
+			Method:  "tools/call",
+			Params:  callParams,
+		})
+		if resp.Status != 200 {
+			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal %s: %v", name, err)
+		}
+
+		var out mcpruntime.ToolResult
+		if rpc.Error == nil {
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		return &rpc, &out
+	}
+
+	readCursor := func(id int) string {
+		rpc, out := callTool(id, "memory_query", map[string]any{
+			"query": "notification_cursor:",
+			"limit": 1,
+			"order": "desc",
+		})
+		if rpc.Error != nil {
+			t.Fatalf("memory_query error: %+v", rpc.Error)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		events, _ := data["events"].([]any)
+		if len(events) == 0 {
+			return ""
+		}
+		event, _ := events[0].(map[string]any)
+		content, _ := event["content"].(string)
+		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
+	}
+
+	rpc, _ := callTool(2, "notifications_read", map[string]any{"limit": 5})
+	if rpc.Error != nil {
+		t.Fatalf("notifications_read error: %+v", rpc.Error)
+	}
+	if readCursor(3) != "n9" {
+		t.Fatalf("expected cursor n9 after seed read")
+	}
+
+	rpc, out := callTool(4, "notification_dismiss", map[string]any{"id": "n9"})
+	if rpc.Error != nil {
+		t.Fatalf("notification_dismiss error: %+v", rpc.Error)
+	}
+	data, _ := out.StructuredContent["data"].(map[string]any)
+	if data["ok"] != true || data["id"] != "n9" || data["dismiss"] != "single" {
+		t.Fatalf("unexpected single dismiss response: %+v", data)
+	}
+	if readCursor(5) != "n9" {
+		t.Fatalf("expected single dismiss to keep cursor")
+	}
+
+	rpc, _ = callTool(6, "notification_dismiss", map[string]any{"id": "missing"})
+	if rpc.Error == nil {
+		t.Fatalf("expected not-found error")
+	}
+	if !strings.Contains(strings.ToLower(rpc.Error.Message), "not found") {
+		t.Fatalf("expected not-found error message, got %+v", rpc.Error)
 	}
 }
