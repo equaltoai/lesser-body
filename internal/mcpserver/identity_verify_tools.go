@@ -80,7 +80,7 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return toolErrorResult("unauthorized", err.Error(), 401, nil)
+		return authToolResultFromError(err)
 	}
 
 	notification, err := findCommunicationNotification(ctx, token, in.MessageID)

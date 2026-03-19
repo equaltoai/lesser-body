@@ -151,7 +151,8 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	}
 	var out struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
@@ -159,6 +160,12 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	}
 	if out.Error.Code != "app.unauthorized" {
 		t.Fatalf("expected app.unauthorized, got %q", out.Error.Code)
+	}
+	if out.Error.Details["authAction"] != "authorize" {
+		t.Fatalf("expected authAction=authorize, got %+v", out.Error.Details)
+	}
+	if out.Error.Details["refreshRequired"] != false {
+		t.Fatalf("expected refreshRequired=false, got %+v", out.Error.Details)
 	}
 	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
@@ -315,10 +322,37 @@ func TestMcpAuth_ToolCallForbiddenWithoutScopes(t *testing.T) {
 	}
 }
 
-func TestMcpAuth_InstanceKey(t *testing.T) {
+func TestMcpAuth_InstanceKeyRejectedByDefault(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "lhk_test")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer lhk_test"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 401 {
+		t.Fatalf("expected 401, got %d (%s)", initResp.Status, string(initResp.Body))
+	}
+}
+
+func TestMcpAuth_InstanceKeyAllowedWithCompatibilityFlag(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "lhk_test")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "true")
 	auth.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")
@@ -361,6 +395,116 @@ func TestMcpAuth_InstanceKey(t *testing.T) {
 	})
 	if callResp.Status != 200 {
 		t.Fatalf("expected 200, got %d (%s)", callResp.Status, string(callResp.Body))
+	}
+}
+
+func TestMcpAuth_InstanceKeyCompatibilityModeReturnsStructuredOAuthOnlyErrors(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "lhk_test")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "true")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer lhk_test"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "profile_read",
+		"arguments": map[string]any{},
+	})
+	callResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {"Bearer lhk_test"},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params:  callParams,
+	})
+	if callResp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", callResp.Status, string(callResp.Body))
+	}
+
+	var toolRPC mcpruntime.Response
+	if err := json.Unmarshal(callResp.Body, &toolRPC); err != nil {
+		t.Fatalf("unmarshal tools/call: %v", err)
+	}
+	var toolResult mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(toolRPC.Result)
+		_ = json.Unmarshal(b, &toolResult)
+	}
+	if !toolResult.IsError {
+		t.Fatalf("expected tool result error, got %+v", toolResult)
+	}
+	toolErr, _ := toolResult.StructuredContent["error"].(map[string]any)
+	if toolErr["code"] != "unauthorized" {
+		t.Fatalf("unexpected tool error payload: %+v", toolErr)
+	}
+	toolDetails, _ := toolErr["details"].(map[string]any)
+	if toolDetails["authAction"] != "authorize" || toolDetails["reason"] != "missing_oauth_bearer" {
+		t.Fatalf("unexpected tool auth details: %+v", toolDetails)
+	}
+
+	resourceParams, _ := json.Marshal(map[string]any{"uri": "agent://profile"})
+	resourceResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {"Bearer lhk_test"},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "resources/read",
+		Params:  resourceParams,
+	})
+	if resourceResp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", resourceResp.Status, string(resourceResp.Body))
+	}
+
+	var resourceRPC mcpruntime.Response
+	if err := json.Unmarshal(resourceResp.Body, &resourceRPC); err != nil {
+		t.Fatalf("unmarshal resources/read: %v", err)
+	}
+	var resourceOut struct {
+		Contents []struct {
+			Text string `json:"text"`
+		} `json:"contents"`
+	}
+	{
+		b, _ := json.Marshal(resourceRPC.Result)
+		_ = json.Unmarshal(b, &resourceOut)
+	}
+	if len(resourceOut.Contents) != 1 {
+		t.Fatalf("expected one resource content, got %+v", resourceOut.Contents)
+	}
+	var resourcePayload struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(resourceOut.Contents[0].Text), &resourcePayload); err != nil {
+		t.Fatalf("unmarshal resource payload: %v", err)
+	}
+	if resourcePayload.Error.Code != "unauthorized" {
+		t.Fatalf("unexpected resource payload: %+v", resourcePayload)
+	}
+	if resourcePayload.Error.Details["authAction"] != "authorize" || resourcePayload.Error.Details["reason"] != "missing_oauth_bearer" {
+		t.Fatalf("unexpected resource auth details: %+v", resourcePayload.Error.Details)
 	}
 }
 

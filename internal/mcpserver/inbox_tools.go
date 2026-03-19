@@ -33,7 +33,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authToolResultFromError(err)
 	}
 
 	direction := "inbound"
@@ -43,7 +43,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 
 	items, nextSince, err := readCommNotifications(ctx, token, direction, in.Limit, in.Since)
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 
 	messages := commMessagesFromNotifications(items, "email")
@@ -81,7 +81,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authToolResultFromError(err)
 	}
 
 	direction := "inbound"
@@ -91,7 +91,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 
 	items, _, err := readCommNotifications(ctx, token, direction, 200, "")
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 	messages := commMessagesFromNotifications(items, "email")
 
@@ -146,7 +146,7 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authToolResultFromError(err)
 	}
 	client, err := lesserapi.Default()
 	if err != nil {
@@ -159,7 +159,7 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	// - comm-worker messageId embedded in the notification payload.
 	notificationID, err := resolveNotificationIDForMessage(ctx, token, in.MessageID)
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 	if notificationID == "" {
 		return toolJSONResult(map[string]any{
@@ -172,7 +172,7 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 
 	_, err = client.DoJSON(ctx, "POST", "/api/v1/notifications/"+url.PathEscape(notificationID)+"/dismiss", nil, token, map[string]any{})
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 
 	return toolJSONResult(map[string]any{
@@ -196,12 +196,12 @@ func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authToolResultFromError(err)
 	}
 
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", in.Limit, in.Since)
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 
 	messages := commMessagesFromNotifications(items, "sms")
@@ -226,12 +226,12 @@ func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authToolResultFromError(err)
 	}
 
 	items, _, err := readCommNotifications(ctx, token, "inbound", in.Limit, "")
 	if err != nil {
-		return lesserToolResultFromError(err)
+		return authToolResultFromError(err)
 	}
 
 	messages := commMessagesFromNotifications(items, "voicemail")

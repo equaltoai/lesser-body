@@ -33,7 +33,7 @@ func handleIdentityWhoami(ctx context.Context, args json.RawMessage) (*mcpruntim
 	}
 
 	if _, err := requireOAuthBearer(ctx); err != nil {
-		return toolErrorResult("unauthorized", err.Error(), 401, nil)
+		return authToolResultFromError(err)
 	}
 
 	payload, err := whoamiChannelsPayload(ctx)
@@ -115,7 +115,7 @@ func whoamiChannelsPayload(ctx context.Context) (map[string]any, error) {
 func authenticatedAgentID(ctx context.Context) (string, error) {
 	principal := auth.PrincipalFromToolContext(ctx)
 	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken {
-		return "", &toolUserError{Code: "unauthorized", Message: "oauth token required", Status: 401}
+		return "", oauthBearerRequiredFailure("missing_oauth_bearer")
 	}
 
 	username := strings.TrimSpace(principal.Identity)
@@ -123,7 +123,7 @@ func authenticatedAgentID(ctx context.Context) (string, error) {
 		username = strings.TrimSpace(principal.Claims.GetUsername())
 	}
 	if username == "" {
-		return "", &toolUserError{Code: "unauthorized", Message: "missing authenticated agent identity", Status: 401}
+		return "", newLocalAuthFailure("missing authenticated agent identity", "missing_authenticated_identity")
 	}
 
 	agentID, err := soulbinding.ResolveAgentID(ctx, username)
@@ -189,8 +189,15 @@ func identityToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 		return toolErrorResult(userErr.Code, userErr.Message, userErr.Status, userErr.Details)
 	}
 
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+
 	var apiErr *soulapi.APIError
 	if errors.As(err, &apiErr) {
+		if failure := soulAuthFailureFromError(err); failure != nil {
+			return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+		}
 		code := identityErrorCodeForStatus(apiErr.Status)
 		message, parsed := commExtractAPIErrorMessage(apiErr.Body)
 		details := map[string]any{}

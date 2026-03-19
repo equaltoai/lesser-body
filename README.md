@@ -18,6 +18,9 @@ It reuses Lesser’s existing primitives:
 - Lesser stage DynamoDB table (for memory events)
 - Lesser REST API (for social tools like timelines and post creation)
 
+For inbound MCP clients, the canonical auth path is the Lesser OAuth connector flow. Managed instance key and
+hardcoded bearer-token client configs are deprecated compatibility paths; see `docs/oauth-migration.md`.
+
 ## Key Features
 
 - **MCP tools/resources/prompts** powered by AppTheory’s MCP runtime
@@ -32,6 +35,8 @@ It reuses Lesser’s existing primitives:
 - Deploy: `docs/deployment.md`
 - Configure: `docs/configuration.md`
 - Verify MCP: `docs/mcp.md`
+- Migrate legacy clients: `docs/oauth-migration.md`
+- Plan operator automation replacement: `docs/operator-auth-replacement.md`
 
 ### Developers
 

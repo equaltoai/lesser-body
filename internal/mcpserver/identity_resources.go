@@ -4,19 +4,12 @@ import (
 	"context"
 	"errors"
 
-	"github.com/equaltoai/lesser-body/internal/soulapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
 func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	if _, err := requireOAuthBearer(ctx); err != nil {
-		return resourceJSON("agent://channels", map[string]any{
-			"error": map[string]any{
-				"code":    "unauthorized",
-				"message": err.Error(),
-				"status":  401,
-			},
-		})
+		return authResourceContentsFromError("agent://channels", err)
 	}
 
 	payload, err := whoamiChannelsPayload(ctx)
@@ -31,13 +24,7 @@ func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error)
 
 func resourceChannelPreferences(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	if _, err := requireOAuthBearer(ctx); err != nil {
-		return resourceJSON("agent://channels/preferences", map[string]any{
-			"error": map[string]any{
-				"code":    "unauthorized",
-				"message": err.Error(),
-				"status":  401,
-			},
-		})
+		return authResourceContentsFromError("agent://channels/preferences", err)
 	}
 
 	payload, err := whoamiChannelsPayload(ctx)
@@ -56,11 +43,7 @@ func resourceChannelPreferences(ctx context.Context) ([]mcpruntime.ResourceConte
 
 func identityErrorPayload(err error) map[string]any {
 	if err == nil {
-		return map[string]any{
-			"code":    "upstream_error",
-			"message": "error",
-			"status":  500,
-		}
+		return authErrorPayload(nil)
 	}
 
 	var userErr *toolUserError
@@ -76,31 +59,5 @@ func identityErrorPayload(err error) map[string]any {
 		return payload
 	}
 
-	var apiErr *soulapi.APIError
-	if errors.As(err, &apiErr) {
-		code := identityErrorCodeForStatus(apiErr.Status)
-		message, parsed := commExtractAPIErrorMessage(apiErr.Body)
-		payload := map[string]any{
-			"code":    code,
-			"message": message,
-			"status":  apiErr.Status,
-		}
-		details := map[string]any{}
-		if parsed != nil {
-			details["apiError"] = parsed
-		}
-		if retryAfter := apiErr.RetryAfterSeconds(); retryAfter > 0 {
-			details["retryAfterSeconds"] = retryAfter
-		}
-		if len(details) > 0 {
-			payload["details"] = details
-		}
-		return payload
-	}
-
-	return map[string]any{
-		"code":    "upstream_error",
-		"message": err.Error(),
-		"status":  500,
-	}
+	return authErrorPayload(err)
 }

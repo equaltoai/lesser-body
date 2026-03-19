@@ -31,10 +31,18 @@ All `/mcp` requests require:
 Authorization: Bearer <token>
 ```
 
-Supported bearer tokens:
+Canonical bearer token:
 
 - Lesser OAuth access token (HS256 JWT validated via `JWT_SECRET` / `JWT_SECRET_ARN`)
-- Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`)
+
+Deprecated compatibility path:
+
+- Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`) for transitional
+  inbound automation only; this path is disabled by default and only available when
+  `MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
+
+Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
+`docs/oauth-migration.md` for exact registration and config examples.
 
 ## Discovery and registration chain
 
@@ -51,6 +59,23 @@ Client registration remains a Lesser concern. Today the Lesser API exposes publi
 client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
 its credentials out of band.
 
+## Canonical vs transitional auth paths
+
+- Canonical for inbound MCP clients: OAuth connector flow against Lesser
+- Transitional only: hardcoded bearer token in MCP client config
+- Transitional only: Simulacrum runtime credentials issued via `delegateToAgent()`
+- Separate outbound service credential: `LESSER_HOST_INSTANCE_KEY` for lesser-body to call lesser-host communication APIs
+
+Do not remove `LESSER_HOST_INSTANCE_KEY` from the deployment just because MCP clients move to OAuth. That key still
+backs outbound communication tools.
+
+The Simulacrum runtime-credentials button is still part of the rollout dependency chain tracked in
+`equaltoai/simulacrum#54`. Removing legacy inbound auth in lesser-body before that UI migrates will break that flow.
+
+For operator automation that historically used `PrincipalTypeInstanceKey`, the replacement target is a dedicated
+OAuth-based operator client described in `docs/operator-auth-replacement.md`. The exact admin/operator authority model
+depends on `equaltoai/lesser#259`.
+
 ## Sessions
 
 MCP uses stateless HTTP requests, with optional session continuity via a header:
@@ -63,10 +88,23 @@ If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
 
+- route-level auth failures return HTTP `401` with `error.code=app.unauthorized`, `WWW-Authenticate`, and machine-readable
+  `error.details`
 - tools return MCP error results with `isError=true` and `structuredContent.error`
 - Lesser-backed resources return JSON content with a top-level `error` object
 
 Clients should refresh or re-authorize, then retry the MCP operation.
+
+Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth
+fields aligned:
+
+- `details.source`
+- `details.authAction`
+- `details.refreshRequired`
+- `details.reauthorize`
+
+Upstream Lesser payload normalization still belongs to `equaltoai/lesser#249`; lesser-body translates those failures
+into the MCP-visible contract above.
 
 ## JSON-RPC methods
 
@@ -146,7 +184,9 @@ JWT-based callers are authorized by scopes inside the JWT claims:
 - `write`: can call write tools and read tools
 - `read`: can call read tools only
 
-The managed instance key bypasses scope checks (treat it as `admin`).
+The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
+being deprecated for inbound MCP traffic. That bypass only remains available when
+`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
 
 ## Tools
 
@@ -195,7 +235,7 @@ Notes:
   `/api/v1/soul/comm/*` endpoints.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
-  `instance` for managed-instance-key auth.
+  `instance` for the deprecated managed-instance-key compatibility path.
 
 ## Resources
 

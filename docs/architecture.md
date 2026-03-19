@@ -43,8 +43,9 @@ Notes:
 
 - `internal/auth/`
   - validates HS256 JWTs (Lesser OAuth access tokens)
-  - optionally validates managed instance key (operator automation)
+  - carries a temporary inbound compatibility branch for managed instance key auth during migration
   - enforces tool-call scope policy (`read|write|admin`)
+  - logs a deprecation warning whenever inbound auth falls back to the managed instance key
 
 ### Social tools (calls Lesser API)
 
@@ -71,4 +72,6 @@ See:
 
 - `docs/deployment.md`
 - `docs/configuration.md`
+- `docs/oauth-migration.md`
+- `docs/operator-auth-replacement.md`
 - `ROADMAP.md` (implementation sequencing and constraints)

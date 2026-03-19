@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
@@ -19,6 +20,8 @@ const (
 	PrincipalTypeOAuthToken  PrincipalType = "oauth_token"
 	PrincipalTypeInstanceKey PrincipalType = "instance_key"
 )
+
+const legacyInstanceKeyInboundAuthEnv = "MCP_ALLOW_LEGACY_INSTANCE_KEY"
 
 type Principal struct {
 	Type     PrincipalType
@@ -71,19 +74,36 @@ func Hook(logger *slog.Logger) apptheory.AuthHook {
 			return identity, nil
 		}
 
-		// Fall back to managed instance key authentication (operator automation).
-		instanceKey, keyErr := lesserHostInstanceKey(ctx.Context())
-		if keyErr == nil && instanceKey != "" && TimingSafeTokenValidation(token, instanceKey) {
-			identity := "instance"
-			WithPrincipal(ctx, &Principal{
-				Type:     PrincipalTypeInstanceKey,
-				Identity: identity,
-				Claims:   nil,
-			})
-			return identity, nil
+		// Fall back to managed instance key authentication only when the temporary
+		// compatibility flag is explicitly enabled.
+		if LegacyInstanceKeyInboundAuthEnabled() {
+			instanceKey, keyErr := lesserHostInstanceKey(ctx.Context())
+			if keyErr == nil && instanceKey != "" && TimingSafeTokenValidation(token, instanceKey) {
+				identity := "instance"
+				logger.Warn("managed-instance-key inbound MCP auth is deprecated; migrate clients to the OAuth connector flow",
+					"path", strings.TrimSpace(ctx.Request.Path),
+					"migration_doc", "docs/oauth-migration.md",
+					"compatibility_flag", legacyInstanceKeyInboundAuthEnv,
+				)
+				WithPrincipal(ctx, &Principal{
+					Type:     PrincipalTypeInstanceKey,
+					Identity: identity,
+					Claims:   nil,
+				})
+				return identity, nil
+			}
 		}
 
 		return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+	}
+}
+
+func LegacyInstanceKeyInboundAuthEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(legacyInstanceKeyInboundAuthEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
