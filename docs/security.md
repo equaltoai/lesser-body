@@ -14,8 +14,8 @@ This doc describes the implemented security posture of `lesser-body`.
 
 `lesser-body` enforces auth at the AppTheory route layer (`RequireAuth()`), using an auth hook that accepts:
 
-1) **Lesser OAuth access token** (HS256 JWT)
-2) **Managed instance key** (for automation/operator workflows)
+1) **Lesser OAuth access token** (HS256 JWT; canonical inbound MCP client path)
+2) **Managed instance key** (deprecated inbound compatibility path, still required for outbound lesser-host service auth)
 
 ### JWT validation
 
@@ -39,7 +39,8 @@ Write tools include:
 
 - `post_create`, `post_boost`, `post_favorite`, `follow`, `unfollow`, `profile_update`, `memory_append`
 
-The managed instance key bypasses scope checks (treat as `admin`).
+The managed instance key compatibility path bypasses scope checks (treat as `admin`), which is why it should not
+remain the long-term inbound client auth model.
 
 ## Secrets handling
 
@@ -70,3 +71,4 @@ At a minimum, the MCP Lambda needs:
 
 - Treat `/mcp` as a powerful tool surface. Only grant tokens with the minimum scopes required.
 - Prefer short-lived OAuth tokens and avoid embedding long-lived secrets in client apps.
+- Treat hardcoded bearer tokens and runtime credentials as temporary migration aids, not the canonical integration path.

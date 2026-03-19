@@ -14,6 +14,7 @@ This directory contains the canonical operator + developer documentation for `le
 
 1) Deploy the plugin (this repo): `docs/deployment.md`
 2) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
+3) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
 
 ## Start here (developers)
 
@@ -50,6 +51,7 @@ Protocol + tool catalog: `docs/mcp.md`
 
 - Deploy: `docs/deployment.md`
 - Configure: `docs/configuration.md`
+- OAuth migration guide: `docs/oauth-migration.md`
 - Security posture: `docs/security.md`
 - Troubleshoot: `docs/troubleshooting.md`
 - Release artifacts: `docs/release.md`

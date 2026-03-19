@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -48,6 +49,13 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	}
 	if _, ok := out.Auth["type"]; !ok {
 		t.Fatalf("expected auth hints")
+	}
+	notes, _ := out.Auth["notes"].(string)
+	if !strings.Contains(notes, "OAuth access token") {
+		t.Fatalf("expected OAuth-first auth note, got %q", notes)
+	}
+	if strings.Contains(strings.ToLower(notes), "or managed instance key") {
+		t.Fatalf("discovery should not recommend managed instance key, got %q", notes)
 	}
 
 	foundEcho := false

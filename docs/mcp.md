@@ -31,10 +31,17 @@ All `/mcp` requests require:
 Authorization: Bearer <token>
 ```
 
-Supported bearer tokens:
+Canonical bearer token:
 
 - Lesser OAuth access token (HS256 JWT validated via `JWT_SECRET` / `JWT_SECRET_ARN`)
-- Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`)
+
+Deprecated compatibility path:
+
+- Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`) for transitional
+  inbound automation only; lesser-body logs a deprecation warning whenever this path is used.
+
+Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
+`docs/oauth-migration.md` for exact registration and config examples.
 
 ## Discovery and registration chain
 
@@ -50,6 +57,19 @@ Client registration remains a Lesser concern. Today the Lesser API exposes publi
 `lesser-body` does not proxy or emulate client registration. If your MCP client specifically expects RFC 7591 dynamic
 client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
 its credentials out of band.
+
+## Canonical vs transitional auth paths
+
+- Canonical for inbound MCP clients: OAuth connector flow against Lesser
+- Transitional only: hardcoded bearer token in MCP client config
+- Transitional only: Simulacrum runtime credentials issued via `delegateToAgent()`
+- Separate outbound service credential: `LESSER_HOST_INSTANCE_KEY` for lesser-body to call lesser-host communication APIs
+
+Do not remove `LESSER_HOST_INSTANCE_KEY` from the deployment just because MCP clients move to OAuth. That key still
+backs outbound communication tools.
+
+The Simulacrum runtime-credentials button is still part of the rollout dependency chain tracked in
+`equaltoai/simulacrum#54`. Removing legacy inbound auth in lesser-body before that UI migrates will break that flow.
 
 ## Sessions
 
@@ -146,7 +166,8 @@ JWT-based callers are authorized by scopes inside the JWT claims:
 - `write`: can call write tools and read tools
 - `read`: can call read tools only
 
-The managed instance key bypasses scope checks (treat it as `admin`).
+The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
+being deprecated for inbound MCP traffic.
 
 ## Tools
 
@@ -195,7 +216,7 @@ Notes:
   `/api/v1/soul/comm/*` endpoints.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
-  `instance` for managed-instance-key auth.
+  `instance` for the deprecated managed-instance-key compatibility path.
 
 ## Resources
 

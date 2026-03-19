@@ -19,6 +19,25 @@ Fix:
 
 - For local/unit runs, set `JWT_SECRET` and mint a token with HS256.
 - For deployed runs, ensure `JWT_SECRET_ARN` points to the same secret Lesser uses.
+- If the deployment still relies on a managed instance key or a hardcoded bearer token, follow `docs/oauth-migration.md`
+  to move the client onto the OAuth connector path.
+
+## Warning log: managed-instance-key inbound MCP auth is deprecated
+
+Symptoms:
+
+- Logs include `managed-instance-key inbound MCP auth is deprecated`.
+
+Cause:
+
+- A client is still authenticating inbound `/mcp` traffic with `LESSER_HOST_INSTANCE_KEY` instead of an OAuth token.
+
+Fix:
+
+- Register or reuse a Lesser OAuth app and migrate the client to the connector flow described in
+  `docs/oauth-migration.md`.
+- Keep `LESSER_HOST_INSTANCE_KEY` only for outbound communication tooling unless the temporary compatibility flag is
+  intentionally enabled.
 
 ## Mid-session OAuth failures on tools or resources
 

@@ -138,6 +138,9 @@ Expected headers include:
 
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 
+For production clients, prefer OAuth connector registration rather than a static bearer token in client config.
+`docs/oauth-migration.md` includes the step-by-step migration sequence and compatibility notes.
+
 ## Destroy
 
 ```bash

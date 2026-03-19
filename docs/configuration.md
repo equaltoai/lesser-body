@@ -29,8 +29,8 @@ Stage is used in:
 
 `lesser-body` accepts `Authorization: Bearer <token>` and validates it using one of:
 
-- **HS256 JWT** (Lesser OAuth access token)
-- **Managed instance key** (operator automation)
+- **HS256 JWT** (Lesser OAuth access token; canonical inbound MCP client path)
+- **Managed instance key** (deprecated inbound compatibility path; still required for outbound lesser-host service auth)
 
 Variables:
 
@@ -40,11 +40,14 @@ Variables:
   - If set, fetched from AWS Secrets Manager (value may be plaintext or JSON like `{"secret":"..."}`).
   - If not set, defaults to secret id `lesser/jwt-secret` (matches Lesser’s default).
 - `LESSER_HOST_INSTANCE_KEY` (string, optional)
-  - If set, enables bearer-token auth for the managed instance key (timing-safe compare).
+  - If set, supports two distinct roles:
+    - deprecated inbound MCP compatibility when legacy instance-key auth is enabled
+    - outbound lesser-host service auth for communication tools
 - `LESSER_HOST_INSTANCE_KEY_ARN` (string, optional)
   - If set, fetches the managed instance key from Secrets Manager.
   - If not set in a managed deployment, lesser-body falls back to the persisted Lesser `TRUST_CONFIG.instanceKeySecretARN`
     record in `LESSER_TABLE_NAME`.
+  - Do not remove this just because inbound MCP clients migrate to OAuth; outbound communication tools still use it.
 
 ### MCP session persistence
 
@@ -64,6 +67,10 @@ Variables:
   - Comma-separated list of allowed browser origins for discovery and MCP responses.
   - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.
   - Example: `https://claude.ai,https://app.dev.example.com,https://api.dev.example.com`
+- `MCP_ALLOW_LEGACY_INSTANCE_KEY` (string, optional)
+  - Compatibility flag for inbound `/mcp` requests that authenticate with `LESSER_HOST_INSTANCE_KEY`.
+  - This flag is temporary and should remain unset for OAuth-first deployments.
+  - See `docs/oauth-migration.md` for the rollout sequence.
 - `LESSER_API_BASE_URL` (string, optional)
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
   - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp`.

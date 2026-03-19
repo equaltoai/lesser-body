@@ -48,7 +48,7 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 			Auth: map[string]any{
 				"type":   "bearer",
 				"scopes": []string{"read", "write", "admin"},
-				"notes":  "Use Lesser OAuth access token (HS256 JWT) or managed instance key.",
+				"notes":  "Use a Lesser OAuth access token minted via the connector flow. Managed instance key and hardcoded bearer-token flows are deprecated inbound compatibility paths.",
 			},
 		}
 

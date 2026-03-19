@@ -75,6 +75,10 @@ func Hook(logger *slog.Logger) apptheory.AuthHook {
 		instanceKey, keyErr := lesserHostInstanceKey(ctx.Context())
 		if keyErr == nil && instanceKey != "" && TimingSafeTokenValidation(token, instanceKey) {
 			identity := "instance"
+			logger.Warn("managed-instance-key inbound MCP auth is deprecated; migrate clients to the OAuth connector flow",
+				"path", strings.TrimSpace(ctx.Request.Path),
+				"migration_doc", "docs/oauth-migration.md",
+			)
 			WithPrincipal(ctx, &Principal{
 				Type:     PrincipalTypeInstanceKey,
 				Identity: identity,
