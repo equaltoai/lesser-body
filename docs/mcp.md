@@ -60,6 +60,14 @@ MCP uses stateless HTTP requests, with optional session continuity via a header:
 
 If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are in-memory (best-effort).
 
+`lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
+initialization:
+
+- tools return MCP error results with `isError=true` and `structuredContent.error`
+- Lesser-backed resources return JSON content with a top-level `error` object
+
+Clients should refresh or re-authorize, then retry the MCP operation.
+
 ## JSON-RPC methods
 
 AppTheory’s MCP server implements:

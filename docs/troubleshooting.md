@@ -20,6 +20,24 @@ Fix:
 - For local/unit runs, set `JWT_SECRET` and mint a token with HS256.
 - For deployed runs, ensure `JWT_SECRET_ARN` points to the same secret Lesser uses.
 
+## Mid-session OAuth failures on tools or resources
+
+Symptoms:
+
+- `initialize` succeeds, but later social or inbox-backed MCP operations fail.
+- Tool calls return `isError=true` with `structuredContent.error.code=unauthorized|forbidden`.
+- Resource reads return JSON content whose top-level payload is `{ "error": ... }`.
+
+Cause:
+
+- `lesser-body` passes the caller bearer token through to Lesser and does not own refresh.
+- Lesser rejected the token later in the flow with `401` (expired/revoked) or `403` (insufficient access).
+
+Fix:
+
+- Refresh or re-authorize the OAuth token in the MCP client, then retry the request.
+- Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
+
 ## 403 `app.forbidden` on `tools/call`
 
 Symptoms:
