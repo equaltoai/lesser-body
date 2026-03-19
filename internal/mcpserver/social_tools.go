@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -13,7 +14,13 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	"github.com/equaltoai/lesser-body/internal/memory"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+)
+
+const (
+	notificationCursorMemoryPrefix = "notification_cursor:"
+	notificationCursorMemoryTag    = "notification_cursor"
 )
 
 func registerSocialTools(r *mcpruntime.ToolRegistry) error {
@@ -31,6 +38,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
 		{Def: notificationsReadDef(), Handler: handleNotificationsRead},
+		{Def: notificationDismissDef(), Handler: handleNotificationDismiss},
 		{Def: postCreateDef(), Handler: handlePostCreate},
 		{Def: postBoostDef(), Handler: handlePostBoost},
 		{Def: postFavoriteDef(), Handler: handlePostFavorite},
@@ -292,13 +300,24 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		Types []string `json:"types,omitempty"`
-		Since string   `json:"since,omitempty"`
+		Since *string  `json:"since"`
 		Limit int      `json:"limit,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
 	requestedTypes, upstreamTypes := normalizeRequestedNotificationTypes(in.Types)
+	explicitSince := in.Since != nil
+	requestedSince := trimDeref(in.Since)
+	effectiveSince := requestedSince
+
+	if !explicitSince {
+		if storedCursor, err := readNotificationCursor(ctx); err == nil {
+			effectiveSince = storedCursor
+		}
+	} else if requestedSince == "" {
+		_ = clearNotificationCursor(ctx)
+	}
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
@@ -309,7 +328,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		return nil, err
 	}
 
-	list, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, in.Since)
+	list, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, effectiveSince)
 	if err != nil {
 		return nil, err
 	}
@@ -324,17 +343,65 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 	nextSince := ""
 	if len(notifications) > 0 {
-		if item, ok := notifications[len(notifications)-1].(map[string]any); ok {
-			nextSince = strings.TrimSpace(firstNonEmptyStringMap(item, "id"))
+		if newest, ok := notifications[0].(map[string]any); ok {
+			_ = writeNotificationCursor(ctx, strings.TrimSpace(firstNonEmptyStringMap(newest, "id")))
+		}
+		if oldest, ok := notifications[len(notifications)-1].(map[string]any); ok {
+			nextSince = strings.TrimSpace(firstNonEmptyStringMap(oldest, "id"))
 		}
 	}
 
 	return toolJSONResult(map[string]any{
-		"since":         strings.TrimSpace(in.Since),
+		"since":         effectiveSince,
 		"nextSince":     nextSince,
 		"count":         len(notifications),
 		"types":         requestedTypes,
 		"notifications": notifications,
+	})
+}
+
+func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		ID string `json:"id,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	in.ID = strings.TrimSpace(in.ID)
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	path := "/api/v1/notifications/clear"
+	if in.ID != "" {
+		path = "/api/v1/notifications/" + url.PathEscape(in.ID) + "/dismiss"
+	}
+
+	if _, err := client.DoJSON(ctx, "POST", path, nil, token, map[string]any{}); err != nil {
+		var apiErr *lesserapi.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == 404 {
+			if in.ID != "" {
+				return nil, fmt.Errorf("notification %q not found", in.ID)
+			}
+			return nil, fmt.Errorf("notifications not found")
+		}
+		return nil, err
+	}
+
+	if in.ID == "" {
+		_ = clearNotificationCursor(ctx)
+	}
+
+	return toolJSONResult(map[string]any{
+		"ok":      true,
+		"id":      in.ID,
+		"dismiss": ternaryString(in.ID == "", "all", "single"),
 	})
 }
 
@@ -616,6 +683,107 @@ func notificationsReadDef() mcpruntime.ToolDef {
 			}
 		}`),
 	}
+}
+
+func notificationDismissDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "notification_dismiss",
+		Description: "Dismiss a notification or all notifications, marking them as read.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"ID of a specific notification to dismiss. Omit to dismiss all notifications."}
+			}
+		}`),
+	}
+}
+
+func trimDeref(raw *string) string {
+	if raw == nil {
+		return ""
+	}
+	return strings.TrimSpace(*raw)
+}
+
+func readNotificationCursor(ctx context.Context) (string, error) {
+	p := auth.PrincipalFromToolContext(ctx)
+	if p == nil || strings.TrimSpace(p.Identity) == "" {
+		return "", fmt.Errorf("missing identity")
+	}
+
+	store, err := memory.Default()
+	if err != nil {
+		return "", err
+	}
+
+	res, err := store.Query(ctx, strings.TrimSpace(p.Identity), memory.QueryInput{
+		Query: notificationCursorMemoryPrefix,
+		Limit: 1,
+		Order: "desc",
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(res.Events) == 0 {
+		return "", nil
+	}
+	return parseNotificationCursorContent(res.Events[0].Content), nil
+}
+
+func writeNotificationCursor(ctx context.Context, cursor string) error {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return nil
+	}
+
+	p := auth.PrincipalFromToolContext(ctx)
+	if p == nil || strings.TrimSpace(p.Identity) == "" {
+		return fmt.Errorf("missing identity")
+	}
+
+	store, err := memory.Default()
+	if err != nil {
+		return err
+	}
+
+	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+		Content: notificationCursorMemoryPrefix + cursor,
+		Tags:    []string{notificationCursorMemoryTag},
+	})
+	return err
+}
+
+func clearNotificationCursor(ctx context.Context) error {
+	p := auth.PrincipalFromToolContext(ctx)
+	if p == nil || strings.TrimSpace(p.Identity) == "" {
+		return fmt.Errorf("missing identity")
+	}
+
+	store, err := memory.Default()
+	if err != nil {
+		return err
+	}
+
+	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+		Content: notificationCursorMemoryPrefix,
+		Tags:    []string{notificationCursorMemoryTag},
+	})
+	return err
+}
+
+func parseNotificationCursorContent(content string) string {
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, notificationCursorMemoryPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(content, notificationCursorMemoryPrefix))
+}
+
+func ternaryString(cond bool, yes string, no string) string {
+	if cond {
+		return yes
+	}
+	return no
 }
 
 func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
