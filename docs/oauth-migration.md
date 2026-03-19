@@ -130,6 +130,9 @@ Until that UI is migrated:
 - OAuth connectors are the recommended client path
 - runtime credentials remain a compatibility flow that must be coordinated before legacy inbound auth is removed
 
+Operator automation that historically used the managed instance key has a separate target state: move it to a dedicated
+OAuth operator client as described in `docs/operator-auth-replacement.md`.
+
 ## Compatibility and rollback
 
 - If a deployment still depends on managed-instance-key inbound auth, keep the temporary `MCP_ALLOW_LEGACY_INSTANCE_KEY`

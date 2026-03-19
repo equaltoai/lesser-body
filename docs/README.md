@@ -52,6 +52,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - Deploy: `docs/deployment.md`
 - Configure: `docs/configuration.md`
 - OAuth migration guide: `docs/oauth-migration.md`
+- Operator auth replacement: `docs/operator-auth-replacement.md`
 - Security posture: `docs/security.md`
 - Troubleshoot: `docs/troubleshooting.md`
 - Release artifacts: `docs/release.md`

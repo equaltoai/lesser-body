@@ -36,6 +36,7 @@ hardcoded bearer-token client configs are deprecated compatibility paths; see `d
 - Configure: `docs/configuration.md`
 - Verify MCP: `docs/mcp.md`
 - Migrate legacy clients: `docs/oauth-migration.md`
+- Plan operator automation replacement: `docs/operator-auth-replacement.md`
 
 ### Developers
 

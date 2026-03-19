@@ -73,4 +73,5 @@ See:
 - `docs/deployment.md`
 - `docs/configuration.md`
 - `docs/oauth-migration.md`
+- `docs/operator-auth-replacement.md`
 - `ROADMAP.md` (implementation sequencing and constraints)

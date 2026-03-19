@@ -72,3 +72,5 @@ At a minimum, the MCP Lambda needs:
 - Treat `/mcp` as a powerful tool surface. Only grant tokens with the minimum scopes required.
 - Prefer short-lived OAuth tokens and avoid embedding long-lived secrets in client apps.
 - Treat hardcoded bearer tokens and runtime credentials as temporary migration aids, not the canonical integration path.
+- Treat operator automation as a separate OAuth client design problem; the replacement direction is documented in
+  `docs/operator-auth-replacement.md`.

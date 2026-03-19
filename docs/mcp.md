@@ -71,6 +71,10 @@ backs outbound communication tools.
 The Simulacrum runtime-credentials button is still part of the rollout dependency chain tracked in
 `equaltoai/simulacrum#54`. Removing legacy inbound auth in lesser-body before that UI migrates will break that flow.
 
+For operator automation that historically used `PrincipalTypeInstanceKey`, the replacement target is a dedicated
+OAuth-based operator client described in `docs/operator-auth-replacement.md`. The exact admin/operator authority model
+depends on `equaltoai/lesser#259`.
+
 ## Sessions
 
 MCP uses stateless HTTP requests, with optional session continuity via a header:

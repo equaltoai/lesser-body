@@ -48,6 +48,7 @@ Variables:
   - If not set in a managed deployment, lesser-body falls back to the persisted Lesser `TRUST_CONFIG.instanceKeySecretARN`
     record in `LESSER_TABLE_NAME`.
   - Do not remove this just because inbound MCP clients migrate to OAuth; outbound communication tools still use it.
+  - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 
 ### MCP session persistence
 
