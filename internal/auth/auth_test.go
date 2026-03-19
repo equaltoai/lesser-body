@@ -14,6 +14,7 @@ func TestHook_WarnsWhenManagedInstanceKeyFallbackIsUsed(t *testing.T) {
 	t.Setenv("JWT_SECRET_ARN", "")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "legacy-instance-key")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY_ARN", "")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "true")
 	ResetForTests()
 
 	var logs bytes.Buffer
@@ -46,5 +47,37 @@ func TestHook_WarnsWhenManagedInstanceKeyFallbackIsUsed(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, "docs/oauth-migration.md") {
 		t.Fatalf("expected migration doc reference in log, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "MCP_ALLOW_LEGACY_INSTANCE_KEY") {
+		t.Fatalf("expected compatibility flag reference in log, got %q", logOutput)
+	}
+}
+
+func TestHook_RejectsManagedInstanceKeyFallbackByDefault(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("JWT_SECRET_ARN", "")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "legacy-instance-key")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY_ARN", "")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "")
+	ResetForTests()
+
+	ctx := &apptheory.Context{
+		Request: apptheory.Request{
+			Path: "/mcp",
+			Headers: map[string][]string{
+				"authorization": {"Bearer legacy-instance-key"},
+			},
+		},
+	}
+
+	identity, err := Hook(nil)(ctx)
+	if err == nil {
+		t.Fatalf("expected unauthorized error, got identity %q", identity)
+	}
+	if identity != "" {
+		t.Fatalf("expected empty identity, got %q", identity)
+	}
+	if principal := PrincipalFromContext(ctx); principal != nil {
+		t.Fatalf("expected no principal, got %+v", principal)
 	}
 }

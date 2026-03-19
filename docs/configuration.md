@@ -70,6 +70,7 @@ Variables:
   - Example: `https://claude.ai,https://app.dev.example.com,https://api.dev.example.com`
 - `MCP_ALLOW_LEGACY_INSTANCE_KEY` (string, optional)
   - Compatibility flag for inbound `/mcp` requests that authenticate with `LESSER_HOST_INSTANCE_KEY`.
+  - Default: disabled.
   - This flag is temporary and should remain unset for OAuth-first deployments.
   - See `docs/oauth-migration.md` for the rollout sequence.
 - `LESSER_API_BASE_URL` (string, optional)

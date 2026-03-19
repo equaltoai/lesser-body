@@ -15,7 +15,8 @@ This doc describes the implemented security posture of `lesser-body`.
 `lesser-body` enforces auth at the AppTheory route layer (`RequireAuth()`), using an auth hook that accepts:
 
 1) **Lesser OAuth access token** (HS256 JWT; canonical inbound MCP client path)
-2) **Managed instance key** (deprecated inbound compatibility path, still required for outbound lesser-host service auth)
+2) **Managed instance key** (deprecated inbound compatibility path behind `MCP_ALLOW_LEGACY_INSTANCE_KEY=true`, still
+   required for outbound lesser-host service auth)
 
 ### JWT validation
 

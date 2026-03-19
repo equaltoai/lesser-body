@@ -315,10 +315,37 @@ func TestMcpAuth_ToolCallForbiddenWithoutScopes(t *testing.T) {
 	}
 }
 
-func TestMcpAuth_InstanceKey(t *testing.T) {
+func TestMcpAuth_InstanceKeyRejectedByDefault(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "lhk_test")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer lhk_test"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 401 {
+		t.Fatalf("expected 401, got %d (%s)", initResp.Status, string(initResp.Body))
+	}
+}
+
+func TestMcpAuth_InstanceKeyAllowedWithCompatibilityFlag(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "lhk_test")
+	t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "true")
 	auth.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")

@@ -38,6 +38,7 @@ Fix:
   `docs/oauth-migration.md`.
 - Keep `LESSER_HOST_INSTANCE_KEY` only for outbound communication tooling unless the temporary compatibility flag is
   intentionally enabled.
+- If a rollback is unavoidable, set `MCP_ALLOW_LEGACY_INSTANCE_KEY=true` explicitly and treat it as temporary.
 
 ## Mid-session OAuth failures on tools or resources
 

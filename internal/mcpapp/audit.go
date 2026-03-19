@@ -79,7 +79,10 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 	}
 	if p.Type == auth.PrincipalTypeInstanceKey {
-		return nil
+		if auth.LegacyInstanceKeyInboundAuthEnabled() {
+			return nil
+		}
+		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 	}
 	if p.Claims == nil {
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}

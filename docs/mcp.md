@@ -38,7 +38,8 @@ Canonical bearer token:
 Deprecated compatibility path:
 
 - Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`) for transitional
-  inbound automation only; lesser-body logs a deprecation warning whenever this path is used.
+  inbound automation only; this path is disabled by default and only available when
+  `MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
 
 Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
 `docs/oauth-migration.md` for exact registration and config examples.
@@ -171,7 +172,8 @@ JWT-based callers are authorized by scopes inside the JWT claims:
 - `read`: can call read tools only
 
 The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
-being deprecated for inbound MCP traffic.
+being deprecated for inbound MCP traffic. That bypass only remains available when
+`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
 
 ## Tools
 
