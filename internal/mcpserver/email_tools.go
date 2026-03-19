@@ -98,7 +98,7 @@ func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	if in.To == "" || in.Subject == "" {
 		bearerToken, err := requireOAuthBearer(ctx)
 		if err != nil {
-			return toolErrorResult("unauthorized", err.Error(), 401, nil)
+			return authToolResultFromError(err)
 		}
 
 		notification, err := findCommunicationNotification(ctx, bearerToken, in.MessageID)

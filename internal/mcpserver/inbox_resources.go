@@ -9,7 +9,7 @@ import (
 func resourceEmailInbox(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://email/inbox", err)
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {
@@ -27,7 +27,7 @@ func resourceEmailInbox(ctx context.Context) ([]mcpruntime.ResourceContent, erro
 func resourceEmailSent(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://email/sent", err)
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "outbound", 20, "")
 	if err != nil {
@@ -48,7 +48,7 @@ func resourceEmailSent(ctx context.Context) ([]mcpruntime.ResourceContent, error
 func resourceSmsMessages(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://sms/messages", err)
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {
@@ -66,7 +66,7 @@ func resourceSmsMessages(ctx context.Context) ([]mcpruntime.ResourceContent, err
 func resourceVoicemail(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://voicemail", err)
 	}
 	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
 	if err != nil {

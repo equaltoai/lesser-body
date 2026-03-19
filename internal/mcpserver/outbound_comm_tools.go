@@ -120,7 +120,7 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 
 func loadCommSendDependencies(ctx context.Context, channel string) (*commSendDependencies, *mcpruntime.ToolResult, error) {
 	if _, err := requireOAuthBearer(ctx); err != nil {
-		res, resErr := toolErrorResult("unauthorized", err.Error(), 401, nil)
+		res, resErr := authToolResultFromError(err)
 		return nil, res, resErr
 	}
 

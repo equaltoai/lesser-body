@@ -49,3 +49,27 @@ func TestCommToolResultFromError_MapsCommAPIErrors(t *testing.T) {
 		t.Fatalf("expected retryAfterSeconds=12, got %v", details["retryAfterSeconds"])
 	}
 }
+
+func TestCommToolResultFromError_MapsSoulAuthFailures(t *testing.T) {
+	res, err := commToolResultFromError(&soulapi.APIError{
+		Status: 401,
+		Body:   []byte(`{"error":{"message":"token expired"}}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("expected isError tool result, got %+v", res)
+	}
+	errPayload, ok := res.StructuredContent["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structuredContent.error, got %+v", res.StructuredContent)
+	}
+	if errPayload["code"] != "unauthorized" || errPayload["status"] != 401 {
+		t.Fatalf("unexpected payload: %+v", errPayload)
+	}
+	details, _ := errPayload["details"].(map[string]any)
+	if details["source"] != "soul_api" || details["authAction"] != "refresh_or_reauthorize" {
+		t.Fatalf("unexpected auth details: %+v", details)
+	}
+}

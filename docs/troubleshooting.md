@@ -57,6 +57,8 @@ Fix:
 
 - Refresh or re-authorize the OAuth token in the MCP client, then retry the request.
 - Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
+- Route-level `401` responses, tool errors, and resource payloads all use the same detail fields so client logic can make
+  the same retry decision in each surface.
 
 ## 403 `app.forbidden` on `tools/call`
 

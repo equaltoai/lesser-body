@@ -40,6 +40,13 @@ func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 	errBody := map[string]any{
 		"code":    "app.unauthorized",
 		"message": "unauthorized",
+		"details": map[string]any{
+			"source":          "lesser_body",
+			"reauthorize":     true,
+			"authAction":      "authorize",
+			"refreshRequired": false,
+			"reason":          "missing_or_invalid_bearer",
+		},
 	}
 	if ctx != nil && strings.TrimSpace(ctx.RequestID) != "" {
 		errBody["request_id"] = ctx.RequestID

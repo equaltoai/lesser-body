@@ -88,10 +88,23 @@ If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
 
+- route-level auth failures return HTTP `401` with `error.code=app.unauthorized`, `WWW-Authenticate`, and machine-readable
+  `error.details`
 - tools return MCP error results with `isError=true` and `structuredContent.error`
 - Lesser-backed resources return JSON content with a top-level `error` object
 
 Clients should refresh or re-authorize, then retry the MCP operation.
+
+Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth
+fields aligned:
+
+- `details.source`
+- `details.authAction`
+- `details.refreshRequired`
+- `details.reauthorize`
+
+Upstream Lesser payload normalization still belongs to `equaltoai/lesser#249`; lesser-body translates those failures
+into the MCP-visible contract above.
 
 ## JSON-RPC methods
 

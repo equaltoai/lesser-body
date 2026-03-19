@@ -53,6 +53,10 @@ func commToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 		return nil, nil
 	}
 
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+
 	var apiErr *soulapi.APIError
 	if errors.As(err, &apiErr) {
 		code := commErrorCodeForStatus(apiErr.Status)

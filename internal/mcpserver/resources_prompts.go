@@ -186,7 +186,7 @@ func resourceJSON(uri string, payload any) ([]mcpruntime.ResourceContent, error)
 func resourceProfile(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://profile", err)
 	}
 	client, err := lesserapi.Default()
 	if err != nil {
@@ -208,7 +208,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 
 		token, err := requireOAuthBearer(ctx)
 		if err != nil {
-			return nil, err
+			return authResourceContentsFromError("agent://timeline/"+kind, err)
 		}
 		client, err := lesserapi.Default()
 		if err != nil {
@@ -242,7 +242,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://followers", err)
 	}
 	client, err := lesserapi.Default()
 	if err != nil {
@@ -275,7 +275,7 @@ func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error
 func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://following", err)
 	}
 	client, err := lesserapi.Default()
 	if err != nil {
@@ -308,7 +308,7 @@ func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error
 func resourceNotifications(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
-		return nil, err
+		return authResourceContentsFromError("agent://notifications", err)
 	}
 	client, err := lesserapi.Default()
 	if err != nil {
