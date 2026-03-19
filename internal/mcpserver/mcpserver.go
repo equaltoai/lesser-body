@@ -63,7 +63,7 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 }
 
 func originValidatorFromEnv() mcpruntime.OriginValidator {
-	origins := splitCommaSeparatedEnv(os.Getenv(envMcpAllowedOrigins))
+	origins := SplitCommaSeparatedEnv(os.Getenv(envMcpAllowedOrigins))
 	if len(origins) == 0 {
 		return nil
 	}
@@ -77,7 +77,7 @@ func originValidatorFromEnv() mcpruntime.OriginValidator {
 	return mcpruntime.AllowOrigins(origins...)
 }
 
-func splitCommaSeparatedEnv(value string) []string {
+func SplitCommaSeparatedEnv(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
 	}

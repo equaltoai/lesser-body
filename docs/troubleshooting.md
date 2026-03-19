@@ -53,6 +53,27 @@ Fix:
 - Ensure `MCP_ENDPOINT` is `https://api.<stageDomain>/mcp`.
 - Or set `LESSER_API_BASE_URL` explicitly to `https://api.<stageDomain>`.
 
+## Discovery fails with `500 app.config_invalid`
+
+Symptoms:
+
+- `GET /.well-known/mcp.json` or `GET /.well-known/oauth-protected-resource` returns HTTP `500`.
+- The response mentions `MCP_ENDPOINT` or `TRUST_CONFIG.TrustBaseURL`.
+
+Common causes:
+
+- `MCP_ENDPOINT` is malformed or does not end in `/mcp`.
+- Clients are reaching a different public host than the one configured in `MCP_ENDPOINT`.
+- Managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is empty or points at the wrong Lesser environment.
+- Lesser OAuth metadata is not reachable at `/.well-known/oauth-authorization-server`.
+
+Fix:
+
+- Ensure `MCP_ENDPOINT` exactly matches the public URL clients use, for example `https://api.<stageDomain>/mcp`.
+- Verify `curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server"` returns `200`.
+- In managed deployments, confirm `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` contains the correct Lesser trust base URL.
+- If a browser client is involved, ensure `MCP_ALLOWED_ORIGINS` includes the browser origin (for example `https://claude.ai`).
+
 ## Identity / communication tools fail (`not_found`, `not_configured`, or soul API 404)
 
 Symptoms:

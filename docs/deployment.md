@@ -113,6 +113,7 @@ Once Lesser is deployed with `soulEnabled=true`, verify both public discovery do
 ```bash
 curl -sS "https://api.<stageDomain>/.well-known/mcp.json" | jq .
 curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource" | jq .
+curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server" | jq .
 ```
 
 Expected protected-resource fields:
@@ -121,6 +122,19 @@ Expected protected-resource fields:
 - `authorization_servers`
 - `scopes_supported`
 - `bearer_methods_supported`
+
+For browser-based MCP clients, also verify CORS on discovery:
+
+```bash
+curl -sSI \
+  -H "Origin: https://claude.ai" \
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+```
+
+Expected headers include:
+
+- `access-control-allow-origin: https://claude.ai`
+- `vary: origin`
 
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 

@@ -1,6 +1,7 @@
 package mcpapp
 
 import (
+	"context"
 	"log/slog"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -10,6 +11,10 @@ import (
 )
 
 func New(name, version string) (*apptheory.App, error) {
+	if err := validateDiscoveryStartupConfig(context.Background()); err != nil {
+		return nil, err
+	}
+
 	srv, err := mcpserver.New(name, version)
 	if err != nil {
 		return nil, err
@@ -20,10 +25,10 @@ func New(name, version string) (*apptheory.App, error) {
 		apptheory.WithAuthHook(auth.Hook(logger)),
 	)
 
-	app.Get("/.well-known/mcp.json", WellKnownMcpHandler(srv, name, version))
-	app.Get("/.well-known/oauth-protected-resource", WellKnownOAuthProtectedResourceHandler())
+	app.Get("/.well-known/mcp.json", WithBrowserCORS(WellKnownMcpHandler(srv, name, version)))
+	app.Get("/.well-known/oauth-protected-resource", WithBrowserCORS(WellKnownOAuthProtectedResourceHandler()))
 
-	handler := WithClientCompatibilityHeaders(WithMCPAuthorization(WithAudit(WithToolContext(srv.Handler()), logger)))
+	handler := WithBrowserCORS(WithClientCompatibilityHeaders(WithMCPAuthorization(WithAudit(WithToolContext(srv.Handler()), logger))))
 	app.Post("/mcp", handler)
 	app.Get("/mcp", handler)
 	app.Delete("/mcp", handler)

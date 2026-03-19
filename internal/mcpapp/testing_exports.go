@@ -18,3 +18,16 @@ func SetLoadEffectiveTrustConfigForTests(fn func(context.Context) (*trustconfig.
 		loadEffectiveTrustConfig = previous
 	}
 }
+
+// SetProbeAuthorizationServerMetadataForTests lets sibling-package tests stub discovery validation probes.
+func SetProbeAuthorizationServerMetadataForTests(fn func(context.Context, string) error) func() {
+	previous := probeAuthorizationServerMetadata
+	if fn == nil {
+		probeAuthorizationServerMetadata = defaultProbeAuthorizationServerMetadata
+	} else {
+		probeAuthorizationServerMetadata = fn
+	}
+	return func() {
+		probeAuthorizationServerMetadata = previous
+	}
+}

@@ -392,6 +392,9 @@ func TestMcpAuth_AuthorizedJwt_AllowsConfiguredBrowserOrigin(t *testing.T) {
 	if ids := initResp.Headers["mcp-session-id"]; len(ids) == 0 || ids[0] == "" {
 		t.Fatalf("expected non-empty mcp-session-id header")
 	}
+	if got := firstHeader(initResp.Headers, "access-control-allow-origin"); got != "https://dev.example.com" {
+		t.Fatalf("expected access-control-allow-origin to echo request origin, got %q", got)
+	}
 	exposeHeaders := ""
 	if values := initResp.Headers["access-control-expose-headers"]; len(values) > 0 {
 		exposeHeaders = values[0]

@@ -19,6 +19,10 @@ So the MCP endpoint is:
 
 - `https://api.<stageDomain>/mcp`
 
+Protected-resource discovery depends on Lesser OAuth metadata being reachable at:
+
+- `https://api.<stageDomain>/.well-known/oauth-authorization-server`
+
 ## Authentication
 
 All `/mcp` requests require:
@@ -31,6 +35,21 @@ Supported bearer tokens:
 
 - Lesser OAuth access token (HS256 JWT validated via `JWT_SECRET` / `JWT_SECRET_ARN`)
 - Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`)
+
+## Discovery and registration chain
+
+Protected-resource discovery in `lesser-body` only publishes:
+
+- the MCP `resource` URL
+- the Lesser OAuth `authorization_servers` URL
+
+Client registration remains a Lesser concern. Today the Lesser API exposes public app registration at:
+
+- `POST https://api.<stageDomain>/api/v1/apps`
+
+`lesser-body` does not proxy or emulate client registration. If your MCP client specifically expects RFC 7591 dynamic
+client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
+its credentials out of band.
 
 ## Sessions
 
