@@ -39,9 +39,9 @@ func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *
 
 	previousProbe := probeAuthorizationServerMetadata
 	probedURL := ""
-	probeAuthorizationServerMetadata = func(_ context.Context, metadataURL string) error {
+	probeAuthorizationServerMetadata = func(_ context.Context, metadataURL string) (string, error) {
 		probedURL = metadataURL
-		return errors.New("dial tcp: i/o timeout")
+		return "", errors.New("dial tcp: i/o timeout")
 	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
@@ -53,6 +53,37 @@ func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *
 	}
 	if want := "https://api.example.com/.well-known/oauth-authorization-server"; probedURL != want {
 		t.Fatalf("unexpected metadata probe url: got %q want %q", probedURL, want)
+	}
+}
+
+func TestNew_CachesAuthorizationServerIssuerFromMetadataProbe(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+
+	previousLoader := loadEffectiveTrustConfig
+	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	}
+	t.Cleanup(func() {
+		loadEffectiveTrustConfig = previousLoader
+	})
+
+	previousProbe := probeAuthorizationServerMetadata
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		return "https://issuer.example", nil
+	}
+	t.Cleanup(func() {
+		probeAuthorizationServerMetadata = previousProbe
+	})
+
+	if _, err := New("test", "dev"); err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	if got := cachedAuthorizationServerIssuer(); got != "https://issuer.example" {
+		t.Fatalf("unexpected cached issuer: got %q want %q", got, "https://issuer.example")
 	}
 }
 
@@ -72,9 +103,9 @@ func TestNew_SkipsAuthorizationServerMetadataProbeWithoutMCPEndpoint(t *testing.
 
 	previousProbe := probeAuthorizationServerMetadata
 	probeCalled := false
-	probeAuthorizationServerMetadata = func(context.Context, string) error {
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
 		probeCalled = true
-		return nil
+		return "https://issuer.example", nil
 	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
@@ -104,7 +135,9 @@ func TestWellKnownOAuthProtectedResource_RejectsConfiguredEndpointMismatch(t *te
 	})
 
 	previousProbe := probeAuthorizationServerMetadata
-	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		return "https://issuer.example", nil
+	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})
@@ -148,7 +181,9 @@ func TestWellKnownOAuthProtectedResource_AddsCORSForAllowedOrigin(t *testing.T) 
 	})
 
 	previousProbe := probeAuthorizationServerMetadata
-	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		return "https://issuer.example", nil
+	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})

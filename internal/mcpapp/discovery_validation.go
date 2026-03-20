@@ -2,12 +2,14 @@ package mcpapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -15,12 +17,22 @@ import (
 
 const oauthAuthorizationServerMetadataPath = "/.well-known/oauth-authorization-server"
 
+type authorizationServerMetadata struct {
+	Issuer string `json:"issuer"`
+}
+
 var probeAuthorizationServerMetadata = defaultProbeAuthorizationServerMetadata
+
+var authorizationServerIssuerCache struct {
+	mu     sync.RWMutex
+	issuer string
+}
 
 func validateDiscoveryStartupConfig(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	setAuthorizationServerIssuer("")
 
 	validatedEndpoint := ""
 	if raw := strings.TrimSpace(os.Getenv("MCP_ENDPOINT")); raw != "" {
@@ -55,9 +67,14 @@ func validateDiscoveryStartupConfig(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("validate MCP_ENDPOINT: %w", err)
 	}
-	if err := probeAuthorizationServerMetadata(ctx, metadataURL); err != nil {
+	issuer, err := probeAuthorizationServerMetadata(ctx, metadataURL)
+	if err != nil {
 		return fmt.Errorf("validate MCP_ENDPOINT reachability via %s: %w", metadataURL, err)
 	}
+	if _, err := validatedPublicBaseURL(issuer); err != nil {
+		return fmt.Errorf("validate authorization server issuer %q: %w", issuer, err)
+	}
+	setAuthorizationServerIssuer(issuer)
 
 	return nil
 }
@@ -147,27 +164,49 @@ func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (stri
 	return oauthAuthorizationServerMetadataURL(baseURL), nil
 }
 
-func defaultProbeAuthorizationServerMetadata(ctx context.Context, metadataURL string) error {
+func defaultProbeAuthorizationServerMetadata(ctx context.Context, metadataURL string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request metadata: %w", err)
+		return "", fmt.Errorf("request metadata: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
-	return nil
+
+	var metadata authorizationServerMetadata
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&metadata); err != nil {
+		return "", fmt.Errorf("decode metadata response: %w", err)
+	}
+
+	issuer := strings.TrimSpace(metadata.Issuer)
+	if issuer == "" {
+		return "", fmt.Errorf("metadata response missing issuer")
+	}
+	return issuer, nil
+}
+
+func cachedAuthorizationServerIssuer() string {
+	authorizationServerIssuerCache.mu.RLock()
+	defer authorizationServerIssuerCache.mu.RUnlock()
+	return authorizationServerIssuerCache.issuer
+}
+
+func setAuthorizationServerIssuer(issuer string) {
+	authorizationServerIssuerCache.mu.Lock()
+	defer authorizationServerIssuerCache.mu.Unlock()
+	authorizationServerIssuerCache.issuer = strings.TrimSpace(issuer)
 }

@@ -174,7 +174,9 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *
 		}, nil
 	})
 	t.Cleanup(restore)
-	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) error { return nil })
+	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) (string, error) {
+		return "https://dev.example.com", nil
+	})
 	t.Cleanup(restoreProbe)
 
 	app, err := mcpapp.New("test", "dev")
@@ -242,7 +244,9 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 		}, nil
 	})
 	t.Cleanup(restore)
-	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) error { return nil })
+	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) (string, error) {
+		return "https://dev.example.com", nil
+	})
 	t.Cleanup(restoreProbe)
 
 	app, err := mcpapp.New("test", "dev")
