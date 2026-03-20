@@ -22,8 +22,11 @@ func validateDiscoveryStartupConfig(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
+	validatedEndpoint := ""
 	if raw := strings.TrimSpace(os.Getenv("MCP_ENDPOINT")); raw != "" {
-		if _, err := validatedMcpEndpoint(raw); err != nil {
+		var err error
+		validatedEndpoint, err = validatedMcpEndpoint(raw)
+		if err != nil {
 			return fmt.Errorf("validate MCP_ENDPOINT: %w", err)
 		}
 	}
@@ -44,9 +47,16 @@ func validateDiscoveryStartupConfig(ctx context.Context) error {
 		return fmt.Errorf("validate TRUST_CONFIG.TrustBaseURL: %w", err)
 	}
 
-	metadataURL := oauthAuthorizationServerMetadataURL(trustBaseURL)
+	if validatedEndpoint == "" {
+		return nil
+	}
+
+	metadataURL, err := oauthAuthorizationServerMetadataURLForMcpEndpoint(validatedEndpoint)
+	if err != nil {
+		return fmt.Errorf("validate MCP_ENDPOINT: %w", err)
+	}
 	if err := probeAuthorizationServerMetadata(ctx, metadataURL); err != nil {
-		return fmt.Errorf("validate TRUST_CONFIG.TrustBaseURL reachability via %s: %w", metadataURL, err)
+		return fmt.Errorf("validate MCP_ENDPOINT reachability via %s: %w", metadataURL, err)
 	}
 
 	return nil
@@ -113,6 +123,20 @@ func validatedPublicBaseURL(raw string) (*url.URL, error) {
 func oauthAuthorizationServerMetadataURL(baseURL string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	return baseURL + oauthAuthorizationServerMetadataPath
+}
+
+func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (string, error) {
+	u, err := validatedMcpEndpoint(mcpEndpoint)
+	if err != nil {
+		return "", err
+	}
+
+	base, err := url.Parse(u)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	base.Path = strings.TrimSuffix(strings.TrimRight(base.Path, "/"), "/mcp")
+	return oauthAuthorizationServerMetadataURL(base.String()), nil
 }
 
 func defaultProbeAuthorizationServerMetadata(ctx context.Context, metadataURL string) error {

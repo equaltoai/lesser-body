@@ -98,8 +98,9 @@ Variables:
 - `LESSER_TABLE_NAME` (string, required for `dynamo`)
   - The Lesser stage DynamoDB table name.
   - Also used to resolve managed trust configuration (`TRUST_CONFIG`) for soul API base URL and instance-key secret ARN.
-  - The managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` must resolve to a reachable Lesser OAuth metadata surface at
-    `/.well-known/oauth-authorization-server` for protected-resource discovery to start.
+  - The managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is still required for the protected-resource issuer value.
+  - Startup reachability checks for `/.well-known/oauth-authorization-server` run against the Lesser API host derived
+    from `MCP_ENDPOINT`, not against `TrustBaseURL`.
 
 ### Misc
 
