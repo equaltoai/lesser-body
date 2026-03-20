@@ -103,6 +103,13 @@ fields aligned:
 - `details.refreshRequired`
 - `details.reauthorize`
 
+For outbound communication tools, Lesser-origin auth failures also preserve the Lesser contract fields at the top level
+of the MCP error payload:
+
+- `error`
+- `error_description`
+- `scope` on `insufficient_scope`
+
 Upstream Lesser payload normalization still belongs to `equaltoai/lesser#249`; lesser-body translates those failures
 into the MCP-visible contract above.
 

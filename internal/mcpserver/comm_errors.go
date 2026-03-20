@@ -10,6 +10,38 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
+type commOAuthErrorPayload struct {
+	Error            string
+	ErrorDescription string
+	Scope            string
+	Raw              map[string]any
+}
+
+func toolErrorResultPayload(payload map[string]any) (*mcpruntime.ToolResult, error) {
+	if payload == nil {
+		payload = map[string]any{
+			"code":    "unknown_error",
+			"message": "error",
+		}
+	}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tool error: %w", err)
+	}
+
+	return &mcpruntime.ToolResult{
+		Content: []mcpruntime.ContentBlock{{
+			Type: "text",
+			Text: string(b),
+		}},
+		IsError: true,
+		StructuredContent: map[string]any{
+			"error": payload,
+		},
+	}, nil
+}
+
 func toolErrorResult(code string, message string, status int, details map[string]any) (*mcpruntime.ToolResult, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -31,21 +63,7 @@ func toolErrorResult(code string, message string, status int, details map[string
 		payload["details"] = details
 	}
 
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tool error: %w", err)
-	}
-
-	return &mcpruntime.ToolResult{
-		Content: []mcpruntime.ContentBlock{{
-			Type: "text",
-			Text: string(b),
-		}},
-		IsError: true,
-		StructuredContent: map[string]any{
-			"error": payload,
-		},
-	}, nil
+	return toolErrorResultPayload(payload)
 }
 
 func commToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
@@ -53,11 +71,17 @@ func commToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 		return nil, nil
 	}
 
+	var apiErr *soulapi.APIError
+	if errors.As(err, &apiErr) {
+		if res, handled, resErr := commToolResultFromOAuthContract(apiErr); handled {
+			return res, resErr
+		}
+	}
+
 	if failure := mcpAuthFailureFromError(err); failure != nil {
 		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
 	}
 
-	var apiErr *soulapi.APIError
 	if errors.As(err, &apiErr) {
 		code := commErrorCodeForStatus(apiErr.Status)
 		message, parsed := commExtractAPIErrorMessage(apiErr.Body)
@@ -74,6 +98,101 @@ func commToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	}
 
 	return toolErrorResult("upstream_error", err.Error(), 0, nil)
+}
+
+func commToolResultFromOAuthContract(apiErr *soulapi.APIError) (*mcpruntime.ToolResult, bool, error) {
+	oauthPayload := parseCommOAuthErrorPayload(apiErr.Body)
+	if oauthPayload == nil {
+		return nil, false, nil
+	}
+
+	action := commClientActionForOAuthError(apiErr.Status, oauthPayload.Error)
+	details := map[string]any{
+		"source":          "soul_api",
+		"authAction":      action,
+		"refreshRequired": action == "refresh",
+		"reauthorize":     action == "reauth",
+		"upstreamCode":    apiErr.Status,
+		"apiError":        oauthPayload.Raw,
+	}
+	if retryAfter := apiErr.RetryAfterSeconds(); retryAfter > 0 {
+		details["retryAfterSeconds"] = retryAfter
+	}
+
+	message := oauthPayload.ErrorDescription
+	if message == "" {
+		message = oauthPayload.Error
+	}
+
+	payload := map[string]any{
+		"code":    oauthPayload.Error,
+		"message": message,
+		"status":  apiErr.Status,
+		"error":   oauthPayload.Error,
+		"details": details,
+	}
+	if oauthPayload.ErrorDescription != "" {
+		payload["error_description"] = oauthPayload.ErrorDescription
+	}
+	if oauthPayload.Scope != "" {
+		payload["scope"] = oauthPayload.Scope
+	}
+
+	res, err := toolErrorResultPayload(payload)
+	return res, true, err
+}
+
+func parseCommOAuthErrorPayload(body []byte) *commOAuthErrorPayload {
+	raw := strings.TrimSpace(string(body))
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return nil
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil
+	}
+
+	errorCode := extractString(parsed, "error")
+	if errorCode == "" {
+		return nil
+	}
+
+	return &commOAuthErrorPayload{
+		Error:            errorCode,
+		ErrorDescription: extractString(parsed, "error_description"),
+		Scope:            extractString(parsed, "scope"),
+		Raw:              parsed,
+	}
+}
+
+func commClientActionForOAuthError(status int, errorCode string) string {
+	switch {
+	case status == 401 && errorCode == "invalid_token":
+		return "refresh"
+	case status == 403 && errorCode == "insufficient_scope":
+		return "fail"
+	case status == 400 && errorCode == "invalid_grant":
+		return "reauth"
+	case status == 401 && errorCode == "invalid_client":
+		return "reconfigure"
+	case status == 400 && (errorCode == "unauthorized_client" || errorCode == "invalid_scope"):
+		return "reconfigure"
+	case status == 429 && errorCode == "slow_down":
+		return "backoff"
+	case status >= 500 && errorCode == "server_error":
+		return "retry"
+	case status == 401:
+		return "refresh"
+	case status == 403:
+		return "fail"
+	case status == 429:
+		return "backoff"
+	case status >= 500:
+		return "retry"
+	default:
+		return "fail"
+	}
 }
 
 func commErrorCodeForStatus(status int) string {
