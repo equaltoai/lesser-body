@@ -125,7 +125,7 @@ func oauthAuthorizationServerMetadataURL(baseURL string) string {
 	return baseURL + oauthAuthorizationServerMetadataPath
 }
 
-func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (string, error) {
+func authorizationServerURLForMcpEndpoint(mcpEndpoint string) (string, error) {
 	u, err := validatedMcpEndpoint(mcpEndpoint)
 	if err != nil {
 		return "", err
@@ -136,7 +136,15 @@ func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (stri
 		return "", fmt.Errorf("parse url: %w", err)
 	}
 	base.Path = strings.TrimSuffix(strings.TrimRight(base.Path, "/"), "/mcp")
-	return oauthAuthorizationServerMetadataURL(base.String()), nil
+	return base.String(), nil
+}
+
+func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (string, error) {
+	baseURL, err := authorizationServerURLForMcpEndpoint(mcpEndpoint)
+	if err != nil {
+		return "", err
+	}
+	return oauthAuthorizationServerMetadataURL(baseURL), nil
 }
 
 func defaultProbeAuthorizationServerMetadata(ctx context.Context, metadataURL string) error {
