@@ -35,6 +35,16 @@ Canonical bearer token:
 
 - Lesser OAuth access token (HS256 JWT validated via `JWT_SECRET` / `JWT_SECRET_ARN`)
 
+Public OAuth discovery advertises these requestable scopes:
+
+- `read`
+- `write`
+- `follow`
+- `push`
+
+The `admin` scope remains internal/operator-only and is not advertised in `/.well-known/mcp.json` or
+`/.well-known/oauth-protected-resource`.
+
 Deprecated compatibility path:
 
 - Managed instance key (validated via `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN`) for transitional
@@ -50,6 +60,7 @@ Protected-resource discovery in `lesser-body` only publishes:
 
 - the MCP `resource` URL
 - the Lesser OAuth `authorization_servers` URL
+- the canonical public OAuth scope catalog: `read`, `write`, `follow`, `push`
 
 Client registration remains a Lesser concern. Today the Lesser API exposes public app registration at:
 
