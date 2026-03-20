@@ -105,13 +105,14 @@ Common causes:
 - `MCP_ENDPOINT` is malformed or does not end in `/mcp`.
 - Clients are reaching a different public host than the one configured in `MCP_ENDPOINT`.
 - Managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is empty or points at the wrong Lesser environment.
-- Lesser OAuth metadata is not reachable at `/.well-known/oauth-authorization-server`.
+- Lesser OAuth metadata is not reachable on the Lesser API host derived from `MCP_ENDPOINT`.
 
 Fix:
 
 - Ensure `MCP_ENDPOINT` exactly matches the public URL clients use, for example `https://api.<stageDomain>/mcp`.
 - Verify `curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server"` returns `200`.
-- In managed deployments, confirm `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` contains the correct Lesser trust base URL.
+- In managed deployments, confirm `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` contains the correct Lesser trust base URL for
+  the protected-resource issuer field.
 - If a browser client is involved, ensure `MCP_ALLOWED_ORIGINS` includes the browser origin (for example `https://claude.ai`).
 
 ## Identity / communication tools fail (`not_found`, `not_configured`, or soul API 404)

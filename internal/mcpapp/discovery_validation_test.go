@@ -22,7 +22,7 @@ func TestNew_ValidatesConfiguredMCPEndpoint(t *testing.T) {
 	}
 }
 
-func TestNew_ValidatesTrustBaseURLReachability(t *testing.T) {
+func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
 
@@ -38,7 +38,9 @@ func TestNew_ValidatesTrustBaseURLReachability(t *testing.T) {
 	})
 
 	previousProbe := probeAuthorizationServerMetadata
-	probeAuthorizationServerMetadata = func(context.Context, string) error {
+	probedURL := ""
+	probeAuthorizationServerMetadata = func(_ context.Context, metadataURL string) error {
+		probedURL = metadataURL
 		return errors.New("dial tcp: i/o timeout")
 	}
 	t.Cleanup(func() {
@@ -46,8 +48,43 @@ func TestNew_ValidatesTrustBaseURLReachability(t *testing.T) {
 	})
 
 	_, err := New("test", "dev")
-	if err == nil || !strings.Contains(err.Error(), "TrustBaseURL") {
-		t.Fatalf("expected TrustBaseURL validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "MCP_ENDPOINT") {
+		t.Fatalf("expected MCP_ENDPOINT validation error, got %v", err)
+	}
+	if want := "https://api.example.com/.well-known/oauth-authorization-server"; probedURL != want {
+		t.Fatalf("unexpected metadata probe url: got %q want %q", probedURL, want)
+	}
+}
+
+func TestNew_SkipsAuthorizationServerMetadataProbeWithoutMCPEndpoint(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+
+	previousLoader := loadEffectiveTrustConfig
+	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	}
+	t.Cleanup(func() {
+		loadEffectiveTrustConfig = previousLoader
+	})
+
+	previousProbe := probeAuthorizationServerMetadata
+	probeCalled := false
+	probeAuthorizationServerMetadata = func(context.Context, string) error {
+		probeCalled = true
+		return nil
+	}
+	t.Cleanup(func() {
+		probeAuthorizationServerMetadata = previousProbe
+	})
+
+	if _, err := New("test", "dev"); err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	if probeCalled {
+		t.Fatalf("expected metadata probe to be skipped without MCP_ENDPOINT")
 	}
 }
 
