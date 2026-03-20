@@ -64,7 +64,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://lesser.example" {
 		t.Fatalf("unexpected authorization_servers: %#v", out.AuthorizationServers)
 	}
-	if want := []string{"read", "write", "follow"}; !reflect.DeepEqual(out.ScopesSupported, want) {
+	if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
 		t.Fatalf("unexpected scopes_supported: got %#v want %#v", out.ScopesSupported, want)
 	}
 	if len(out.BearerMethodsSupported) != 1 || out.BearerMethodsSupported[0] != "header" {

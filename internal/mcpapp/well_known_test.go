@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,7 +37,11 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 		Endpoint     string           `json:"endpoint"`
 		Capabilities map[string]bool  `json:"capabilities"`
 		Tools        []map[string]any `json:"tools"`
-		Auth         map[string]any   `json:"auth"`
+		Auth         struct {
+			Type   string   `json:"type"`
+			Scopes []string `json:"scopes"`
+			Notes  string   `json:"notes"`
+		} `json:"auth"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -47,15 +52,17 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	if !out.Capabilities["tools"] {
 		t.Fatalf("expected capabilities.tools=true")
 	}
-	if _, ok := out.Auth["type"]; !ok {
-		t.Fatalf("expected auth hints")
+	if out.Auth.Type != "bearer" {
+		t.Fatalf("expected bearer auth hints, got %q", out.Auth.Type)
 	}
-	notes, _ := out.Auth["notes"].(string)
-	if !strings.Contains(notes, "OAuth access token") {
-		t.Fatalf("expected OAuth-first auth note, got %q", notes)
+	if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.Auth.Scopes, want) {
+		t.Fatalf("unexpected auth scopes: got %#v want %#v", out.Auth.Scopes, want)
 	}
-	if strings.Contains(strings.ToLower(notes), "or managed instance key") {
-		t.Fatalf("discovery should not recommend managed instance key, got %q", notes)
+	if !strings.Contains(out.Auth.Notes, "OAuth access token") {
+		t.Fatalf("expected OAuth-first auth note, got %q", out.Auth.Notes)
+	}
+	if strings.Contains(strings.ToLower(out.Auth.Notes), "or managed instance key") {
+		t.Fatalf("discovery should not recommend managed instance key, got %q", out.Auth.Notes)
 	}
 
 	foundEcho := false

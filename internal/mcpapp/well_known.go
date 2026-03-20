@@ -29,6 +29,8 @@ type mcpWellKnownToolHint struct {
 
 var loadEffectiveTrustConfig = trustconfig.Default
 
+var publicOAuthDiscoveryScopes = []string{"read", "write", "follow", "push"}
+
 func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := validatedMcpEndpointForRequest(ctx)
@@ -47,7 +49,7 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 			},
 			Auth: map[string]any{
 				"type":   "bearer",
-				"scopes": []string{"read", "write", "admin"},
+				"scopes": append([]string(nil), publicOAuthDiscoveryScopes...),
 				"notes":  "Use a Lesser OAuth access token minted via the connector flow. Managed instance key and hardcoded bearer-token flows are deprecated inbound compatibility paths.",
 			},
 		}
@@ -101,7 +103,7 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 		if err != nil {
 			return nil, fmt.Errorf("build protected resource metadata: %w", err)
 		}
-		md.ScopesSupported = []string{"read", "write", "follow"}
+		md.ScopesSupported = append([]string(nil), publicOAuthDiscoveryScopes...)
 		md.BearerMethodsSupported = []string{"header"}
 
 		body, err := md.MarshalJSONBytes()
