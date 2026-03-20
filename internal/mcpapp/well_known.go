@@ -75,7 +75,9 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 	}
 }
 
-func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
+func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer string) apptheory.Handler {
+	probedAuthorizationServerIssuer = strings.TrimSpace(probedAuthorizationServerIssuer)
+
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := validatedMcpEndpointForRequest(ctx)
 		if err != nil {
@@ -85,9 +87,12 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
 		}
 
-		authorizationServerURL, err := authorizationServerURLForMcpEndpoint(endpoint)
-		if err != nil {
-			return invalidDiscoveryConfigResponse(fmt.Errorf("derive authorization server URL from MCP endpoint: %w", err)), nil
+		authorizationServerURL := probedAuthorizationServerIssuer
+		if authorizationServerURL == "" {
+			authorizationServerURL, err = authorizationServerURLForMcpEndpoint(endpoint)
+			if err != nil {
+				return invalidDiscoveryConfigResponse(fmt.Errorf("derive authorization server URL from MCP endpoint: %w", err)), nil
+			}
 		}
 
 		md, err := oauthruntime.NewProtectedResourceMetadata(endpoint, []string{authorizationServerURL})

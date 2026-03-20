@@ -24,7 +24,9 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 		loadEffectiveTrustConfig = previous
 	})
 	previousProbe := probeAuthorizationServerMetadata
-	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		return "https://dev.example.com", nil
+	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})
@@ -61,7 +63,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	if out.Resource != "https://api.example.com/mcp" {
 		t.Fatalf("unexpected resource: %q", out.Resource)
 	}
-	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://api.example.com" {
+	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://dev.example.com" {
 		t.Fatalf("unexpected authorization_servers: %#v", out.AuthorizationServers)
 	}
 	if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
@@ -84,7 +86,9 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 		loadEffectiveTrustConfig = previous
 	})
 	previousProbe := probeAuthorizationServerMetadata
-	probeAuthorizationServerMetadata = func(context.Context, string) error { return nil }
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		return "https://dev.example.com", nil
+	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})
