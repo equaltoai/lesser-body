@@ -1,7 +1,6 @@
 package mcpapp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -86,20 +85,12 @@ func WellKnownOAuthProtectedResourceHandler() apptheory.Handler {
 			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
 		}
 
-		cfg, err := loadEffectiveTrustConfig(trustConfigContext(ctx))
+		authorizationServerURL, err := authorizationServerURLForMcpEndpoint(endpoint)
 		if err != nil {
-			return nil, fmt.Errorf("load trust config: %w", err)
+			return invalidDiscoveryConfigResponse(fmt.Errorf("derive authorization server URL from MCP endpoint: %w", err)), nil
 		}
 
-		issuer := ""
-		if cfg != nil {
-			issuer = strings.TrimSpace(cfg.TrustBaseURL)
-		}
-		if issuer == "" {
-			return invalidDiscoveryConfigResponse(fmt.Errorf("TRUST_CONFIG.TrustBaseURL is required for OAuth discovery")), nil
-		}
-
-		md, err := oauthruntime.NewProtectedResourceMetadata(endpoint, []string{issuer})
+		md, err := oauthruntime.NewProtectedResourceMetadata(endpoint, []string{authorizationServerURL})
 		if err != nil {
 			return nil, fmt.Errorf("build protected resource metadata: %w", err)
 		}
@@ -143,13 +134,6 @@ func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
 		return ""
 	}
 	return url
-}
-
-func trustConfigContext(ctx *apptheory.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx.Context()
 }
 
 func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {

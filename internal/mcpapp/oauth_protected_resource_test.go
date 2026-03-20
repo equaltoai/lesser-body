@@ -61,7 +61,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	if out.Resource != "https://api.example.com/mcp" {
 		t.Fatalf("unexpected resource: %q", out.Resource)
 	}
-	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://lesser.example" {
+	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://api.example.com" {
 		t.Fatalf("unexpected authorization_servers: %#v", out.AuthorizationServers)
 	}
 	if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
@@ -110,12 +110,16 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	}
 
 	var out struct {
-		Resource string `json:"resource"`
+		Resource             string   `json:"resource"`
+		AuthorizationServers []string `json:"authorization_servers"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.Resource != "https://tenant.example.com/mcp" {
 		t.Fatalf("unexpected inferred resource: %q", out.Resource)
+	}
+	if want := []string{"https://tenant.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
+		t.Fatalf("unexpected inferred authorization_servers: got %#v want %#v", out.AuthorizationServers, want)
 	}
 }

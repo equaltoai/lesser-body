@@ -112,7 +112,7 @@ Fix:
 - Ensure `MCP_ENDPOINT` exactly matches the public URL clients use, for example `https://api.<stageDomain>/mcp`.
 - Verify `curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server"` returns `200`.
 - In managed deployments, confirm `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` contains the correct Lesser trust base URL for
-  the protected-resource issuer field.
+  soul API fallback routing and instance-key secret resolution.
 - If a browser client is involved, ensure `MCP_ALLOWED_ORIGINS` includes the browser origin (for example `https://claude.ai`).
 
 ## Identity / communication tools fail (`not_found`, `not_configured`, or soul API 404)
