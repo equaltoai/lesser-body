@@ -10,7 +10,7 @@ These legacy inbound patterns are deprecated:
 
 - hardcoded bearer tokens in `.mcp.json` or equivalent client config
 - Simulacrum runtime credentials issued via `delegateToAgent()`
-- managed instance key as a direct `/mcp` bearer token
+- managed instance key as a direct `/mcp/{actor}` bearer token
 
 This guide shows how to migrate without removing the outbound `LESSER_HOST_INSTANCE_KEY` that communication tools still
 need for server-to-server calls into lesser-host.
@@ -21,7 +21,7 @@ Confirm the public discovery surfaces are healthy:
 
 ```bash
 curl -sS "https://api.<stageDomain>/.well-known/mcp.json" | jq .
-curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource" | jq .
+curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/Arch" | jq .
 curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server" | jq .
 ```
 
@@ -30,7 +30,7 @@ If browser MCP clients are involved, verify CORS too:
 ```bash
 curl -sSI \
   -H "Origin: https://claude.ai" \
-  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/Arch"
 ```
 
 ## Step 1: register an OAuth connector in Lesser
@@ -62,17 +62,29 @@ Store the returned `client_id` and `client_secret`. Lesser only returns the secr
 For Lesser-backed MCP, the auth discovery URL is:
 
 ```text
-https://api.<stageDomain>/.well-known/oauth-protected-resource
+https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/<actor>
 ```
 
-The MCP transport endpoint remains:
+The MCP transport endpoint becomes:
 
 ```text
-https://api.<stageDomain>/mcp
+https://api.<stageDomain>/mcp/<actor>
 ```
 
 Clients should discover auth from the protected-resource metadata and then complete the OAuth redirect flow against the
 authorization server it declares.
+
+Agent URL map:
+
+| Actor | URL |
+|------|-----|
+| `Arch` | `https://api.dev.simulacrum.greater.website/mcp/Arch` |
+| `Medic` | `https://api.dev.simulacrum.greater.website/mcp/Medic` |
+| `Scout` | `https://api.dev.simulacrum.greater.website/mcp/Scout` |
+| `Pilot` | `https://api.dev.simulacrum.greater.website/mcp/Pilot` |
+| `Ops` | `https://api.dev.simulacrum.greater.website/mcp/Ops` |
+| `Counsel` | `https://api.dev.simulacrum.greater.website/mcp/Counsel` |
+| `Advocate` | `https://api.dev.simulacrum.greater.website/mcp/Advocate` |
 
 ## Step 3: remove hardcoded bearer tokens from client config
 
@@ -81,9 +93,9 @@ Legacy static-token shape:
 ```json
 {
   "mcpServers": {
-    "lesser": {
+    "simulacrum-arch": {
       "type": "http",
-      "url": "https://api.<stageDomain>/mcp",
+      "url": "https://api.<stageDomain>/mcp/Arch",
       "headers": {
         "Authorization": "Bearer <legacy-runtime-token>"
       }
@@ -97,16 +109,25 @@ OAuth-first target shape:
 ```json
 {
   "mcpServers": {
-    "lesser": {
+    "simulacrum-arch": {
       "type": "http",
-      "url": "https://api.<stageDomain>/mcp"
+      "url": "https://api.<stageDomain>/mcp/Arch",
+      "oauth": {
+        "clientId": "<registered-client-id>",
+        "callbackPort": 8787
+      }
     }
   }
 }
 ```
 
-The exact config envelope varies by MCP client, but the migration rule is the same: keep the MCP transport URL and
-remove the static bearer header so the client can run the OAuth flow instead.
+The exact config envelope varies by MCP client, but the migration rule is the same:
+
+1. move from the shared `/mcp` URL to the actor-specific `/mcp/{actor}` URL
+2. remove the static bearer header
+3. let the client run the OAuth flow instead
+
+Arch-specific note: fix the server key from `simulacrum-medic` to `simulacrum-arch`.
 
 ## Step 4: keep outbound service auth intact
 

@@ -7,17 +7,24 @@
 ## Endpoints
 
 - Public discovery: `GET /.well-known/mcp.json`
-- OAuth protected-resource metadata: `GET /.well-known/oauth-protected-resource`
-- MCP (authenticated): `POST /mcp`
-  - `GET /mcp` and `DELETE /mcp` are also supported for MCP Streamable HTTP compatibility.
+- OAuth protected-resource metadata: `GET /.well-known/oauth-protected-resource/mcp/{actor}`
+- MCP (authenticated): `POST /mcp/{actor}`
+  - `GET /mcp/{actor}` and `DELETE /mcp/{actor}` are also supported for MCP Streamable HTTP compatibility.
+- Shared compatibility endpoint: `GET|POST|DELETE /mcp`
+  - Returns HTTP `410 Gone` with migration guidance. It no longer serves MCP traffic.
 
 Canonical base URL for a Lesser stage:
 
 - `https://api.<stageDomain>`
 
-So the MCP endpoint is:
+So the canonical MCP endpoint template is:
 
-- `https://api.<stageDomain>/mcp`
+- `https://api.<stageDomain>/mcp/{actor}`
+
+For example:
+
+- `https://api.<stageDomain>/mcp/Arch`
+- `https://api.<stageDomain>/mcp/Medic`
 
 Protected-resource discovery depends on Lesser OAuth metadata being reachable at:
 
@@ -25,7 +32,7 @@ Protected-resource discovery depends on Lesser OAuth metadata being reachable at
 
 ## Authentication
 
-All `/mcp` requests require:
+All `/mcp/{actor}` requests require:
 
 ```text
 Authorization: Bearer <token>
@@ -43,7 +50,7 @@ Public OAuth discovery advertises these requestable scopes:
 - `push`
 
 The `admin` scope remains internal/operator-only and is not advertised in `/.well-known/mcp.json` or
-`/.well-known/oauth-protected-resource`.
+`/.well-known/oauth-protected-resource/mcp/{actor}`.
 
 Deprecated compatibility path:
 
@@ -141,8 +148,10 @@ AppTheory’s MCP server implements:
 ### Initialize
 
 ```bash
+ACTOR="Arch"
+
 curl -sS -i \
-  -X POST "https://api.<stageDomain>/mcp" \
+  -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
   -H "authorization: Bearer ${TOKEN}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
@@ -154,7 +163,7 @@ Copy the `mcp-session-id` response header for subsequent calls.
 
 ```bash
 curl -sS \
-  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/${ACTOR}"
 ```
 
 Expected fields:
@@ -168,7 +177,7 @@ Expected fields:
 
 ```bash
 curl -sS \
-  -X POST "https://api.<stageDomain>/mcp" \
+  -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
   -H "authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
@@ -179,7 +188,7 @@ curl -sS \
 
 ```bash
 curl -sS \
-  -X POST "https://api.<stageDomain>/mcp" \
+  -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
   -H "authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
@@ -193,6 +202,20 @@ curl -sS \
     }
   }'
 ```
+
+## Agent URL map
+
+Use a distinct MCP URL per agent so OAuth tokens stay isolated per client cache key:
+
+| Actor | MCP URL |
+|------|---------|
+| `Arch` | `https://api.dev.simulacrum.greater.website/mcp/Arch` |
+| `Medic` | `https://api.dev.simulacrum.greater.website/mcp/Medic` |
+| `Scout` | `https://api.dev.simulacrum.greater.website/mcp/Scout` |
+| `Pilot` | `https://api.dev.simulacrum.greater.website/mcp/Pilot` |
+| `Ops` | `https://api.dev.simulacrum.greater.website/mcp/Ops` |
+| `Counsel` | `https://api.dev.simulacrum.greater.website/mcp/Counsel` |
+| `Advocate` | `https://api.dev.simulacrum.greater.website/mcp/Advocate` |
 
 ## Authorization scopes (tool calls)
 

@@ -60,7 +60,7 @@ Variables:
 ### Endpoints
 
 - `MCP_ENDPOINT` (string, optional but recommended)
-  - The public MCP endpoint URL clients should use (for example: `https://api.dev.example.com/mcp`).
+  - The public MCP endpoint template clients should use (for example: `https://api.dev.example.com/mcp/{actor}`).
   - Used by `GET /.well-known/mcp.json` and by the `agent://config` resource.
   - When set, discovery validates that inbound requests are arriving on the same public MCP URL instead of emitting
     mismatched `resource` metadata.
@@ -69,19 +69,19 @@ Variables:
   - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.
   - Example: `https://claude.ai,https://app.dev.example.com,https://api.dev.example.com`
 - `MCP_ALLOW_LEGACY_INSTANCE_KEY` (string, optional)
-  - Compatibility flag for inbound `/mcp` requests that authenticate with `LESSER_HOST_INSTANCE_KEY`.
+  - Compatibility flag for inbound `/mcp/{actor}` requests that authenticate with `LESSER_HOST_INSTANCE_KEY`.
   - Default: disabled.
   - This flag is temporary and should remain unset for OAuth-first deployments.
   - See `docs/oauth-migration.md` for the rollout sequence.
 - `LESSER_API_BASE_URL` (string, optional)
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
-  - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp`.
+  - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp/{actor}` (or `/mcp`).
 - `LESSER_SOUL_API_BASE_URL` (string, optional)
   - Base URL used by identity and communication tools when calling the soul API (for example: `https://lab.lesser.host`).
   - In managed deployments, if not set, lesser-body resolves it from the persisted Lesser `TRUST_CONFIG.baseURL` record
     in `LESSER_TABLE_NAME` and fails closed if that managed config is missing.
   - For local/manual runs, it falls back to `LESSER_HOST_URL`, then `LESSER_API_BASE_URL`, then `MCP_ENDPOINT` with
-    `/mcp` stripped.
+    `/mcp/{actor}` stripped.
 - `LESSER_HOST_URL` (string, optional)
   - Manual override for the lesser-host control-plane base URL.
   - Primarily useful for local/manual runs; managed deployments should prefer persisted `TRUST_CONFIG`.
@@ -128,9 +128,9 @@ Published by the Lesser shared/stage stacks:
 Published by this repo’s CDK stack:
 
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn`
-  - Imported by Lesser to wire `POST /mcp`, `GET /.well-known/mcp.json`, and
-    `GET /.well-known/oauth-protected-resource`.
+  - Imported by Lesser to wire `POST /mcp/{actor}`, `GET /.well-known/mcp.json`, and
+    `GET /.well-known/oauth-protected-resource/mcp/{actor}`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
-  - Convenience value intended to equal `https://api.<stageDomain>/mcp`.
+  - Convenience value intended to equal `https://api.<stageDomain>/mcp/{actor}`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name`
   - Session table name (if provisioned).

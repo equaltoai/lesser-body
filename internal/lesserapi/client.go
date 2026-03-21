@@ -151,9 +151,8 @@ func resolveBaseURL() (*url.URL, error) {
 		if err != nil {
 			return nil, err
 		}
-		u.Path = strings.TrimSuffix(u.Path, "/mcp")
-		if u.Path == "/mcp" {
-			u.Path = ""
+		if err := stripMcpPath(u); err != nil {
+			return nil, err
 		}
 		return u, nil
 	}
@@ -195,4 +194,30 @@ func joinPath(base string, suffix string) string {
 		return base
 	}
 	return base + "/" + suffix
+}
+
+func stripMcpPath(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("base url is nil")
+	}
+
+	path := strings.TrimRight(strings.TrimSpace(u.Path), "/")
+	if path == "" {
+		return fmt.Errorf("mcp endpoint path must include /mcp")
+	}
+
+	idx := strings.Index(path, "/mcp")
+	if idx < 0 {
+		return fmt.Errorf("mcp endpoint path must include /mcp")
+	}
+	rest := path[idx:]
+	if rest != "/mcp" && !strings.HasPrefix(rest, "/mcp/") {
+		return fmt.Errorf("mcp endpoint path must include /mcp as a path segment")
+	}
+
+	u.Path = path[:idx]
+	if u.Path == "/" {
+		u.Path = ""
+	}
+	return nil
 }

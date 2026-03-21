@@ -35,8 +35,8 @@ Local dev guide: `docs/development.md`
 ## Start here (MCP clients)
 
 - Discovery doc: `GET https://api.<stageDomain>/.well-known/mcp.json`
-- OAuth protected-resource doc: `GET https://api.<stageDomain>/.well-known/oauth-protected-resource`
-- MCP endpoint: `POST https://api.<stageDomain>/mcp`
+- OAuth protected-resource doc: `GET https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/<actor>`
+- MCP endpoint: `POST https://api.<stageDomain>/mcp/<actor>`
 
 Protocol + tool catalog: `docs/mcp.md`
 
