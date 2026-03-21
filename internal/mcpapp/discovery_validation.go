@@ -16,9 +16,15 @@ import (
 )
 
 const oauthAuthorizationServerMetadataPath = "/.well-known/oauth-authorization-server"
+const mcpActorPlaceholder = "{actor}"
 
 type authorizationServerMetadata struct {
 	Issuer string `json:"issuer"`
+}
+
+type mcpEndpointInfo struct {
+	BasePath string
+	Actor    string
 }
 
 var probeAuthorizationServerMetadata = defaultProbeAuthorizationServerMetadata
@@ -94,20 +100,25 @@ func validatedMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
 		return "", fmt.Errorf("validate MCP_ENDPOINT: %w", err)
 	}
 
+	resolvedConfigured, err := resolveConfiguredMcpEndpointForRequest(validatedConfigured, ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve configured MCP endpoint: %w", err)
+	}
+
 	inferred := inferMcpEndpointFromRequest(ctx)
 	if inferred == "" {
-		return validatedConfigured, nil
+		return resolvedConfigured, nil
 	}
 
 	validatedInferred, err := validatedMcpEndpoint(inferred)
 	if err != nil {
 		return "", fmt.Errorf("infer MCP endpoint from request: %w", err)
 	}
-	if validatedInferred != validatedConfigured {
-		return "", fmt.Errorf("configured MCP_ENDPOINT %q does not match request URL %q", validatedConfigured, validatedInferred)
+	if validatedInferred != resolvedConfigured {
+		return "", fmt.Errorf("configured MCP_ENDPOINT %q does not match request URL %q", resolvedConfigured, validatedInferred)
 	}
 
-	return validatedConfigured, nil
+	return resolvedConfigured, nil
 }
 
 func validatedMcpEndpoint(raw string) (string, error) {
@@ -115,10 +126,11 @@ func validatedMcpEndpoint(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/mcp") {
-		return "", fmt.Errorf("path must end with /mcp")
+	info, err := parseMcpEndpointPath(u.Path)
+	if err != nil {
+		return "", err
 	}
-	return u.String(), nil
+	return canonicalAbsoluteURL(u, buildMcpEndpointPath(info)), nil
 }
 
 func validatedPublicBaseURL(raw string) (*url.URL, error) {
@@ -143,17 +155,20 @@ func oauthAuthorizationServerMetadataURL(baseURL string) string {
 }
 
 func authorizationServerURLForMcpEndpoint(mcpEndpoint string) (string, error) {
-	u, err := validatedMcpEndpoint(mcpEndpoint)
+	validatedEndpoint, err := validatedMcpEndpoint(mcpEndpoint)
 	if err != nil {
 		return "", err
 	}
 
-	base, err := url.Parse(u)
+	base, err := url.Parse(validatedEndpoint)
 	if err != nil {
 		return "", fmt.Errorf("parse url: %w", err)
 	}
-	base.Path = strings.TrimSuffix(strings.TrimRight(base.Path, "/"), "/mcp")
-	return base.String(), nil
+	info, err := parseMcpEndpointPath(base.Path)
+	if err != nil {
+		return "", err
+	}
+	return canonicalAbsoluteURL(base, info.BasePath), nil
 }
 
 func oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint string) (string, error) {
@@ -209,4 +224,130 @@ func setAuthorizationServerIssuer(issuer string) {
 	authorizationServerIssuerCache.mu.Lock()
 	defer authorizationServerIssuerCache.mu.Unlock()
 	authorizationServerIssuerCache.issuer = strings.TrimSpace(issuer)
+}
+
+func resolveConfiguredMcpEndpointForRequest(configured string, ctx *apptheory.Context) (string, error) {
+	info, err := parsedMcpEndpoint(configured)
+	if err != nil {
+		return "", err
+	}
+	if info.Actor != mcpActorPlaceholder {
+		return configured, nil
+	}
+
+	actor := actorFromRequestContext(ctx)
+	if actor == "" {
+		return configured, nil
+	}
+
+	u, err := url.Parse(configured)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	info.Actor = actor
+	return canonicalAbsoluteURL(u, buildMcpEndpointPath(info)), nil
+}
+
+func parsedMcpEndpoint(raw string) (mcpEndpointInfo, error) {
+	u, err := validatedPublicBaseURL(raw)
+	if err != nil {
+		return mcpEndpointInfo{}, err
+	}
+	return parseMcpEndpointPath(u.Path)
+}
+
+func parseMcpEndpointPath(path string) (mcpEndpointInfo, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return mcpEndpointInfo{}, fmt.Errorf("path must include /mcp")
+	}
+	path = strings.TrimRight(path, "/")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	trimmed := strings.TrimPrefix(path, "/")
+	segments := strings.Split(trimmed, "/")
+	mcpIndex := -1
+	for i, segment := range segments {
+		if segment == "mcp" {
+			mcpIndex = i
+			break
+		}
+	}
+	if mcpIndex < 0 {
+		return mcpEndpointInfo{}, fmt.Errorf("path must include /mcp")
+	}
+	if len(segments) > mcpIndex+2 {
+		return mcpEndpointInfo{}, fmt.Errorf("path may only include one segment after /mcp")
+	}
+
+	basePath := ""
+	if mcpIndex > 0 {
+		basePath = "/" + strings.Join(segments[:mcpIndex], "/")
+	}
+	actor := ""
+	if len(segments) == mcpIndex+2 {
+		actor = strings.TrimSpace(segments[mcpIndex+1])
+		if actor == "" {
+			return mcpEndpointInfo{}, fmt.Errorf("actor segment after /mcp must be non-empty")
+		}
+	}
+
+	return mcpEndpointInfo{
+		BasePath: basePath,
+		Actor:    actor,
+	}, nil
+}
+
+func buildMcpEndpointPath(info mcpEndpointInfo) string {
+	path := strings.TrimRight(strings.TrimSpace(info.BasePath), "/")
+	if path == "" {
+		path = "/mcp"
+	} else {
+		path += "/mcp"
+	}
+	if actor := strings.TrimSpace(info.Actor); actor != "" {
+		path += "/" + actor
+	}
+	return path
+}
+
+func canonicalAbsoluteURL(u *url.URL, path string) string {
+	if u == nil {
+		return ""
+	}
+
+	scheme := strings.TrimSpace(u.Scheme)
+	host := strings.TrimSpace(u.Host)
+	if scheme == "" || host == "" {
+		return ""
+	}
+
+	if path != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if path == "/" {
+		path = ""
+	}
+
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+}
+
+func actorFromRequestContext(ctx *apptheory.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if actor := strings.TrimSpace(ctx.Params["actor"]); actor != "" {
+		return actor
+	}
+	path := mcpEndpointPathFromRequest(ctx.Request.Path)
+	if !strings.HasPrefix(path, "/mcp/") {
+		return ""
+	}
+	actor := strings.TrimSpace(strings.TrimPrefix(path, "/mcp/"))
+	if actor == "" || strings.Contains(actor, "/") {
+		return ""
+	}
+	return actor
 }

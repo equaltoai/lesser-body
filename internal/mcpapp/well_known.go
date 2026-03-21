@@ -146,6 +146,12 @@ func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {
 		return ""
 	}
 
+	requestPath := strings.TrimSpace(ctx.Request.Path)
+	mcpPath := mcpEndpointPathFromRequest(requestPath)
+	if mcpPath == "" {
+		return ""
+	}
+
 	host := firstHeaderValue(ctx.Request.Headers, "x-forwarded-host")
 	if host == "" {
 		host = firstHeaderValue(ctx.Request.Headers, "host")
@@ -163,7 +169,33 @@ func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {
 		proto = "https"
 	}
 
-	return fmt.Sprintf("%s://%s/mcp", proto, strings.TrimSpace(host))
+	return fmt.Sprintf("%s://%s%s", proto, strings.TrimSpace(host), mcpPath)
+}
+
+func mcpEndpointPathFromRequest(requestPath string) string {
+	requestPath = strings.TrimSpace(requestPath)
+	if requestPath == "" {
+		return ""
+	}
+
+	requestPath = strings.TrimRight(requestPath, "/")
+	switch {
+	case requestPath == "/mcp":
+		return requestPath
+	case strings.HasPrefix(requestPath, "/mcp/"):
+		if strings.Contains(strings.TrimPrefix(requestPath, "/mcp/"), "/") {
+			return ""
+		}
+		return requestPath
+	case strings.HasPrefix(requestPath, "/.well-known/oauth-protected-resource/mcp/"):
+		actor := strings.TrimPrefix(requestPath, "/.well-known/oauth-protected-resource/mcp/")
+		if actor == "" || strings.Contains(actor, "/") {
+			return ""
+		}
+		return "/mcp/" + actor
+	default:
+		return ""
+	}
 }
 
 func invalidDiscoveryConfigResponse(err error) *apptheory.Response {

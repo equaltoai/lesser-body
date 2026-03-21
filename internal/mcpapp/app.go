@@ -26,9 +26,12 @@ func New(name, version string) (*apptheory.App, error) {
 	)
 
 	app.Get("/.well-known/mcp.json", WithBrowserCORS(WellKnownMcpHandler(srv, name, version)))
-	app.Get("/.well-known/oauth-protected-resource", WithBrowserCORS(WellKnownOAuthProtectedResourceHandler(cachedAuthorizationServerIssuer())))
+	app.Get("/.well-known/oauth-protected-resource/mcp/{actor}", WithBrowserCORS(WellKnownOAuthProtectedResourceHandler(cachedAuthorizationServerIssuer())))
 
 	handler := WithBrowserCORS(WithClientCompatibilityHeaders(WithMCPAuthorization(WithAudit(WithToolContext(srv.Handler()), logger))))
+	app.Post("/mcp/{actor}", handler)
+	app.Get("/mcp/{actor}", handler)
+	app.Delete("/mcp/{actor}", handler)
 	app.Post("/mcp", handler)
 	app.Get("/mcp", handler)
 	app.Delete("/mcp", handler)
