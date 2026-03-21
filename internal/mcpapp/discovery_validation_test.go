@@ -22,6 +22,16 @@ func TestNew_ValidatesConfiguredMCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidatedMcpEndpoint_AcceptsActorTemplate(t *testing.T) {
+	got, err := validatedMcpEndpoint("https://api.example.com/mcp/{actor}")
+	if err != nil {
+		t.Fatalf("validatedMcpEndpoint: %v", err)
+	}
+	if got != "https://api.example.com/mcp/{actor}" {
+		t.Fatalf("unexpected validated endpoint: %q", got)
+	}
+}
+
 func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
@@ -53,6 +63,27 @@ func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *
 	}
 	if want := "https://api.example.com/.well-known/oauth-authorization-server"; probedURL != want {
 		t.Fatalf("unexpected metadata probe url: got %q want %q", probedURL, want)
+	}
+}
+
+func TestValidatedMcpEndpointForRequest_ResolvesActorTemplate(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+
+	got, err := validatedMcpEndpointForRequest(&apptheory.Context{
+		Params: map[string]string{"actor": "Arch"},
+		Request: apptheory.Request{
+			Path: "/mcp/Arch",
+			Headers: map[string][]string{
+				"x-forwarded-proto": {"https"},
+				"x-forwarded-host":  {"api.example.com"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validatedMcpEndpointForRequest: %v", err)
+	}
+	if got != "https://api.example.com/mcp/Arch" {
+		t.Fatalf("unexpected resolved endpoint: %q", got)
 	}
 }
 

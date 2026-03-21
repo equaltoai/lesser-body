@@ -232,6 +232,32 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestMcpActorRoute_UnauthorizedAdvertisesActorMetadata(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/Arch", nil, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 401 {
+		t.Fatalf("expected 401, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+}
+
 func TestMcpAuth_AuthorizedJwt(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")

@@ -82,3 +82,32 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 		t.Fatalf("phone_call should not appear in well-known doc")
 	}
 }
+
+func TestM7_WellKnownMcpJSON_AdvertisesActorTemplateEndpoint(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/mcp.json",
+	})
+	if resp.Status != 200 {
+		t.Fatalf("unexpected status: %d (%s)", resp.Status, string(resp.Body))
+	}
+
+	var out struct {
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Endpoint != "https://api.example.com/mcp/{actor}" {
+		t.Fatalf("unexpected endpoint: %q", out.Endpoint)
+	}
+}
