@@ -128,6 +128,32 @@ func TestMcpActorRoute_InitializeAllowed(t *testing.T) {
 	}
 }
 
+func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/other-agent", map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 403 {
+		t.Fatalf("expected 403 for actor/token mismatch, got %d (%s)", resp.Status, string(resp.Body))
+	}
+}
+
 func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
