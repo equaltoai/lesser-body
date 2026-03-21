@@ -18,6 +18,7 @@ cd "$ROOT_DIR/cdk"
 ./node_modules/.bin/cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com >"$TMP_TEMPLATE"
 
 grep -q '/.well-known/mcp.json' "$TMP_TEMPLATE"
-grep -q '/.well-known/oauth-protected-resource' "$TMP_TEMPLATE"
+grep -q '/mcp/{actor}' "$TMP_TEMPLATE"
+grep -q '/.well-known/oauth-protected-resource/mcp/{actor}' "$TMP_TEMPLATE"
 
-echo "OK: synthesized template includes both public discovery routes"
+echo "OK: synthesized template includes per-actor MCP transport and discovery routes"

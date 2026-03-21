@@ -155,6 +155,32 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 
 	server := apptheorycdk.NewAppTheoryRemoteMcpServer(stack, jsii.String("McpServer"), mcpProps)
 
+	// The current Go jsii binding for v0.18.2 does not surface actorPath yet, so
+	// we register the per-actor bundle routes explicitly while still relying on
+	// the shared construct for the base API, sessions table, and root /mcp mount.
+	server.Router().AddLambdaIntegration(
+		jsii.String("/mcp/{actor}"),
+		&[]*string{jsii.String("POST")},
+		handler,
+		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{
+			Streaming: jsii.Bool(true),
+		},
+	)
+	server.Router().AddLambdaIntegration(
+		jsii.String("/mcp/{actor}"),
+		&[]*string{jsii.String("GET")},
+		handler,
+		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{
+			Streaming: jsii.Bool(true),
+		},
+	)
+	server.Router().AddLambdaIntegration(
+		jsii.String("/mcp/{actor}"),
+		&[]*string{jsii.String("DELETE")},
+		handler,
+		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
+	)
+
 	// Expose /.well-known/mcp.json from the same handler (non-streaming).
 	server.Router().AddLambdaIntegration(
 		jsii.String("/.well-known/mcp.json"),
@@ -163,7 +189,7 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
 	)
 	server.Router().AddLambdaIntegration(
-		jsii.String("/.well-known/oauth-protected-resource"),
+		jsii.String("/.well-known/oauth-protected-resource/mcp/{actor}"),
 		&[]*string{jsii.String("GET")},
 		handler,
 		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
@@ -247,7 +273,7 @@ func publicMcpEndpoint(stageDomain *string) *string {
 	return awscdk.Fn_Join(jsii.String(""), &[]*string{
 		jsii.String("https://api."),
 		stageDomain,
-		jsii.String("/mcp"),
+		jsii.String("/mcp/{actor}"),
 	})
 }
 
