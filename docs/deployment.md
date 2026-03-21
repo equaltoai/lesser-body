@@ -6,8 +6,8 @@
 API domain as:
 
 - `GET /.well-known/mcp.json` (public discovery)
-- `GET /.well-known/oauth-protected-resource` (public OAuth protected-resource metadata)
-- `POST /mcp` (authenticated MCP JSON-RPC)
+- `GET /.well-known/oauth-protected-resource/mcp/{actor}` (public OAuth protected-resource metadata)
+- `POST /mcp/{actor}` (authenticated MCP JSON-RPC)
 
 ## Prerequisites
 
@@ -27,8 +27,8 @@ This repo’s CDK stack deploys:
 
 Notes:
 
-- The **canonical** client-facing endpoint in the Lesser ecosystem is `https://api.<stageDomain>/mcp` (wired by the
-  Lesser stack when `soulEnabled=true`).
+- The **canonical** client-facing endpoint in the Lesser ecosystem is `https://api.<stageDomain>/mcp/{actor}` (wired by
+  the Lesser stack when `soulEnabled=true`).
 - The standalone execute-api endpoint exists as part of the current `lesser-body` stack implementation; treat it as an
   implementation detail unless you are intentionally using it for isolated testing.
 
@@ -48,13 +48,13 @@ And it publishes these (consumed by Lesser when `soulEnabled=true`):
 
 ## Deploy order (avoid the “missing SSM param” trap)
 
-Because Lesser wires `/mcp` by importing `mcp_lambda_arn` from SSM, and `lesser-body` requires Lesser’s SSM exports, the
+Because Lesser wires `/mcp/{actor}` by importing `mcp_lambda_arn` from SSM, and `lesser-body` requires Lesser’s SSM exports, the
 safe sequence is:
 
 1) Deploy Lesser with `soulEnabled=false` (so it does **not** try to import lesser-body yet)
 2) Deploy `lesser-body` (this repo)
-3) Re-deploy Lesser with `soulEnabled=true` (so `/mcp`, `/.well-known/mcp.json`, and
-   `/.well-known/oauth-protected-resource` route to the lesser-body Lambda)
+3) Re-deploy Lesser with `soulEnabled=true` (so `/mcp/{actor}`, `/.well-known/mcp.json`, and
+   `/.well-known/oauth-protected-resource/mcp/{actor}` route to the lesser-body Lambda)
 
 If you already have `mcp_lambda_arn` present for the target stage, you can deploy Lesser with `soulEnabled=true`
 immediately.
@@ -85,7 +85,8 @@ Notes:
 
 - `app` must match your Lesser app slug (the same value you deploy Lesser with).
 - `stage` must be one of `dev|staging|live`.
-- `baseDomain` is used to compute the public MCP endpoint (`https://api.<stageDomain>/mcp`) at synth time.
+- `baseDomain` is used to compute the public MCP endpoint template (`https://api.<stageDomain>/mcp/{actor}`) at synth
+  time.
 
 ## Deploy (via `theory app up`)
 
@@ -112,7 +113,7 @@ Once Lesser is deployed with `soulEnabled=true`, verify both public discovery do
 
 ```bash
 curl -sS "https://api.<stageDomain>/.well-known/mcp.json" | jq .
-curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource" | jq .
+curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/Arch" | jq .
 curl -sS "https://api.<stageDomain>/.well-known/oauth-authorization-server" | jq .
 ```
 
@@ -128,7 +129,7 @@ For browser-based MCP clients, also verify CORS on discovery:
 ```bash
 curl -sSI \
   -H "Origin: https://claude.ai" \
-  "https://api.<stageDomain>/.well-known/oauth-protected-resource"
+  "https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/Arch"
 ```
 
 Expected headers include:

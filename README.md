@@ -9,8 +9,8 @@ memory, prompts, resources) to MCP clients such as **Bedrock AgentCore**.
 routes:
 
 - `GET /.well-known/mcp.json` → lesser-body (public discovery)
-- `GET /.well-known/oauth-protected-resource` → lesser-body (public OAuth resource metadata)
-- `POST /mcp` → lesser-body (authenticated MCP JSON-RPC)
+- `GET /.well-known/oauth-protected-resource/mcp/{actor}` → lesser-body (public OAuth resource metadata)
+- `POST /mcp/{actor}` → lesser-body (authenticated MCP JSON-RPC)
 
 It reuses Lesser’s existing primitives:
 

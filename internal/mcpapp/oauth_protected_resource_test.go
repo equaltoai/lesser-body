@@ -32,7 +32,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	})
 
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	app, err := New("test", "dev")
 	if err != nil {
@@ -42,7 +42,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	env := testkit.New()
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",
-		Path:   "/.well-known/oauth-protected-resource",
+		Path:   "/.well-known/oauth-protected-resource/mcp/Arch",
 	})
 	if resp.Status != 200 {
 		t.Fatalf("unexpected status: %d (%s)", resp.Status, string(resp.Body))
@@ -60,7 +60,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.Resource != "https://api.example.com/mcp" {
+	if out.Resource != "https://api.example.com/mcp/Arch" {
 		t.Fatalf("unexpected resource: %q", out.Resource)
 	}
 	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://dev.example.com" {
@@ -94,6 +94,7 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	})
 
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://tenant.example.com/mcp/{actor}")
 
 	app, err := New("test", "dev")
 	if err != nil {
@@ -103,7 +104,7 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	env := testkit.New()
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",
-		Path:   "/.well-known/oauth-protected-resource",
+		Path:   "/.well-known/oauth-protected-resource/mcp/Arch",
 		Headers: map[string][]string{
 			"x-forwarded-proto": {"https"},
 			"x-forwarded-host":  {"tenant.example.com"},
@@ -120,10 +121,10 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.Resource != "https://tenant.example.com/mcp" {
+	if out.Resource != "https://tenant.example.com/mcp/Arch" {
 		t.Fatalf("unexpected inferred resource: %q", out.Resource)
 	}
-	if want := []string{"https://tenant.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
+	if want := []string{"https://dev.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
 		t.Fatalf("unexpected inferred authorization_servers: got %#v want %#v", out.AuthorizationServers, want)
 	}
 }

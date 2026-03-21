@@ -51,6 +51,21 @@ func TestResolveBaseURL_FallsBackToMcpEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveBaseURL_FallsBackToActorTemplateMcpEndpoint(t *testing.T) {
+	t.Setenv(envBaseURL, "")
+	t.Setenv("LESSER_TABLE_NAME", "")
+	t.Setenv(envLesserAPIURL, "")
+	t.Setenv(envMcpURL, "https://api.example.com/mcp/{actor}")
+
+	u, err := resolveBaseURL(context.Background())
+	if err != nil {
+		t.Fatalf("resolveBaseURL: %v", err)
+	}
+	if got := u.String(); got != "https://api.example.com" {
+		t.Fatalf("expected actor-template mcp endpoint fallback, got %q", got)
+	}
+}
+
 func TestResolveBaseURL_UsesManagedTrustConfigWhenTableConfigured(t *testing.T) {
 	t.Setenv(envBaseURL, "")
 	t.Setenv("LESSER_TABLE_NAME", "lesser-main")

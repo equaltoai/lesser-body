@@ -22,9 +22,19 @@ func TestNew_ValidatesConfiguredMCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidatedMcpEndpoint_AcceptsActorTemplate(t *testing.T) {
+	got, err := validatedMcpEndpoint("https://api.example.com/mcp/{actor}")
+	if err != nil {
+		t.Fatalf("validatedMcpEndpoint: %v", err)
+	}
+	if got != "https://api.example.com/mcp/{actor}" {
+		t.Fatalf("unexpected validated endpoint: %q", got)
+	}
+}
+
 func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	previousLoader := loadEffectiveTrustConfig
 	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
@@ -56,9 +66,30 @@ func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *
 	}
 }
 
+func TestValidatedMcpEndpointForRequest_ResolvesActorTemplate(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+
+	got, err := validatedMcpEndpointForRequest(&apptheory.Context{
+		Params: map[string]string{"actor": "Arch"},
+		Request: apptheory.Request{
+			Path: "/mcp/Arch",
+			Headers: map[string][]string{
+				"x-forwarded-proto": {"https"},
+				"x-forwarded-host":  {"api.example.com"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validatedMcpEndpointForRequest: %v", err)
+	}
+	if got != "https://api.example.com/mcp/Arch" {
+		t.Fatalf("unexpected resolved endpoint: %q", got)
+	}
+}
+
 func TestNew_CachesAuthorizationServerIssuerFromMetadataProbe(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	previousLoader := loadEffectiveTrustConfig
 	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
@@ -121,7 +152,7 @@ func TestNew_SkipsAuthorizationServerMetadataProbeWithoutMCPEndpoint(t *testing.
 
 func TestWellKnownOAuthProtectedResource_RejectsConfiguredEndpointMismatch(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	previousLoader := loadEffectiveTrustConfig
 	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
@@ -150,7 +181,7 @@ func TestWellKnownOAuthProtectedResource_RejectsConfiguredEndpointMismatch(t *te
 	env := testkit.New()
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",
-		Path:   "/.well-known/oauth-protected-resource",
+		Path:   "/.well-known/oauth-protected-resource/mcp/agent1",
 		Headers: map[string][]string{
 			"x-forwarded-proto": {"https"},
 			"x-forwarded-host":  {"other.example.com"},
@@ -166,7 +197,7 @@ func TestWellKnownOAuthProtectedResource_RejectsConfiguredEndpointMismatch(t *te
 
 func TestWellKnownOAuthProtectedResource_AddsCORSForAllowedOrigin(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("MCP_ALLOWED_ORIGINS", "https://claude.ai,https://app.example.com")
 
 	previousLoader := loadEffectiveTrustConfig
@@ -196,7 +227,7 @@ func TestWellKnownOAuthProtectedResource_AddsCORSForAllowedOrigin(t *testing.T) 
 	env := testkit.New()
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",
-		Path:   "/.well-known/oauth-protected-resource",
+		Path:   "/.well-known/oauth-protected-resource/mcp/agent1",
 		Headers: map[string][]string{
 			"origin": {"https://claude.ai"},
 		},

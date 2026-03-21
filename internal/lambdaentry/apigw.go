@@ -44,7 +44,7 @@ func isMcpPath(path string) bool {
 		return false
 	}
 	path = strings.TrimSuffix(path, "/")
-	return path == "/mcp" || strings.HasSuffix(path, "/mcp")
+	return path == "/mcp" || strings.HasPrefix(path, "/mcp/")
 }
 
 func isStreamingMcpMethod(method string) bool {
@@ -76,16 +76,10 @@ func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) apptheory.R
 
 func normalizeGatewayPath(path string) string {
 	path = strings.TrimSpace(path)
-	switch {
-	case path == "/mcp/" || strings.HasSuffix(path, "/mcp/"):
-		return strings.TrimSuffix(path, "/")
-	case path == "/.well-known/mcp.json/" || strings.HasSuffix(path, "/.well-known/mcp.json/"):
-		return strings.TrimSuffix(path, "/")
-	case path == "/.well-known/oauth-protected-resource/" || strings.HasSuffix(path, "/.well-known/oauth-protected-resource/"):
-		return strings.TrimSuffix(path, "/")
-	default:
+	if path == "/" {
 		return path
 	}
+	return strings.TrimRight(path, "/")
 }
 
 func headersFromProxyEvent(single map[string]string, multi map[string][]string) map[string][]string {

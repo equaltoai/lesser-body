@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -49,6 +50,11 @@ func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes 
 
 func invokeJSON(t testing.TB, env *testkit.Env, app *apptheory.App, headers map[string][]string, payload any) apptheory.Response {
 	t.Helper()
+	return invokeJSONAtPath(t, env, app, defaultMcpPath(headers), headers, payload)
+}
+
+func invokeJSONAtPath(t testing.TB, env *testkit.Env, app *apptheory.App, path string, headers map[string][]string, payload any) apptheory.Response {
+	t.Helper()
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -64,10 +70,58 @@ func invokeJSON(t testing.TB, env *testkit.Env, app *apptheory.App, headers map[
 
 	return env.Invoke(context.Background(), app, apptheory.Request{
 		Method:  "POST",
-		Path:    "/mcp",
+		Path:    path,
 		Headers: reqHeaders,
 		Body:    body,
 	})
+}
+
+func defaultMcpPath(headers map[string][]string) string {
+	token := bearerTokenFromHeaders(headers)
+	if token == "" {
+		return "/mcp/agent1"
+	}
+
+	if username := usernameFromJWTForTests(token); username != "" {
+		return "/mcp/" + username
+	}
+
+	return "/mcp/instance"
+}
+
+func bearerTokenFromHeaders(headers map[string][]string) string {
+	for key, values := range headers {
+		if !strings.EqualFold(strings.TrimSpace(key), "authorization") {
+			continue
+		}
+		for _, value := range values {
+			parts := strings.Fields(strings.TrimSpace(value))
+			if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+func usernameFromJWTForTests(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+
+	var claims struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(claims.Username)
 }
 
 func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
@@ -97,9 +151,61 @@ func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
 	}
 }
 
+func TestMcpActorRoute_InitializeAllowed(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 200 {
+		t.Fatalf("expected 200 for /mcp/{actor}, got %d (%s)", resp.Status, string(resp.Body))
+	}
+}
+
+func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/other-agent", map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 403 {
+		t.Fatalf("expected 403 for actor/token mismatch, got %d (%s)", resp.Status, string(resp.Body))
+	}
+}
+
 func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -123,14 +229,14 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
 
 func TestMcpAuth_Unauthorized(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -167,11 +273,65 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	if out.Error.Details["refreshRequired"] != false {
 		t.Fatalf("expected refreshRequired=false, got %+v", out.Error.Details)
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := firstHeader(resp.Headers, "access-control-expose-headers"); !strings.Contains(strings.ToLower(expose), "www-authenticate") {
 		t.Fatalf("expected access-control-expose-headers to include www-authenticate, got %q", expose)
+	}
+}
+
+func TestMcpActorRoute_UnauthorizedAdvertisesActorMetadata(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/Arch", nil, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 401 {
+		t.Fatalf("expected 401, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+}
+
+func TestSharedMcpRoute_ReturnsRetiredResponse(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "POST",
+		Path:   "/mcp",
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
+	})
+
+	if resp.Status != 410 {
+		t.Fatalf("expected 410, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if !strings.Contains(string(resp.Body), "app.endpoint_retired") {
+		t.Fatalf("unexpected body: %s", string(resp.Body))
 	}
 }
 

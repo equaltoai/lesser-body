@@ -16,7 +16,7 @@ import (
 
 func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -34,7 +34,7 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 
 	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		HTTPMethod: "POST",
-		Path:       "/mcp",
+		Path:       "/mcp/agent1",
 		Headers: map[string]string{
 			"content-type": "application/json",
 		},
@@ -47,7 +47,7 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 
 	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
 	if !ok {
-		t.Fatalf("expected APIGatewayProxyStreamingResponse for /mcp, got %T", out)
+		t.Fatalf("expected APIGatewayProxyStreamingResponse for /mcp/{actor}, got %T", out)
 	}
 	if streaming.StatusCode != 401 {
 		t.Fatalf("expected 401, got %d", streaming.StatusCode)
@@ -62,7 +62,7 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 	if len(b) == 0 {
 		t.Fatalf("expected non-empty body")
 	}
-	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"` {
+	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := streaming.Headers["access-control-expose-headers"]; !strings.Contains(strings.ToLower(expose), "www-authenticate") {
@@ -72,6 +72,7 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 
 func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -89,7 +90,7 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 
 	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		HTTPMethod: "POST",
-		Path:       "/mcp/",
+		Path:       "/mcp/agent1/",
 		Headers: map[string]string{
 			"content-type": "application/json",
 		},
@@ -101,7 +102,7 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 
 	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
 	if !ok {
-		t.Fatalf("expected APIGatewayProxyStreamingResponse for /mcp/, got %T", out)
+		t.Fatalf("expected APIGatewayProxyStreamingResponse for /mcp/{actor}/, got %T", out)
 	}
 	if streaming.StatusCode != 401 {
 		t.Fatalf("expected 401, got %d", streaming.StatusCode)
@@ -110,6 +111,7 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 
 func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
@@ -121,14 +123,14 @@ func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
 	handler := NewAPIGatewayHandler(app)
 	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		HTTPMethod: "DELETE",
-		Path:       "/mcp",
+		Path:       "/mcp/agent1",
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
 
 	if _, ok := out.(events.APIGatewayProxyResponse); !ok {
-		t.Fatalf("expected APIGatewayProxyResponse for DELETE /mcp, got %T", out)
+		t.Fatalf("expected APIGatewayProxyResponse for DELETE /mcp/{actor}, got %T", out)
 	}
 }
 
@@ -136,7 +138,7 @@ func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -165,7 +167,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
 		return &trustconfig.Effective{
@@ -187,7 +189,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *
 	handler := NewAPIGatewayHandler(app)
 	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		HTTPMethod: "GET",
-		Path:       "/.well-known/oauth-protected-resource",
+		Path:       "/.well-known/oauth-protected-resource/mcp/agent1",
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -195,7 +197,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *
 
 	proxy, ok := out.(events.APIGatewayProxyResponse)
 	if !ok {
-		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource, got %T", out)
+		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource/mcp/{actor}, got %T", out)
 	}
 	if proxy.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
@@ -206,7 +208,7 @@ func TestNewAPIGatewayHandler_WellKnownTrailingSlashNormalizes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -235,7 +237,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
 	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
 		return &trustconfig.Effective{
@@ -257,7 +259,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 	handler := NewAPIGatewayHandler(app)
 	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
 		HTTPMethod: "GET",
-		Path:       "/.well-known/oauth-protected-resource/",
+		Path:       "/.well-known/oauth-protected-resource/mcp/agent1/",
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -265,7 +267,7 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 
 	proxy, ok := out.(events.APIGatewayProxyResponse)
 	if !ok {
-		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource/, got %T", out)
+		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource/mcp/{actor}/, got %T", out)
 	}
 	if proxy.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
@@ -273,10 +275,19 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 }
 
 func TestNormalizeGatewayPath_OAuthProtectedResourceTrailingSlash(t *testing.T) {
-	if got := normalizeGatewayPath("/.well-known/oauth-protected-resource/"); got != "/.well-known/oauth-protected-resource" {
+	if got := normalizeGatewayPath("/.well-known/oauth-protected-resource/mcp/agent1/"); got != "/.well-known/oauth-protected-resource/mcp/agent1" {
 		t.Fatalf("unexpected normalized path: %q", got)
 	}
-	if got := normalizeGatewayPath("/prod/.well-known/oauth-protected-resource/"); got != "/prod/.well-known/oauth-protected-resource" {
+	if got := normalizeGatewayPath("/mcp/agent1/"); got != "/mcp/agent1" {
 		t.Fatalf("unexpected normalized nested path: %q", got)
+	}
+}
+
+func TestIsMcpPath_RecognizesActorRouteOnly(t *testing.T) {
+	if !isMcpPath("/mcp/Arch") {
+		t.Fatalf("expected /mcp/{actor} to be recognized as MCP path")
+	}
+	if isMcpPath("/.well-known/oauth-protected-resource/mcp/Arch") {
+		t.Fatalf("protected-resource discovery route must not be treated as MCP path")
 	}
 }
