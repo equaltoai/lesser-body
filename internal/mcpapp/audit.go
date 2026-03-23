@@ -21,11 +21,26 @@ func WithAudit(next apptheory.Handler, logger *slog.Logger) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		if err := authorizeTools(ctx); err != nil {
 			auditMcp(ctx, logger)
+			if stepUp, ok := err.(*mcpStepUpRequiredError); ok {
+				return insufficientScopeMCPResponse(ctx, stepUp.GrantedScopes, stepUp.RequiredScopes), nil
+			}
 			return nil, err
 		}
 		auditMcp(ctx, logger)
 		return next(ctx)
 	}
+}
+
+type mcpStepUpRequiredError struct {
+	GrantedScopes  []string
+	RequiredScopes []string
+}
+
+func (e *mcpStepUpRequiredError) Error() string {
+	if e == nil {
+		return "forbidden"
+	}
+	return "insufficient scope"
 }
 
 func authorizeTools(ctx *apptheory.Context) error {
@@ -93,19 +108,29 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 		return nil
 	}
 
+	requiredScopes := requiredScopesForTool(toolName)
+	allowedScopes := append([]string(nil), requiredScopes...)
+	if len(requiredScopes) == 1 && requiredScopes[0] == "read" {
+		allowedScopes = append(allowedScopes, "write")
+	}
+	if hasAnyScope(p.Claims.Scopes, allowedScopes...) {
+		return nil
+	}
+
+	return &mcpStepUpRequiredError{
+		GrantedScopes:  append([]string(nil), p.Claims.Scopes...),
+		RequiredScopes: requiredScopes,
+	}
+}
+
+func requiredScopesForTool(toolName string) []string {
 	switch toolName {
 	case "post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "memory_append", "notification_dismiss",
 		"email_send", "email_reply", "email_delete", "sms_send":
-		if hasAnyScope(p.Claims.Scopes, "write") {
-			return nil
-		}
+		return []string{"write"}
 	default:
-		if hasAnyScope(p.Claims.Scopes, "write", "read") {
-			return nil
-		}
+		return []string{"read"}
 	}
-
-	return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 }
 
 func hasAnyScope(scopes []string, want ...string) bool {
