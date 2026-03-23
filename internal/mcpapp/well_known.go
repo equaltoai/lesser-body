@@ -26,6 +26,11 @@ type mcpWellKnownToolHint struct {
 	Description string `json:"description,omitempty"`
 }
 
+type protectedResourceMetadataDocument struct {
+	*oauthruntime.ProtectedResourceMetadata
+	ResourceName string `json:"resource_name,omitempty"`
+}
+
 var loadEffectiveTrustConfig = trustconfig.Default
 
 var publicOAuthDiscoveryScopes = []string{"read", "write", "follow", "push"}
@@ -102,7 +107,10 @@ func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer stri
 		md.ScopesSupported = append([]string(nil), publicOAuthDiscoveryScopes...)
 		md.BearerMethodsSupported = []string{"header"}
 
-		body, err := md.MarshalJSONBytes()
+		body, err := json.Marshal(protectedResourceMetadataDocument{
+			ProtectedResourceMetadata: md,
+			ResourceName:              protectedResourceNameForRequest(ctx),
+		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal protected resource metadata: %w", err)
 		}
@@ -116,6 +124,13 @@ func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer stri
 			Body: body,
 		}, nil
 	}
+}
+
+func protectedResourceNameForRequest(ctx *apptheory.Context) string {
+	if actor := strings.TrimSpace(actorFromRequestContext(ctx)); actor != "" {
+		return actor
+	}
+	return "MCP"
 }
 
 func mcpEndpointForRequest(ctx *apptheory.Context) string {
