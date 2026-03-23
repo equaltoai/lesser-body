@@ -10,6 +10,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 )
 
+const basicMCPAuthorizationScopes = "read write"
+
 func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 	if next == nil {
 		return nil
@@ -37,9 +39,7 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 
 func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 	headers := map[string][]string{}
-	if resourceMetadataURL := protectedResourceMetadataURLForRequest(ctx); resourceMetadataURL != "" {
-		headers["www-authenticate"] = []string{oauthruntime.ProtectedResourceWWWAuthenticate(resourceMetadataURL)}
-	}
+	headers["www-authenticate"] = []string{mcpAuthorizationChallenge(protectedResourceMetadataURLForRequest(ctx))}
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
 	errBody := map[string]any{
@@ -73,4 +73,12 @@ func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 		Headers: headers,
 		Body:    body,
 	}
+}
+
+func mcpAuthorizationChallenge(resourceMetadataURL string) string {
+	challenge := oauthruntime.ProtectedResourceWWWAuthenticate(resourceMetadataURL)
+	if challenge == "Bearer" {
+		return `Bearer scope="` + basicMCPAuthorizationScopes + `"`
+	}
+	return challenge + `, scope="` + basicMCPAuthorizationScopes + `"`
 }

@@ -62,7 +62,7 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 	if len(b) == 0 {
 		t.Fatalf("expected non-empty body")
 	}
-	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := streaming.Headers["access-control-expose-headers"]; !strings.Contains(strings.ToLower(expose), "www-authenticate") {

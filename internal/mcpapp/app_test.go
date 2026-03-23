@@ -243,7 +243,7 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -273,7 +273,7 @@ func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for audience mismatch, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -317,7 +317,7 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	if out.Error.Details["refreshRequired"] != false {
 		t.Fatalf("expected refreshRequired=false, got %+v", out.Error.Details)
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := firstHeader(resp.Headers, "access-control-expose-headers"); !strings.Contains(strings.ToLower(expose), "www-authenticate") {
@@ -346,7 +346,7 @@ func TestMcpActorRoute_UnauthorizedAdvertisesActorMetadata(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
