@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	"log/slog"
 )
@@ -80,4 +81,37 @@ func TestHook_RejectsManagedInstanceKeyFallbackByDefault(t *testing.T) {
 	if principal := PrincipalFromContext(ctx); principal != nil {
 		t.Fatalf("expected no principal, got %+v", principal)
 	}
+}
+
+func TestValidateTokenAudience(t *testing.T) {
+	t.Run("matches configured resource", func(t *testing.T) {
+		claims := &Claims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Audience: jwt.ClaimStrings{"https://api.example.com/mcp/agent1/"},
+			},
+		}
+
+		if err := ValidateTokenAudience(claims, "https://api.example.com/mcp/agent1"); err != nil {
+			t.Fatalf("expected matching audience to pass, got %v", err)
+		}
+	})
+
+	t.Run("rejects mismatched resource", func(t *testing.T) {
+		claims := &Claims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Audience: jwt.ClaimStrings{"https://api.example.com/mcp/other-agent"},
+			},
+		}
+
+		if err := ValidateTokenAudience(claims, "https://api.example.com/mcp/agent1"); err == nil {
+			t.Fatalf("expected mismatched audience to be rejected")
+		}
+	})
+
+	t.Run("skips validation without expected audience", func(t *testing.T) {
+		claims := &Claims{}
+		if err := ValidateTokenAudience(claims, ""); err != nil {
+			t.Fatalf("expected empty configured resource to skip validation, got %v", err)
+		}
+	})
 }

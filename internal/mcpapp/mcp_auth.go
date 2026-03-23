@@ -25,6 +25,11 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 		if strings.TrimSpace(identity) == "" {
 			return unauthorizedMCPResponse(ctx), nil
 		}
+		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeOAuthToken {
+			if err := auth.ValidateTokenAudience(principal.Claims, mcpEndpointForRequest(ctx)); err != nil {
+				return unauthorizedMCPResponse(ctx), nil
+			}
+		}
 		ctx.AuthIdentity = identity
 		return next(ctx)
 	}

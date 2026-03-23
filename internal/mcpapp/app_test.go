@@ -21,10 +21,23 @@ func newTestToken(t testing.TB, secret string, username string, scopes []string)
 	t.Helper()
 
 	now := time.Now().UTC()
-	return newTestTokenWithTimes(t, secret, username, scopes, now, now.Add(time.Hour))
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, now, now.Add(time.Hour), nil)
 }
 
 func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time) string {
+	t.Helper()
+
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, issuedAt, expiresAt, nil)
+}
+
+func newTestTokenWithAudience(t testing.TB, secret string, username string, scopes []string, audience []string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, now, now.Add(time.Hour), audience)
+}
+
+func newTestTokenWithTimesAndAudience(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time, audience []string) string {
 	t.Helper()
 
 	claims := &auth.Claims{
@@ -34,6 +47,7 @@ func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes 
 			NotBefore: jwt.NewNumericDate(issuedAt),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        "jti_test",
+			Audience:  jwt.ClaimStrings(audience),
 		},
 		Username: username,
 		Scopes:   scopes,
@@ -228,6 +242,36 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+}
+
+func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestTokenWithAudience(t, "test", "agent1", []string{"read"}, []string{"https://api.example.com/mcp/other-agent"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 401 {
+		t.Fatalf("expected 401 for audience mismatch, got %d (%s)", resp.Status, string(resp.Body))
 	}
 	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
