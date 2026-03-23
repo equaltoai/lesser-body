@@ -4,12 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 )
 
 const contextKeyPrincipal = "lesser_body_principal"
@@ -154,6 +156,25 @@ func (c *Claims) GetUsername() string {
 		return ""
 	}
 	return c.Username
+}
+
+func ValidateTokenAudience(claims *Claims, expectedAudience string) error {
+	expectedAudience = oauthruntime.CanonicalResourceURL(expectedAudience)
+	if expectedAudience == "" || claims == nil {
+		return nil
+	}
+
+	audiences := make([]string, 0, len(claims.Audience))
+	for _, audience := range claims.Audience {
+		if canonical := oauthruntime.CanonicalResourceURL(audience); canonical != "" {
+			audiences = append(audiences, canonical)
+		}
+	}
+	if slices.Contains(audiences, expectedAudience) {
+		return nil
+	}
+
+	return &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
 }
 
 func validateAccessToken(ctx context.Context, tokenString string) (*Claims, error) {

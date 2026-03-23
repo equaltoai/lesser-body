@@ -21,10 +21,23 @@ func newTestToken(t testing.TB, secret string, username string, scopes []string)
 	t.Helper()
 
 	now := time.Now().UTC()
-	return newTestTokenWithTimes(t, secret, username, scopes, now, now.Add(time.Hour))
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, now, now.Add(time.Hour), nil)
 }
 
 func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time) string {
+	t.Helper()
+
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, issuedAt, expiresAt, nil)
+}
+
+func newTestTokenWithAudience(t testing.TB, secret string, username string, scopes []string, audience []string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, now, now.Add(time.Hour), audience)
+}
+
+func newTestTokenWithTimesAndAudience(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time, audience []string) string {
 	t.Helper()
 
 	claims := &auth.Claims{
@@ -34,6 +47,7 @@ func newTestTokenWithTimes(t testing.TB, secret string, username string, scopes 
 			NotBefore: jwt.NewNumericDate(issuedAt),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        "jti_test",
+			Audience:  jwt.ClaimStrings(audience),
 		},
 		Username: username,
 		Scopes:   scopes,
@@ -229,7 +243,37 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+}
+
+func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestTokenWithAudience(t, "test", "agent1", []string{"read"}, []string{"https://api.example.com/mcp/other-agent"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 401 {
+		t.Fatalf("expected 401 for audience mismatch, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -273,7 +317,7 @@ func TestMcpAuth_Unauthorized(t *testing.T) {
 	if out.Error.Details["refreshRequired"] != false {
 		t.Fatalf("expected refreshRequired=false, got %+v", out.Error.Details)
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := firstHeader(resp.Headers, "access-control-expose-headers"); !strings.Contains(strings.ToLower(expose), "www-authenticate") {
@@ -302,7 +346,7 @@ func TestMcpActorRoute_UnauthorizedAdvertisesActorMetadata(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -423,10 +467,11 @@ func TestMcpAuth_AuthorizedJwt(t *testing.T) {
 
 func TestMcpAuth_ToolCallForbiddenWithoutScopes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
-	token := newTestToken(t, "test", "agent1", []string{"follow"})
+	token := newTestTokenWithAudience(t, "test", "agent1", []string{"follow"}, []string{"https://api.example.com/mcp/agent1"})
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -479,6 +524,63 @@ func TestMcpAuth_ToolCallForbiddenWithoutScopes(t *testing.T) {
 	}
 	if out.Error.Code != "app.forbidden" {
 		t.Fatalf("expected app.forbidden, got %q", out.Error.Code)
+	}
+	if got := firstHeader(callResp.Headers, "www-authenticate"); got != `Bearer error="insufficient_scope", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="follow read", error_description="Additional read permission required"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+}
+
+func TestMcpAuth_ToolCallWriteScopeChallengePreservesGrantedScopes(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestTokenWithAudience(t, "test", "agent1", []string{"read"}, []string{"https://api.example.com/mcp/agent1"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {"Bearer " + token},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", initResp.Status, string(initResp.Body))
+	}
+	sessionID := ""
+	if ids := initResp.Headers["mcp-session-id"]; len(ids) > 0 {
+		sessionID = ids[0]
+	}
+	if sessionID == "" {
+		t.Fatalf("expected non-empty mcp-session-id header")
+	}
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "post_create",
+		"arguments": json.RawMessage(`{"content":"hi","visibility":"public"}`),
+	})
+	callResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {"Bearer " + token},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params:  callParams,
+	})
+
+	if callResp.Status != 403 {
+		t.Fatalf("expected 403, got %d (%s)", callResp.Status, string(callResp.Body))
+	}
+	if got := firstHeader(callResp.Headers, "www-authenticate"); got != `Bearer error="insufficient_scope", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write", error_description="Additional write permission required"` {
+		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
 

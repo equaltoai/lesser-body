@@ -53,6 +53,7 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 
 	var out struct {
 		Resource               string   `json:"resource"`
+		ResourceName           string   `json:"resource_name"`
 		AuthorizationServers   []string `json:"authorization_servers"`
 		ScopesSupported        []string `json:"scopes_supported"`
 		BearerMethodsSupported []string `json:"bearer_methods_supported"`
@@ -62,6 +63,9 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	}
 	if out.Resource != "https://api.example.com/mcp/Arch" {
 		t.Fatalf("unexpected resource: %q", out.Resource)
+	}
+	if out.ResourceName != "Arch" {
+		t.Fatalf("unexpected resource_name: %q", out.ResourceName)
 	}
 	if len(out.AuthorizationServers) != 1 || out.AuthorizationServers[0] != "https://dev.example.com" {
 		t.Fatalf("unexpected authorization_servers: %#v", out.AuthorizationServers)
@@ -116,6 +120,7 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 
 	var out struct {
 		Resource             string   `json:"resource"`
+		ResourceName         string   `json:"resource_name"`
 		AuthorizationServers []string `json:"authorization_servers"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
@@ -123,6 +128,9 @@ func TestWellKnownOAuthProtectedResource_InferEndpointFromRequest(t *testing.T) 
 	}
 	if out.Resource != "https://tenant.example.com/mcp/Arch" {
 		t.Fatalf("unexpected inferred resource: %q", out.Resource)
+	}
+	if out.ResourceName != "Arch" {
+		t.Fatalf("unexpected inferred resource_name: %q", out.ResourceName)
 	}
 	if want := []string{"https://dev.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
 		t.Fatalf("unexpected inferred authorization_servers: got %#v want %#v", out.AuthorizationServers, want)

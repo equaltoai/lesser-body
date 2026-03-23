@@ -2,13 +2,22 @@ package mcpapp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 )
+
+const basicMCPAuthorizationScopes = "read write"
+
+type mcpAuthorizationChallengeOptions struct {
+	Error            string
+	ResourceMetadata string
+	Scope            string
+	ErrorDescription string
+}
 
 func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 	if next == nil {
@@ -25,6 +34,11 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 		if strings.TrimSpace(identity) == "" {
 			return unauthorizedMCPResponse(ctx), nil
 		}
+		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeOAuthToken {
+			if err := auth.ValidateTokenAudience(principal.Claims, mcpEndpointForRequest(ctx)); err != nil {
+				return unauthorizedMCPResponse(ctx), nil
+			}
+		}
 		ctx.AuthIdentity = identity
 		return next(ctx)
 	}
@@ -32,9 +46,10 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 
 func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 	headers := map[string][]string{}
-	if resourceMetadataURL := protectedResourceMetadataURLForRequest(ctx); resourceMetadataURL != "" {
-		headers["www-authenticate"] = []string{oauthruntime.ProtectedResourceWWWAuthenticate(resourceMetadataURL)}
-	}
+	headers["www-authenticate"] = []string{mcpAuthorizationChallenge(mcpAuthorizationChallengeOptions{
+		ResourceMetadata: protectedResourceMetadataURLForRequest(ctx),
+		Scope:            basicMCPAuthorizationScopes,
+	})}
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
 	errBody := map[string]any{
@@ -68,4 +83,117 @@ func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 		Headers: headers,
 		Body:    body,
 	}
+}
+
+func insufficientScopeMCPResponse(ctx *apptheory.Context, grantedScopes []string, requiredScopes []string) *apptheory.Response {
+	headers := map[string][]string{}
+	headers["www-authenticate"] = []string{mcpAuthorizationChallenge(mcpAuthorizationChallengeOptions{
+		Error:            "insufficient_scope",
+		ResourceMetadata: protectedResourceMetadataURLForRequest(ctx),
+		Scope:            joinScopeChallenge(grantedScopes, requiredScopes),
+		ErrorDescription: insufficientScopeDescription(requiredScopes),
+	})}
+	headers["content-type"] = []string{"application/json; charset=utf-8"}
+
+	errBody := map[string]any{
+		"code":    "app.forbidden",
+		"message": "forbidden",
+		"details": map[string]any{
+			"source":          "lesser_body",
+			"reauthorize":     true,
+			"authAction":      "authorize",
+			"refreshRequired": false,
+			"reason":          "insufficient_scope",
+			"requiredScopes":  append([]string(nil), requiredScopes...),
+			"grantedScopes":   append([]string(nil), grantedScopes...),
+		},
+	}
+	if ctx != nil && strings.TrimSpace(ctx.RequestID) != "" {
+		errBody["request_id"] = ctx.RequestID
+	}
+
+	body, err := json.Marshal(map[string]any{"error": errBody})
+	if err != nil {
+		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+		headers["content-type"] = []string{"application/json; charset=utf-8"}
+		return &apptheory.Response{
+			Status:  500,
+			Headers: headers,
+			Body:    body,
+		}
+	}
+
+	return &apptheory.Response{
+		Status:  403,
+		Headers: headers,
+		Body:    body,
+	}
+}
+
+func mcpAuthorizationChallenge(options mcpAuthorizationChallengeOptions) string {
+	params := make([]string, 0, 4)
+	if value := strings.TrimSpace(options.Error); value != "" {
+		params = append(params, fmt.Sprintf(`error="%s"`, escapeWWWAuthenticateValue(value)))
+	}
+	if value := strings.TrimSpace(options.ResourceMetadata); value != "" {
+		params = append(params, fmt.Sprintf(`resource_metadata="%s"`, escapeWWWAuthenticateValue(value)))
+	}
+	if value := strings.TrimSpace(options.Scope); value != "" {
+		params = append(params, fmt.Sprintf(`scope="%s"`, escapeWWWAuthenticateValue(value)))
+	}
+	if value := strings.TrimSpace(options.ErrorDescription); value != "" {
+		params = append(params, fmt.Sprintf(`error_description="%s"`, escapeWWWAuthenticateValue(value)))
+	}
+	if len(params) == 0 {
+		return "Bearer"
+	}
+	return "Bearer " + strings.Join(params, ", ")
+}
+
+func joinScopeChallenge(grantedScopes []string, requiredScopes []string) string {
+	seen := make(map[string]struct{}, len(grantedScopes)+len(requiredScopes))
+	ordered := make([]string, 0, len(grantedScopes)+len(requiredScopes))
+
+	for _, scope := range grantedScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		ordered = append(ordered, scope)
+	}
+	for _, scope := range requiredScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		ordered = append(ordered, scope)
+	}
+
+	return strings.Join(ordered, " ")
+}
+
+func insufficientScopeDescription(requiredScopes []string) string {
+	scopes := joinScopeChallenge(nil, requiredScopes)
+	switch len(strings.Fields(scopes)) {
+	case 0:
+		return "Additional authorization required"
+	case 1:
+		return "Additional " + scopes + " permission required"
+	default:
+		return "Additional scopes required: " + scopes
+	}
+}
+
+func escapeWWWAuthenticateValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return value
 }
