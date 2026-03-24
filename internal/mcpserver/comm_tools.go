@@ -14,21 +14,28 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 	}
 
 	for _, tool := range []struct {
-		Def     mcpruntime.ToolDef
-		Handler mcpruntime.ToolHandler
+		Def       mcpruntime.ToolDef
+		Handler   mcpruntime.ToolHandler
+		Streaming mcpruntime.StreamingToolHandler
 	}{
-		{Def: emailSendDef(), Handler: handleEmailSend},
+		{Def: emailSendDef(), Handler: handleEmailSend, Streaming: handleEmailSendStreaming},
 		{Def: emailReadDef(), Handler: handleEmailRead},
 		{Def: emailSearchDef(), Handler: handleEmailSearch},
-		{Def: emailReplyDef(), Handler: handleEmailReply},
+		{Def: emailReplyDef(), Handler: handleEmailReply, Streaming: handleEmailReplyStreaming},
 		{Def: emailDeleteDef(), Handler: handleEmailDelete},
-		{Def: smsSendDef(), Handler: handleSmsSend},
+		{Def: smsSendDef(), Handler: handleSmsSend, Streaming: handleSmsSendStreaming},
 		{Def: smsReadDef(), Handler: handleSmsRead},
 		{Def: voicemailReadDef(), Handler: handleVoicemailRead},
 		{Def: identityWhoamiDef(), Handler: handleIdentityWhoami},
 		{Def: identityLookupDef(), Handler: handleIdentityLookup},
 		{Def: identityVerifyDef(), Handler: handleIdentityVerify},
 	} {
+		if tool.Streaming != nil {
+			if err := r.RegisterStreamingTool(tool.Def, tool.Streaming); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
 			return err
 		}

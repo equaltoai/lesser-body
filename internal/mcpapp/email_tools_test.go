@@ -125,6 +125,10 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if gotBody["to"] != "alice@example.com" || gotBody["subject"] != "[bot] Hello" || gotBody["body"] != "Hi there\n\n"+expectedFooter {
 			t.Fatalf("unexpected comm api payload fields: %+v", gotBody)
 		}
+		idempotencyKey, _ := gotBody["idempotencyKey"].(string)
+		if strings.TrimSpace(idempotencyKey) == "" {
+			t.Fatalf("expected generated idempotencyKey, got %+v", gotBody)
+		}
 		if gotBody["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected inReplyTo=comm-msg-prev, got %+v", gotBody)
 		}
@@ -142,6 +146,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		if data["messageId"] != "comm-msg-001" || data["status"] != "sent" {
 			t.Fatalf("unexpected tool data: %+v", data)
+		}
+		if data["idempotencyKey"] != idempotencyKey {
+			t.Fatalf("expected tool data to include generated idempotencyKey, got %+v", data)
 		}
 		if data["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected tool data to include inReplyTo, got %+v", data)
@@ -201,6 +208,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		}
 		if gotBody["inReplyTo"] != "comm-msg-000" {
 			t.Fatalf("expected inReplyTo=comm-msg-000, got %+v", gotBody)
+		}
+		if gotBody["idempotencyKey"] != "comm-msg-000" {
+			t.Fatalf("expected idempotencyKey=comm-msg-000, got %+v", gotBody)
 		}
 		if gotBody["to"] != "alice@example.com" {
 			t.Fatalf("expected reply to original sender, got %+v", gotBody)

@@ -109,6 +109,9 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		if gotBody["to"] != "+15550143" || gotBody["inReplyTo"] != "comm-msg-prev" || gotBody["body"] != expectedSMSBody {
 			t.Fatalf("unexpected sms payload: %+v", gotBody)
 		}
+		if gotBody["idempotencyKey"] != "comm-msg-prev" {
+			t.Fatalf("expected sms idempotencyKey=comm-msg-prev, got %+v", gotBody)
+		}
 
 		var rpc mcpruntime.Response
 		_ = json.Unmarshal(resp.Body, &rpc)
@@ -123,6 +126,9 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		if data["messageId"] != "comm-msg-sms-001" || data["status"] != "queued" {
 			t.Fatalf("unexpected sms result: %+v", data)
+		}
+		if data["idempotencyKey"] != "comm-msg-prev" {
+			t.Fatalf("expected sms result idempotencyKey, got %+v", data)
 		}
 	})
 
