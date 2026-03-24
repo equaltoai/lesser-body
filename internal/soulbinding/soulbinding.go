@@ -52,7 +52,7 @@ func ResetForTests() {
 }
 
 func ResolveAgentID(ctx context.Context, username string) (string, error) {
-	username = strings.TrimSpace(username)
+	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
 		return "", nil
 	}
@@ -85,7 +85,7 @@ func ResolveAgentID(ctx context.Context, username string) (string, error) {
 }
 
 func soulBodyBindingUsernamePartitionKey(username string) string {
-	username = strings.TrimSpace(username)
+	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
 		return ""
 	}

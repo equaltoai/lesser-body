@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
@@ -28,7 +30,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer soulbinding.ResetForTests()
 
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	const tokenUser = "agent1"
+	const tokenUser = "Agent1"
 
 	var gotBindingPK string
 	var gotBindingSK string
@@ -114,6 +116,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -147,7 +153,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("identity_whoami: status=%d body=%s", resp.Status, string(resp.Body))
 		}
-		if gotBindingPK != "SOUL_BODY_BINDING_USERNAME#"+tokenUser {
+		if gotBindingPK != "SOUL_BODY_BINDING_USERNAME#agent1" {
 			t.Fatalf("expected binding lookup PK, got %q", gotBindingPK)
 		}
 		if gotBindingSK != "SOUL_BODY_BINDING" {
