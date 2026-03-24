@@ -80,6 +80,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"post_search",
 		"followers_list",
 		"following_list",
+		"conversations_read",
 		"notifications_read",
 		"notification_dismiss",
 		"post_create",
@@ -169,6 +170,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/accounts/verify_credentials"},
 				{Method: "GET", Path: "/api/v1/accounts/acct1/following", Query: "limit=2"},
+			},
+		},
+		{
+			name:        "conversations_read",
+			tool:        "conversations_read",
+			scope:       "read",
+			args:        map[string]any{"limit": 2},
+			invalidArgs: map[string]any{"limit": "nope"},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "GET", Path: "/api/v1/conversations", Query: "limit=2"},
 			},
 		},
 		{
@@ -298,6 +310,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`[{"id":"f1"}]`))
 				case "/api/v1/accounts/acct1/following":
 					_, _ = w.Write([]byte(`[{"id":"g1"}]`))
+				case "/api/v1/conversations":
+					_, _ = w.Write([]byte(`[{"id":"conv1"}]`))
 				case "/api/v1/timelines/home":
 					_, _ = w.Write([]byte(`[{"id":"t1"}]`))
 				case "/api/v1/timelines/public":
