@@ -51,7 +51,7 @@ func handleSmsSendWithProgress(ctx context.Context, args json.RawMessage, emit f
 		return toolErrorResult("invalid_request", "to and body are required", 400, nil)
 	}
 	in.Body = ensureBotDisclosurePrefix(in.Body)
-	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
+	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "sms")
 	if res != nil || err != nil {
@@ -100,7 +100,7 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if in.To == "" || in.Purpose == "" {
 		return toolErrorResult("invalid_request", "to and purpose are required", 400, nil)
 	}
-	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
+	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "voice")
 	if res != nil || err != nil {
@@ -190,7 +190,7 @@ func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel s
 		return nil, errors.New("outbound communication dependencies not initialized")
 	}
 
-	idempotencyKey = resolveOutboundCommIdempotencyKey(idempotencyKey)
+	idempotencyKey = resolveOutboundCommIdempotencyKey(ctx, idempotencyKey)
 	payload := map[string]any{
 		"channel":        channel,
 		"agentId":        deps.agentID,
@@ -211,10 +211,13 @@ func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel s
 	return normalized, nil
 }
 
-func resolveOutboundCommIdempotencyKey(value string) string {
+func resolveOutboundCommIdempotencyKey(ctx context.Context, value string) string {
 	value = strings.TrimSpace(value)
 	if value != "" {
 		return value
+	}
+	if requestID := auth.RequestIDFromToolContext(ctx); requestID != "" {
+		return requestID
 	}
 	return uuid.NewString()
 }

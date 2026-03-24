@@ -47,7 +47,7 @@ func handleEmailSendWithProgress(ctx context.Context, args json.RawMessage, emit
 	}
 	in.Subject = ensureBotDisclosurePrefix(in.Subject)
 	in.Body = ensureEmailDisclosureFooter(in.Body)
-	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
+	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "email")
 	if res != nil || err != nil {
@@ -139,7 +139,7 @@ func handleEmailReplyWithProgress(ctx context.Context, args json.RawMessage, emi
 	}
 	in.Subject = ensureBotDisclosurePrefix(in.Subject)
 	in.Body = ensureEmailDisclosureFooter(in.Body)
-	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
+	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "email")
 	if res != nil || err != nil {

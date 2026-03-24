@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
@@ -25,6 +27,10 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
 
 	const agentID = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	const tokenUser = "agent1"
@@ -129,6 +135,48 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		}
 		if data["idempotencyKey"] != "comm-msg-prev" {
 			t.Fatalf("expected sms result idempotencyKey, got %+v", data)
+		}
+	})
+
+	t.Run("sms send uses request id as fallback idempotency key", func(t *testing.T) {
+		gotAuth = ""
+		gotBody = nil
+
+		callParams, _ := json.Marshal(map[string]any{
+			"name": "sms_send",
+			"arguments": map[string]any{
+				"to":   "+1 (555) 0143",
+				"body": "On it.",
+			},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+			"x-request-id":   {"req-sms-send-123"},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 22, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("sms_send fallback idempotency: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		if gotBody["idempotencyKey"] != "req-sms-send-123" {
+			t.Fatalf("expected sms fallback idempotencyKey=req-sms-send-123, got %+v", gotBody)
+		}
+		if _, ok := gotBody["inReplyTo"]; ok {
+			t.Fatalf("expected no inReplyTo for non-reply sms, got %+v", gotBody)
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("sms_send fallback rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data["idempotencyKey"] != "req-sms-send-123" {
+			t.Fatalf("expected sms fallback result idempotencyKey, got %+v", data)
 		}
 	})
 

@@ -1,12 +1,16 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type toolContextKey int
 
 const (
 	toolContextKeyPrincipal toolContextKey = iota
 	toolContextKeyBearerToken
+	toolContextKeyRequestID
 )
 
 func InjectToolContext(ctx context.Context, principal *Principal, bearerToken string) context.Context {
@@ -36,6 +40,26 @@ func BearerTokenFromToolContext(ctx context.Context) string {
 		return ""
 	}
 	val := ctx.Value(toolContextKeyBearerToken)
+	out, _ := val.(string)
+	return out
+}
+
+func WithToolRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID != "" {
+		ctx = context.WithValue(ctx, toolContextKeyRequestID, requestID)
+	}
+	return ctx
+}
+
+func RequestIDFromToolContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	val := ctx.Value(toolContextKeyRequestID)
 	out, _ := val.(string)
 	return out
 }

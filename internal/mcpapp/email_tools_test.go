@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
@@ -27,6 +29,10 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
 	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
 
 	const agentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	const tokenUser = "agent1"
@@ -112,6 +118,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		resp := invokeJSON(t, env, app, map[string][]string{
 			"authorization":  {authHeader},
 			"mcp-session-id": {sessionID},
+			"x-request-id":   {"req-email-send-123"},
 		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
 		if resp.Status != 200 {
 			t.Fatalf("email_send: status=%d body=%s", resp.Status, string(resp.Body))
@@ -125,9 +132,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if gotBody["to"] != "alice@example.com" || gotBody["subject"] != "[bot] Hello" || gotBody["body"] != "Hi there\n\n"+expectedFooter {
 			t.Fatalf("unexpected comm api payload fields: %+v", gotBody)
 		}
-		idempotencyKey, _ := gotBody["idempotencyKey"].(string)
-		if strings.TrimSpace(idempotencyKey) == "" {
-			t.Fatalf("expected generated idempotencyKey, got %+v", gotBody)
+		if gotBody["idempotencyKey"] != "req-email-send-123" {
+			t.Fatalf("expected request-id-backed idempotencyKey, got %+v", gotBody)
 		}
 		if gotBody["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected inReplyTo=comm-msg-prev, got %+v", gotBody)
@@ -147,8 +153,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if data["messageId"] != "comm-msg-001" || data["status"] != "sent" {
 			t.Fatalf("unexpected tool data: %+v", data)
 		}
-		if data["idempotencyKey"] != idempotencyKey {
-			t.Fatalf("expected tool data to include generated idempotencyKey, got %+v", data)
+		if data["idempotencyKey"] != "req-email-send-123" {
+			t.Fatalf("expected tool data to include request idempotencyKey, got %+v", data)
 		}
 		if data["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected tool data to include inReplyTo, got %+v", data)
