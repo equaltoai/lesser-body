@@ -47,6 +47,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: postSearchDef(), Handler: handlePostSearch},
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
+		{Def: conversationsReadDef(), Handler: handleConversationsRead},
 		{Def: notificationsReadDef(), Handler: handleNotificationsRead},
 		{Def: notificationDismissDef(), Handler: handleNotificationDismiss},
 		{Def: postCreateDef(), Handler: handlePostCreate},
@@ -301,6 +302,35 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 	}
 
 	out, err := client.DoJSON(ctx, "GET", fmt.Sprintf("/api/v1/accounts/%s/following", id), query, token, nil)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	return toolJSONResult(out)
+}
+
+func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		Limit int `json:"limit,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := url.Values{}
+	if in.Limit > 0 {
+		query.Set("limit", strconv.Itoa(in.Limit))
+	}
+
+	out, err := client.DoJSON(ctx, "GET", "/api/v1/conversations", query, token, nil)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -689,6 +719,19 @@ func notificationsReadDef() mcpruntime.ToolDef {
 			"properties":{
 				"types":{"type":"array","items":{"type":"string"}},
 				"since":{"type":"string"},
+				"limit":{"type":"integer","minimum":1,"maximum":80}
+			}
+		}`),
+	}
+}
+
+func conversationsReadDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "conversations_read",
+		Description: "Read the authenticated agent's direct message conversations.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
 				"limit":{"type":"integer","minimum":1,"maximum":80}
 			}
 		}`),
