@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
@@ -132,6 +133,23 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		},
 	}
 
+	streamTable := awsdynamodb.NewTable(stack, jsii.String("McpStreamTable"), &awsdynamodb.TableProps{
+		TableName:   jsii.String(fmt.Sprintf("%s-%s-mcp-streams", appName, stage)),
+		BillingMode: awsdynamodb.BillingMode_PAY_PER_REQUEST,
+		PartitionKey: &awsdynamodb.Attribute{
+			Name: jsii.String("PK"),
+			Type: awsdynamodb.AttributeType_STRING,
+		},
+		SortKey: &awsdynamodb.Attribute{
+			Name: jsii.String("SK"),
+			Type: awsdynamodb.AttributeType_STRING,
+		},
+		TimeToLiveAttribute: jsii.String("expiresAt"),
+		PointInTimeRecovery: jsii.Bool(true),
+	})
+	streamTable.GrantReadWriteData(handler)
+	handler.AddEnvironment(jsii.String("MCP_STREAM_TABLE"), streamTable.TableName(), nil)
+
 	// Allow the MCP runtime to read required cross-stack values via SSM (no CFN exports/imports).
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{
@@ -256,6 +274,10 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 			StringValue:   server.SessionTable().TableName(),
 		})
 	}
+	awsssm.NewStringParameter(stack, jsii.String("McpStreamTableParam"), &awsssm.StringParameterProps{
+		ParameterName: jsii.String(fmt.Sprintf("%s/mcp_stream_table_name", paramPrefix)),
+		StringValue:   streamTable.TableName(),
+	})
 
 	return &LesserBodyStack{Stack: stack}
 }

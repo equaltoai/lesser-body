@@ -9,13 +9,21 @@ import (
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/tabletheory"
+	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
 	"github.com/theory-cloud/tabletheory/pkg/session"
 )
 
 const (
 	envMcpAllowedOrigins = "MCP_ALLOWED_ORIGINS"
 	envMcpSessionTable   = "MCP_SESSION_TABLE"
+	envMcpStreamTable    = "MCP_STREAM_TABLE"
 )
+
+var newMCPDB = func() (tablecore.DB, error) {
+	return tabletheory.NewBasic(session.Config{
+		Region: os.Getenv("AWS_REGION"),
+	})
+}
 
 func New(name, version string) (*Server, error) {
 	opts, err := buildServerOptionsFromEnv()
@@ -44,15 +52,18 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 		opts = append(opts, mcpruntime.WithOriginValidator(validator))
 	}
 
-	if os.Getenv(envMcpSessionTable) != "" {
-		db, err := tabletheory.NewBasic(session.Config{
-			Region: os.Getenv("AWS_REGION"),
-		})
+	if os.Getenv(envMcpSessionTable) != "" || os.Getenv(envMcpStreamTable) != "" {
+		db, err := newMCPDB()
 		if err != nil {
 			return nil, fmt.Errorf("create tabletheory client: %w", err)
 		}
 
-		opts = append(opts, mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)))
+		if os.Getenv(envMcpSessionTable) != "" {
+			opts = append(opts, mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)))
+		}
+		if os.Getenv(envMcpStreamTable) != "" {
+			opts = append(opts, mcpruntime.WithStreamStore(NewDynamoStreamStore(db)))
+		}
 	}
 
 	if len(opts) == 0 {

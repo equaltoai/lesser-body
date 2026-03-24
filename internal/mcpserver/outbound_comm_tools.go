@@ -9,6 +9,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
+	"github.com/google/uuid"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -22,6 +23,14 @@ type commSendDependencies struct {
 const botDisclosurePrefix = "[bot] "
 
 func handleSmsSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	return handleSmsSendWithProgress(ctx, args, nil)
+}
+
+func handleSmsSendStreaming(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
+	return handleSmsSendWithProgress(ctx, args, emit)
+}
+
+func handleSmsSendWithProgress(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		To        string `json:"to"`
 		Body      string `json:"body"`
@@ -42,11 +51,14 @@ func handleSmsSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		return toolErrorResult("invalid_request", "to and body are required", 400, nil)
 	}
 	in.Body = ensureBotDisclosurePrefix(in.Body)
+	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "sms")
 	if res != nil || err != nil {
 		return res, err
 	}
+
+	emitCommProgress(emit, 1, 2, "sending sms")
 
 	body := map[string]any{
 		"to":   in.To,
@@ -56,10 +68,11 @@ func handleSmsSend(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		body["inReplyTo"] = replyRef
 	}
 
-	normalized, err := sendOutboundComm(ctx, deps, "sms", body)
+	normalized, err := sendOutboundComm(ctx, deps, "sms", body, idempotencyKey)
 	if err != nil {
 		return commToolResultFromError(err)
 	}
+	emitCommProgress(emit, 2, 2, "sms queued")
 	if replyRef != "" {
 		normalized["inReplyTo"] = replyRef
 	}
@@ -87,6 +100,7 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if in.To == "" || in.Purpose == "" {
 		return toolErrorResult("invalid_request", "to and purpose are required", 400, nil)
 	}
+	idempotencyKey := resolveOutboundCommIdempotencyKey(in.MessageID)
 
 	deps, res, err := loadCommSendDependencies(ctx, "voice")
 	if res != nil || err != nil {
@@ -101,7 +115,7 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		body["inReplyTo"] = replyRef
 	}
 
-	normalized, err := sendOutboundComm(ctx, deps, "voice", body)
+	normalized, err := sendOutboundComm(ctx, deps, "voice", body, idempotencyKey)
 	if err != nil {
 		if isUnsupportedVoiceGap(err) {
 			return voiceGapToolResult(err)
@@ -171,14 +185,16 @@ func requireCommAPIBearer(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel string, body map[string]any) (map[string]any, error) {
+func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel string, body map[string]any, idempotencyKey string) (map[string]any, error) {
 	if deps == nil || deps.client == nil {
 		return nil, errors.New("outbound communication dependencies not initialized")
 	}
 
+	idempotencyKey = resolveOutboundCommIdempotencyKey(idempotencyKey)
 	payload := map[string]any{
-		"channel": channel,
-		"agentId": deps.agentID,
+		"channel":        channel,
+		"agentId":        deps.agentID,
+		"idempotencyKey": idempotencyKey,
 	}
 	for key, value := range body {
 		payload[key] = value
@@ -190,8 +206,28 @@ func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel s
 	}
 
 	normalized := normalizeCommSendResult(out, deps.advisory)
+	normalized["idempotencyKey"] = idempotencyKey
 	_ = maybeHydrateCommStatus(ctx, deps.client, deps.commBearer, normalized)
 	return normalized, nil
+}
+
+func resolveOutboundCommIdempotencyKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return uuid.NewString()
+}
+
+func emitCommProgress(emit func(mcpruntime.SSEEvent), progress int, total int, message string) {
+	if emit == nil {
+		return
+	}
+	emit(mcpruntime.SSEEvent{Data: map[string]any{
+		"progress": progress,
+		"total":    total,
+		"message":  strings.TrimSpace(message),
+	}})
 }
 
 func commBoundaryAdvisoryForChannel(ctx context.Context, client *soulapi.Client, agentID string, channel string) map[string]any {
