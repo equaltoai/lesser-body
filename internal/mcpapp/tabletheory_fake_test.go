@@ -8,6 +8,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
 )
 
 type fakeTableTheoryDB struct {
@@ -120,6 +121,20 @@ func installSoulBindingLookup(t testing.TB, username string, agentID string) {
 					"AgentID":  agentID,
 					"Username": username,
 				})
+			},
+		}, nil
+	})
+}
+
+func installMissingSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return tableerrors.ErrItemNotFound
 			},
 		}, nil
 	})

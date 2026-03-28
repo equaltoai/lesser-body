@@ -9,16 +9,18 @@ import (
 	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
+	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
 type mcpWellKnownDoc struct {
-	Name         string                 `json:"name"`
-	Version      string                 `json:"version"`
-	Endpoint     string                 `json:"endpoint,omitempty"`
-	Capabilities map[string]bool        `json:"capabilities"`
-	Auth         map[string]any         `json:"auth"`
-	Tools        []mcpWellKnownToolHint `json:"tools,omitempty"`
+	Name            string                            `json:"name"`
+	Version         string                            `json:"version"`
+	Endpoint        string                            `json:"endpoint,omitempty"`
+	Capabilities    map[string]bool                   `json:"capabilities"`
+	Auth            map[string]any                    `json:"auth"`
+	RuntimeProfiles map[string]runtimepolicy.Contract `json:"runtime_profiles,omitempty"`
+	Tools           []mcpWellKnownToolHint            `json:"tools,omitempty"`
 }
 
 type mcpWellKnownToolHint struct {
@@ -56,10 +58,14 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 				"scopes": append([]string(nil), publicOAuthDiscoveryScopes...),
 				"notes":  "Use a Lesser OAuth access token minted via the connector flow. Managed instance key and hardcoded bearer-token flows are deprecated inbound compatibility paths.",
 			},
+			RuntimeProfiles: runtimepolicy.Contracts(),
 		}
 
 		if srv != nil && srv.Registry() != nil {
 			for _, tool := range srv.Registry().List() {
+				if !runtimepolicy.ToolAllowed(runtimepolicy.ProfileSouled, tool.Name) {
+					continue
+				}
 				doc.Tools = append(doc.Tools, mcpWellKnownToolHint{
 					Name:        strings.TrimSpace(tool.Name),
 					Description: strings.TrimSpace(tool.Description),

@@ -12,6 +12,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
+	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -348,36 +349,29 @@ func resourceMemoryRecent(ctx context.Context) ([]mcpruntime.ResourceContent, er
 
 func resourceCapabilities(srv *Server) mcpruntime.ResourceHandler {
 	return func(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
+		_ = srv
+
 		p := auth.PrincipalFromToolContext(ctx)
 		scopes := []string{}
 		if p != nil && p.Claims != nil {
-			scopes = p.Claims.Scopes
+			scopes = append([]string(nil), p.Claims.Scopes...)
 		}
 
-		tools := []string{}
-		if srv != nil && srv.Registry() != nil {
-			for _, t := range srv.Registry().List() {
-				tools = append(tools, strings.TrimSpace(t.Name))
-			}
+		runtime := runtimepolicy.ResolveForActor(ctx, "")
+		if fromContext, ok := runtimepolicy.FromContext(ctx); ok {
+			runtime = fromContext
 		}
-		resources := []string{}
-		if srv != nil && srv.Resources() != nil {
-			for _, r := range srv.Resources().List() {
-				resources = append(resources, strings.TrimSpace(r.URI))
-			}
-		}
-		prompts := []string{}
-		if srv != nil && srv.Prompts() != nil {
-			for _, p := range srv.Prompts().List() {
-				prompts = append(prompts, strings.TrimSpace(p.Name))
-			}
-		}
+		tools := runtimepolicy.ToolsForProfile(runtime.Profile)
+		resources := runtimepolicy.ResourcesForProfile(runtime.Profile)
+		prompts := runtimepolicy.PromptsForProfile(runtime.Profile)
 
 		return resourceJSON("agent://capabilities", map[string]any{
 			"scopes":    scopes,
+			"runtime":   runtime,
 			"tools":     tools,
 			"resources": resources,
 			"prompts":   prompts,
+			"contracts": runtimepolicy.Contracts(),
 		})
 	}
 }
