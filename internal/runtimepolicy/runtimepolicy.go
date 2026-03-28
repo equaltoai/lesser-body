@@ -162,16 +162,16 @@ var profilePromptSets = buildNameSetMap(func(c Contract) []string { return c.Pro
 func ResolveForActor(ctx context.Context, actor string) Resolved {
 	actor = strings.TrimSpace(actor)
 	if actor == "" {
-		return resolvedForProfile(ProfileSouled, false, "actor_unset", "", false)
+		return resolvedForProfile(ProfileDrone, false, "actor_unset", "", false)
 	}
 	if strings.TrimSpace(os.Getenv(envLesserTableName)) == "" {
-		return resolvedForProfile(ProfileSouled, false, "soulbinding_unconfigured", "", false)
+		return resolvedForProfile(ProfileDrone, false, "soulbinding_unconfigured", "", false)
 	}
 
 	agentID, err := soulbinding.ResolveAgentID(ctx, actor)
 	switch {
 	case err != nil:
-		return resolvedForProfile(ProfileSouled, false, "soulbinding_lookup_error", "", false)
+		return resolvedForProfile(ProfileDrone, false, "soulbinding_lookup_error", "", false)
 	case strings.TrimSpace(agentID) == "":
 		return resolvedForProfile(ProfileDrone, true, "soulbinding_absent", "", false)
 	default:

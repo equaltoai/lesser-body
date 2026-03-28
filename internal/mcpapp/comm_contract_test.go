@@ -15,6 +15,7 @@ import (
 func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
 	auth.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")

@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -138,4 +139,24 @@ func installMissingSoulBindingLookup(t testing.TB) {
 			},
 		}, nil
 	})
+}
+
+func installErroringSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return errors.New("soulbinding lookup failed")
+			},
+		}, nil
+	})
+}
+
+func resetSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
 }

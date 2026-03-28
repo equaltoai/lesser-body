@@ -165,6 +165,8 @@ Runtime resolution is based on soul binding:
 
 - if `/mcp/{actor}` resolves to an existing soul binding in `LESSER_TABLE_NAME`, the actor runs as `souled`
 - if the actor has no soul binding, the actor runs as `drone`
+- if soul binding cannot be consulted because `LESSER_TABLE_NAME` is unset or the lookup fails, lesser-body degrades
+  conservatively to the `drone` boundary until soul state can be resolved again
 
 When the active profile is `drone`, lesser-body filters `tools/list`, `resources/list`, and `prompts/list`, and rejects
 direct calls to communication-only surfaces such as `sms_send`, `agent://channels`, and `compose_email`.
