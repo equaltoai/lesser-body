@@ -2,12 +2,16 @@ package mcpapp_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
+	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
 )
 
 type fakeTableTheoryDB struct {
@@ -108,9 +112,21 @@ func setStructFields(dest any, values map[string]string) error {
 	return nil
 }
 
+func installTrustConfigIsolation(t testing.TB) {
+	t.Helper()
+	trustconfig.ResetForTests()
+	t.Cleanup(trustconfig.ResetForTests)
+
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+}
+
 func installSoulBindingLookup(t testing.TB, username string, agentID string) {
 	t.Helper()
 	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	installTrustConfigIsolation(t)
 	soulbinding.ResetForTests()
 	t.Cleanup(soulbinding.ResetForTests)
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
@@ -123,4 +139,40 @@ func installSoulBindingLookup(t testing.TB, username string, agentID string) {
 			},
 		}, nil
 	})
+}
+
+func installMissingSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	installTrustConfigIsolation(t)
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return tableerrors.ErrItemNotFound
+			},
+		}, nil
+	})
+}
+
+func installErroringSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	installTrustConfigIsolation(t)
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return errors.New("soulbinding lookup failed")
+			},
+		}, nil
+	})
+}
+
+func resetSoulBindingLookup(t testing.TB) {
+	t.Helper()
+	soulbinding.ResetForTests()
+	t.Cleanup(soulbinding.ResetForTests)
 }

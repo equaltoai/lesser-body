@@ -143,6 +143,34 @@ AppTheory’s MCP server implements:
 - `prompts/list`
 - `prompts/get`
 
+## Runtime Profiles
+
+`lesser-body` now publishes and enforces two runtime profiles for the agent-first model:
+
+- `drone`
+  - Lightweight body before soul promotion.
+  - Social + memory MCP surfaces remain available.
+  - Communication surfaces and wallet-backed product semantics stay disabled.
+- `souled`
+  - Full lesser-body MCP surface, including communication tooling and soul-linked runtime behavior.
+
+The profile contract is exposed in two places:
+
+- `GET /.well-known/mcp.json`
+  - publishes a `runtime_profiles` map for `drone` and `souled`
+- `agent://capabilities`
+  - returns the active `runtime` profile for the authenticated actor plus the profile-scoped `tools`, `resources`, and `prompts`
+
+Runtime resolution is based on soul binding:
+
+- if `/mcp/{actor}` resolves to an existing soul binding in `LESSER_TABLE_NAME`, the actor runs as `souled`
+- if the actor has no soul binding, the actor runs as `drone`
+- if soul binding cannot be consulted because `LESSER_TABLE_NAME` is unset or the lookup fails, lesser-body degrades
+  conservatively to the `drone` boundary until soul state can be resolved again
+
+When the active profile is `drone`, lesser-body filters `tools/list`, `resources/list`, and `prompts/list`, and rejects
+direct calls to communication-only surfaces such as `sms_send`, `agent://channels`, and `compose_email`.
+
 ## Examples (curl)
 
 ### Initialize
