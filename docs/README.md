@@ -50,6 +50,7 @@ Protocol + tool catalog: `docs/mcp.md`
 ### Operators
 
 - Deploy: `docs/deployment.md`
+- Managed deploy inventory: `docs/managed-deploy-inventory.md`
 - Configure: `docs/configuration.md`
 - OAuth migration guide: `docs/oauth-migration.md`
 - Operator auth replacement: `docs/operator-auth-replacement.md`
