@@ -23,6 +23,7 @@ This repo’s CDK stack deploys:
 - `lesser-body` MCP Lambda (`cmd/lesser-body`)
 - A standalone **Remote MCP gateway** (API Gateway REST API v1) via AppTheory CDK (`AppTheoryRemoteMcpServer`)
 - (Recommended) DynamoDB session table for MCP sessions
+- DynamoDB stream table for MCP streaming state
 - SSM exports used by the Lesser stack to wire routes
 
 Notes:
@@ -45,6 +46,7 @@ And it publishes these (consumed by Lesser when `soulEnabled=true`):
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn`
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name` (when session table is enabled)
+- `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
 
 ## Deploy order (avoid the “missing SSM param” trap)
 
@@ -97,6 +99,39 @@ theory app up --aws-profile <profile> --stage dev
 ```
 
 The contract runs CDK deterministically (`npm ci`) and passes `-c stage=<stage>` to CDK.
+
+## Deploy (from release assets, no source checkout)
+
+Managed consumers can deploy from release assets without a repo tarball or `npm ci`.
+
+Required release assets:
+
+- `lesser-body.zip`
+- `lesser-body-deploy.json`
+- `lesser-body-managed-<stage>.template.json`
+- `deploy-lesser-body-from-release.sh`
+- `checksums.txt`
+- `lesser-body-release.json`
+
+Example:
+
+```bash
+bash ./deploy-lesser-body-from-release.sh \
+  --stack-name lesser-dev-lesser-body \
+  --asset-bucket my-artifact-bucket \
+  --app lesser \
+  --stage dev \
+  --base-domain example.com
+```
+
+Notes:
+
+- `--stage` selects the matching stage-specific release template (`dev`, `staging`, or `live`).
+- `--asset-bucket` must be writable in the target account because the helper stages `lesser-body.zip` there before
+  calling CloudFormation.
+- `--base-domain` is optional. When omitted, the template resolves `/<app>/<stage>/lesser/exports/v1/domain` from SSM.
+
+See `docs/managed-deploy-contract.md` for the full release contract.
 
 ## Verify (SSM exports)
 

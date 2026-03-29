@@ -134,3 +134,5 @@ Published by this repo’s CDK stack:
   - Convenience value intended to equal `https://api.<stageDomain>/mcp/{actor}`.
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name`
   - Session table name (if provisioned).
+- `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
+  - Stream table used for MCP streaming state.

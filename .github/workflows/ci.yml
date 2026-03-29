@@ -41,6 +41,9 @@ jobs:
           cache: npm
           cache-dependency-path: cdk/package-lock.json
 
+      - name: Verify release assets
+        run: bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test
+
       - name: Install CDK dependencies
         working-directory: cdk
         run: npm ci

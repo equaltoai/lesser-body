@@ -37,6 +37,11 @@ jobs:
             go.sum
             cdk/go.sum
 
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
       - name: Create and push tag (workflow_dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
@@ -68,6 +73,9 @@ jobs:
       - name: Build release assets
         run: bash scripts/build_release_assets.sh "${RELEASE_VERSION}" dist/release
 
+      - name: Verify release assets
+        run: bash scripts/verify_release_assets.sh "${RELEASE_VERSION}" dist/release
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,6 +84,11 @@ jobs:
 
           files=(
             dist/release/lesser-body.zip
+            dist/release/lesser-body-deploy.json
+            dist/release/lesser-body-managed-dev.template.json
+            dist/release/lesser-body-managed-staging.template.json
+            dist/release/lesser-body-managed-live.template.json
+            dist/release/deploy-lesser-body-from-release.sh
             dist/release/checksums.txt
             dist/release/lesser-body-release.json
           )
