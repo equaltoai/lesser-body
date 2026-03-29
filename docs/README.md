@@ -13,8 +13,10 @@ This directory contains the canonical operator + developer documentation for `le
 `lesser-body` is an **optional MCP server** that integrates with a deployed Lesser instance.
 
 1) Deploy the plugin (this repo): `docs/deployment.md`
-2) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
-3) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
+2) Managed release contract: `docs/managed-deploy-contract.md`
+3) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
+4) Inventory current/release gaps: `docs/managed-deploy-inventory.md`
+5) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
 
 ## Start here (developers)
 
@@ -50,6 +52,7 @@ Protocol + tool catalog: `docs/mcp.md`
 ### Operators
 
 - Deploy: `docs/deployment.md`
+- Managed deploy contract: `docs/managed-deploy-contract.md`
 - Managed deploy inventory: `docs/managed-deploy-inventory.md`
 - Configure: `docs/configuration.md`
 - OAuth migration guide: `docs/oauth-migration.md`
