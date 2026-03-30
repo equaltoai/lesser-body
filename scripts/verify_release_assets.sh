@@ -26,20 +26,42 @@ if [[ ! -f "${OUT_DIR}/lesser-body-release.json" ]]; then
   bash "${ROOT_DIR}/scripts/build_release_assets.sh" "${VERSION}" "${OUT_DIR}"
 fi
 
-required_files=(
-  "${OUT_DIR}/lesser-body.zip"
-  "${OUT_DIR}/lesser-body-deploy.json"
-  "${OUT_DIR}/lesser-body-managed-dev.template.json"
-  "${OUT_DIR}/lesser-body-managed-staging.template.json"
-  "${OUT_DIR}/lesser-body-managed-live.template.json"
-  "${OUT_DIR}/deploy-lesser-body-from-release.sh"
-  "${OUT_DIR}/checksums.txt"
-  "${OUT_DIR}/lesser-body-release.json"
+published_assets=(
+  "lesser-body.zip"
+  "lesser-body-deploy.json"
+  "lesser-body-managed-dev.template.json"
+  "lesser-body-managed-staging.template.json"
+  "lesser-body-managed-live.template.json"
+  "deploy-lesser-body-from-release.sh"
+  "checksums.txt"
+  "lesser-body-release.json"
 )
+
+required_files=()
+for asset in "${published_assets[@]}"; do
+  required_files+=("${OUT_DIR}/${asset}")
+done
 
 for file in "${required_files[@]}"; do
   if [[ ! -f "${file}" ]]; then
     echo "missing release asset: ${file}" >&2
+    exit 1
+  fi
+done
+
+checksum_assets=()
+while read -r _ path _; do
+  if [[ -n "${path:-}" ]]; then
+    checksum_assets+=("${path}")
+  fi
+done < "${OUT_DIR}/checksums.txt"
+
+for asset in "${published_assets[@]}"; do
+  if [[ "${asset}" == "checksums.txt" ]]; then
+    continue
+  fi
+  if ! printf '%s\n' "${checksum_assets[@]}" | grep -Fxq "${asset}"; then
+    echo "checksums.txt is missing published managed asset: ${asset}" >&2
     exit 1
   fi
 done
