@@ -15,7 +15,7 @@ This directory contains the canonical operator + developer documentation for `le
 1) Deploy the plugin (this repo): `docs/deployment.md`
 2) Managed release contract: `docs/managed-deploy-contract.md`
 3) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
-4) Inventory current/release gaps: `docs/managed-deploy-inventory.md`
+4) Managed deploy inventory/history: `docs/managed-deploy-inventory.md`
 5) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
 
 ## Start here (developers)
@@ -53,7 +53,7 @@ Protocol + tool catalog: `docs/mcp.md`
 
 - Deploy: `docs/deployment.md`
 - Managed deploy contract: `docs/managed-deploy-contract.md`
-- Managed deploy inventory: `docs/managed-deploy-inventory.md`
+- Managed deploy inventory/history: `docs/managed-deploy-inventory.md`
 - Configure: `docs/configuration.md`
 - OAuth migration guide: `docs/oauth-migration.md`
 - Operator auth replacement: `docs/operator-auth-replacement.md`

@@ -21,6 +21,12 @@ Every `lesser-body` release now publishes these managed deploy assets:
 The canonical manifest is `lesser-body-release.json`. It contains per-asset paths, sizes, and sha256 values so consumers
 can discover and verify the deploy assets automatically.
 
+`lesser-body-release.json` is a checksum-covered published asset. It is not unsigned metadata that happens to ship
+alongside the release.
+
+`checksums.txt` is the checksum root for the published asset set. It must include every other published managed asset,
+including `lesser-body-release.json`.
+
 `lesser-body-deploy.json` is the deploy-specific contract. It describes:
 
 - which stage-specific CloudFormation templates are published
@@ -106,11 +112,14 @@ endpoint metadata.
 
 ## Verification rules
 
-Consumers should verify release assets in this order:
+Managed consumers should verify release assets in this order:
 
-1. Check `checksums.txt`.
-2. Check `lesser-body-release.json` for the expected deploy asset paths and sha256 values.
-3. Use `lesser-body-deploy.json` to confirm the stage template, helper script, and exported SSM contract.
+1. Confirm the published asset set is present: `lesser-body.zip`, `lesser-body-deploy.json`, the three stage-specific
+   templates, `deploy-lesser-body-from-release.sh`, `checksums.txt`, and `lesser-body-release.json`.
+2. Check that `checksums.txt` includes every published managed asset except `checksums.txt` itself.
+3. Run `sha256sum -c checksums.txt`.
+4. Check `lesser-body-release.json` for the expected deploy asset paths and sha256 values.
+5. Use `lesser-body-deploy.json` to confirm the stage template, helper script, and exported SSM contract.
 
 Repo-local verification is implemented by:
 
@@ -121,6 +130,14 @@ bash scripts/verify_release_assets.sh v1.2.3 dist/release
 That verification fails if:
 
 - a required deploy asset is missing
+- `checksums.txt` omits any published managed asset, including `lesser-body-release.json`
 - a checksum does not match
 - a template regresses to CDK asset/bootstrap assumptions
 - the helper script no longer operates purely from the produced release directory
+
+Managed consumers should reject the release before trusting `lesser-body-release.json` or `lesser-body-deploy.json` if
+checksum coverage is incomplete. The repo-local verifier surfaces that failure as:
+
+```text
+checksums.txt is missing published managed asset: lesser-body-release.json
+```

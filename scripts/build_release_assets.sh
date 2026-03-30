@@ -14,6 +14,14 @@ cd "${ROOT_DIR}"
 
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
+mapfile -t PUBLISHED_ASSETS < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
+CHECKSUM_COVERED_ASSETS=()
+for asset in "${PUBLISHED_ASSETS[@]}"; do
+  if [[ "${asset}" != "checksums.txt" ]]; then
+    CHECKSUM_COVERED_ASSETS+=("${asset}")
+  fi
+done
+
 if [[ -z "${VERSION}" ]]; then
   echo "version is required" >&2
   exit 1
@@ -24,15 +32,9 @@ if [[ "${VERSION}" != v* ]]; then
 fi
 
 mkdir -p "${OUT_DIR}"
-rm -f \
-  "${OUT_DIR}/lesser-body.zip" \
-  "${OUT_DIR}/lesser-body-deploy.json" \
-  "${OUT_DIR}/lesser-body-managed-dev.template.json" \
-  "${OUT_DIR}/lesser-body-managed-staging.template.json" \
-  "${OUT_DIR}/lesser-body-managed-live.template.json" \
-  "${OUT_DIR}/deploy-lesser-body-from-release.sh" \
-  "${OUT_DIR}/checksums.txt" \
-  "${OUT_DIR}/lesser-body-release.json"
+for asset in "${PUBLISHED_ASSETS[@]}"; do
+  rm -f "${OUT_DIR}/${asset}"
+done
 
 ASSEMBLY_DIR="$(mktemp -d)"
 cleanup() {
@@ -214,17 +216,6 @@ JSON
 DEPLOY_MANIFEST_SHA256="$(sha256_of "${OUT_DIR}/lesser-body-deploy.json")"
 DEPLOY_MANIFEST_BYTES="$(bytes_of "${OUT_DIR}/lesser-body-deploy.json")"
 
-(
-  cd "${OUT_DIR}"
-  sha256sum \
-    lesser-body.zip \
-    lesser-body-deploy.json \
-    "${TEMPLATE_PATHS[dev]}" \
-    "${TEMPLATE_PATHS[staging]}" \
-    "${TEMPLATE_PATHS[live]}" \
-    deploy-lesser-body-from-release.sh > checksums.txt
-)
-
 cat > "${OUT_DIR}/lesser-body-release.json" <<JSON
 {
   "schema": 1,
@@ -286,5 +277,10 @@ cat > "${OUT_DIR}/lesser-body-release.json" <<JSON
   }
 }
 JSON
+
+(
+  cd "${OUT_DIR}"
+  sha256sum "${CHECKSUM_COVERED_ASSETS[@]}" > checksums.txt
+)
 
 echo "Wrote release assets to ${OUT_DIR}"

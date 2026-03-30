@@ -44,6 +44,9 @@ jobs:
       - name: Verify release assets
         run: bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test
 
+      - name: Regression: release manifest checksum coverage
+        run: bash scripts/check_release_asset_checksum_regression.sh v0.0.0-test dist/release-test
+
       - name: Install CDK dependencies
         working-directory: cdk
         run: npm ci

@@ -82,16 +82,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          files=(
-            dist/release/lesser-body.zip
-            dist/release/lesser-body-deploy.json
-            dist/release/lesser-body-managed-dev.template.json
-            dist/release/lesser-body-managed-staging.template.json
-            dist/release/lesser-body-managed-live.template.json
-            dist/release/deploy-lesser-body-from-release.sh
-            dist/release/checksums.txt
-            dist/release/lesser-body-release.json
-          )
+          mapfile -t published_assets < <(bash scripts/list_release_assets.sh)
+          files=()
+          for asset in "${published_assets[@]}"; do
+            files+=("dist/release/${asset}")
+          done
 
           if gh release view "${RELEASE_VERSION}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_VERSION}" "${files[@]}" --clobber

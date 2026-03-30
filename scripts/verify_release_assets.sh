@@ -26,16 +26,48 @@ if [[ ! -f "${OUT_DIR}/lesser-body-release.json" ]]; then
   bash "${ROOT_DIR}/scripts/build_release_assets.sh" "${VERSION}" "${OUT_DIR}"
 fi
 
-required_files=(
-  "${OUT_DIR}/lesser-body.zip"
-  "${OUT_DIR}/lesser-body-deploy.json"
-  "${OUT_DIR}/lesser-body-managed-dev.template.json"
-  "${OUT_DIR}/lesser-body-managed-staging.template.json"
-  "${OUT_DIR}/lesser-body-managed-live.template.json"
-  "${OUT_DIR}/deploy-lesser-body-from-release.sh"
-  "${OUT_DIR}/checksums.txt"
-  "${OUT_DIR}/lesser-body-release.json"
+mapfile -t published_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
+mapfile -t checksum_descriptor < <(python3 - "${OUT_DIR}/lesser-body-release.json" <<'PY'
+import json
+import pathlib
+import sys
+
+release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+checksums = release.get("artifacts", {}).get("checksums")
+if not isinstance(checksums, dict):
+    raise SystemExit("lesser-body-release.json is missing artifacts.checksums")
+
+path = checksums.get("path")
+if not isinstance(path, str) or not path:
+    raise SystemExit("lesser-body-release.json is missing artifacts.checksums.path")
+
+algorithm = checksums.get("algorithm")
+if not isinstance(algorithm, str) or not algorithm:
+    raise SystemExit("lesser-body-release.json is missing artifacts.checksums.algorithm")
+
+print(path)
+print(algorithm)
+PY
 )
+
+CHECKSUMS_PATH="${checksum_descriptor[0]:-}"
+CHECKSUMS_ALGORITHM="${checksum_descriptor[1]:-}"
+
+if [[ "${CHECKSUMS_PATH}" != "checksums.txt" ]]; then
+  echo "lesser-body-release.json has unsupported checksums.path: ${CHECKSUMS_PATH}" >&2
+  exit 1
+fi
+if [[ "${CHECKSUMS_ALGORITHM}" != "sha256" ]]; then
+  echo "lesser-body-release.json has unsupported checksums.algorithm: ${CHECKSUMS_ALGORITHM}" >&2
+  exit 1
+fi
+
+CHECKSUMS_FILE="${OUT_DIR}/${CHECKSUMS_PATH}"
+
+required_files=()
+for asset in "${published_assets[@]}"; do
+  required_files+=("${OUT_DIR}/${asset}")
+done
 
 for file in "${required_files[@]}"; do
   if [[ ! -f "${file}" ]]; then
@@ -44,9 +76,26 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+checksum_assets=()
+while read -r _ path _; do
+  if [[ -n "${path:-}" ]]; then
+    checksum_assets+=("${path}")
+  fi
+done < "${CHECKSUMS_FILE}"
+
+for asset in "${published_assets[@]}"; do
+  if [[ "${asset}" == "checksums.txt" ]]; then
+    continue
+  fi
+  if ! printf '%s\n' "${checksum_assets[@]}" | grep -Fxq "${asset}"; then
+    echo "checksums.txt is missing published managed asset: ${asset}" >&2
+    exit 1
+  fi
+done
+
 (
   cd "${OUT_DIR}"
-  sha256sum -c checksums.txt
+  sha256sum -c "${CHECKSUMS_PATH}"
 )
 
 python3 - "${OUT_DIR}" "${VERSION}" <<'PY'
