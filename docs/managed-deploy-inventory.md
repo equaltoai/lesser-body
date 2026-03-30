@@ -2,23 +2,45 @@
 
 <!-- AI Training: Inventory of lesser-body release outputs versus managed deploy inputs -->
 
-This document inventories what `lesser-body` releases publish today, what the managed runner currently needs in order to
-deploy the stack, and which values are true deploy-time inputs versus release-time build products.
+This document records both:
+
+- the historical release/deploy gap identified in `#92`
+- the current managed deploy asset set and consumer inputs after `#91` and `#98`
+
+Use `docs/managed-deploy-contract.md` as the canonical consumer-facing contract. This inventory exists to show how the
+current release model differs from the earlier source-tarball workflow.
 
 ## Current release outputs
 
 Today `bash scripts/build_release_assets.sh <version> dist/release` publishes:
 
 - `dist/release/lesser-body.zip`
+- `dist/release/lesser-body-deploy.json`
+- `dist/release/lesser-body-managed-dev.template.json`
+- `dist/release/lesser-body-managed-staging.template.json`
+- `dist/release/lesser-body-managed-live.template.json`
+- `dist/release/deploy-lesser-body-from-release.sh`
 - `dist/release/checksums.txt`
 - `dist/release/lesser-body-release.json`
 
-Those assets are enough to distribute the Lambda binary itself, but they are not yet sufficient to deploy the
-`lesser-body` stack without reconstructing repo-local CDK inputs.
+Those assets are sufficient for managed consumers to deploy `lesser-body` without reconstructing a source checkout.
+`checksums.txt` checksum-covers every published managed asset except `checksums.txt` itself, including the canonical
+`lesser-body-release.json` manifest.
 
-## Current managed runner workflow
+## Current managed deploy workflow
 
-The managed runner path currently reconstructs a source checkout at deploy time:
+The managed deploy path now consumes release-produced assets directly:
+
+1. Download the published release assets for the requested tag.
+2. Verify the published asset set with `checksums.txt`, `lesser-body-release.json`, and `lesser-body-deploy.json`.
+3. Upload `lesser-body.zip` to the target account's staging bucket.
+4. Deploy the stage-specific CloudFormation template with `deploy-lesser-body-from-release.sh` or equivalent consumer logic.
+
+That path does not require a repo tarball, `npm ci`, or CDK synthesis in the deploy environment.
+
+## Historical gap before #91
+
+Before the immutable deploy work landed, the managed runner reconstructed a source checkout at deploy time:
 
 1. Download the repo source tarball for the requested tag.
 2. Extract it into a temporary working tree.
@@ -26,12 +48,11 @@ The managed runner path currently reconstructs a source checkout at deploy time:
 4. Rebuild the Lambda artifact as part of CDK synthesis.
 5. Run `cdk deploy` from that reconstructed source tree.
 
-That means the managed path still depends on mutable source layout, a live Node install path, and repo-local synthesis
-behavior instead of release-produced deploy assets.
+That historical path depended on mutable source layout, a live Node install path, and repo-local synthesis behavior.
 
 ## True deploy-time inputs
 
-These values are chosen by the deploy consumer or target environment and should remain deploy-time inputs:
+These values are chosen by the deploy consumer or target environment and remain deploy-time inputs:
 
 - AWS credentials, account, and region for the target Lesser instance account
 - CloudFormation stack name for the `lesser-body` deployment
@@ -43,17 +64,18 @@ These values are chosen by the deploy consumer or target environment and should 
 
 ## Release-time build products
 
-These are deterministic artifacts that should be produced once at release time and then consumed as immutable inputs:
+These are deterministic artifacts produced once at release time and then consumed as immutable inputs:
 
 - the Lambda zip for `cmd/lesser-body`
-- a deploy template that can provision the stack without a source checkout
+- stage-specific deploy templates that can provision the stack without a source checkout
 - machine-readable metadata describing the deploy asset contract
-- checksums that let consumers verify every deploy asset automatically
+- checksums that let consumers verify every published deploy asset automatically
 - documentation describing the managed deploy contract and exported SSM values
 
 ## Gap summary
 
-The current release only publishes the Lambda zip plus minimal metadata, while the managed runner still needs:
+The original `#92` gap was that releases only published the Lambda zip plus minimal metadata, while the managed runner
+still needed:
 
 - a deployable infrastructure template
 - explicit deploy parameter inventory
@@ -61,4 +83,5 @@ The current release only publishes the Lambda zip plus minimal metadata, while t
 - a no-source deployment entrypoint
 - checksums and schema details for the deploy-specific artifacts
 
-Closing that gap is what the `#91` tracker and its subissues implement.
+That gap was closed by `#91`, and `#98` tightened the remaining producer-side blind spots by requiring checksum coverage
+for `lesser-body-release.json` and verifying the checksum-root descriptor embedded in the canonical manifest.
