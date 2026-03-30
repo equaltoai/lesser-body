@@ -214,17 +214,6 @@ JSON
 DEPLOY_MANIFEST_SHA256="$(sha256_of "${OUT_DIR}/lesser-body-deploy.json")"
 DEPLOY_MANIFEST_BYTES="$(bytes_of "${OUT_DIR}/lesser-body-deploy.json")"
 
-(
-  cd "${OUT_DIR}"
-  sha256sum \
-    lesser-body.zip \
-    lesser-body-deploy.json \
-    "${TEMPLATE_PATHS[dev]}" \
-    "${TEMPLATE_PATHS[staging]}" \
-    "${TEMPLATE_PATHS[live]}" \
-    deploy-lesser-body-from-release.sh > checksums.txt
-)
-
 cat > "${OUT_DIR}/lesser-body-release.json" <<JSON
 {
   "schema": 1,
@@ -286,5 +275,17 @@ cat > "${OUT_DIR}/lesser-body-release.json" <<JSON
   }
 }
 JSON
+
+(
+  cd "${OUT_DIR}"
+  sha256sum \
+    lesser-body.zip \
+    lesser-body-deploy.json \
+    "${TEMPLATE_PATHS[dev]}" \
+    "${TEMPLATE_PATHS[staging]}" \
+    "${TEMPLATE_PATHS[live]}" \
+    deploy-lesser-body-from-release.sh \
+    lesser-body-release.json > checksums.txt
+)
 
 echo "Wrote release assets to ${OUT_DIR}"
