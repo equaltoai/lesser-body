@@ -26,16 +26,7 @@ if [[ ! -f "${OUT_DIR}/lesser-body-release.json" ]]; then
   bash "${ROOT_DIR}/scripts/build_release_assets.sh" "${VERSION}" "${OUT_DIR}"
 fi
 
-published_assets=(
-  "lesser-body.zip"
-  "lesser-body-deploy.json"
-  "lesser-body-managed-dev.template.json"
-  "lesser-body-managed-staging.template.json"
-  "lesser-body-managed-live.template.json"
-  "deploy-lesser-body-from-release.sh"
-  "checksums.txt"
-  "lesser-body-release.json"
-)
+mapfile -t published_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
 
 required_files=()
 for asset in "${published_assets[@]}"; do
