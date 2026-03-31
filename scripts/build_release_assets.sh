@@ -146,7 +146,7 @@ cat > "${OUT_DIR}/lesser-body-deploy.json" <<JSON
     {
       "name": "asset_bucket",
       "required": true,
-      "description": "S3 bucket in the target account used to stage lesser-body.zip."
+      "description": "S3 bucket in the target account used to stage lesser-body.zip and CloudFormation templates (for large-template deploys)."
     },
     {
       "name": "stage",

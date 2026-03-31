@@ -128,7 +128,8 @@ Notes:
 
 - `--stage` selects the matching stage-specific release template (`dev`, `staging`, or `live`).
 - `--asset-bucket` must be writable in the target account because the helper stages `lesser-body.zip` there before
-  calling CloudFormation.
+  calling CloudFormation. The helper also passes `--s3-bucket <assetBucket>` to `aws cloudformation deploy` so managed
+  templates can exceed the AWS CLI local-template limit (51,200 bytes).
 - `--base-domain` is optional. When omitted, the template resolves `/<app>/<stage>/lesser/exports/v1/domain` from SSM.
 - The helper derives the managed template's SSM path parameters from `--app` plus `--stage` and passes them as explicit
   string overrides. The templates no longer rely on intrinsic expressions in parameter defaults.

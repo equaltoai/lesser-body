@@ -41,7 +41,7 @@ Managed consumers must still choose these deploy-time values:
 - CloudFormation stack name
 - target stage (`dev`, `staging`, or `live`)
 - Lesser app slug (`app`)
-- artifact staging bucket in the target account
+- artifact staging bucket in the target account (also used to upload CloudFormation templates for large-template deploys)
 - optional artifact key prefix
 - optional `baseDomain` override
 
@@ -64,7 +64,8 @@ What the helper does:
 
 1. Upload `lesser-body.zip` to the requested S3 bucket and prefix.
 2. Select the stage-specific CloudFormation template for `dev`, `staging`, or `live`.
-3. Deploy the stack with `aws cloudformation deploy`.
+3. Deploy the stack with `aws cloudformation deploy --s3-bucket <assetBucket>` so templates can grow beyond the AWS CLI
+   local-template size limit (51,200 bytes).
 
 This path does not require:
 
