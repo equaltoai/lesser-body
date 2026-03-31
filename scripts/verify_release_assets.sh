@@ -229,6 +229,13 @@ all_dry_run_logs=(
   "${DRY_RUN_LOG_DEV}"
   "${DRY_RUN_LOG_STAGING}"
   "${DRY_RUN_LOG_LIVE}"
+  "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"
+)
+
+expected_s3_prefix="releases/lesser-body/${VERSION}/templates"
+expected_parameter_overrides=(
+  'JWTSecretArnParamPath=/lesser/shared/secrets/jwt-secret-arn'
+  'JWTSecretKeyArnParamPath=/lesser/shared/kms/encryption-key-arn'
 )
 
 for stage in dev staging live; do
@@ -254,20 +261,17 @@ for stage in dev staging live; do
     echo "dry-run output did not include expected --s3-bucket flag (stage: ${stage})" >&2
     exit 1
   fi
-done
-
-expected_parameter_overrides=(
-  'JWTSecretArnParamPath=/lesser/shared/secrets/jwt-secret-arn'
-  'JWTSecretKeyArnParamPath=/lesser/shared/kms/encryption-key-arn'
-)
-for override in "${expected_parameter_overrides[@]}"; do
-  if ! grep -q -- "${override}" "${DRY_RUN_LOG_DEV}"; then
-    echo "dry-run output did not include expected parameter override: ${override}" >&2
+  if ! grep -q -- "--s3-prefix ${expected_s3_prefix}" "${stage_log}"; then
+    echo "dry-run output did not include expected --s3-prefix (stage: ${stage}): ${expected_s3_prefix}" >&2
     exit 1
   fi
-done
-for stage in dev staging live; do
-  stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
+
+  for override in "${expected_parameter_overrides[@]}"; do
+    if ! grep -q -- "${override}" "${stage_log}"; then
+      echo "dry-run output did not include expected parameter override (stage: ${stage}): ${override}" >&2
+      exit 1
+    fi
+  done
 
   expected_stage_overrides=(
     "LesserStageDomainParamPath=/lesser/${stage}/lesser/exports/v1/domain"
@@ -286,19 +290,14 @@ if ! grep -q -- '--no-execute-changeset' "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"; 
   exit 1
 fi
 
-TEMPLATE_LOCAL_LIMIT_BYTES=51200
-for stage in dev staging live; do
-  template_path="${OUT_DIR}/lesser-body-managed-${stage}.template.json"
-  template_bytes="$(stat -c %s "${template_path}")"
-  if [[ "${template_bytes}" -gt "${TEMPLATE_LOCAL_LIMIT_BYTES}" ]]; then
-    stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
-    if ! grep -q -- '--s3-bucket' "${stage_log}"; then
-      echo "managed template exceeds AWS CLI local-template limit (${template_bytes} bytes > ${TEMPLATE_LOCAL_LIMIT_BYTES}): ${template_path}" >&2
-      echo "deploy helper must pass --s3-bucket for stage ${stage}" >&2
-      exit 1
-    fi
-  fi
-done
+if ! grep -q -- '--s3-bucket example-artifacts-bucket' "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"; then
+  echo "dry-run output did not include expected --s3-bucket flag for --no-execute-changeset run" >&2
+  exit 1
+fi
+if ! grep -q -- "--s3-prefix ${expected_s3_prefix}" "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"; then
+  echo "dry-run output did not include expected --s3-prefix for --no-execute-changeset run: ${expected_s3_prefix}" >&2
+  exit 1
+fi
 
 for log in "${all_dry_run_logs[@]}"; do
   if grep -Eq 'scripts/build\.sh|cmd/release-template|/cdk/' "${log}"; then
