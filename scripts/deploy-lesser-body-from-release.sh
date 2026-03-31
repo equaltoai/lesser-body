@@ -7,7 +7,7 @@ usage: deploy-lesser-body-from-release.sh --stack-name <name> --asset-bucket <bu
 
 Required:
   --stack-name <name>      CloudFormation stack name to create or update
-  --asset-bucket <bucket>  S3 bucket in the target account used to stage lesser-body.zip
+  --asset-bucket <bucket>  S3 bucket in the target account used to stage lesser-body.zip and CloudFormation templates
   --stage <stage>          Lesser stage: dev | staging | live
 
 Optional:
@@ -161,6 +161,8 @@ deploy_cmd=(
   aws cloudformation deploy
   --stack-name "${STACK_NAME}"
   --template-file "${TEMPLATE_PATH}"
+  --s3-bucket "${ASSET_BUCKET}"
+  --s3-prefix "${ASSET_PREFIX%/}/templates"
   --capabilities CAPABILITY_NAMED_IAM
 )
 if [[ "${NO_EXECUTE_CHANGESET}" == "1" ]]; then
