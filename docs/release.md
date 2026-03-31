@@ -59,6 +59,9 @@ bash scripts/verify_published_release_assets.sh \
 
 That runs the downloaded `deploy-lesser-body-from-release.sh` helper with `--no-execute-changeset`.
 
+Note: the helper always passes `--s3-bucket <assetBucket>` to `aws cloudformation deploy` so managed templates can grow
+beyond the AWS CLI local-template size limit (51,200 bytes).
+
 ## GitHub Actions release
 
 The workflow `.github/workflows/release.yml`:
