@@ -186,50 +186,125 @@ if template_errors:
     raise SystemExit("\n".join(template_errors))
 PY
 
-DRY_RUN_LOG="$(cd "${OUT_DIR}" && pwd)/deploy-dry-run.log"
+RELEASE_ABS_DIR="$(cd "${OUT_DIR}" && pwd)"
+
+run_deploy_dry_run() {
+  local stage="$1"
+  local log_path="$2"
+
+  (
+    cd "${OUT_DIR}"
+    bash ./deploy-lesser-body-from-release.sh \
+      --dry-run \
+      --stack-name "lesser-${stage}-lesser-body" \
+      --asset-bucket example-artifacts-bucket \
+      --app lesser \
+      --stage "${stage}" \
+      --base-domain example.com > "${log_path}"
+  )
+}
+
+DRY_RUN_LOG_DEV="${RELEASE_ABS_DIR}/deploy-dry-run-dev.log"
+DRY_RUN_LOG_STAGING="${RELEASE_ABS_DIR}/deploy-dry-run-staging.log"
+DRY_RUN_LOG_LIVE="${RELEASE_ABS_DIR}/deploy-dry-run-live.log"
+
+run_deploy_dry_run dev "${DRY_RUN_LOG_DEV}"
+run_deploy_dry_run staging "${DRY_RUN_LOG_STAGING}"
+run_deploy_dry_run live "${DRY_RUN_LOG_LIVE}"
+
+DRY_RUN_LOG_NO_EXECUTE_CHANGESET="${RELEASE_ABS_DIR}/deploy-dry-run-dev-no-execute-changeset.log"
 (
   cd "${OUT_DIR}"
   bash ./deploy-lesser-body-from-release.sh \
     --dry-run \
+    --no-execute-changeset \
     --stack-name lesser-dev-lesser-body \
     --asset-bucket example-artifacts-bucket \
     --app lesser \
     --stage dev \
-    --base-domain example.com > "${DRY_RUN_LOG}"
+    --base-domain example.com > "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"
 )
 
-if ! grep -q 'lesser-body.zip' "${DRY_RUN_LOG}"; then
-  echo "dry-run output did not reference lesser-body.zip" >&2
-  exit 1
-fi
-if ! grep -q 'lesser-body-managed-dev.template.json' "${DRY_RUN_LOG}"; then
-  echo "dry-run output did not reference the stage-specific managed deploy template" >&2
-  exit 1
-fi
-RELEASE_ABS_DIR="$(cd "${OUT_DIR}" && pwd)"
-if ! grep -q "${RELEASE_ABS_DIR}/lesser-body.zip" "${DRY_RUN_LOG}"; then
-  echo "dry-run output did not stage the release-produced lambda zip from the release directory" >&2
-  exit 1
-fi
-if ! grep -q "${RELEASE_ABS_DIR}/lesser-body-managed-dev.template.json" "${DRY_RUN_LOG}"; then
-  echo "dry-run output did not use the release-produced dev template from the release directory" >&2
-  exit 1
-fi
+all_dry_run_logs=(
+  "${DRY_RUN_LOG_DEV}"
+  "${DRY_RUN_LOG_STAGING}"
+  "${DRY_RUN_LOG_LIVE}"
+)
+
+for stage in dev staging live; do
+  stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
+
+  if ! grep -q -- 'lesser-body.zip' "${stage_log}"; then
+    echo "dry-run output did not reference lesser-body.zip (stage: ${stage})" >&2
+    exit 1
+  fi
+  if ! grep -q -- "lesser-body-managed-${stage}.template.json" "${stage_log}"; then
+    echo "dry-run output did not reference the stage-specific managed deploy template (stage: ${stage})" >&2
+    exit 1
+  fi
+  if ! grep -q -- "${RELEASE_ABS_DIR}/lesser-body.zip" "${stage_log}"; then
+    echo "dry-run output did not stage the release-produced lambda zip from the release directory (stage: ${stage})" >&2
+    exit 1
+  fi
+  if ! grep -q -- "${RELEASE_ABS_DIR}/lesser-body-managed-${stage}.template.json" "${stage_log}"; then
+    echo "dry-run output did not use the release-produced stage template from the release directory (stage: ${stage})" >&2
+    exit 1
+  fi
+  if ! grep -q -- '--s3-bucket example-artifacts-bucket' "${stage_log}"; then
+    echo "dry-run output did not include expected --s3-bucket flag (stage: ${stage})" >&2
+    exit 1
+  fi
+done
+
 expected_parameter_overrides=(
   'JWTSecretArnParamPath=/lesser/shared/secrets/jwt-secret-arn'
   'JWTSecretKeyArnParamPath=/lesser/shared/kms/encryption-key-arn'
-  'LesserStageDomainParamPath=/lesser/dev/lesser/exports/v1/domain'
-  'LesserTableNameParamPath=/lesser/dev/lesser/exports/v1/table_name'
 )
 for override in "${expected_parameter_overrides[@]}"; do
-  if ! grep -q "${override}" "${DRY_RUN_LOG}"; then
+  if ! grep -q -- "${override}" "${DRY_RUN_LOG_DEV}"; then
     echo "dry-run output did not include expected parameter override: ${override}" >&2
     exit 1
   fi
 done
-if grep -Eq 'scripts/build\.sh|cmd/release-template|/cdk/' "${DRY_RUN_LOG}"; then
-  echo "dry-run output leaked source-checkout build paths" >&2
+for stage in dev staging live; do
+  stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
+
+  expected_stage_overrides=(
+    "LesserStageDomainParamPath=/lesser/${stage}/lesser/exports/v1/domain"
+    "LesserTableNameParamPath=/lesser/${stage}/lesser/exports/v1/table_name"
+  )
+  for override in "${expected_stage_overrides[@]}"; do
+    if ! grep -q -- "${override}" "${stage_log}"; then
+      echo "dry-run output did not include expected stage parameter override (stage: ${stage}): ${override}" >&2
+      exit 1
+    fi
+  done
+done
+
+if ! grep -q -- '--no-execute-changeset' "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"; then
+  echo "dry-run output did not include --no-execute-changeset when requested" >&2
   exit 1
 fi
+
+TEMPLATE_LOCAL_LIMIT_BYTES=51200
+for stage in dev staging live; do
+  template_path="${OUT_DIR}/lesser-body-managed-${stage}.template.json"
+  template_bytes="$(stat -c %s "${template_path}")"
+  if [[ "${template_bytes}" -gt "${TEMPLATE_LOCAL_LIMIT_BYTES}" ]]; then
+    stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
+    if ! grep -q -- '--s3-bucket' "${stage_log}"; then
+      echo "managed template exceeds AWS CLI local-template limit (${template_bytes} bytes > ${TEMPLATE_LOCAL_LIMIT_BYTES}): ${template_path}" >&2
+      echo "deploy helper must pass --s3-bucket for stage ${stage}" >&2
+      exit 1
+    fi
+  fi
+done
+
+for log in "${all_dry_run_logs[@]}"; do
+  if grep -Eq 'scripts/build\.sh|cmd/release-template|/cdk/' "${log}"; then
+    echo "dry-run output leaked source-checkout build paths: ${log}" >&2
+    exit 1
+  fi
+done
 
 echo "Verified release assets in ${OUT_DIR}"
