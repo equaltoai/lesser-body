@@ -170,6 +170,12 @@ cat > "${OUT_DIR}/lesser-body-deploy.json" <<JSON
       "required": false,
       "default": "releases/lesser-body/${VERSION}",
       "description": "Optional S3 key prefix used when staging lesser-body.zip."
+    },
+    {
+      "name": "no_execute_changeset",
+      "required": false,
+      "default": false,
+      "description": "Optional helper flag that passes --no-execute-changeset to aws cloudformation deploy for verification-only runs."
     }
   ],
   "template_parameters": [
@@ -190,6 +196,30 @@ cat > "${OUT_DIR}/lesser-body-deploy.json" <<JSON
     {
       "name": "LesserBodyCodeObjectKey",
       "required": true
+    },
+    {
+      "name": "JWTSecretArnParamPath",
+      "required": false,
+      "default": "/<app>/shared/secrets/jwt-secret-arn",
+      "description": "SSM parameter path for the shared JWT secret ARN. The release helper derives this from the target app."
+    },
+    {
+      "name": "JWTSecretKeyArnParamPath",
+      "required": false,
+      "default": "/<app>/shared/kms/encryption-key-arn",
+      "description": "SSM parameter path for the shared KMS key ARN. The release helper derives this from the target app."
+    },
+    {
+      "name": "LesserStageDomainParamPath",
+      "required": false,
+      "default": "/<app>/<stage>/lesser/exports/v1/domain",
+      "description": "SSM parameter path for the Lesser stage domain. The stage-specific template and release helper align on this path."
+    },
+    {
+      "name": "LesserTableNameParamPath",
+      "required": false,
+      "default": "/<app>/<stage>/lesser/exports/v1/table_name",
+      "description": "SSM parameter path for the Lesser table name. The release helper derives this from the target app and stage."
     }
   ],
   "exports": [

@@ -14,6 +14,7 @@ Optional:
   --app <slug>             Lesser app slug (default: lesser)
   --base-domain <domain>   Optional base domain override; omit to use Lesser's exported stage domain from SSM
   --asset-prefix <prefix>  S3 key prefix for the staged zip (default: releases/lesser-body/<version>)
+  --no-execute-changeset   Pass through to aws cloudformation deploy for verification-only change set creation
   --dry-run                Print the AWS commands without executing them
   -h, --help               Show this help text
 EOF
@@ -30,6 +31,7 @@ APP_NAME="lesser"
 STAGE=""
 BASE_DOMAIN=""
 DRY_RUN=0
+NO_EXECUTE_CHANGESET=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,6 +61,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --no-execute-changeset)
+      NO_EXECUTE_CHANGESET=1
       shift
       ;;
     -h|--help)
@@ -127,11 +133,19 @@ if [[ -z "${ASSET_PREFIX}" ]]; then
 fi
 ASSET_PREFIX="${ASSET_PREFIX#/}"
 ASSET_KEY="${ASSET_PREFIX%/}/lesser-body.zip"
+JWT_SECRET_ARN_PARAM_PATH="/${APP_NAME}/shared/secrets/jwt-secret-arn"
+JWT_SECRET_KEY_ARN_PARAM_PATH="/${APP_NAME}/shared/kms/encryption-key-arn"
+LESSER_STAGE_DOMAIN_PARAM_PATH="/${APP_NAME}/${STAGE}/lesser/exports/v1/domain"
+LESSER_TABLE_NAME_PARAM_PATH="/${APP_NAME}/${STAGE}/lesser/exports/v1/table_name"
 
 parameter_overrides=(
   "AppName=${APP_NAME}"
   "LesserBodyCodeBucketName=${ASSET_BUCKET}"
   "LesserBodyCodeObjectKey=${ASSET_KEY}"
+  "JWTSecretArnParamPath=${JWT_SECRET_ARN_PARAM_PATH}"
+  "JWTSecretKeyArnParamPath=${JWT_SECRET_KEY_ARN_PARAM_PATH}"
+  "LesserStageDomainParamPath=${LESSER_STAGE_DOMAIN_PARAM_PATH}"
+  "LesserTableNameParamPath=${LESSER_TABLE_NAME_PARAM_PATH}"
 )
 if [[ -n "${BASE_DOMAIN}" ]]; then
   parameter_overrides+=("BaseDomain=${BASE_DOMAIN}")
@@ -148,8 +162,11 @@ deploy_cmd=(
   --stack-name "${STACK_NAME}"
   --template-file "${TEMPLATE_PATH}"
   --capabilities CAPABILITY_NAMED_IAM
-  --parameter-overrides
 )
+if [[ "${NO_EXECUTE_CHANGESET}" == "1" ]]; then
+  deploy_cmd+=(--no-execute-changeset)
+fi
+deploy_cmd+=(--parameter-overrides)
 deploy_cmd+=("${parameter_overrides[@]}")
 
 run_or_print "${upload_cmd[@]}"
