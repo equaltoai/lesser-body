@@ -80,13 +80,25 @@ Each stage-specific template accepts these CloudFormation parameters:
 - `BaseDomain`
 - `LesserBodyCodeBucketName`
 - `LesserBodyCodeObjectKey`
+- `JWTSecretArnParamPath`
+- `JWTSecretKeyArnParamPath`
+- `LesserStageDomainParamPath`
+- `LesserTableNameParamPath`
 
 Template behavior:
 
 - `AppName` defaults to `lesser`.
 - `BaseDomain` is optional.
+- Every parameter `Default` emitted in the managed templates is a plain string. Intrinsics and object-valued defaults are not
+  CloudFormation-legal for this deploy path.
+- `JWTSecretArnParamPath` defaults to `/<app>/shared/secrets/jwt-secret-arn`.
+- `JWTSecretKeyArnParamPath` defaults to `/<app>/shared/kms/encryption-key-arn`.
+- `LesserStageDomainParamPath` defaults to `/<app>/<stage>/lesser/exports/v1/domain`.
+- `LesserTableNameParamPath` defaults to `/<app>/<stage>/lesser/exports/v1/table_name`.
 - When `BaseDomain` is empty, the stack resolves `/<app>/<stage>/lesser/exports/v1/domain` from SSM.
 - The Lambda code location is always provided from the staged release asset in S3.
+- The release helper derives the SSM path parameters from `--app` plus `--stage` and passes them explicitly as legal
+  string parameter overrides.
 
 ## Published exports
 
@@ -127,11 +139,18 @@ Repo-local verification is implemented by:
 bash scripts/verify_release_assets.sh v1.2.3 dist/release
 ```
 
+Exact published-release verification is implemented by:
+
+```bash
+bash scripts/verify_published_release_assets.sh --version v1.2.3
+```
+
 That verification fails if:
 
 - a required deploy asset is missing
 - `checksums.txt` omits any published managed asset, including `lesser-body-release.json`
 - a checksum does not match
+- a managed template contains a non-string `Parameters.*.Default`
 - a template regresses to CDK asset/bootstrap assumptions
 - the helper script no longer operates purely from the produced release directory
 

@@ -130,6 +130,9 @@ Notes:
 - `--asset-bucket` must be writable in the target account because the helper stages `lesser-body.zip` there before
   calling CloudFormation.
 - `--base-domain` is optional. When omitted, the template resolves `/<app>/<stage>/lesser/exports/v1/domain` from SSM.
+- The helper derives the managed template's SSM path parameters from `--app` plus `--stage` and passes them as explicit
+  string overrides. The templates no longer rely on intrinsic expressions in parameter defaults.
+- Add `--no-execute-changeset` to exercise the real `aws cloudformation deploy` path without executing the change set.
 
 See `docs/managed-deploy-contract.md` for the full release contract.
 

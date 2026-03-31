@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -47,12 +48,32 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 		Type:        jsii.String("String"),
 		Description: jsii.String("S3 object key for the lesser-body Lambda zip release asset."),
 	})
+	jwtSecretArnParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("JWTSecretArnParamPath"), &awscdk.CfnParameterProps{
+		Type:        jsii.String("String"),
+		Default:     jsii.String(defaultSsmParamPath("lesser", "shared", "secrets", "jwt-secret-arn")),
+		Description: jsii.String("SSM parameter path containing the shared JWT secret ARN for the target app."),
+	})
+	jwtSecretKeyParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("JWTSecretKeyArnParamPath"), &awscdk.CfnParameterProps{
+		Type:        jsii.String("String"),
+		Default:     jsii.String(defaultSsmParamPath("lesser", "shared", "kms", "encryption-key-arn")),
+		Description: jsii.String("SSM parameter path containing the shared KMS key ARN for the target app."),
+	})
+	lesserStageDomainParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("LesserStageDomainParamPath"), &awscdk.CfnParameterProps{
+		Type:        jsii.String("String"),
+		Default:     jsii.String(defaultSsmParamPath("lesser", stage, "lesser", "exports", "v1", "domain")),
+		Description: jsii.String("SSM parameter path containing the Lesser stage domain for the target app and stage."),
+	})
+	lesserTableParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("LesserTableNameParamPath"), &awscdk.CfnParameterProps{
+		Type:        jsii.String("String"),
+		Default:     jsii.String(defaultSsmParamPath("lesser", stage, "lesser", "exports", "v1", "table_name")),
+		Description: jsii.String("SSM parameter path containing the Lesser table name for the target app and stage."),
+	})
 
 	stageDomain := resolvedStageDomainFromDeployInputs(
 		stack,
-		appNameParam.ValueAsString(),
 		stage,
 		baseDomainParam.ValueAsString(),
+		lesserStageDomainParamPathParam.ValueAsString(),
 	)
 
 	configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
@@ -62,15 +83,18 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 			BucketNameParam: codeBucketParam,
 			ObjectKeyParam:  codeKeyParam,
 		}),
-		ServiceVersion: jsii.String(serviceVersion),
-		PublicEndpoint: publicMcpEndpoint(stageDomain),
-		AllowedOrigins: mcpAllowedOrigins(stageDomain),
+		ServiceVersion:        jsii.String(serviceVersion),
+		PublicEndpoint:        publicMcpEndpoint(stageDomain),
+		AllowedOrigins:        mcpAllowedOrigins(stageDomain),
+		JWTSecretArnParamPath: jwtSecretArnParamPathParam.ValueAsString(),
+		JWTSecretKeyParamPath: jwtSecretKeyParamPathParam.ValueAsString(),
+		LesserTableParamPath:  lesserTableParamPathParam.ValueAsString(),
 	})
 
 	return &LesserBodyStack{Stack: stack}
 }
 
-func resolvedStageDomainFromDeployInputs(stack awscdk.Stack, appName *string, stage string, baseDomain *string) *string {
+func resolvedStageDomainFromDeployInputs(stack awscdk.Stack, stage string, baseDomain *string, stageDomainParamPath *string) *string {
 	hasBaseDomain := awscdk.NewCfnCondition(stack, jsii.String("HasBaseDomain"), &awscdk.CfnConditionProps{
 		Expression: awscdk.Fn_ConditionNot(awscdk.Fn_ConditionEquals(baseDomain, jsii.String(""))),
 	})
@@ -79,18 +103,21 @@ func resolvedStageDomainFromDeployInputs(stack awscdk.Stack, appName *string, st
 		stageDomainFromBase = tokenJoin(".", jsii.String(stage), baseDomain)
 	}
 
-	domainParam := importStringParameter(
-		stack,
-		jsii.String("LesserStageDomainParamLookup"),
-		ssmParamName(appName, jsii.String(stage), jsii.String("lesser"), jsii.String("exports"), jsii.String("v1"), jsii.String("domain")),
+	domainValue := awscdk.Token_AsString(
+		awscdk.NewCfnDynamicReference(awscdk.CfnDynamicReferenceService_SSM, stageDomainParamPath),
+		nil,
 	)
 
 	return awscdk.Token_AsString(
 		awscdk.Fn_ConditionIf(
 			hasBaseDomain.LogicalId(),
 			stageDomainFromBase,
-			domainParam.StringValue(),
+			domainValue,
 		),
 		nil,
 	)
+}
+
+func defaultSsmParamPath(parts ...string) string {
+	return fmt.Sprintf("/%s", strings.Join(parts, "/"))
 }

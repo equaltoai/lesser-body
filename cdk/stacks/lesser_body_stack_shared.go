@@ -14,12 +14,15 @@ import (
 )
 
 type lesserBodyRuntimeProps struct {
-	AppName        *string
-	Stage          *string
-	Code           awslambda.Code
-	ServiceVersion *string
-	PublicEndpoint *string
-	AllowedOrigins *string
+	AppName               *string
+	Stage                 *string
+	Code                  awslambda.Code
+	ServiceVersion        *string
+	PublicEndpoint        *string
+	AllowedOrigins        *string
+	JWTSecretArnParamPath *string
+	JWTSecretKeyParamPath *string
+	LesserTableParamPath  *string
 }
 
 func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps) {
@@ -42,21 +45,21 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		},
 	})
 
-	jwtSecretArnParam := importStringParameter(
-		stack,
-		jsii.String("JWTSecretArnParamLookup"),
-		ssmParamName(props.AppName, jsii.String("shared"), jsii.String("secrets"), jsii.String("jwt-secret-arn")),
-	)
-	jwtSecretKeyArnParam := importStringParameter(
-		stack,
-		jsii.String("JWTSecretKeyArnParamLookup"),
-		ssmParamName(props.AppName, jsii.String("shared"), jsii.String("kms"), jsii.String("encryption-key-arn")),
-	)
-	handler.AddEnvironment(jsii.String("JWT_SECRET_ARN"), jwtSecretArnParam.StringValue(), nil)
+	jwtSecretArnParamPath := props.JWTSecretArnParamPath
+	if jwtSecretArnParamPath == nil || *jwtSecretArnParamPath == "" {
+		jwtSecretArnParamPath = ssmParamName(props.AppName, jsii.String("shared"), jsii.String("secrets"), jsii.String("jwt-secret-arn"))
+	}
+	jwtSecretKeyParamPath := props.JWTSecretKeyParamPath
+	if jwtSecretKeyParamPath == nil || *jwtSecretKeyParamPath == "" {
+		jwtSecretKeyParamPath = ssmParamName(props.AppName, jsii.String("shared"), jsii.String("kms"), jsii.String("encryption-key-arn"))
+	}
+	jwtSecretArnValue := lookupStringParameterValue(stack, jsii.String("JWTSecretArnParamLookup"), props.JWTSecretArnParamPath, jwtSecretArnParamPath)
+	jwtSecretKeyArnValue := lookupStringParameterValue(stack, jsii.String("JWTSecretKeyArnParamLookup"), props.JWTSecretKeyParamPath, jwtSecretKeyParamPath)
+	handler.AddEnvironment(jsii.String("JWT_SECRET_ARN"), jwtSecretArnValue, nil)
 	jwtSecret := awssecretsmanager.Secret_FromSecretCompleteArn(
 		stack,
 		jsii.String("ImportedJWTSecret"),
-		jwtSecretArnParam.StringValue(),
+		jwtSecretArnValue,
 	)
 	jwtSecret.GrantRead(handler, nil)
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
@@ -65,7 +68,7 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 			jsii.String("kms:DescribeKey"),
 		},
 		Resources: &[]*string{
-			jwtSecretKeyArnParam.StringValue(),
+			jwtSecretKeyArnValue,
 		},
 	}))
 
@@ -193,13 +196,12 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	handler.AddEnvironment(jsii.String("MCP_ALLOWED_ORIGINS"), props.AllowedOrigins, nil)
 	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
-	lesserTableParam := importStringParameter(
-		stack,
-		jsii.String("LesserTableNameParamLookup"),
-		ssmParamName(props.AppName, props.Stage, jsii.String("lesser"), jsii.String("exports"), jsii.String("v1"), jsii.String("table_name")),
-	)
-	handler.AddEnvironment(jsii.String("LESSER_TABLE_NAME"), lesserTableParam.StringValue(), nil)
-	tableName := lesserTableParam.StringValue()
+	lesserTableParamPath := props.LesserTableParamPath
+	if lesserTableParamPath == nil || *lesserTableParamPath == "" {
+		lesserTableParamPath = ssmParamName(props.AppName, props.Stage, jsii.String("lesser"), jsii.String("exports"), jsii.String("v1"), jsii.String("table_name"))
+	}
+	tableName := lookupStringParameterValue(stack, jsii.String("LesserTableNameParamLookup"), props.LesserTableParamPath, lesserTableParamPath)
+	handler.AddEnvironment(jsii.String("LESSER_TABLE_NAME"), tableName, nil)
 	tableArn := stack.FormatArn(&awscdk.ArnComponents{
 		Service:      jsii.String("dynamodb"),
 		Resource:     jsii.String("table"),
@@ -270,4 +272,14 @@ func importStringParameter(scope constructs.Construct, id *string, parameterName
 		ParameterName: parameterName,
 		SimpleName:    jsii.Bool(false),
 	})
+}
+
+func lookupStringParameterValue(stack awscdk.Stack, id *string, explicitPath *string, fallbackPath *string) *string {
+	if explicitPath != nil && *explicitPath != "" {
+		return awscdk.Token_AsString(
+			awscdk.NewCfnDynamicReference(awscdk.CfnDynamicReferenceService_SSM, explicitPath),
+			nil,
+		)
+	}
+	return importStringParameter(stack, id, fallbackPath).StringValue()
 }
