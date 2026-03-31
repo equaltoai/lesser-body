@@ -118,6 +118,19 @@ assert release["deploy"]["manifest_path"] == "lesser-body-deploy.json"
 assert release["deploy"]["source_checkout_required"] is False
 assert release["deploy"]["npm_install_required"] is False
 
+expected_template_parameters = {
+    "AppName",
+    "BaseDomain",
+    "LesserBodyCodeBucketName",
+    "LesserBodyCodeObjectKey",
+    "JWTSecretArnParamPath",
+    "JWTSecretKeyArnParamPath",
+    "LesserStageDomainParamPath",
+    "LesserTableNameParamPath",
+}
+deploy_template_parameters = {entry["name"] for entry in deploy["template_parameters"]}
+assert expected_template_parameters.issubset(deploy_template_parameters), deploy["template_parameters"]
+
 expected_artifacts = {
     "lambda_zip": "lesser-body.zip",
     "deploy_manifest": "lesser-body-deploy.json",
@@ -134,6 +147,8 @@ for key, path_name in expected_artifacts.items():
 
 assert deploy["lambda"]["sha256"] == release["artifacts"]["lambda_zip"]["sha256"]
 assert deploy["script"]["sha256"] == release["artifacts"]["deploy_script"]["sha256"]
+
+template_errors = []
 
 for stage in ("dev", "staging", "live"):
     stage_meta = release["artifacts"]["deploy_templates"][stage]
@@ -154,8 +169,21 @@ for stage in ("dev", "staging", "live"):
         "BaseDomain",
         "LesserBodyCodeBucketName",
         "LesserBodyCodeObjectKey",
+        "JWTSecretArnParamPath",
+        "JWTSecretKeyArnParamPath",
+        "LesserStageDomainParamPath",
+        "LesserTableNameParamPath",
     }
     assert required_params.issubset(template["Parameters"].keys()), template["Parameters"].keys()
+
+    for param_name, param_spec in template["Parameters"].items():
+        if "Default" in param_spec and not isinstance(param_spec["Default"], str):
+            template_errors.append(
+                f"{stage_path.name}: Parameters.{param_name}.Default must be a string, got {type(param_spec['Default']).__name__}"
+            )
+
+if template_errors:
+    raise SystemExit("\n".join(template_errors))
 PY
 
 DRY_RUN_LOG="$(cd "${OUT_DIR}" && pwd)/deploy-dry-run.log"
@@ -187,6 +215,18 @@ if ! grep -q "${RELEASE_ABS_DIR}/lesser-body-managed-dev.template.json" "${DRY_R
   echo "dry-run output did not use the release-produced dev template from the release directory" >&2
   exit 1
 fi
+expected_parameter_overrides=(
+  'JWTSecretArnParamPath=/lesser/shared/secrets/jwt-secret-arn'
+  'JWTSecretKeyArnParamPath=/lesser/shared/kms/encryption-key-arn'
+  'LesserStageDomainParamPath=/lesser/dev/lesser/exports/v1/domain'
+  'LesserTableNameParamPath=/lesser/dev/lesser/exports/v1/table_name'
+)
+for override in "${expected_parameter_overrides[@]}"; do
+  if ! grep -q "${override}" "${DRY_RUN_LOG}"; then
+    echo "dry-run output did not include expected parameter override: ${override}" >&2
+    exit 1
+  fi
+done
 if grep -Eq 'scripts/build\.sh|cmd/release-template|/cdk/' "${DRY_RUN_LOG}"; then
   echo "dry-run output leaked source-checkout build paths" >&2
   exit 1
