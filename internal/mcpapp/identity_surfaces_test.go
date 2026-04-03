@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -35,6 +37,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	var gotBindingPK string
 	var gotBindingSK string
 	var searchQueries []string
+	var searchDomains []string
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
 		return &fakeTableTheoryDB{
 			firstFn: func(dest any, where map[string]any) error {
@@ -54,8 +57,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/soul/search":
 			q := r.URL.Query().Get("q")
+			domain := r.URL.Query().Get("domain")
 			searchQueries = append(searchQueries, q)
-			if q == "agent-alice" {
+			searchDomains = append(searchDomains, domain)
+			if q == "agent-alice" && domain == "test.example.com" {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
@@ -225,6 +230,56 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	if len(searchQueries) != 0 {
 		t.Fatalf("identity_lookup for managed identifiers should resolve directly, got search queries %+v", searchQueries)
 	}
+	if len(searchDomains) != 0 {
+		t.Fatalf("identity_lookup for managed identifiers should not set search domains, got %+v", searchDomains)
+	}
+
+	searchQueries = nil
+	searchDomains = nil
+
+	// identity_lookup should normalize current-instance local IDs and carry the authenticated instance domain explicitly.
+	for _, q := range []string{"agent-alice", "@agent-alice"} {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": q},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 31, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_lookup(%q): status=%d body=%s", q, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_lookup(%q) rpc error: %+v", q, rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		matches, _ := data["matches"].([]any)
+		if len(matches) != 1 {
+			t.Fatalf("identity_lookup(%q): expected 1 match, got %+v", q, matches)
+		}
+		match, _ := matches[0].(map[string]any)
+		if match["agentId"] != agentID {
+			t.Fatalf("identity_lookup(%q): agentId want %s got %v", q, agentID, match["agentId"])
+		}
+		if match["localId"] != "agent-alice" {
+			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
+		}
+	}
+	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice"}) {
+		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
+	}
+	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com"}) {
+		t.Fatalf("identity_lookup should provide current-instance domain context for local queries, got %+v", searchDomains)
+	}
 
 	// agent://channels + agent://channels/preferences should read successfully.
 	{
@@ -318,5 +373,214 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if data["verified"] != true {
 			t.Fatalf("expected ENS verification to succeed, got %+v", data)
 		}
+	}
+}
+
+func TestLBM1_IdentityLookupBareLocalFailsWithoutTrustworthyCurrentInstanceDomain(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulbinding.ResetForTests()
+	soulapi.ResetForTests()
+	defer soulbinding.ResetForTests()
+
+	const agentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return setStructFields(dest, map[string]string{
+					"AgentID":  agentID,
+					"Username": "Agent1",
+				})
+			},
+		}, nil
+	})
+
+	searchCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/search":
+			searchCalled = true
+			_, _ = w.Write([]byte(`{"version":"1","results":[],"count":0,"has_more":false}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "identity_lookup",
+		"arguments": map[string]any{"query": "agent-alice"},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("identity_lookup(agent-alice): status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("identity_lookup(agent-alice) rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+	}
+	if !out.IsError {
+		t.Fatalf("expected isError tool result, got %+v", out)
+	}
+	errPayload, _ := out.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "invalid_request" {
+		t.Fatalf("expected invalid_request, got %+v", errPayload)
+	}
+	if !strings.Contains(strings.ToLower(errPayload["message"].(string)), "trustworthy instance domain") {
+		t.Fatalf("expected error message to mention trustworthy instance domain, got %+v", errPayload)
+	}
+	if searchCalled {
+		t.Fatalf("identity_lookup should fail before search when current-instance domain context is unavailable")
+	}
+}
+
+func TestLBM1_IdentityLookupMalformedLocalIdentifierReturnsBadRequest(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulbinding.ResetForTests()
+	soulapi.ResetForTests()
+	defer soulbinding.ResetForTests()
+
+	const agentID = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return setStructFields(dest, map[string]string{
+					"AgentID":  agentID,
+					"Username": "Agent1",
+				})
+			},
+		}, nil
+	})
+
+	var gotSearchQuery string
+	var gotSearchDomain string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/api/v1/soul/search":
+			gotSearchQuery = r.URL.Query().Get("q")
+			gotSearchDomain = r.URL.Query().Get("domain")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"local_id must not contain /, :, or @"}}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "identity_lookup",
+		"arguments": map[string]any{"query": "bad/local"},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("identity_lookup(bad/local): status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("identity_lookup(bad/local) rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+	}
+	if !out.IsError {
+		t.Fatalf("expected isError tool result, got %+v", out)
+	}
+	errPayload, _ := out.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "invalid_request" {
+		t.Fatalf("expected invalid_request, got %+v", errPayload)
+	}
+	if !strings.Contains(strings.ToLower(errPayload["message"].(string)), "local_id") {
+		t.Fatalf("expected error message to mention local_id, got %+v", errPayload)
+	}
+	if gotSearchQuery != "bad/local" || gotSearchDomain != "" {
+		t.Fatalf("unexpected downstream malformed search shape: q=%q domain=%q", gotSearchQuery, gotSearchDomain)
 	}
 }
