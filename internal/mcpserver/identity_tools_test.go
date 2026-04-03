@@ -139,12 +139,13 @@ func TestNormalizeCurrentInstanceLocalLookupQuery(t *testing.T) {
 		ok   bool
 	}{
 		{name: "plain", raw: "medic", want: "medic", ok: true},
+		{name: "dot_local", raw: "ops.v2", want: "ops.v2", ok: true},
 		{name: "at_prefix", raw: "@Medic", want: "medic", ok: true},
 		{name: "trailing_slash", raw: "medic/", want: "medic", ok: true},
 		{name: "email", raw: "medic@example.com", ok: false},
 		{name: "ens", raw: "medic.lessersoul.eth", ok: false},
 		{name: "agent_id", raw: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ok: false},
-		{name: "domain_like", raw: "simulacrum.greater.website", ok: false},
+		{name: "multi_dot_local", raw: "ops.v2.dev", want: "ops.v2.dev", ok: true},
 	}
 
 	for _, tc := range cases {
@@ -198,5 +199,16 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 	}
 	if search.Domain != "test.example.com" {
 		t.Fatalf("domain: want test.example.com got %q", search.Domain)
+	}
+
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.v2")
+	if err != nil {
+		t.Fatalf("prepareSoulLookupSearch dot_local: %v", err)
+	}
+	if search.Query != "ops.v2" {
+		t.Fatalf("dot_local query: want ops.v2 got %q", search.Query)
+	}
+	if search.Domain != "test.example.com" {
+		t.Fatalf("dot_local domain: want test.example.com got %q", search.Domain)
 	}
 }

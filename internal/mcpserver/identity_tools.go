@@ -401,9 +401,6 @@ func normalizeCurrentInstanceLocalLookupQuery(raw string) (string, bool) {
 	if raw == "" || isSoulAgentID(raw) || looksLikeEmail(raw) || looksLikeENSName(raw) {
 		return "", false
 	}
-	if strings.Contains(raw, ".") && !strings.HasPrefix(raw, "@") && !strings.HasSuffix(raw, "/") {
-		return "", false
-	}
 
 	localID := strings.ToLower(strings.TrimSpace(raw))
 	localID = strings.TrimPrefix(localID, "@")
