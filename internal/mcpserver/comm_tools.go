@@ -209,7 +209,7 @@ func identityWhoamiDef() mcpruntime.ToolDef {
 func identityLookupDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "identity_lookup",
-		Description: "Look up an agent by ENS name, agentId, or email address.",
+		Description: "Look up a soul identity by ENS name, managed email, full agentId, or a current-instance local ID such as medic.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

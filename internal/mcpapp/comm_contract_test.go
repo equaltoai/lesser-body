@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -202,6 +203,9 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		s := mustSchema(t, toolsByName["identity_lookup"])
 		if !reflect.DeepEqual(s.Required, []string{"query"}) {
 			t.Fatalf("identity_lookup required: want [query], got %#v", s.Required)
+		}
+		if !strings.Contains(toolsByName["identity_lookup"].Description, "current-instance local ID") {
+			t.Fatalf("identity_lookup description should mention current-instance local IDs, got %q", toolsByName["identity_lookup"].Description)
 		}
 		expectPropType(t, s, "query", "string")
 	}

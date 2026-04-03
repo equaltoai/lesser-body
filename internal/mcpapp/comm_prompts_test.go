@@ -91,6 +91,9 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	if !strings.Contains(combined, "identity_whoami") || !strings.Contains(combined, "agent://channels/preferences") {
 		t.Fatalf("expected compose_email prompt to reference identity_whoami and agent://channels/preferences, got: %s", combined)
 	}
+	if !strings.Contains(combined, "current-instance local ID") {
+		t.Fatalf("expected compose_email prompt to describe supported identity_lookup query forms, got: %s", combined)
+	}
 
 	getParams, _ = json.Marshal(map[string]any{
 		"name":      "handle_inbound",
@@ -147,5 +150,32 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	}
 	if !strings.Contains(combined, "outbound voice call") {
 		t.Fatalf("voice inbound prompt should explain outbound voice is disabled, got: %s", combined)
+	}
+
+	getParams, _ = json.Marshal(map[string]any{
+		"name":      "respect_preferences",
+		"arguments": map[string]any{"query": "medic"},
+	})
+	getResp = invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 6, Method: "prompts/get", Params: getParams})
+	if getResp.Status != 200 {
+		t.Fatalf("prompts/get respect_preferences: status=%d body=%s", getResp.Status, string(getResp.Body))
+	}
+	_ = json.Unmarshal(getResp.Body, &rpcGet)
+	if rpcGet.Error != nil {
+		t.Fatalf("prompts/get respect_preferences error: %+v", rpcGet.Error)
+	}
+	{
+		b, _ := json.Marshal(rpcGet.Result)
+		_ = json.Unmarshal(b, &prompt)
+	}
+	combined = ""
+	for _, m := range prompt.Messages {
+		combined += "\n" + m.Content.Text
+	}
+	if !strings.Contains(combined, "managed email, ENS name, full agentId, or current-instance local ID") {
+		t.Fatalf("expected respect_preferences prompt to describe supported identity_lookup query forms, got: %s", combined)
 	}
 }

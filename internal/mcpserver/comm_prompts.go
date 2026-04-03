@@ -50,7 +50,7 @@ func promptComposeEmail(_ context.Context, args json.RawMessage) (*mcpruntime.Pr
 						"You are operating an agent's communication channels via lesser-body MCP.",
 						"Before composing/sending, fetch your current preferences and boundaries:",
 						"- Call identity_whoami and/or read agent://channels/preferences.",
-						"If the recipient is a soul-holding agent, prefer to look up their preferences first using identity_lookup.",
+						"If the recipient is a soul-holding agent, prefer to look up their preferences first using identity_lookup with a managed email, ENS name, full agentId, or a current-instance local ID such as medic.",
 						"Respect communication_policy boundaries (e.g., no unsolicited outbound) and first-contact expectations (e.g., disclose you are an AI agent).",
 						"Keep the email concise and avoid secrets.",
 					}, "\n"),
@@ -130,7 +130,7 @@ func promptHandleInbound(_ context.Context, args json.RawMessage) (*mcpruntime.P
 					Text: strings.Join([]string{
 						"Use the agent's declared boundaries and contact preferences as constraints.",
 						"Fetch your own channels/preferences via identity_whoami or agent://channels/preferences if needed.",
-						"When the sender is identifiable (email/ENS), consider using identity_lookup to fetch their contactPreferences and choose the best response channel/timing.",
+						"When the sender is identifiable, consider using identity_lookup with their managed email, ENS name, full agentId, or current-instance local ID to fetch contactPreferences and choose the best response channel/timing.",
 						"Never invent message contents; read them via tools/resources.",
 					}, "\n"),
 				},
@@ -154,7 +154,7 @@ func promptRespectPreferences(_ context.Context, args json.RawMessage) (*mcprunt
 
 	user := strings.Join([]string{
 		"Determine the best way to contact the target agent while respecting their preferences.",
-		"1) Call identity_lookup with the provided query to resolve their channels and contactPreferences.",
+		"1) Call identity_lookup with a managed email, ENS name, full agentId, or current-instance local ID (for example medic) to resolve their channels and contactPreferences.",
 		"2) Recommend the best channel (email/sms/activitypub/mcp) and timing based on availability schedule, languages, and first-contact settings.",
 		"   - Treat voice as receive-only because outbound phone_call is intentionally disabled.",
 		"3) If preferences suggest constraints (e.g., requireSoul/requireReputation), explain what is missing and what to do next.",
@@ -170,7 +170,7 @@ func promptRespectPreferences(_ context.Context, args json.RawMessage) (*mcprunt
 					Type: "text",
 					Text: strings.Join([]string{
 						"Prefer boundary-respecting, preference-respecting communication.",
-						"Use identity_lookup for target preferences and identity_whoami for your own boundaries.",
+						"Use identity_lookup for target preferences with a supported query form, and identity_whoami for your own boundaries.",
 						"If a preferred channel is unavailable, choose a fallback and explain tradeoffs.",
 					}, "\n"),
 				},
