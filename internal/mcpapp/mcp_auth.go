@@ -27,6 +27,11 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 	authHook := auth.Hook(nil)
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		expectedAudience, err := validatedMcpEndpointForRequest(ctx)
+		if err != nil {
+			return invalidDiscoveryConfigResponse(err), nil
+		}
+
 		identity, err := authHook(ctx)
 		if err != nil {
 			return unauthorizedMCPResponse(ctx), nil
@@ -35,7 +40,7 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 			return unauthorizedMCPResponse(ctx), nil
 		}
 		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeOAuthToken {
-			if err := auth.ValidateTokenAudience(principal.Claims, mcpEndpointForRequest(ctx)); err != nil {
+			if err := auth.ValidateTokenAudience(principal.Claims, expectedAudience); err != nil {
 				return unauthorizedMCPResponse(ctx), nil
 			}
 		}

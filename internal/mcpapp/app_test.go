@@ -351,6 +351,41 @@ func TestMcpActorRoute_UnauthorizedAdvertisesActorMetadata(t *testing.T) {
 	}
 }
 
+func TestMcpActorRoute_RejectsWrongPublicHost(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestTokenWithAudience(t, "test", "agent1", []string{"read"}, []string{"https://example.com/mcp/agent1"})
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
+		"authorization":     {"Bearer " + token},
+		"x-forwarded-proto": {"https"},
+		"x-forwarded-host":  {"api.example.com"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+
+	if resp.Status != 400 {
+		t.Fatalf("expected 400 for wrong public host, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if !strings.Contains(string(resp.Body), "app.invalid_public_url") {
+		t.Fatalf("expected invalid public url body, got %s", string(resp.Body))
+	}
+	if !strings.Contains(string(resp.Body), "https://example.com/mcp/agent1") {
+		t.Fatalf("expected canonical MCP url in body, got %s", string(resp.Body))
+	}
+}
+
 func TestSharedMcpRoute_ReturnsRetiredResponse(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")

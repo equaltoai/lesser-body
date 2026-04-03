@@ -109,6 +109,55 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 	}
 }
 
+func TestNewAPIGatewayHandler_McpRouteRejectsWrongPublicHost(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	handler := NewAPIGatewayHandler(app)
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+	})
+
+	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "POST",
+		Path:       "/mcp/agent1",
+		Headers: map[string]string{
+			"content-type":      "application/json",
+			"x-forwarded-proto": "https",
+			"x-forwarded-host":  "api.example.com",
+		},
+		Body:            string(body),
+		IsBase64Encoded: false,
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
+	if !ok {
+		t.Fatalf("expected APIGatewayProxyStreamingResponse for /mcp/{actor}, got %T", out)
+	}
+	if streaming.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", streaming.StatusCode)
+	}
+	b, readErr := io.ReadAll(streaming.Body)
+	if readErr != nil {
+		t.Fatalf("read body: %v", readErr)
+	}
+	if !strings.Contains(string(b), "app.invalid_public_url") {
+		t.Fatalf("expected invalid public url body, got %s", string(b))
+	}
+}
+
 func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
