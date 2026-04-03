@@ -60,7 +60,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			domain := r.URL.Query().Get("domain")
 			searchQueries = append(searchQueries, q)
 			searchDomains = append(searchDomains, domain)
-			if domain == "test.example.com" && (q == "agent-alice" || q == "ops.v2") {
+			if domain == "test.example.com" && (q == "agent-alice" || q == "ops.v2" || q == "ops.eth") {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
@@ -97,6 +97,9 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/resolve/ens/agent-alice.lessersoul.eth":
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/resolve/ens/ops.eth":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
 		case r.URL.Path == "/api/v1/notifications":
 			_, _ = w.Write([]byte(`[
 				{
@@ -238,7 +241,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	searchDomains = nil
 
 	// identity_lookup should normalize current-instance local IDs and carry the authenticated instance domain explicitly.
-	for _, q := range []string{"agent-alice", "@agent-alice", "ops.v2"} {
+	for _, q := range []string{"agent-alice", "@agent-alice", "ops.v2", "ops.eth"} {
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_lookup",
 			"arguments": map[string]any{"query": q},
@@ -274,10 +277,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
 		}
 	}
-	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2"}) {
+	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2", "ops.eth"}) {
 		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
 	}
-	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com", "test.example.com"}) {
+	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com", "test.example.com", "test.example.com"}) {
 		t.Fatalf("identity_lookup should provide current-instance domain context for local queries, got %+v", searchDomains)
 	}
 

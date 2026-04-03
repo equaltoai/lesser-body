@@ -289,6 +289,7 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 		return nil, errors.New("soul api client is nil")
 	}
 
+	allowENSLikeLocalFallback := false
 	if agentID, err := resolveAgentIDByIdentifier(ctx, client, q); err == nil && agentID != "" {
 		return []string{agentID}, nil
 	} else if err != nil {
@@ -296,9 +297,10 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 		if !errors.As(err, &apiErr) || apiErr.Status != 404 {
 			return nil, err
 		}
+		allowENSLikeLocalFallback = looksLikeENSName(q)
 	}
 
-	search, err := prepareSoulLookupSearch(ctx, client, q)
+	search, err := prepareSoulLookupSearch(ctx, client, q, allowENSLikeLocalFallback)
 	if err != nil {
 		return nil, err
 	}
@@ -334,9 +336,9 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 	return agentIDs, nil
 }
 
-func prepareSoulLookupSearch(ctx context.Context, client *soulapi.Client, q string) (soulLookupSearch, error) {
+func prepareSoulLookupSearch(ctx context.Context, client *soulapi.Client, q string, allowENSLikeLocalFallback bool) (soulLookupSearch, error) {
 	searchQ := normalizeSoulLookupQuery(q)
-	localID, ok := normalizeCurrentInstanceLocalLookupQuery(searchQ)
+	localID, ok := normalizeCurrentInstanceLocalLookupQuery(searchQ, allowENSLikeLocalFallback)
 	if !ok {
 		return soulLookupSearch{Query: searchQ}, nil
 	}
@@ -396,9 +398,12 @@ func authenticatedAgentDomain(ctx context.Context, client *soulapi.Client) (stri
 	return domain, nil
 }
 
-func normalizeCurrentInstanceLocalLookupQuery(raw string) (string, bool) {
+func normalizeCurrentInstanceLocalLookupQuery(raw string, allowENSLikeLocalFallback bool) (string, bool) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || isSoulAgentID(raw) || looksLikeEmail(raw) || looksLikeENSName(raw) {
+	if raw == "" || isSoulAgentID(raw) || looksLikeEmail(raw) {
+		return "", false
+	}
+	if !allowENSLikeLocalFallback && looksLikeENSName(raw) {
 		return "", false
 	}
 

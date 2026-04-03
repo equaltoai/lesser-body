@@ -153,7 +153,7 @@ func TestNormalizeCurrentInstanceLocalLookupQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := normalizeCurrentInstanceLocalLookupQuery(tc.raw)
+			got, ok := normalizeCurrentInstanceLocalLookupQuery(tc.raw, false)
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("normalizeCurrentInstanceLocalLookupQuery(%q) = (%q, %v), want (%q, %v)", tc.raw, got, ok, tc.want, tc.ok)
 			}
@@ -190,7 +190,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		Claims:   &auth.Claims{Username: "Agent1"},
 	}, "")
 
-	search, err := prepareSoulLookupSearch(ctx, client, "medic")
+	search, err := prepareSoulLookupSearch(ctx, client, "medic", false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		t.Fatalf("domain: want test.example.com got %q", search.Domain)
 	}
 
-	search, err = prepareSoulLookupSearch(ctx, client, "ops.v2")
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.v2", false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch dot_local: %v", err)
 	}
@@ -210,5 +210,24 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 	}
 	if search.Domain != "test.example.com" {
 		t.Fatalf("dot_local domain: want test.example.com got %q", search.Domain)
+	}
+
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", false)
+	if err != nil {
+		t.Fatalf("prepareSoulLookupSearch ens_like_without_fallback: %v", err)
+	}
+	if search.Query != "ops.eth" || search.Domain != "" {
+		t.Fatalf("ens_like_without_fallback: want generic search query without domain, got %+v", search)
+	}
+
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", true)
+	if err != nil {
+		t.Fatalf("prepareSoulLookupSearch ens_like_with_fallback: %v", err)
+	}
+	if search.Query != "ops.eth" {
+		t.Fatalf("ens_like_with_fallback query: want ops.eth got %q", search.Query)
+	}
+	if search.Domain != "test.example.com" {
+		t.Fatalf("ens_like_with_fallback domain: want test.example.com got %q", search.Domain)
 	}
 }
