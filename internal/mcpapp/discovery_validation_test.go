@@ -187,11 +187,14 @@ func TestWellKnownOAuthProtectedResource_RejectsConfiguredEndpointMismatch(t *te
 			"x-forwarded-host":  {"other.example.com"},
 		},
 	})
-	if resp.Status != 500 {
-		t.Fatalf("expected 500, got %d (%s)", resp.Status, string(resp.Body))
+	if resp.Status != 400 {
+		t.Fatalf("expected 400, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if !strings.Contains(string(resp.Body), "MCP_ENDPOINT") {
-		t.Fatalf("expected MCP_ENDPOINT mismatch details, got %s", string(resp.Body))
+	if !strings.Contains(string(resp.Body), "app.invalid_public_url") {
+		t.Fatalf("expected invalid public url details, got %s", string(resp.Body))
+	}
+	if !strings.Contains(string(resp.Body), "https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1") {
+		t.Fatalf("expected canonical resource metadata url in body, got %s", string(resp.Body))
 	}
 }
 

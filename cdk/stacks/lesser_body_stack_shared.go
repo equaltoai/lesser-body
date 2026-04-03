@@ -19,6 +19,7 @@ type lesserBodyRuntimeProps struct {
 	Code                  awslambda.Code
 	ServiceVersion        *string
 	PublicEndpoint        *string
+	LesserAPIBaseURL      *string
 	AllowedOrigins        *string
 	JWTSecretArnParamPath *string
 	JWTSecretKeyParamPath *string
@@ -193,6 +194,9 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	)
 
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), props.PublicEndpoint, nil)
+	if props.LesserAPIBaseURL != nil && *props.LesserAPIBaseURL != "" {
+		handler.AddEnvironment(jsii.String("LESSER_API_BASE_URL"), props.LesserAPIBaseURL, nil)
+	}
 	handler.AddEnvironment(jsii.String("MCP_ALLOWED_ORIGINS"), props.AllowedOrigins, nil)
 	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
@@ -228,28 +232,33 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		Resources: &[]*string{tableArn, indexArn},
 	}))
 
-	awsssm.NewCfnParameter(stack, jsii.String("McpLambdaArnParam"), &awsssm.CfnParameterProps{
+	mcpLambdaArnParam := awsssm.NewCfnParameter(stack, jsii.String("McpLambdaArnParam"), &awsssm.CfnParameterProps{
 		Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_lambda_arn")),
 		Type:  jsii.String("String"),
 		Value: handler.FunctionArn(),
 	})
-	awsssm.NewCfnParameter(stack, jsii.String("McpEndpointParam"), &awsssm.CfnParameterProps{
+	mcpLambdaArnParam.OverrideLogicalId(jsii.String("McpLambdaArnParamE9C053F0"))
+
+	mcpEndpointParam := awsssm.NewCfnParameter(stack, jsii.String("McpEndpointParam"), &awsssm.CfnParameterProps{
 		Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_endpoint_url")),
 		Type:  jsii.String("String"),
 		Value: props.PublicEndpoint,
 	})
+	mcpEndpointParam.OverrideLogicalId(jsii.String("McpEndpointParam71B07820"))
 	if server.SessionTable() != nil {
-		awsssm.NewCfnParameter(stack, jsii.String("McpSessionTableParam"), &awsssm.CfnParameterProps{
+		mcpSessionTableParam := awsssm.NewCfnParameter(stack, jsii.String("McpSessionTableParam"), &awsssm.CfnParameterProps{
 			Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_session_table_name")),
 			Type:  jsii.String("String"),
 			Value: server.SessionTable().TableName(),
 		})
+		mcpSessionTableParam.OverrideLogicalId(jsii.String("McpSessionTableParam11A03692"))
 	}
-	awsssm.NewCfnParameter(stack, jsii.String("McpStreamTableParam"), &awsssm.CfnParameterProps{
+	mcpStreamTableParam := awsssm.NewCfnParameter(stack, jsii.String("McpStreamTableParam"), &awsssm.CfnParameterProps{
 		Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_stream_table_name")),
 		Type:  jsii.String("String"),
 		Value: streamTable.TableName(),
 	})
+	mcpStreamTableParam.OverrideLogicalId(jsii.String("McpStreamTableParam604E9EFA"))
 }
 
 func ssmParamName(parts ...*string) *string {

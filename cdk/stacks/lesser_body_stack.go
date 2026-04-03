@@ -35,12 +35,13 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 	}
 	stageDomain := resolvedStageDomain(stack, appName, stage, props.BaseDomain)
 	configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
-		AppName:        jsii.String(appName),
-		Stage:          jsii.String(stage),
-		Code:           awslambda.Code_FromAsset(jsii.String("../dist/lesser-body.zip"), nil),
-		ServiceVersion: jsii.String("dev"),
-		PublicEndpoint: publicMcpEndpoint(stageDomain),
-		AllowedOrigins: mcpAllowedOrigins(stageDomain),
+		AppName:          jsii.String(appName),
+		Stage:            jsii.String(stage),
+		Code:             awslambda.Code_FromAsset(jsii.String("../dist/lesser-body.zip"), nil),
+		ServiceVersion:   jsii.String("dev"),
+		PublicEndpoint:   publicMcpEndpoint(stageDomain),
+		LesserAPIBaseURL: lesserAPIBaseURL(stageDomain),
+		AllowedOrigins:   mcpAllowedOrigins(stageDomain),
 	})
 
 	return &LesserBodyStack{Stack: stack}
@@ -60,6 +61,13 @@ func publicMcpEndpoint(stageDomain *string) *string {
 		jsii.String("https://api."),
 		stageDomain,
 		jsii.String("/mcp/{actor}"),
+	})
+}
+
+func lesserAPIBaseURL(stageDomain *string) *string {
+	return awscdk.Fn_Join(jsii.String(""), &[]*string{
+		jsii.String("https://api."),
+		stageDomain,
 	})
 }
 

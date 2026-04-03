@@ -85,6 +85,7 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 		}),
 		ServiceVersion:        jsii.String(serviceVersion),
 		PublicEndpoint:        publicMcpEndpoint(stageDomain),
+		LesserAPIBaseURL:      lesserAPIBaseURL(stageDomain),
 		AllowedOrigins:        mcpAllowedOrigins(stageDomain),
 		JWTSecretArnParamPath: jwtSecretArnParamPathParam.ValueAsString(),
 		JWTSecretKeyParamPath: jwtSecretKeyParamPathParam.ValueAsString(),

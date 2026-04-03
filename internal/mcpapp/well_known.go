@@ -2,6 +2,7 @@ package mcpapp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -148,7 +149,13 @@ func mcpEndpointForRequest(ctx *apptheory.Context) string {
 }
 
 func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
-	endpoint := mcpEndpointForRequest(ctx)
+	endpoint, err := configuredMcpEndpointForRequest(ctx)
+	if err != nil {
+		endpoint = ""
+	}
+	if endpoint == "" {
+		endpoint = mcpEndpointForRequest(ctx)
+	}
 	if url, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(endpoint); ok {
 		return url
 	}
@@ -220,15 +227,30 @@ func mcpEndpointPathFromRequest(requestPath string) string {
 }
 
 func invalidDiscoveryConfigResponse(err error) *apptheory.Response {
+	status := 500
+	code := "app.config_invalid"
 	message := "invalid discovery configuration"
+	details := map[string]any{}
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		message = strings.TrimSpace(err.Error())
 	}
+	var mismatch *mcpEndpointMismatchError
+	if errors.As(err, &mismatch) {
+		status = 400
+		code = "app.invalid_public_url"
+		details["reason"] = "configured_endpoint_mismatch"
+		details["canonical_mcp_url"] = mismatch.Configured
+		details["requested_mcp_url"] = mismatch.Requested
+		if resourceMetadataURL, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(mismatch.Configured); ok {
+			details["canonical_resource_metadata_url"] = resourceMetadataURL
+		}
+	}
 
-	return apptheory.MustJSON(500, map[string]any{
+	return apptheory.MustJSON(status, map[string]any{
 		"error": map[string]any{
-			"code":    "app.config_invalid",
+			"code":    code,
 			"message": message,
+			"details": details,
 		},
 	})
 }
