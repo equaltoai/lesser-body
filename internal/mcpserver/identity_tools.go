@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
@@ -12,6 +13,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
+
+var localAgentIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{1,62}[a-z0-9]$`)
 
 type toolUserError struct {
 	Code    string
@@ -243,6 +246,11 @@ func normalizeSoulLookupQuery(q string) string {
 	return q
 }
 
+type soulLookupSearch struct {
+	Query  string
+	Domain string
+}
+
 func isSoulAgentID(q string) bool {
 	q = strings.TrimSpace(q)
 	if !strings.HasPrefix(q, "0x") {
@@ -290,9 +298,15 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 		}
 	}
 
-	searchQ := normalizeSoulLookupQuery(q)
+	search, err := prepareSoulLookupSearch(ctx, client, q)
+	if err != nil {
+		return nil, err
+	}
 	query := url.Values{}
-	query.Set("q", searchQ)
+	query.Set("q", search.Query)
+	if search.Domain != "" {
+		query.Set("domain", search.Domain)
+	}
 	query.Set("limit", "5")
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/soul/search", query, "", nil)
 	if err != nil {
@@ -318,6 +332,93 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 		}
 	}
 	return agentIDs, nil
+}
+
+func prepareSoulLookupSearch(ctx context.Context, client *soulapi.Client, q string) (soulLookupSearch, error) {
+	searchQ := normalizeSoulLookupQuery(q)
+	localID, ok := normalizeCurrentInstanceLocalLookupQuery(searchQ)
+	if !ok {
+		return soulLookupSearch{Query: searchQ}, nil
+	}
+
+	domain, err := authenticatedAgentDomain(ctx, client)
+	if err != nil {
+		return soulLookupSearch{}, err
+	}
+	if domain == "" {
+		return soulLookupSearch{}, &toolUserError{
+			Code:    "invalid_request",
+			Message: "current-instance local ID lookup requires a trustworthy instance domain; use a domain-qualified query instead",
+			Status:  400,
+			Details: map[string]any{"query": q},
+		}
+	}
+
+	return soulLookupSearch{
+		Query:  localID,
+		Domain: domain,
+	}, nil
+}
+
+func authenticatedAgentDomain(ctx context.Context, client *soulapi.Client) (string, error) {
+	if client == nil {
+		return "", errors.New("soul api client is nil")
+	}
+
+	agentID, err := authenticatedAgentID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if agentID == "" {
+		return "", &toolUserError{
+			Code:    "invalid_request",
+			Message: "current-instance local ID lookup requires an authenticated soul identity",
+			Status:  400,
+		}
+	}
+
+	agentAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID), nil, "", nil)
+	if err != nil {
+		return "", err
+	}
+	agentEnvelope, _ := agentAny.(map[string]any)
+	agent, _ := agentEnvelope["agent"].(map[string]any)
+
+	domain := stringFromMap(agent, "domain")
+	if domain == "" {
+		return "", &toolUserError{
+			Code:    "invalid_request",
+			Message: "current-instance local ID lookup requires a trustworthy instance domain; use a domain-qualified query instead",
+			Status:  400,
+			Details: map[string]any{"agentId": agentID},
+		}
+	}
+	return domain, nil
+}
+
+func normalizeCurrentInstanceLocalLookupQuery(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || isSoulAgentID(raw) || looksLikeEmail(raw) || looksLikeENSName(raw) {
+		return "", false
+	}
+	if strings.Contains(raw, ".") && !strings.HasPrefix(raw, "@") && !strings.HasSuffix(raw, "/") {
+		return "", false
+	}
+
+	localID := strings.ToLower(strings.TrimSpace(raw))
+	localID = strings.TrimPrefix(localID, "@")
+	localID = strings.TrimSuffix(localID, "/")
+
+	if localID == "" || strings.ContainsAny(localID, "/:@") {
+		return "", false
+	}
+	if len(localID) < 3 || len(localID) > 64 {
+		return "", false
+	}
+	if !localAgentIDRE.MatchString(localID) {
+		return "", false
+	}
+	return localID, true
 }
 
 func resolveAgentIDByIdentifier(ctx context.Context, client *soulapi.Client, q string) (string, error) {
