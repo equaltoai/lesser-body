@@ -290,7 +290,7 @@ Scope key:
 | `sms_read` | Read | Read recent inbound SMS messages delivered to the instance. |
 | `voicemail_read` | Read | Read voicemail notifications and transcriptions. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `identity_lookup` | Read | Resolve a soul identity by ENS name, email address, or agent id. |
+| `identity_lookup` | Read | Resolve a soul identity by ENS name, managed email, full agent ID, or a current-instance local ID such as `medic`. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
 
 Notes:
@@ -303,6 +303,13 @@ Notes:
   `LESSER_HOST_INSTANCE_KEY` (or `LESSER_HOST_INSTANCE_KEY_ARN`) so lesser-body can authenticate to lesser-host's
   `/api/v1/soul/comm/*` endpoints.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
+- `identity_lookup` accepts:
+  - full soul `agentId`
+  - managed email address
+  - ENS name
+  - current-instance local IDs such as `medic`
+- When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.
+  Cross-instance lookups should use a domain-qualified form instead of relying on bare local IDs.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for the deprecated managed-instance-key compatibility path.
 
