@@ -27,6 +27,18 @@ type mcpEndpointInfo struct {
 	Actor    string
 }
 
+type mcpEndpointMismatchError struct {
+	Configured string
+	Requested  string
+}
+
+func (e *mcpEndpointMismatchError) Error() string {
+	if e == nil {
+		return "configured MCP_ENDPOINT does not match request URL"
+	}
+	return fmt.Sprintf("configured MCP_ENDPOINT %q does not match request URL %q", e.Configured, e.Requested)
+}
+
 var probeAuthorizationServerMetadata = defaultProbeAuthorizationServerMetadata
 
 var authorizationServerIssuerCache struct {
@@ -86,6 +98,31 @@ func validateDiscoveryStartupConfig(ctx context.Context) error {
 }
 
 func validatedMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
+	resolvedConfigured, err := configuredMcpEndpointForRequest(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	inferred := inferMcpEndpointFromRequest(ctx)
+	if inferred == "" {
+		return resolvedConfigured, nil
+	}
+
+	validatedInferred, err := validatedMcpEndpoint(inferred)
+	if err != nil {
+		return "", fmt.Errorf("infer MCP endpoint from request: %w", err)
+	}
+	if validatedInferred != resolvedConfigured {
+		return "", &mcpEndpointMismatchError{
+			Configured: resolvedConfigured,
+			Requested:  validatedInferred,
+		}
+	}
+
+	return resolvedConfigured, nil
+}
+
+func configuredMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
 	configured := strings.TrimSpace(os.Getenv("MCP_ENDPOINT"))
 	if configured == "" {
 		inferred := inferMcpEndpointFromRequest(ctx)
@@ -103,19 +140,6 @@ func validatedMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
 	resolvedConfigured, err := resolveConfiguredMcpEndpointForRequest(validatedConfigured, ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolve configured MCP endpoint: %w", err)
-	}
-
-	inferred := inferMcpEndpointFromRequest(ctx)
-	if inferred == "" {
-		return resolvedConfigured, nil
-	}
-
-	validatedInferred, err := validatedMcpEndpoint(inferred)
-	if err != nil {
-		return "", fmt.Errorf("infer MCP endpoint from request: %w", err)
-	}
-	if validatedInferred != resolvedConfigured {
-		return "", fmt.Errorf("configured MCP_ENDPOINT %q does not match request URL %q", resolvedConfigured, validatedInferred)
 	}
 
 	return resolvedConfigured, nil
