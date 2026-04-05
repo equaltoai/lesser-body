@@ -68,6 +68,11 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 		Default:     jsii.String(defaultSsmParamPath("lesser", stage, "lesser", "exports", "v1", "table_name")),
 		Description: jsii.String("SSM parameter path containing the Lesser table name for the target app and stage."),
 	})
+	lesserHostInstanceKeyArnParam := awscdk.NewCfnParameter(stack, jsii.String("LesserHostInstanceKeyARN"), &awscdk.CfnParameterProps{
+		Type:        jsii.String("String"),
+		Default:     jsii.String(""),
+		Description: jsii.String("Optional exact Secrets Manager ARN for the managed lesser-host instance key. When provided, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and grants direct read access to that secret."),
+	})
 
 	stageDomain := resolvedStageDomainFromDeployInputs(
 		stack,
@@ -83,13 +88,14 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 			BucketNameParam: codeBucketParam,
 			ObjectKeyParam:  codeKeyParam,
 		}),
-		ServiceVersion:        jsii.String(serviceVersion),
-		PublicEndpoint:        publicMcpEndpoint(stageDomain),
-		LesserAPIBaseURL:      lesserAPIBaseURL(stageDomain),
-		AllowedOrigins:        mcpAllowedOrigins(stageDomain),
-		JWTSecretArnParamPath: jwtSecretArnParamPathParam.ValueAsString(),
-		JWTSecretKeyParamPath: jwtSecretKeyParamPathParam.ValueAsString(),
-		LesserTableParamPath:  lesserTableParamPathParam.ValueAsString(),
+		ServiceVersion:           jsii.String(serviceVersion),
+		PublicEndpoint:           publicMcpEndpoint(stageDomain),
+		LesserAPIBaseURL:         lesserAPIBaseURL(stageDomain),
+		AllowedOrigins:           mcpAllowedOrigins(stageDomain),
+		JWTSecretArnParamPath:    jwtSecretArnParamPathParam.ValueAsString(),
+		JWTSecretKeyParamPath:    jwtSecretKeyParamPathParam.ValueAsString(),
+		LesserTableParamPath:     lesserTableParamPathParam.ValueAsString(),
+		LesserHostInstanceKeyARN: lesserHostInstanceKeyArnParam.ValueAsString(),
 	})
 
 	return &LesserBodyStack{Stack: stack}

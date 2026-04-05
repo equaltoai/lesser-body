@@ -1,6 +1,8 @@
 package stacks
 
 import (
+	"strings"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
@@ -14,16 +16,17 @@ import (
 )
 
 type lesserBodyRuntimeProps struct {
-	AppName               *string
-	Stage                 *string
-	Code                  awslambda.Code
-	ServiceVersion        *string
-	PublicEndpoint        *string
-	LesserAPIBaseURL      *string
-	AllowedOrigins        *string
-	JWTSecretArnParamPath *string
-	JWTSecretKeyParamPath *string
-	LesserTableParamPath  *string
+	AppName                  *string
+	Stage                    *string
+	Code                     awslambda.Code
+	ServiceVersion           *string
+	PublicEndpoint           *string
+	LesserAPIBaseURL         *string
+	AllowedOrigins           *string
+	JWTSecretArnParamPath    *string
+	JWTSecretKeyParamPath    *string
+	LesserTableParamPath     *string
+	LesserHostInstanceKeyARN *string
 }
 
 func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps) {
@@ -73,19 +76,24 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		},
 	}))
 
+	if props.LesserHostInstanceKeyARN != nil {
+		handler.AddEnvironment(jsii.String("LESSER_HOST_INSTANCE_KEY_ARN"), props.LesserHostInstanceKeyARN, nil)
+	}
+
+	instanceKeySecretResources := []*string{
+		legacyInstanceKeySecretArnPattern(stack, props.AppName),
+		managedLesserHostInstanceKeySecretArnPattern(stack, props.Stage, props.AppName),
+	}
+	if exactSecretArn := optionalNonEmptyStringValue(stack, jsii.String("HasLesserHostInstanceKeyARN"), props.LesserHostInstanceKeyARN); exactSecretArn != nil {
+		instanceKeySecretResources = append(instanceKeySecretResources, exactSecretArn)
+	}
+
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{
 			jsii.String("secretsmanager:GetSecretValue"),
 			jsii.String("secretsmanager:DescribeSecret"),
 		},
-		Resources: &[]*string{
-			stack.FormatArn(&awscdk.ArnComponents{
-				Service:      jsii.String("secretsmanager"),
-				Resource:     jsii.String("secret"),
-				ArnFormat:    awscdk.ArnFormat_COLON_RESOURCE_NAME,
-				ResourceName: tokenJoin("/", props.AppName, jsii.String("instance-key*")),
-			}),
-		},
+		Resources: &instanceKeySecretResources,
 	}))
 
 	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
@@ -291,4 +299,61 @@ func lookupStringParameterValue(stack awscdk.Stack, id *string, explicitPath *st
 		)
 	}
 	return importStringParameter(stack, id, fallbackPath).StringValue()
+}
+
+func legacyInstanceKeySecretArnPattern(stack awscdk.Stack, appName *string) *string {
+	return stack.FormatArn(&awscdk.ArnComponents{
+		Service:      jsii.String("secretsmanager"),
+		Resource:     jsii.String("secret"),
+		ArnFormat:    awscdk.ArnFormat_COLON_RESOURCE_NAME,
+		ResourceName: tokenJoin("/", appName, jsii.String("instance-key*")),
+	})
+}
+
+func managedLesserHostInstanceKeySecretArnPattern(stack awscdk.Stack, stage *string, appName *string) *string {
+	return stack.FormatArn(&awscdk.ArnComponents{
+		Service:   jsii.String("secretsmanager"),
+		Resource:  jsii.String("secret"),
+		ArnFormat: awscdk.ArnFormat_COLON_RESOURCE_NAME,
+		ResourceName: tokenJoin(
+			"/",
+			jsii.String("lesser-host"),
+			lesserHostControlPlaneStage(stage),
+			jsii.String("instances"),
+			appName,
+			jsii.String("instance-key*"),
+		),
+	})
+}
+
+func lesserHostControlPlaneStage(stage *string) *string {
+	normalized := ""
+	if stage != nil {
+		normalized = strings.ToLower(strings.TrimSpace(*stage))
+	}
+	switch normalized {
+	case "live":
+		return jsii.String("live")
+	case "staging":
+		return jsii.String("staging")
+	default:
+		return jsii.String("lab")
+	}
+}
+
+func optionalNonEmptyStringValue(stack awscdk.Stack, id *string, value *string) *string {
+	if value == nil {
+		return nil
+	}
+	hasValue := awscdk.NewCfnCondition(stack, id, &awscdk.CfnConditionProps{
+		Expression: awscdk.Fn_ConditionNot(awscdk.Fn_ConditionEquals(value, jsii.String(""))),
+	})
+	return awscdk.Token_AsString(
+		awscdk.Fn_ConditionIf(
+			hasValue.LogicalId(),
+			value,
+			awscdk.Aws_NO_VALUE(),
+		),
+		nil,
+	)
 }

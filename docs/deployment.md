@@ -80,7 +80,8 @@ From repo root:
 ```bash
 cd cdk
 npm ci
-npx cdk deploy --all -c app=lesser -c stage=dev -c baseDomain=example.com
+npx cdk deploy --all -c app=lesser -c stage=dev -c baseDomain=example.com \
+  -c lesserHostInstanceKeyArn="$LESSER_HOST_INSTANCE_KEY_ARN"
 ```
 
 Notes:
@@ -89,6 +90,8 @@ Notes:
 - `stage` must be one of `dev|staging|live`.
 - `baseDomain` is used to compute the public MCP endpoint template (`https://api.<stageDomain>/mcp/{actor}`) at synth
   time.
+- `lesserHostInstanceKeyArn` is optional but recommended for managed instances. If omitted, lesser-body still grants the
+  managed `lesser-host/<stage>/instances/<app>/instance-key*` secret namespace and can fall back to `TRUST_CONFIG`.
 
 ## Deploy (via `theory app up`)
 
@@ -121,7 +124,8 @@ bash ./deploy-lesser-body-from-release.sh \
   --asset-bucket my-artifact-bucket \
   --app lesser \
   --stage dev \
-  --base-domain example.com
+  --base-domain example.com \
+  --lesser-host-instance-key-arn "$LESSER_HOST_INSTANCE_KEY_ARN"
 ```
 
 Notes:
@@ -133,6 +137,8 @@ Notes:
 - `--base-domain` is optional. When omitted, the template resolves `/<app>/<stage>/lesser/exports/v1/domain` from SSM.
 - The helper derives the managed template's SSM path parameters from `--app` plus `--stage` and passes them as explicit
   string overrides. The templates no longer rely on intrinsic expressions in parameter defaults.
+- `--lesser-host-instance-key-arn` is optional. If omitted, the helper also checks the shell environment for
+  `LESSER_HOST_INSTANCE_KEY_ARN` and forwards it automatically when present.
 - Add `--no-execute-changeset` to exercise the real `aws cloudformation deploy` path without executing the change set.
 
 See `docs/managed-deploy-contract.md` for the full release contract.

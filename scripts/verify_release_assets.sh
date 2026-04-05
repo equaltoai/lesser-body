@@ -123,6 +123,7 @@ expected_template_parameters = {
     "BaseDomain",
     "LesserBodyCodeBucketName",
     "LesserBodyCodeObjectKey",
+    "LesserHostInstanceKeyARN",
     "JWTSecretArnParamPath",
     "JWTSecretKeyArnParamPath",
     "LesserStageDomainParamPath",
@@ -169,6 +170,7 @@ for stage in ("dev", "staging", "live"):
         "BaseDomain",
         "LesserBodyCodeBucketName",
         "LesserBodyCodeObjectKey",
+        "LesserHostInstanceKeyARN",
         "JWTSecretArnParamPath",
         "JWTSecretKeyArnParamPath",
         "LesserStageDomainParamPath",
@@ -225,11 +227,25 @@ DRY_RUN_LOG_NO_EXECUTE_CHANGESET="${RELEASE_ABS_DIR}/deploy-dry-run-dev-no-execu
     --base-domain example.com > "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"
 )
 
+DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN="${RELEASE_ABS_DIR}/deploy-dry-run-dev-with-instance-key-arn.log"
+(
+  cd "${OUT_DIR}"
+  LESSER_HOST_INSTANCE_KEY_ARN="arn:aws:secretsmanager:us-east-1:123456789012:secret:lesser-host/lab/instances/lesser/instance-key-example" \
+    bash ./deploy-lesser-body-from-release.sh \
+      --dry-run \
+      --stack-name lesser-dev-lesser-body \
+      --asset-bucket example-artifacts-bucket \
+      --app lesser \
+      --stage dev \
+      --base-domain example.com > "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"
+)
+
 all_dry_run_logs=(
   "${DRY_RUN_LOG_DEV}"
   "${DRY_RUN_LOG_STAGING}"
   "${DRY_RUN_LOG_LIVE}"
   "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"
+  "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"
 )
 
 expected_s3_prefix="releases/lesser-body/${VERSION}/templates"
@@ -296,6 +312,11 @@ if ! grep -q -- '--s3-bucket example-artifacts-bucket' "${DRY_RUN_LOG_NO_EXECUTE
 fi
 if ! grep -q -- "--s3-prefix ${expected_s3_prefix}" "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"; then
   echo "dry-run output did not include expected --s3-prefix for --no-execute-changeset run: ${expected_s3_prefix}" >&2
+  exit 1
+fi
+
+if ! grep -q -- 'LesserHostInstanceKeyARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:lesser-host/lab/instances/lesser/instance-key-example' "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"; then
+  echo "dry-run output did not forward LESSER_HOST_INSTANCE_KEY_ARN into the managed deploy parameter overrides" >&2
   exit 1
 fi
 

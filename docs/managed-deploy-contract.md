@@ -81,6 +81,7 @@ Each stage-specific template accepts these CloudFormation parameters:
 - `BaseDomain`
 - `LesserBodyCodeBucketName`
 - `LesserBodyCodeObjectKey`
+- `LesserHostInstanceKeyARN`
 - `JWTSecretArnParamPath`
 - `JWTSecretKeyArnParamPath`
 - `LesserStageDomainParamPath`
@@ -90,6 +91,7 @@ Template behavior:
 
 - `AppName` defaults to `lesser`.
 - `BaseDomain` is optional.
+- `LesserHostInstanceKeyARN` is optional and defaults to the empty string.
 - Every parameter `Default` emitted in the managed templates is a plain string. Intrinsics and object-valued defaults are not
   CloudFormation-legal for this deploy path.
 - `JWTSecretArnParamPath` defaults to `/<app>/shared/secrets/jwt-secret-arn`.
@@ -100,6 +102,8 @@ Template behavior:
 - The Lambda code location is always provided from the staged release asset in S3.
 - The release helper derives the SSM path parameters from `--app` plus `--stage` and passes them explicitly as legal
   string parameter overrides.
+- The release helper also forwards `--lesser-host-instance-key-arn` (or `$LESSER_HOST_INSTANCE_KEY_ARN` when set) into
+  `LesserHostInstanceKeyARN`, so managed runners can keep IAM access aligned with the exact secret ARN they already hold.
 
 ## Published exports
 

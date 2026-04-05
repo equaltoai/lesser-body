@@ -13,6 +13,9 @@ Required:
 Optional:
   --app <slug>             Lesser app slug (default: lesser)
   --base-domain <domain>   Optional base domain override; omit to use Lesser's exported stage domain from SSM
+  --lesser-host-instance-key-arn <arn>
+                           Optional exact Secrets Manager ARN for the managed lesser-host instance key.
+                           Defaults to $LESSER_HOST_INSTANCE_KEY_ARN when set.
   --asset-prefix <prefix>  S3 key prefix for the staged zip (default: releases/lesser-body/<version>)
   --no-execute-changeset   Pass through to aws cloudformation deploy for verification-only change set creation
   --dry-run                Print the AWS commands without executing them
@@ -30,6 +33,7 @@ ASSET_PREFIX=""
 APP_NAME="lesser"
 STAGE=""
 BASE_DOMAIN=""
+LESSER_HOST_INSTANCE_KEY_ARN="${LESSER_HOST_INSTANCE_KEY_ARN:-}"
 DRY_RUN=0
 NO_EXECUTE_CHANGESET=0
 
@@ -57,6 +61,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --base-domain)
       BASE_DOMAIN="$2"
+      shift 2
+      ;;
+    --lesser-host-instance-key-arn)
+      LESSER_HOST_INSTANCE_KEY_ARN="$2"
       shift 2
       ;;
     --dry-run)
@@ -149,6 +157,16 @@ parameter_overrides=(
 )
 if [[ -n "${BASE_DOMAIN}" ]]; then
   parameter_overrides+=("BaseDomain=${BASE_DOMAIN}")
+fi
+if [[ -n "${LESSER_HOST_INSTANCE_KEY_ARN}" ]]; then
+  case "${LESSER_HOST_INSTANCE_KEY_ARN}" in
+    arn:*) ;;
+    *)
+      echo "--lesser-host-instance-key-arn must start with arn:" >&2
+      exit 1
+      ;;
+  esac
+  parameter_overrides+=("LesserHostInstanceKeyARN=${LESSER_HOST_INSTANCE_KEY_ARN}")
 fi
 
 upload_cmd=(

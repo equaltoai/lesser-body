@@ -61,6 +61,9 @@ That runs the downloaded `deploy-lesser-body-from-release.sh` helper with `--no-
 
 Note: the helper always passes `--s3-bucket <assetBucket>` to `aws cloudformation deploy` so managed templates can grow
 beyond the AWS CLI local-template size limit (51,200 bytes).
+If `LESSER_HOST_INSTANCE_KEY_ARN` is present in the shell environment, the helper now forwards it into the managed
+template automatically so the deploy can inject the exact outbound comm secret ARN as well as the fallback namespace
+grants.
 
 ## GitHub Actions release
 

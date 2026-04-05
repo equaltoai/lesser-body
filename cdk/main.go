@@ -33,6 +33,10 @@ func main() {
 	}
 
 	baseDomain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(getContextString(app, "baseDomain"))), ".")
+	lesserHostInstanceKeyArn := getContextString(app, "lesserHostInstanceKeyArn")
+	if lesserHostInstanceKeyArn == "" {
+		lesserHostInstanceKeyArn = strings.TrimSpace(os.Getenv("LESSER_HOST_INSTANCE_KEY_ARN"))
+	}
 
 	awsAccount := strings.TrimSpace(os.Getenv("CDK_DEFAULT_ACCOUNT"))
 	awsRegion := strings.TrimSpace(os.Getenv("CDK_DEFAULT_REGION"))
@@ -58,9 +62,10 @@ func main() {
 		StackProps: awscdk.StackProps{
 			Env: env,
 		},
-		AppName:    appName,
-		Stage:      stage,
-		BaseDomain: baseDomain,
+		AppName:                  appName,
+		Stage:                    stage,
+		BaseDomain:               baseDomain,
+		LesserHostInstanceKeyARN: lesserHostInstanceKeyArn,
 	})
 
 	app.Synth(nil)

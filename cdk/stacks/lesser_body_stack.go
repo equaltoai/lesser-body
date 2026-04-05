@@ -13,9 +13,10 @@ import (
 
 type LesserBodyStackProps struct {
 	awscdk.StackProps
-	AppName    string
-	Stage      string // dev|staging|live
-	BaseDomain string // optional; if set, compute api.<stageDomain> without SSM lookup
+	AppName                  string
+	Stage                    string // dev|staging|live
+	BaseDomain               string // optional; if set, compute api.<stageDomain> without SSM lookup
+	LesserHostInstanceKeyARN string // optional exact secret ARN for outbound lesser-host auth
 }
 
 type LesserBodyStack struct {
@@ -42,6 +43,12 @@ func NewLesserBodyStack(scope constructs.Construct, id string, props *LesserBody
 		PublicEndpoint:   publicMcpEndpoint(stageDomain),
 		LesserAPIBaseURL: lesserAPIBaseURL(stageDomain),
 		AllowedOrigins:   mcpAllowedOrigins(stageDomain),
+		LesserHostInstanceKeyARN: func() *string {
+			if strings.TrimSpace(props.LesserHostInstanceKeyARN) == "" {
+				return nil
+			}
+			return jsii.String(strings.TrimSpace(props.LesserHostInstanceKeyARN))
+		}(),
 	})
 
 	return &LesserBodyStack{Stack: stack}

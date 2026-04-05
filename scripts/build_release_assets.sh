@@ -166,6 +166,11 @@ cat > "${OUT_DIR}/lesser-body-deploy.json" <<JSON
       "description": "Optional base domain override. When omitted, the template reads /<app>/<stage>/lesser/exports/v1/domain from SSM."
     },
     {
+      "name": "lesser_host_instance_key_arn",
+      "required": false,
+      "description": "Optional exact Secrets Manager ARN for the managed lesser-host instance key. When supplied, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and also grants direct read access to that secret."
+    },
+    {
       "name": "asset_prefix",
       "required": false,
       "default": "releases/lesser-body/${VERSION}",
@@ -196,6 +201,12 @@ cat > "${OUT_DIR}/lesser-body-deploy.json" <<JSON
     {
       "name": "LesserBodyCodeObjectKey",
       "required": true
+    },
+    {
+      "name": "LesserHostInstanceKeyARN",
+      "required": false,
+      "default": "",
+      "description": "Optional exact Secrets Manager ARN for the managed lesser-host instance key. The release helper forwards --lesser-host-instance-key-arn (or \$LESSER_HOST_INSTANCE_KEY_ARN) into this parameter."
     },
     {
       "name": "JWTSecretArnParamPath",
