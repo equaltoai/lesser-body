@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
@@ -97,8 +96,10 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	}))
 
 	mcpProps := &apptheorycdk.AppTheoryRemoteMcpServerProps{
-		Handler: handler,
-		ApiName: tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp")),
+		Handler:                     handler,
+		ApiName:                     tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp")),
+		ActorPath:                   jsii.Bool(true),
+		EnableWellKnownMcpDiscovery: jsii.Bool(true),
 		Cors: &apptheorycdk.AppTheoryRestApiRouterCorsOptions{
 			AllowOrigins: &[]*string{
 				jsii.String("*"),
@@ -120,29 +121,15 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		EnableSessionTable: jsii.Bool(true),
 		SessionTableName:   tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("sessions")),
 		SessionTtlMinutes:  jsii.Number(60),
+		EnableStreamTable:  jsii.Bool(true),
+		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams")),
+		StreamTtlMinutes:   jsii.Number(60),
 		Stage: &apptheorycdk.AppTheoryRestApiRouterStageOptions{
 			StageName:          props.Stage,
 			AccessLogging:      true,
 			AccessLogRetention: awslogs.RetentionDays_ONE_WEEK,
 		},
 	}
-
-	streamTable := awsdynamodb.NewTable(stack, jsii.String("McpStreamTable"), &awsdynamodb.TableProps{
-		TableName:   tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams")),
-		BillingMode: awsdynamodb.BillingMode_PAY_PER_REQUEST,
-		PartitionKey: &awsdynamodb.Attribute{
-			Name: jsii.String("PK"),
-			Type: awsdynamodb.AttributeType_STRING,
-		},
-		SortKey: &awsdynamodb.Attribute{
-			Name: jsii.String("SK"),
-			Type: awsdynamodb.AttributeType_STRING,
-		},
-		TimeToLiveAttribute: jsii.String("expiresAt"),
-		PointInTimeRecovery: jsii.Bool(true),
-	})
-	streamTable.GrantReadWriteData(handler)
-	handler.AddEnvironment(jsii.String("MCP_STREAM_TABLE"), streamTable.TableName(), nil)
 
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{
@@ -166,47 +153,11 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 
 	server := apptheorycdk.NewAppTheoryRemoteMcpServer(stack, jsii.String("McpServer"), mcpProps)
 
-	server.Router().AddLambdaIntegration(
-		jsii.String("/mcp/{actor}"),
-		&[]*string{jsii.String("POST")},
-		handler,
-		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{
-			Streaming: jsii.Bool(true),
-		},
-	)
-	server.Router().AddLambdaIntegration(
-		jsii.String("/mcp/{actor}"),
-		&[]*string{jsii.String("GET")},
-		handler,
-		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{
-			Streaming: jsii.Bool(true),
-		},
-	)
-	server.Router().AddLambdaIntegration(
-		jsii.String("/mcp/{actor}"),
-		&[]*string{jsii.String("DELETE")},
-		handler,
-		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
-	)
-	server.Router().AddLambdaIntegration(
-		jsii.String("/.well-known/mcp.json"),
-		&[]*string{jsii.String("GET")},
-		handler,
-		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
-	)
-	server.Router().AddLambdaIntegration(
-		jsii.String("/.well-known/oauth-protected-resource/mcp/{actor}"),
-		&[]*string{jsii.String("GET")},
-		handler,
-		&apptheorycdk.AppTheoryRestApiRouterIntegrationOptions{},
-	)
-
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), props.PublicEndpoint, nil)
 	if props.LesserAPIBaseURL != nil && *props.LesserAPIBaseURL != "" {
 		handler.AddEnvironment(jsii.String("LESSER_API_BASE_URL"), props.LesserAPIBaseURL, nil)
 	}
 	handler.AddEnvironment(jsii.String("MCP_ALLOWED_ORIGINS"), props.AllowedOrigins, nil)
-	handler.AddEnvironment(jsii.String("MCP_SESSION_TTL_MINUTES"), jsii.String("60"), nil)
 
 	lesserTableParamPath := props.LesserTableParamPath
 	if lesserTableParamPath == nil || *lesserTableParamPath == "" {
@@ -261,12 +212,14 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		})
 		mcpSessionTableParam.OverrideLogicalId(jsii.String("McpSessionTableParam11A03692"))
 	}
-	mcpStreamTableParam := awsssm.NewCfnParameter(stack, jsii.String("McpStreamTableParam"), &awsssm.CfnParameterProps{
-		Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_stream_table_name")),
-		Type:  jsii.String("String"),
-		Value: streamTable.TableName(),
-	})
-	mcpStreamTableParam.OverrideLogicalId(jsii.String("McpStreamTableParam604E9EFA"))
+	if server.StreamTable() != nil {
+		mcpStreamTableParam := awsssm.NewCfnParameter(stack, jsii.String("McpStreamTableParam"), &awsssm.CfnParameterProps{
+			Name:  ssmParamName(props.AppName, props.Stage, jsii.String("lesser-body"), jsii.String("exports"), jsii.String("v1"), jsii.String("mcp_stream_table_name")),
+			Type:  jsii.String("String"),
+			Value: server.StreamTable().TableName(),
+		})
+		mcpStreamTableParam.OverrideLogicalId(jsii.String("McpStreamTableParam604E9EFA"))
+	}
 }
 
 func ssmParamName(parts ...*string) *string {

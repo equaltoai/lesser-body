@@ -51,12 +51,16 @@ Variables:
   - Do not remove this just because inbound MCP clients migrate to OAuth; outbound communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 
-### MCP session persistence
+### MCP session and stream persistence
 
 - `MCP_SESSION_TABLE` (string, optional)
   - If set, enables DynamoDB-backed MCP sessions.
 - `MCP_SESSION_TTL_MINUTES` (string, optional)
   - Session TTL in minutes (default is runtime-defined; deployments typically use `60`).
+- `MCP_STREAM_TABLE` (string, optional)
+  - If set, enables AppTheory's durable DynamoDB-backed MCP stream replay store.
+- `MCP_STREAM_TTL_MINUTES` (string, optional)
+  - Stream event TTL in minutes (default is runtime-defined; deployments typically use `60`).
 
 ### Endpoints
 

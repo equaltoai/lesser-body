@@ -1,12 +1,12 @@
 module cdk
 
-go 1.26.1
+go 1.26.2
 
 require (
-	github.com/aws/aws-cdk-go/awscdk/v2 v2.243.0
-	github.com/aws/constructs-go/constructs/v10 v10.5.1
+	github.com/aws/aws-cdk-go/awscdk/v2 v2.244.0
+	github.com/aws/constructs-go/constructs/v10 v10.6.0
 	github.com/aws/jsii-runtime-go v1.127.0
-	github.com/theory-cloud/apptheory v0.18.2
+	github.com/theory-cloud/apptheory v0.22.0
 )
 
 require (

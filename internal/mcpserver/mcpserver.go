@@ -62,7 +62,7 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 			opts = append(opts, mcpruntime.WithSessionStore(mcpruntime.NewDynamoSessionStore(db)))
 		}
 		if os.Getenv(envMcpStreamTable) != "" {
-			opts = append(opts, mcpruntime.WithStreamStore(NewDynamoStreamStore(db)))
+			opts = append(opts, mcpruntime.WithStreamStore(mcpruntime.NewDynamoStreamStore(db)))
 		}
 	}
 
