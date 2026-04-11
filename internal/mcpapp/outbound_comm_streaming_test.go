@@ -13,6 +13,7 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
+	mcptestkit "github.com/theory-cloud/apptheory/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
@@ -106,10 +107,11 @@ func TestSmsSendStreamingEmitsProgressAndFinalResult(t *testing.T) {
 	}
 
 	reader := bufio.NewReader(resp.BodyReader)
-	firstFrame, err := readSSEFrameForTest(reader)
+	firstMsg, err := mcptestkit.ReadSSEMessage(reader)
 	if err != nil {
 		t.Fatalf("read first SSE frame: %v", err)
 	}
+	firstFrame := string(firstMsg.Data)
 	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
 		t.Fatalf("expected first frame progress notification, got:\n%s", firstFrame)
 	}
@@ -143,18 +145,4 @@ func mustMarshalJSONForTest(t testing.TB, value any) []byte {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	return body
-}
-
-func readSSEFrameForTest(r *bufio.Reader) (string, error) {
-	var b strings.Builder
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return b.String(), err
-		}
-		b.WriteString(line)
-		if line == "\n" {
-			return b.String(), nil
-		}
-	}
 }
