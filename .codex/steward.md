@@ -17,8 +17,8 @@ body is the **actionable surface**: 27 tools across social, memory, communicatio
 ## The service in six bullets
 
 - **Language**: Go 1.26.2+
-- **Framework**: AppTheory v0.22.0 (runtime + **MCP server runtime** — the critical integration)
-- **ORM**: TableTheory v1.5.3 (for per-actor MCP session persistence and memory tools)
+- **Framework**: AppTheory v0.24.6 (runtime + **MCP server runtime** — the critical integration)
+- **ORM**: TableTheory v1.5.5 (for per-actor MCP session persistence and memory tools)
 - **Infrastructure**: AWS CDK (TypeScript) deploying one Lambda, one optional DynamoDB session table, and SSM parameter exports for cross-stack wiring
 - **Auth**: HS256 JWT validation (Lesser's existing OAuth tokens) — with legacy managed instance key deprecation path in flight
 - **Integration contract**: **SSM-first** (no CloudFormation exports/imports). Exports published at stable names `/<app>/<stage>/lesser-body/exports/v1/{mcp_lambda_arn, mcp_endpoint_url, mcp_session_table_name}`.
@@ -185,7 +185,7 @@ body is AGPL-3.0, consistent with the rest of equaltoai. The steward's posture:
 
 ## Flagship-consumer reciprocity with AppTheory's MCP runtime
 
-AppTheory v0.22.0's MCP server runtime is the newer surface that formalizes Lambda-hosted MCP servers. body is its flagship consumer. Awkwardness here is upstream signal:
+AppTheory v0.24.6's MCP server runtime is the newer surface that formalizes Lambda-hosted MCP servers. body is its flagship consumer. Awkwardness here is upstream signal:
 
 - **When consuming AppTheory's MCP runtime feels bent** — middleware gaps, lifecycle hooks that don't exist, tool-registration helpers that don't fit — that is scoping evidence for the AppTheory steward.
 - **Bending the framework locally** (patching AppTheory, vendoring its code, monkey-patching middleware) is refused.
@@ -476,8 +476,8 @@ body has no direct relationship with `greater-components` (UI library, frontend-
 
 body is a canonical consumer of:
 
-- **AppTheory v0.22.0** — specifically its **MCP server runtime**, which is a newer surface in AppTheory that formalizes Lambda-hosted MCP servers. body's consumption informs how AppTheory's MCP runtime matures.
-- **TableTheory v1.5.3** — for per-actor session persistence and memory tools.
+- **AppTheory v0.24.6** — specifically its **MCP server runtime**, which is a newer surface in AppTheory that formalizes Lambda-hosted MCP servers. body's consumption informs how AppTheory's MCP runtime matures.
+- **TableTheory v1.5.5** — for per-actor session persistence and memory tools.
 
 The boundary:
 

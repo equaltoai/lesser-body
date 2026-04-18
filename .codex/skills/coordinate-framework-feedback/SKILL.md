@@ -11,8 +11,8 @@ This skill handles the signal cleanly. It walks the awkwardness, separates "body
 
 ## The frameworks body consumes
 
-- **AppTheory v0.22.0** — especially the **MCP server runtime** (how Lambda-hosted MCP servers are structured, how tools / resources / prompts register, how `.well-known/mcp.json` is generated, how OAuth protected-resource metadata is served, how JSON-RPC dispatch works). Steward: Theory Cloud AppTheory steward.
-- **TableTheory v1.5.3** — DynamoDB ORM, single-table tag semantics, used for per-actor MCP session persistence and memory tools. Steward: Theory Cloud TableTheory steward.
+- **AppTheory v0.24.6** — especially the **MCP server runtime** (how Lambda-hosted MCP servers are structured, how tools / resources / prompts register, how `.well-known/mcp.json` is generated, how OAuth protected-resource metadata is served, how JSON-RPC dispatch works). Steward: Theory Cloud AppTheory steward.
+- **TableTheory v1.5.5** — DynamoDB ORM, single-table tag semantics, used for per-actor MCP session persistence and memory tools. Steward: Theory Cloud TableTheory steward.
 - **CDK constructs** (if body uses AppTheory's CDK constructs) — for Lambda function URLs, SSM parameter publishing, session-table provisioning.
 
 ## When this skill runs
