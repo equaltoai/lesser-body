@@ -17,8 +17,8 @@ body is the **actionable surface**: 27 tools across social, memory, communicatio
 ## The service in six bullets
 
 - **Language**: Go 1.26.2+
-- **Framework**: AppTheory v0.22.0 (runtime + **MCP server runtime** — the critical integration)
-- **ORM**: TableTheory v1.5.3 (for per-actor MCP session persistence and memory tools)
+- **Framework**: AppTheory v0.24.6 (runtime + **MCP server runtime** — the critical integration)
+- **ORM**: TableTheory v1.5.5 (for per-actor MCP session persistence and memory tools)
 - **Infrastructure**: AWS CDK (TypeScript) deploying one Lambda, one optional DynamoDB session table, and SSM parameter exports for cross-stack wiring
 - **Auth**: HS256 JWT validation (Lesser's existing OAuth tokens) — with legacy managed instance key deprecation path in flight
 - **Integration contract**: **SSM-first** (no CloudFormation exports/imports). Exports published at stable names `/<app>/<stage>/lesser-body/exports/v1/{mcp_lambda_arn, mcp_endpoint_url, mcp_session_table_name}`.

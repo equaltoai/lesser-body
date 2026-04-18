@@ -65,8 +65,8 @@ body has no direct relationship with `greater-components` (UI library, frontend-
 
 body is a canonical consumer of:
 
-- **AppTheory v0.22.0** — specifically its **MCP server runtime**, which is a newer surface in AppTheory that formalizes Lambda-hosted MCP servers. body's consumption informs how AppTheory's MCP runtime matures.
-- **TableTheory v1.5.3** — for per-actor session persistence and memory tools.
+- **AppTheory v0.24.6** — specifically its **MCP server runtime**, which is a newer surface in AppTheory that formalizes Lambda-hosted MCP servers. body's consumption informs how AppTheory's MCP runtime matures.
+- **TableTheory v1.5.5** — for per-actor session persistence and memory tools.
 
 The boundary:
 
