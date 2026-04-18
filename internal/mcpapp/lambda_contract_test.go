@@ -1,7 +1,9 @@
-package lambdaentry
+package mcpapp_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"strings"
@@ -14,7 +16,75 @@ import (
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
 
-func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T) {
+const apptheoryStreamingRouteStageVariablePrefix = "APPTHEORYSTREAMINGV1"
+
+func invokeLambdaProxyRequest(t testing.TB, ctx context.Context, app handleLambdaApp, event events.APIGatewayProxyRequest) any {
+	t.Helper()
+
+	body, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal lambda event: %v", err)
+	}
+
+	out, err := app.HandleLambda(ctx, body)
+	if err != nil {
+		t.Fatalf("handle lambda: %v", err)
+	}
+
+	return out
+}
+
+type handleLambdaApp interface {
+	HandleLambda(context.Context, json.RawMessage) (any, error)
+}
+
+func streamingStageVariables(method, resource string) map[string]string {
+	return map[string]string{
+		streamingStageVariableName(method, resource): "1",
+	}
+}
+
+func streamingStageVariableName(method, resource string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(strings.ToUpper(method)) + " " + normalizeAPIGatewayRoutePath(resource)))
+	return apptheoryStreamingRouteStageVariablePrefix + hex.EncodeToString(sum[:16])
+}
+
+func normalizeAPIGatewayRoutePath(path string) string {
+	trimmed := strings.Trim(strings.TrimSpace(path), "/")
+	if trimmed == "" {
+		return "/"
+	}
+
+	parts := strings.Split(trimmed, "/")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	if len(out) == 0 {
+		return "/"
+	}
+	return "/" + strings.Join(out, "/")
+}
+
+func readStreamingBody(t testing.TB, body io.Reader) string {
+	t.Helper()
+
+	if body == nil {
+		t.Fatal("expected body reader")
+	}
+
+	b, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(b)
+}
+
+func TestHandleLambda_McpRouteReturnsStreamingResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
@@ -25,25 +95,22 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
 	})
 
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/mcp/{actor}",
 		HTTPMethod: "POST",
 		Path:       "/mcp/agent1",
 		Headers: map[string]string{
 			"content-type": "application/json",
 		},
-		Body:            string(body),
-		IsBase64Encoded: false,
+		Body:           string(body),
+		StageVariables: streamingStageVariables("POST", "/mcp/{actor}"),
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
 	if !ok {
@@ -52,25 +119,18 @@ func TestNewAPIGatewayHandler_McpRouteReturnsStreamingResponseType(t *testing.T)
 	if streaming.StatusCode != 401 {
 		t.Fatalf("expected 401, got %d", streaming.StatusCode)
 	}
-	if streaming.Body == nil {
-		t.Fatalf("expected body reader")
-	}
-	b, readErr := io.ReadAll(streaming.Body)
-	if readErr != nil {
-		t.Fatalf("read body: %v", readErr)
-	}
-	if len(b) == 0 {
-		t.Fatalf("expected non-empty body")
-	}
 	if got := streaming.Headers["www-authenticate"]; got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 	if expose := streaming.Headers["access-control-expose-headers"]; !strings.Contains(strings.ToLower(expose), "www-authenticate") {
 		t.Fatalf("expected access-control-expose-headers to include www-authenticate, got %q", expose)
 	}
+	if body := readStreamingBody(t, streaming.Body); strings.TrimSpace(body) == "" {
+		t.Fatalf("expected non-empty body")
+	}
 }
 
-func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
+func TestHandleLambda_McpTrailingSlashCanonicalizes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
@@ -81,24 +141,22 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
 	})
 
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/mcp/{actor}",
 		HTTPMethod: "POST",
 		Path:       "/mcp/agent1/",
 		Headers: map[string]string{
 			"content-type": "application/json",
 		},
-		Body: string(body),
+		Body:           string(body),
+		StageVariables: streamingStageVariables("POST", "/mcp/{actor}"),
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
 	if !ok {
@@ -109,7 +167,7 @@ func TestNewAPIGatewayHandler_McpTrailingSlashPathNormalizes(t *testing.T) {
 	}
 }
 
-func TestNewAPIGatewayHandler_McpRouteRejectsWrongPublicHost(t *testing.T) {
+func TestHandleLambda_McpRouteRejectsWrongPublicHost(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
@@ -120,14 +178,14 @@ func TestNewAPIGatewayHandler_McpRouteRejectsWrongPublicHost(t *testing.T) {
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
 	})
 
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/mcp/{actor}",
 		HTTPMethod: "POST",
 		Path:       "/mcp/agent1",
 		Headers: map[string]string{
@@ -135,12 +193,9 @@ func TestNewAPIGatewayHandler_McpRouteRejectsWrongPublicHost(t *testing.T) {
 			"x-forwarded-proto": "https",
 			"x-forwarded-host":  "api.example.com",
 		},
-		Body:            string(body),
-		IsBase64Encoded: false,
+		Body:           string(body),
+		StageVariables: streamingStageVariables("POST", "/mcp/{actor}"),
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
 	if !ok {
@@ -149,16 +204,12 @@ func TestNewAPIGatewayHandler_McpRouteRejectsWrongPublicHost(t *testing.T) {
 	if streaming.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", streaming.StatusCode)
 	}
-	b, readErr := io.ReadAll(streaming.Body)
-	if readErr != nil {
-		t.Fatalf("read body: %v", readErr)
-	}
-	if !strings.Contains(string(b), "app.invalid_public_url") {
-		t.Fatalf("expected invalid public url body, got %s", string(b))
+	if body := readStreamingBody(t, streaming.Body); !strings.Contains(body, "app.invalid_public_url") {
+		t.Fatalf("expected invalid public url body, got %s", body)
 	}
 }
 
-func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
+func TestHandleLambda_McpDeleteReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
@@ -169,39 +220,33 @@ func TestNewAPIGatewayHandler_McpDeleteReturnsProxyResponseType(t *testing.T) {
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/mcp/{actor}",
 		HTTPMethod: "DELETE",
 		Path:       "/mcp/agent1",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	if _, ok := out.(events.APIGatewayProxyResponse); !ok {
 		t.Fatalf("expected APIGatewayProxyResponse for DELETE /mcp/{actor}, got %T", out)
 	}
 }
 
-func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
+func TestHandleLambda_WellKnownReturnsProxyResponseType(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
-	auth.ResetForTests()
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	auth.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/.well-known/mcp.json",
 		HTTPMethod: "GET",
 		Path:       "/.well-known/mcp.json",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	proxy, ok := out.(events.APIGatewayProxyResponse)
 	if !ok {
@@ -212,11 +257,11 @@ func TestNewAPIGatewayHandler_WellKnownReturnsProxyResponseType(t *testing.T) {
 	}
 }
 
-func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *testing.T) {
+func TestHandleLambda_OAuthProtectedResourceTrailingSlashCanonicalizes(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
-	auth.ResetForTests()
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	auth.ResetForTests()
 
 	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
 		return &trustconfig.Effective{
@@ -235,84 +280,11 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceReturnsProxyResponseType(t *
 		t.Fatalf("new app: %v", err)
 	}
 
-	handler := NewAPIGatewayHandler(app)
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
-		HTTPMethod: "GET",
-		Path:       "/.well-known/oauth-protected-resource/mcp/agent1",
-	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
-
-	proxy, ok := out.(events.APIGatewayProxyResponse)
-	if !ok {
-		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/oauth-protected-resource/mcp/{actor}, got %T", out)
-	}
-	if proxy.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
-	}
-}
-
-func TestNewAPIGatewayHandler_WellKnownTrailingSlashNormalizes(t *testing.T) {
-	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("JWT_SECRET", "test")
-	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
-
-	app, err := mcpapp.New("test", "dev")
-	if err != nil {
-		t.Fatalf("new app: %v", err)
-	}
-
-	handler := NewAPIGatewayHandler(app)
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
-		HTTPMethod: "GET",
-		Path:       "/.well-known/mcp.json/",
-	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
-
-	proxy, ok := out.(events.APIGatewayProxyResponse)
-	if !ok {
-		t.Fatalf("expected APIGatewayProxyResponse for /.well-known/mcp.json/, got %T", out)
-	}
-	if proxy.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
-	}
-}
-
-func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *testing.T) {
-	t.Setenv("MCP_SESSION_TABLE", "")
-	t.Setenv("JWT_SECRET", "test")
-	auth.ResetForTests()
-	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
-
-	restore := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
-		return &trustconfig.Effective{
-			TrustBaseURL: "https://lesser.example",
-			Present:      true,
-		}, nil
-	})
-	t.Cleanup(restore)
-	restoreProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) (string, error) {
-		return "https://dev.example.com", nil
-	})
-	t.Cleanup(restoreProbe)
-
-	app, err := mcpapp.New("test", "dev")
-	if err != nil {
-		t.Fatalf("new app: %v", err)
-	}
-
-	handler := NewAPIGatewayHandler(app)
-	out, err := handler(context.Background(), events.APIGatewayProxyRequest{
+	out := invokeLambdaProxyRequest(t, context.Background(), app, events.APIGatewayProxyRequest{
+		Resource:   "/.well-known/oauth-protected-resource/mcp/{actor}",
 		HTTPMethod: "GET",
 		Path:       "/.well-known/oauth-protected-resource/mcp/agent1/",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
 
 	proxy, ok := out.(events.APIGatewayProxyResponse)
 	if !ok {
@@ -320,23 +292,5 @@ func TestNewAPIGatewayHandler_OAuthProtectedResourceTrailingSlashNormalizes(t *t
 	}
 	if proxy.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d (%s)", proxy.StatusCode, proxy.Body)
-	}
-}
-
-func TestNormalizeGatewayPath_OAuthProtectedResourceTrailingSlash(t *testing.T) {
-	if got := normalizeGatewayPath("/.well-known/oauth-protected-resource/mcp/agent1/"); got != "/.well-known/oauth-protected-resource/mcp/agent1" {
-		t.Fatalf("unexpected normalized path: %q", got)
-	}
-	if got := normalizeGatewayPath("/mcp/agent1/"); got != "/mcp/agent1" {
-		t.Fatalf("unexpected normalized nested path: %q", got)
-	}
-}
-
-func TestIsMcpPath_RecognizesActorRouteOnly(t *testing.T) {
-	if !isMcpPath("/mcp/Arch") {
-		t.Fatalf("expected /mcp/{actor} to be recognized as MCP path")
-	}
-	if isMcpPath("/.well-known/oauth-protected-resource/mcp/Arch") {
-		t.Fatalf("protected-resource discovery route must not be treated as MCP path")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/tabletheory"
@@ -17,6 +18,9 @@ const (
 	envMcpAllowedOrigins = "MCP_ALLOWED_ORIGINS"
 	envMcpSessionTable   = "MCP_SESSION_TABLE"
 	envMcpStreamTable    = "MCP_STREAM_TABLE"
+
+	initialSessionListenerSafetyBuffer = 5 * time.Second
+	initialSessionListenerMaxDuration  = 25 * time.Second
 )
 
 var newMCPDB = func() (tablecore.DB, error) {
@@ -46,7 +50,12 @@ func New(name, version string) (*Server, error) {
 }
 
 func buildServerOptionsFromEnv() ([]ServerOption, error) {
-	var opts []ServerOption
+	opts := []ServerOption{
+		mcpruntime.WithInitialSessionListenerBudget(mcpruntime.InitialSessionListenerBudgetOptions{
+			SafetyBuffer: initialSessionListenerSafetyBuffer,
+			MaxDuration:  initialSessionListenerMaxDuration,
+		}),
+	}
 
 	if validator := originValidatorFromEnv(); validator != nil {
 		opts = append(opts, mcpruntime.WithOriginValidator(validator))
@@ -64,10 +73,6 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 		if os.Getenv(envMcpStreamTable) != "" {
 			opts = append(opts, mcpruntime.WithStreamStore(mcpruntime.NewDynamoStreamStore(db)))
 		}
-	}
-
-	if len(opts) == 0 {
-		return nil, nil
 	}
 
 	return opts, nil

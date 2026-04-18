@@ -86,7 +86,7 @@ body is AGPL-3.0, consistent with the rest of equaltoai. The steward's posture:
 
 ## Flagship-consumer reciprocity with AppTheory's MCP runtime
 
-AppTheory v0.24.6's MCP server runtime is the newer surface that formalizes Lambda-hosted MCP servers. body is its flagship consumer. Awkwardness here is upstream signal:
+AppTheory v0.25.0's MCP server runtime is the newer surface that formalizes Lambda-hosted MCP servers. body is its flagship consumer. Awkwardness here is upstream signal:
 
 - **When consuming AppTheory's MCP runtime feels bent** — middleware gaps, lifecycle hooks that don't exist, tool-registration helpers that don't fit — that is scoping evidence for the AppTheory steward.
 - **Bending the framework locally** (patching AppTheory, vendoring its code, monkey-patching middleware) is refused.
