@@ -144,7 +144,7 @@ func TestLesserBodyUsesAppTheoryDurableStreamTableSchema(t *testing.T) {
 		})
 	})
 
-	streamTable := findDynamoTableByName(t, mustResources(t, template), "theory-dev-mcp-streams")
+	streamTable := findDynamoTableByName(t, mustResources(t, template), "theory-dev-mcp-streams-v2")
 	props, ok := streamTable["Properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("stream table missing Properties")
@@ -276,7 +276,7 @@ func TestLesserBodyNamedMcpTableFingerprints(t *testing.T) {
 		},
 		{
 			LogicalID:    "McpServerStreamTableC6A2DC7E",
-			TableName:    "theory-dev-mcp-streams",
+			TableName:    "theory-dev-mcp-streams-v2",
 			PartitionKey: "sessionId",
 			SortKey:      "eventId",
 			TTLAttribute: "expiresAt",
@@ -296,6 +296,44 @@ func TestLesserBodyNamedMcpTableFingerprints(t *testing.T) {
 		if actual != expected {
 			t.Fatalf("unexpected fingerprint for %q: got=%s want=%s", expected.TableName, mustJSON(t, actual), mustJSON(t, expected))
 		}
+	}
+}
+
+func TestLesserBodyStreamTableExportNameStaysStableAcrossBaselineReset(t *testing.T) {
+	assetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write bootstrap: %v", err)
+	}
+
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		stack := awscdk.NewStack(app, jsii.String("TestStack"), &awscdk.StackProps{
+			Env: &awscdk.Environment{
+				Account: jsii.String("123456789012"),
+				Region:  jsii.String("us-east-1"),
+			},
+		})
+
+		configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
+			AppName:               jsii.String("theory"),
+			Stage:                 jsii.String("dev"),
+			Code:                  awslambda.Code_FromAsset(jsii.String(assetDir), nil),
+			ServiceVersion:        jsii.String("test"),
+			PublicEndpoint:        jsii.String("https://api.dev.example.com/mcp/{actor}"),
+			LesserAPIBaseURL:      jsii.String("https://api.dev.example.com"),
+			AllowedOrigins:        jsii.String("https://claude.ai"),
+			JWTSecretArnParamPath: jsii.String("/theory/shared/secrets/jwt-secret-arn"),
+			JWTSecretKeyParamPath: jsii.String("/theory/shared/kms/encryption-key-arn"),
+			LesserTableParamPath:  jsii.String("/theory/dev/lesser/exports/v1/table_name"),
+		})
+	})
+
+	streamExport := findSSMParameterByName(t, mustResources(t, template), "/theory/dev/lesser-body/exports/v1/mcp_stream_table_name")
+	props, ok := streamExport["Properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream export missing Properties")
+	}
+	if got := mustJSON(t, props["Value"]); got != `{"Ref":"McpServerStreamTableC6A2DC7E"}` {
+		t.Fatalf("expected stream export value to ref McpServerStreamTableC6A2DC7E, got %s", got)
 	}
 }
 
@@ -435,6 +473,30 @@ func findDynamoTableByName(t *testing.T, resources map[string]any, tableName str
 	}
 
 	t.Fatalf("template missing AWS::DynamoDB::Table %q", tableName)
+	return nil
+}
+
+func findSSMParameterByName(t *testing.T, resources map[string]any, paramName string) map[string]any {
+	t.Helper()
+
+	for _, raw := range resources {
+		resource, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := resource["Type"].(string); typ != "AWS::SSM::Parameter" {
+			continue
+		}
+		props, ok := resource["Properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if got, _ := props["Name"].(string); got == paramName {
+			return resource
+		}
+	}
+
+	t.Fatalf("template missing AWS::SSM::Parameter %q", paramName)
 	return nil
 }
 

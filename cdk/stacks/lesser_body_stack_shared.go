@@ -122,7 +122,7 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		SessionTableName:   tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("sessions")),
 		SessionTtlMinutes:  jsii.Number(60),
 		EnableStreamTable:  jsii.Bool(true),
-		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams")),
+		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams"), jsii.String("v2")),
 		StreamTtlMinutes:   jsii.Number(60),
 		Stage: &apptheorycdk.AppTheoryRestApiRouterStageOptions{
 			StageName:          props.Stage,
