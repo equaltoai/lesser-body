@@ -140,6 +140,9 @@ Notes:
 - `--lesser-host-instance-key-arn` is optional. If omitted, the helper also checks the shell environment for
   `LESSER_HOST_INSTANCE_KEY_ARN` and forwards it automatically when present.
 - Add `--no-execute-changeset` to exercise the real `aws cloudformation deploy` path without executing the change set.
+- The corrected MCP stream-table baseline is a versioned physical table (`...-mcp-streams-v2`) while the exported SSM
+  parameter name remains `mcp_stream_table_name`. Existing durable Lesser actor data is preserved; only transient MCP
+  session/stream state may reset during the update.
 
 See `docs/managed-deploy-contract.md` for the full release contract.
 
