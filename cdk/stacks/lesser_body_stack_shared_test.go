@@ -116,6 +116,30 @@ func TestManagedDeployTemplateSupportsExactLesserHostInstanceKeyARN(t *testing.T
 	}
 }
 
+func TestManagedDeployTemplatePinsMcpTableLogicalIDs(t *testing.T) {
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		_ = NewLesserBodyDeployTemplateStack(app, "TestStack", &LesserBodyDeployTemplateStackProps{
+			StackProps: awscdk.StackProps{
+				Env: &awscdk.Environment{
+					Account: jsii.String("123456789012"),
+					Region:  jsii.String("us-east-1"),
+				},
+			},
+			ServiceVersion: "test",
+			Stage:          "dev",
+		})
+	})
+
+	got := dynamoTableLogicalIDs(t, mustResources(t, template))
+	want := []string{
+		"McpServerSessionTable469EA0FB",
+		"McpServerStreamTableC6A2DC7E",
+	}
+	if mustJSON(t, got) != mustJSON(t, want) {
+		t.Fatalf("unexpected managed DynamoDB logical IDs: got=%s want=%s", mustJSON(t, got), mustJSON(t, want))
+	}
+}
+
 func TestLesserBodyUsesAppTheoryDurableStreamTableSchema(t *testing.T) {
 	assetDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -548,6 +572,23 @@ func dynamoTableFingerprints(t *testing.T, resources map[string]any) map[string]
 		}
 	}
 
+	return out
+}
+
+func dynamoTableLogicalIDs(t *testing.T, resources map[string]any) []string {
+	t.Helper()
+
+	var out []string
+	for logicalID, raw := range resources {
+		resource, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := resource["Type"].(string); typ == "AWS::DynamoDB::Table" {
+			out = append(out, logicalID)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
