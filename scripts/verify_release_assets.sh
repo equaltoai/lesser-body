@@ -150,6 +150,29 @@ assert deploy["lambda"]["sha256"] == release["artifacts"]["lambda_zip"]["sha256"
 assert deploy["script"]["sha256"] == release["artifacts"]["deploy_script"]["sha256"]
 
 template_errors = []
+expected_named_tables = {
+    "McpServerSessionTable469EA0FB": {
+        "type": "AWS::DynamoDB::Table",
+        "table_name_contains": "mcp-sessions",
+    },
+    "McpServerStreamTableC6A2DC7E": {
+        "type": "AWS::DynamoDB::Table",
+        "table_name_contains": "mcp-streams-v2",
+    },
+}
+expected_export_refs = {
+    "McpSessionTableParam11A03692": {
+        "name_contains": "mcp_session_table_name",
+        "ref": "McpServerSessionTable469EA0FB",
+    },
+    "McpStreamTableParam604E9EFA": {
+        "name_contains": "mcp_stream_table_name",
+        "ref": "McpServerStreamTableC6A2DC7E",
+    },
+}
+forbidden_legacy_resources = {
+    "McpStreamTableEDC02B0A": "legacy stream table logical ID",
+}
 
 for stage in ("dev", "staging", "live"):
     stage_meta = release["artifacts"]["deploy_templates"][stage]
@@ -182,6 +205,54 @@ for stage in ("dev", "staging", "live"):
         if "Default" in param_spec and not isinstance(param_spec["Default"], str):
             template_errors.append(
                 f"{stage_path.name}: Parameters.{param_name}.Default must be a string, got {type(param_spec['Default']).__name__}"
+            )
+
+    resources = template.get("Resources", {})
+    if not isinstance(resources, dict):
+        template_errors.append(f"{stage_path.name}: template is missing Resources")
+        continue
+
+    for logical_id, label in forbidden_legacy_resources.items():
+        if logical_id in resources:
+            template_errors.append(f"{stage_path.name}: forbidden {label} {logical_id} is present")
+
+    for logical_id, spec in expected_named_tables.items():
+        resource = resources.get(logical_id)
+        if not isinstance(resource, dict):
+            template_errors.append(f"{stage_path.name}: missing expected resource {logical_id}")
+            continue
+        if resource.get("Type") != spec["type"]:
+            template_errors.append(
+                f"{stage_path.name}: {logical_id} expected type {spec['type']}, got {resource.get('Type')!r}"
+            )
+            continue
+        props = resource.get("Properties", {})
+        table_name_text = json.dumps(props.get("TableName"), sort_keys=True)
+        if spec["table_name_contains"] not in table_name_text:
+            template_errors.append(
+                f"{stage_path.name}: {logical_id} TableName must contain {spec['table_name_contains']}, got {table_name_text}"
+            )
+
+    for logical_id, spec in expected_export_refs.items():
+        resource = resources.get(logical_id)
+        if not isinstance(resource, dict):
+            template_errors.append(f"{stage_path.name}: missing expected resource {logical_id}")
+            continue
+        if resource.get("Type") != "AWS::SSM::Parameter":
+            template_errors.append(
+                f"{stage_path.name}: {logical_id} expected type AWS::SSM::Parameter, got {resource.get('Type')!r}"
+            )
+            continue
+        props = resource.get("Properties", {})
+        name_text = json.dumps(props.get("Name"), sort_keys=True)
+        if spec["name_contains"] not in name_text:
+            template_errors.append(
+                f"{stage_path.name}: {logical_id} Name must contain {spec['name_contains']}, got {name_text}"
+            )
+        expected_ref = {"Ref": spec["ref"]}
+        if props.get("Value") != expected_ref:
+            template_errors.append(
+                f"{stage_path.name}: {logical_id} Value must equal {expected_ref}, got {props.get('Value')!r}"
             )
 
 if template_errors:

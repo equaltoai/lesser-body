@@ -105,6 +105,19 @@ Template behavior:
 - The release helper also forwards `--lesser-host-instance-key-arn` (or `$LESSER_HOST_INSTANCE_KEY_ARN` when set) into
   `LesserHostInstanceKeyARN`, so managed runners can keep IAM access aligned with the exact secret ARN they already hold.
 
+### Named MCP resource baseline
+
+Managed templates treat the MCP DynamoDB tables as an explicit compatibility boundary:
+
+- session table logical ID: `McpServerSessionTable469EA0FB`
+- stream table logical ID: `McpServerStreamTableC6A2DC7E`
+- session table physical-name suffix: `mcp-sessions`
+- stream table physical-name suffix: `mcp-streams-v2`
+
+The stream table is transient MCP transport state, not durable agent identity or long-term memory. The published SSM
+export name remains stable at `mcp_stream_table_name` even though the corrected physical stream-table baseline is the
+versioned `...-mcp-streams-v2` table.
+
 ## Published exports
 
 On deploy, `lesser-body` writes these SSM parameters:
@@ -156,6 +169,8 @@ That verification fails if:
 - `checksums.txt` omits any published managed asset, including `lesser-body-release.json`
 - a checksum does not match
 - a managed template contains a non-string `Parameters.*.Default`
+- a managed template drifts the pinned MCP session/stream table logical IDs
+- a managed template drifts the versioned MCP stream-table name baseline (`mcp-streams-v2`)
 - a template regresses to CDK asset/bootstrap assumptions
 - the helper script no longer operates purely from the produced release directory
 

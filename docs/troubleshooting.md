@@ -185,3 +185,23 @@ Fix:
 
 - Deploy Lesser first (shared + stage). Then deploy lesser-body.
 - Only enable `soulEnabled=true` in Lesser after `mcp_lambda_arn` exists.
+
+## Managed deploy fails with stream-table replacement / `AWS::EarlyValidation::ResourceExistenceCheck`
+
+Symptoms:
+
+- Managed `deploy-lesser-body-from-release.sh` fails while creating a change set.
+- CloudFormation reports `AWS::EarlyValidation::ResourceExistenceCheck` for the MCP stream table.
+
+Cause:
+
+- An older managed template reused the physical stream-table name while changing the logical ID and schema boundary.
+- The corrected baseline uses the versioned physical table suffix `mcp-streams-v2` while keeping the exported SSM name
+  `mcp_stream_table_name` stable.
+
+Fix:
+
+- Upgrade to a release that includes the versioned stream-table baseline and the pinned MCP table logical IDs.
+- Expect transient MCP session/stream continuity to reset during the update; durable Lesser actor data is unaffected.
+- In lab, if you are validating a full repro/reset path, dropping and recreating the instance is acceptable, but it is
+  not required for the corrected design.

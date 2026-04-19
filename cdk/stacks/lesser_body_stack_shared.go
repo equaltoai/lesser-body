@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
@@ -27,6 +28,11 @@ type lesserBodyRuntimeProps struct {
 	LesserTableParamPath     *string
 	LesserHostInstanceKeyARN *string
 }
+
+const (
+	mcpSessionTableLogicalID = "McpServerSessionTable469EA0FB"
+	mcpStreamTableLogicalID  = "McpServerStreamTableC6A2DC7E"
+)
 
 func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps) {
 	serviceVersion := props.ServiceVersion
@@ -122,7 +128,7 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		SessionTableName:   tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("sessions")),
 		SessionTtlMinutes:  jsii.Number(60),
 		EnableStreamTable:  jsii.Bool(true),
-		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams")),
+		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams"), jsii.String("v2")),
 		StreamTtlMinutes:   jsii.Number(60),
 		Stage: &apptheorycdk.AppTheoryRestApiRouterStageOptions{
 			StageName:          props.Stage,
@@ -152,6 +158,8 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	}))
 
 	server := apptheorycdk.NewAppTheoryRemoteMcpServer(stack, jsii.String("McpServer"), mcpProps)
+	overrideRemoteMcpTableLogicalID(server.SessionTable(), mcpSessionTableLogicalID)
+	overrideRemoteMcpTableLogicalID(server.StreamTable(), mcpStreamTableLogicalID)
 
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), props.PublicEndpoint, nil)
 	if props.LesserAPIBaseURL != nil && *props.LesserAPIBaseURL != "" {
@@ -220,6 +228,23 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		})
 		mcpStreamTableParam.OverrideLogicalId(jsii.String("McpStreamTableParam604E9EFA"))
 	}
+}
+
+func overrideRemoteMcpTableLogicalID(table awsdynamodb.ITable, logicalID string) {
+	if table == nil {
+		return
+	}
+
+	defaultChild := table.Node().DefaultChild()
+	if defaultChild == nil {
+		panic("remote MCP table is missing a default child")
+	}
+
+	cfnResource, ok := defaultChild.(awscdk.CfnResource)
+	if !ok {
+		panic("remote MCP table default child is not a CloudFormation resource")
+	}
+	cfnResource.OverrideLogicalId(jsii.String(logicalID))
 }
 
 func ssmParamName(parts ...*string) *string {

@@ -32,10 +32,26 @@ exact built `dist/release` directory and uploads that same asset list to GitHub.
 The managed templates now use only CloudFormation-legal plain-string parameter defaults. Stage-specific SSM lookup paths
 are carried through explicit string parameters instead of intrinsic defaults.
 
+The current managed-template baseline also pins the named MCP DynamoDB resources:
+
+- session table logical ID: `McpServerSessionTable469EA0FB`
+- stream table logical ID: `McpServerStreamTableC6A2DC7E`
+- stream table physical-name suffix: `mcp-streams-v2`
+
+That stream-table reset is a one-time lab-era infrastructure correction. The table stores transient MCP stream/session
+transport state, so active sessions may reset during rollout, but durable Lesser actor data remains in Lesser's own
+table.
+
 Verify the produced release directory:
 
 ```bash
 bash scripts/verify_release_assets.sh v1.2.3 dist/release
+```
+
+Exercise the named-resource regression harness locally:
+
+```bash
+bash scripts/check_managed_template_named_resource_regression.sh v1.2.3 dist/release
 ```
 
 Verify the exact published GitHub release assets:
@@ -73,6 +89,7 @@ The workflow `.github/workflows/release.yml`:
 - builds release assets
 - verifies the release assets from the produced release directory
 - rejects managed templates with non-string CloudFormation parameter defaults before publish
+- rejects managed templates that drift the pinned MCP table logical IDs or the `mcp-streams-v2` stream-table baseline
 - rejects the release before upload if `checksums.txt` omits any published managed asset, including `lesser-body-release.json`
 - publishes a GitHub Release with the runtime zip, managed deploy templates, helper script, checksums, and metadata
 
