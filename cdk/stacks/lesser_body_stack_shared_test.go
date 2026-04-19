@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -235,6 +236,69 @@ func TestLesserBodyRemoteMcpServerUsesActorPathWiring(t *testing.T) {
 	}
 }
 
+func TestLesserBodyNamedMcpTableFingerprints(t *testing.T) {
+	assetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write bootstrap: %v", err)
+	}
+
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		stack := awscdk.NewStack(app, jsii.String("TestStack"), &awscdk.StackProps{
+			Env: &awscdk.Environment{
+				Account: jsii.String("123456789012"),
+				Region:  jsii.String("us-east-1"),
+			},
+		})
+
+		configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
+			AppName:               jsii.String("theory"),
+			Stage:                 jsii.String("dev"),
+			Code:                  awslambda.Code_FromAsset(jsii.String(assetDir), nil),
+			ServiceVersion:        jsii.String("test"),
+			PublicEndpoint:        jsii.String("https://api.dev.example.com/mcp/{actor}"),
+			LesserAPIBaseURL:      jsii.String("https://api.dev.example.com"),
+			AllowedOrigins:        jsii.String("https://claude.ai"),
+			JWTSecretArnParamPath: jsii.String("/theory/shared/secrets/jwt-secret-arn"),
+			JWTSecretKeyParamPath: jsii.String("/theory/shared/kms/encryption-key-arn"),
+			LesserTableParamPath:  jsii.String("/theory/dev/lesser/exports/v1/table_name"),
+		})
+	})
+
+	resources := mustResources(t, template)
+
+	want := []dynamoTableFingerprint{
+		{
+			LogicalID:    "McpServerSessionTable469EA0FB",
+			TableName:    "theory-dev-mcp-sessions",
+			PartitionKey: "sessionId",
+			SortKey:      "",
+			TTLAttribute: "expiresAt",
+		},
+		{
+			LogicalID:    "McpServerStreamTableC6A2DC7E",
+			TableName:    "theory-dev-mcp-streams",
+			PartitionKey: "sessionId",
+			SortKey:      "eventId",
+			TTLAttribute: "expiresAt",
+		},
+	}
+
+	got := dynamoTableFingerprints(t, resources)
+	if len(got) != len(want) {
+		t.Fatalf("expected %d DynamoDB tables, got %d: %s", len(want), len(got), mustJSON(t, got))
+	}
+
+	for _, expected := range want {
+		actual, ok := got[expected.TableName]
+		if !ok {
+			t.Fatalf("missing DynamoDB table %q in %s", expected.TableName, mustJSON(t, got))
+		}
+		if actual != expected {
+			t.Fatalf("unexpected fingerprint for %q: got=%s want=%s", expected.TableName, mustJSON(t, actual), mustJSON(t, expected))
+		}
+	}
+}
+
 func synthTemplate(t *testing.T, stackName string, build func(app awscdk.App)) map[string]any {
 	t.Helper()
 
@@ -372,6 +436,103 @@ func findDynamoTableByName(t *testing.T, resources map[string]any, tableName str
 
 	t.Fatalf("template missing AWS::DynamoDB::Table %q", tableName)
 	return nil
+}
+
+type dynamoTableFingerprint struct {
+	LogicalID    string `json:"logical_id"`
+	TableName    string `json:"table_name"`
+	PartitionKey string `json:"partition_key"`
+	SortKey      string `json:"sort_key,omitempty"`
+	TTLAttribute string `json:"ttl_attribute,omitempty"`
+}
+
+func dynamoTableFingerprints(t *testing.T, resources map[string]any) map[string]dynamoTableFingerprint {
+	t.Helper()
+
+	out := make(map[string]dynamoTableFingerprint)
+	logicalIDs := make([]string, 0, len(resources))
+	for logicalID := range resources {
+		logicalIDs = append(logicalIDs, logicalID)
+	}
+	sort.Strings(logicalIDs)
+
+	for _, logicalID := range logicalIDs {
+		raw := resources[logicalID]
+		resource, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := resource["Type"].(string); typ != "AWS::DynamoDB::Table" {
+			continue
+		}
+
+		props, ok := resource["Properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("table %q missing Properties", logicalID)
+		}
+
+		tableName, ok := props["TableName"].(string)
+		if !ok || tableName == "" {
+			t.Fatalf("table %q missing TableName", logicalID)
+		}
+
+		partitionKey, sortKey := dynamoTableKeyNames(t, logicalID, props)
+		out[tableName] = dynamoTableFingerprint{
+			LogicalID:    logicalID,
+			TableName:    tableName,
+			PartitionKey: partitionKey,
+			SortKey:      sortKey,
+			TTLAttribute: dynamoTableTTLAttribute(t, logicalID, props),
+		}
+	}
+
+	return out
+}
+
+func dynamoTableKeyNames(t *testing.T, logicalID string, props map[string]any) (string, string) {
+	t.Helper()
+
+	keySchema, ok := props["KeySchema"].([]any)
+	if !ok {
+		t.Fatalf("table %q missing KeySchema", logicalID)
+	}
+
+	var partitionKey string
+	var sortKey string
+	for _, raw := range keySchema {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("table %q KeySchema entry has unexpected type %T", logicalID, raw)
+		}
+		attrName, _ := entry["AttributeName"].(string)
+		keyType, _ := entry["KeyType"].(string)
+		switch keyType {
+		case "HASH":
+			partitionKey = attrName
+		case "RANGE":
+			sortKey = attrName
+		}
+	}
+
+	if partitionKey == "" {
+		t.Fatalf("table %q missing HASH key", logicalID)
+	}
+
+	return partitionKey, sortKey
+}
+
+func dynamoTableTTLAttribute(t *testing.T, logicalID string, props map[string]any) string {
+	t.Helper()
+
+	spec, ok := props["TimeToLiveSpecification"].(map[string]any)
+	if !ok {
+		t.Fatalf("table %q missing TimeToLiveSpecification", logicalID)
+	}
+	attrName, _ := spec["AttributeName"].(string)
+	if attrName == "" {
+		t.Fatalf("table %q missing TTL attribute name", logicalID)
+	}
+	return attrName
 }
 
 func mustJSON(t *testing.T, value any) string {
