@@ -91,7 +91,7 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	if !strings.Contains(combined, "identity_whoami") || !strings.Contains(combined, "agent://channels/preferences") {
 		t.Fatalf("expected compose_email prompt to reference identity_whoami and agent://channels/preferences, got: %s", combined)
 	}
-	if !strings.Contains(combined, "current-instance local ID") {
+	if !strings.Contains(combined, "current-instance local ID") || !strings.Contains(combined, "remote ActivityPub handle") {
 		t.Fatalf("expected compose_email prompt to describe supported identity_lookup query forms, got: %s", combined)
 	}
 
@@ -175,7 +175,7 @@ func TestLBM4_CommunicationPromptsExistAndReferencePreferences(t *testing.T) {
 	for _, m := range prompt.Messages {
 		combined += "\n" + m.Content.Text
 	}
-	if !strings.Contains(combined, "managed email, ENS name, full agentId, or current-instance local ID") {
+	if !strings.Contains(combined, "current-instance local ID") || !strings.Contains(combined, "remote ActivityPub handle") || !strings.Contains(combined, "canonical actor URL") {
 		t.Fatalf("expected respect_preferences prompt to describe supported identity_lookup query forms, got: %s", combined)
 	}
 }

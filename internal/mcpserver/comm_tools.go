@@ -209,7 +209,7 @@ func identityWhoamiDef() mcpruntime.ToolDef {
 func identityLookupDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "identity_lookup",
-		Description: "Look up a soul identity by ENS name, managed email, full agentId, or a current-instance local ID such as medic.",
+		Description: "Look up a soul identity by full agentId, managed email, ENS name, a current-instance local ID such as medic, a remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
