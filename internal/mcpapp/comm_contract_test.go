@@ -207,6 +207,9 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		if !strings.Contains(toolsByName["identity_lookup"].Description, "current-instance local ID") {
 			t.Fatalf("identity_lookup description should mention current-instance local IDs, got %q", toolsByName["identity_lookup"].Description)
 		}
+		if !strings.Contains(toolsByName["identity_lookup"].Description, "remote ActivityPub handle") {
+			t.Fatalf("identity_lookup description should mention remote ActivityPub handles, got %q", toolsByName["identity_lookup"].Description)
+		}
 		expectPropType(t, s, "query", "string")
 	}
 

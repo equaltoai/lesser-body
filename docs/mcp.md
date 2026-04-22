@@ -290,7 +290,7 @@ Scope key:
 | `sms_read` | Read | Read recent inbound SMS messages delivered to the instance. |
 | `voicemail_read` | Read | Read voicemail notifications and transcriptions. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `identity_lookup` | Read | Resolve a soul identity by ENS name, managed email, full agent ID, or a current-instance local ID such as `medic`. |
+| `identity_lookup` | Read | Resolve a soul identity by full agent ID, managed email, ENS name, a current-instance local ID such as `medic`, a remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
 
 Notes:
@@ -308,8 +308,13 @@ Notes:
   - managed email address
   - ENS name
   - current-instance local IDs such as `medic`
+  - remote ActivityPub handles in `@user@domain` form
+  - canonical remote actor URLs in `https://domain/users/user` form
+- For bare `user@domain` inputs, `identity_lookup` first tries managed-email resolution. If that returns not found, lesser-body falls back to treating the input as a remote ActivityPub handle and resolves it through the exact qualified host search form.
 - When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.
-  Cross-instance lookups should use a domain-qualified form instead of relying on bare local IDs.
+  Cross-instance lookups should use an explicit domain-qualified form such as `@user@domain` or a canonical actor URL instead of relying on bare local IDs.
+- Remote ActivityPub handles and canonical actor URLs resolve through an exact domain-qualified host query instead of the fuzzy `q=<local>&domain=<domain>` path.
+- Remote actor URL support is intentionally narrow and deterministic. Unsupported remote URL shapes return a tool-level `invalid_request` error instead of passing the URL through unchanged to lesser-host.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for the deprecated managed-instance-key compatibility path.
 

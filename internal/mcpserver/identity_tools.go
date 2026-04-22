@@ -251,6 +251,12 @@ type soulLookupSearch struct {
 	Domain string
 }
 
+func newExactQualifiedSoulLookupSearch(domain string, localID string) soulLookupSearch {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	localID = strings.ToLower(strings.TrimSpace(localID))
+	return soulLookupSearch{Query: domain + "/" + localID}
+}
+
 func isSoulAgentID(q string) bool {
 	q = strings.TrimSpace(q)
 	if !strings.HasPrefix(q, "0x") {
@@ -290,6 +296,7 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 	}
 
 	allowENSLikeLocalFallback := false
+	allowBareRemoteHandleFallback := false
 	if agentID, err := resolveAgentIDByIdentifier(ctx, client, q); err == nil && agentID != "" {
 		return []string{agentID}, nil
 	} else if err != nil {
@@ -298,9 +305,10 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 			return nil, err
 		}
 		allowENSLikeLocalFallback = looksLikeENSName(q)
+		allowBareRemoteHandleFallback = looksLikeEmail(q)
 	}
 
-	search, err := prepareSoulLookupSearch(ctx, client, q, allowENSLikeLocalFallback)
+	search, err := prepareSoulLookupSearch(ctx, client, q, allowENSLikeLocalFallback, allowBareRemoteHandleFallback)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +344,17 @@ func lookupAgentIDs(ctx context.Context, client *soulapi.Client, q string) ([]st
 	return agentIDs, nil
 }
 
-func prepareSoulLookupSearch(ctx context.Context, client *soulapi.Client, q string, allowENSLikeLocalFallback bool) (soulLookupSearch, error) {
+func prepareSoulLookupSearch(ctx context.Context, client *soulapi.Client, q string, allowENSLikeLocalFallback bool, allowBareRemoteHandleFallback bool) (soulLookupSearch, error) {
 	searchQ := normalizeSoulLookupQuery(q)
+	if remoteSearch, handled, err := normalizeCanonicalRemoteActorURL(searchQ); handled || err != nil {
+		if err != nil {
+			return soulLookupSearch{}, err
+		}
+		return remoteSearch, nil
+	}
+	if remoteSearch, ok := normalizeRemoteActivityPubHandle(searchQ, allowBareRemoteHandleFallback); ok {
+		return remoteSearch, nil
+	}
 	localID, ok := normalizeCurrentInstanceLocalLookupQuery(searchQ, allowENSLikeLocalFallback)
 	if !ok {
 		return soulLookupSearch{Query: searchQ}, nil
@@ -407,6 +424,10 @@ func normalizeCurrentInstanceLocalLookupQuery(raw string, allowENSLikeLocalFallb
 		return "", false
 	}
 
+	return normalizeLookupLocalID(raw)
+}
+
+func normalizeLookupLocalID(raw string) (string, bool) {
 	localID := strings.ToLower(strings.TrimSpace(raw))
 	localID = strings.TrimPrefix(localID, "@")
 	localID = strings.TrimSuffix(localID, "/")
@@ -421,6 +442,100 @@ func normalizeCurrentInstanceLocalLookupQuery(raw string, allowENSLikeLocalFallb
 		return "", false
 	}
 	return localID, true
+}
+
+func normalizeRemoteActivityPubHandle(raw string, allowBareRemoteHandleFallback bool) (soulLookupSearch, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return soulLookupSearch{}, false
+	}
+
+	if strings.HasPrefix(raw, "@") {
+		parts := strings.SplitN(strings.TrimPrefix(raw, "@"), "@", 2)
+		if len(parts) != 2 {
+			return soulLookupSearch{}, false
+		}
+		localID, ok := normalizeLookupLocalID(parts[0])
+		if !ok {
+			return soulLookupSearch{}, false
+		}
+		domain, ok := normalizeLookupDomain(parts[1])
+		if !ok {
+			return soulLookupSearch{}, false
+		}
+		return newExactQualifiedSoulLookupSearch(domain, localID), true
+	}
+
+	if !allowBareRemoteHandleFallback || strings.Count(raw, "@") != 1 {
+		return soulLookupSearch{}, false
+	}
+
+	parts := strings.SplitN(raw, "@", 2)
+	localID, ok := normalizeLookupLocalID(parts[0])
+	if !ok {
+		return soulLookupSearch{}, false
+	}
+	domain, ok := normalizeLookupDomain(parts[1])
+	if !ok {
+		return soulLookupSearch{}, false
+	}
+	return newExactQualifiedSoulLookupSearch(domain, localID), true
+}
+
+func normalizeLookupDomain(raw string) (string, bool) {
+	raw = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(raw, ".")))
+	if raw == "" || strings.ContainsAny(raw, "/@") {
+		return "", false
+	}
+
+	parsed, err := url.Parse("https://" + raw)
+	if err != nil || parsed.Hostname() == "" {
+		return "", false
+	}
+	if parsed.Hostname() != raw || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	return parsed.Hostname(), true
+}
+
+func normalizeCanonicalRemoteActorURL(raw string) (soulLookupSearch, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.Contains(raw, "://") {
+		return soulLookupSearch{}, false, nil
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
+	}
+
+	domain, ok := normalizeLookupDomain(parsed.Hostname())
+	if !ok {
+		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
+	}
+
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(segments) != 2 || segments[0] != "users" {
+		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
+	}
+
+	localID, ok := normalizeLookupLocalID(segments[1])
+	if !ok {
+		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
+	}
+	return newExactQualifiedSoulLookupSearch(domain, localID), true, nil
+}
+
+func unsupportedRemoteActorURLError(query string) error {
+	return &toolUserError{
+		Code:    "invalid_request",
+		Message: "unsupported remote actor URL; supported form is https://<domain>/users/<localId>",
+		Status:  400,
+		Details: map[string]any{"query": strings.TrimSpace(query)},
+	}
 }
 
 func resolveAgentIDByIdentifier(ctx context.Context, client *soulapi.Client, q string) (string, error) {
