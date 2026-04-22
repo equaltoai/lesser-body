@@ -190,7 +190,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		Claims:   &auth.Claims{Username: "Agent1"},
 	}, "")
 
-	search, err := prepareSoulLookupSearch(ctx, client, "medic", false)
+	search, err := prepareSoulLookupSearch(ctx, client, "medic", false, false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		t.Fatalf("domain: want test.example.com got %q", search.Domain)
 	}
 
-	search, err = prepareSoulLookupSearch(ctx, client, "ops.v2", false)
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.v2", false, false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch dot_local: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		t.Fatalf("dot_local domain: want test.example.com got %q", search.Domain)
 	}
 
-	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", false)
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", false, false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch ens_like_without_fallback: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		t.Fatalf("ens_like_without_fallback: want generic search query without domain, got %+v", search)
 	}
 
-	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", true)
+	search, err = prepareSoulLookupSearch(ctx, client, "ops.eth", true, false)
 	if err != nil {
 		t.Fatalf("prepareSoulLookupSearch ens_like_with_fallback: %v", err)
 	}
@@ -229,5 +229,89 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 	}
 	if search.Domain != "test.example.com" {
 		t.Fatalf("ens_like_with_fallback domain: want test.example.com got %q", search.Domain)
+	}
+}
+
+func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name                    string
+		raw                     string
+		allowBareHandleFallback bool
+		want                    soulLookupSearch
+		ok                      bool
+	}{
+		{
+			name: "acct_form",
+			raw:  "@steward@remote.example",
+			want: soulLookupSearch{Query: "steward", Domain: "remote.example"},
+			ok:   true,
+		},
+		{
+			name:                    "bare_form_with_fallback",
+			raw:                     "steward@remote.example",
+			allowBareHandleFallback: true,
+			want:                    soulLookupSearch{Query: "steward", Domain: "remote.example"},
+			ok:                      true,
+		},
+		{
+			name:                    "bare_form_without_fallback",
+			raw:                     "steward@remote.example",
+			allowBareHandleFallback: false,
+			ok:                      false,
+		},
+		{
+			name: "ens_like_local_part_supported",
+			raw:  "@ops.eth@remote.example",
+			want: soulLookupSearch{Query: "ops.eth", Domain: "remote.example"},
+			ok:   true,
+		},
+		{
+			name: "invalid_domain",
+			raw:  "@steward@remote.example/path",
+			ok:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := normalizeRemoteActivityPubHandle(tc.raw, tc.allowBareHandleFallback)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("normalizeRemoteActivityPubHandle(%q, %v) = (%+v, %v), want (%+v, %v)", tc.raw, tc.allowBareHandleFallback, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestNormalizeCanonicalRemoteActorURL(t *testing.T) {
+	t.Parallel()
+
+	search, handled, err := normalizeCanonicalRemoteActorURL("https://remote.example/users/steward")
+	if err != nil || !handled {
+		t.Fatalf("canonical actor url: handled=%v err=%v", handled, err)
+	}
+	if search != (soulLookupSearch{Query: "steward", Domain: "remote.example"}) {
+		t.Fatalf("canonical actor url: got %+v", search)
+	}
+
+	search, handled, err = normalizeCanonicalRemoteActorURL("https://remote.example/users/ops.eth/")
+	if err != nil || !handled {
+		t.Fatalf("canonical actor url with dotted local id: handled=%v err=%v", handled, err)
+	}
+	if search != (soulLookupSearch{Query: "ops.eth", Domain: "remote.example"}) {
+		t.Fatalf("canonical actor url with dotted local id: got %+v", search)
+	}
+
+	_, handled, err = normalizeCanonicalRemoteActorURL("https://remote.example/actors/steward")
+	if !handled || err == nil {
+		t.Fatalf("unsupported actor url should be handled with an error, got handled=%v err=%v", handled, err)
+	}
+	userErr, ok := err.(*toolUserError)
+	if !ok || userErr.Code != "invalid_request" {
+		t.Fatalf("unsupported actor url should return invalid_request tool error, got %#v", err)
 	}
 }

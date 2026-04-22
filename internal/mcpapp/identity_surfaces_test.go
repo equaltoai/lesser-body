@@ -38,6 +38,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	var gotBindingSK string
 	var searchQueries []string
 	var searchDomains []string
+	var emailResolveQueries []string
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
 		return &fakeTableTheoryDB{
 			firstFn: func(dest any, where map[string]any) error {
@@ -61,6 +62,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			searchQueries = append(searchQueries, q)
 			searchDomains = append(searchDomains, domain)
 			if domain == "test.example.com" && (q == "agent-alice" || q == "ops.v2" || q == "ops.eth") {
+				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
+				return
+			}
+			if domain == "remote.example" && q == "steward" {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
@@ -94,7 +99,12 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 				"updatedAt":"2026-03-09T12:00:00Z"
 			}`))
 		case r.URL.Path == "/api/v1/soul/resolve/email/agent-alice@lessersoul.ai":
+			emailResolveQueries = append(emailResolveQueries, "agent-alice@lessersoul.ai")
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/resolve/email/steward@remote.example":
+			emailResolveQueries = append(emailResolveQueries, "steward@remote.example")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
 		case r.URL.Path == "/api/v1/soul/resolve/ens/agent-alice.lessersoul.eth":
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/resolve/ens/ops.eth":
@@ -236,9 +246,13 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	if len(searchDomains) != 0 {
 		t.Fatalf("identity_lookup for managed identifiers should not set search domains, got %+v", searchDomains)
 	}
+	if !reflect.DeepEqual(emailResolveQueries, []string{"agent-alice@lessersoul.ai"}) {
+		t.Fatalf("identity_lookup for managed identifiers should only resolve supported managed email directly, got %+v", emailResolveQueries)
+	}
 
 	searchQueries = nil
 	searchDomains = nil
+	emailResolveQueries = nil
 
 	// identity_lookup should normalize current-instance local IDs and carry the authenticated instance domain explicitly.
 	for _, q := range []string{"agent-alice", "@agent-alice", "ops.v2", "ops.eth"} {
@@ -282,6 +296,83 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	}
 	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com", "test.example.com", "test.example.com"}) {
 		t.Fatalf("identity_lookup should provide current-instance domain context for local queries, got %+v", searchDomains)
+	}
+	if len(emailResolveQueries) != 0 {
+		t.Fatalf("identity_lookup should not attempt managed-email resolution for current-instance local IDs, got %+v", emailResolveQueries)
+	}
+
+	// identity_lookup should normalize remote ActivityPub identifiers into the existing domain-qualified soul search contract.
+	for _, tc := range []struct {
+		name             string
+		query            string
+		wantSearchQ      string
+		wantSearchDomain string
+		wantEmailResolve []string
+	}{
+		{
+			name:             "acct_form",
+			query:            "@steward@remote.example",
+			wantSearchQ:      "steward",
+			wantSearchDomain: "remote.example",
+		},
+		{
+			name:             "bare_handle_falls_back_after_email_miss",
+			query:            "steward@remote.example",
+			wantSearchQ:      "steward",
+			wantSearchDomain: "remote.example",
+			wantEmailResolve: []string{"steward@remote.example"},
+		},
+		{
+			name:             "canonical_actor_url",
+			query:            "https://remote.example/users/steward",
+			wantSearchQ:      "steward",
+			wantSearchDomain: "remote.example",
+		},
+	} {
+		searchQueries = nil
+		searchDomains = nil
+		emailResolveQueries = nil
+
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": tc.query},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 32, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("%s identity_lookup(%q): status=%d body=%s", tc.name, tc.query, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("%s identity_lookup(%q) rpc error: %+v", tc.name, tc.query, rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		matches, _ := data["matches"].([]any)
+		if len(matches) != 1 {
+			t.Fatalf("%s identity_lookup(%q): expected 1 match, got %+v", tc.name, tc.query, matches)
+		}
+		match, _ := matches[0].(map[string]any)
+		if match["agentId"] != agentID {
+			t.Fatalf("%s identity_lookup(%q): agentId want %s got %v", tc.name, tc.query, agentID, match["agentId"])
+		}
+		if !reflect.DeepEqual(searchQueries, []string{tc.wantSearchQ}) {
+			t.Fatalf("%s identity_lookup(%q): search q want [%s] got %+v", tc.name, tc.query, tc.wantSearchQ, searchQueries)
+		}
+		if !reflect.DeepEqual(searchDomains, []string{tc.wantSearchDomain}) {
+			t.Fatalf("%s identity_lookup(%q): search domain want [%s] got %+v", tc.name, tc.query, tc.wantSearchDomain, searchDomains)
+		}
+		if !reflect.DeepEqual(emailResolveQueries, tc.wantEmailResolve) {
+			t.Fatalf("%s identity_lookup(%q): email resolves want %+v got %+v", tc.name, tc.query, tc.wantEmailResolve, emailResolveQueries)
+		}
 	}
 
 	// agent://channels + agent://channels/preferences should read successfully.
@@ -585,5 +676,109 @@ func TestLBM1_IdentityLookupMalformedLocalIdentifierReturnsBadRequest(t *testing
 	}
 	if gotSearchQuery != "bad/local" || gotSearchDomain != "" {
 		t.Fatalf("unexpected downstream malformed search shape: q=%q domain=%q", gotSearchQuery, gotSearchDomain)
+	}
+}
+
+func TestLBM1_IdentityLookupUnsupportedRemoteActorURLReturnsBadRequest(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulbinding.ResetForTests()
+	soulapi.ResetForTests()
+	defer soulbinding.ResetForTests()
+
+	const agentID = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
+		return &fakeTableTheoryDB{
+			firstFn: func(dest any, where map[string]any) error {
+				return setStructFields(dest, map[string]string{
+					"AgentID":  agentID,
+					"Username": "Agent1",
+				})
+			},
+		}, nil
+	})
+
+	searchCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/api/v1/soul/search":
+			searchCalled = true
+			_, _ = w.Write([]byte(`{"version":"1","results":[],"count":0,"has_more":false}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "identity_lookup",
+		"arguments": map[string]any{"query": "https://remote.example/actors/steward"},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("identity_lookup(unsupported remote actor URL): status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("identity_lookup(unsupported remote actor URL) rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+	}
+	if !out.IsError {
+		t.Fatalf("expected isError tool result, got %+v", out)
+	}
+	errPayload, _ := out.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "invalid_request" {
+		t.Fatalf("expected invalid_request, got %+v", errPayload)
+	}
+	msg, _ := errPayload["message"].(string)
+	if !strings.Contains(strings.ToLower(msg), "unsupported") || !strings.Contains(strings.ToLower(msg), "url") {
+		t.Fatalf("expected actionable unsupported URL message, got %+v", errPayload)
+	}
+	if searchCalled {
+		t.Fatalf("identity_lookup should reject unsupported remote actor URLs before search")
 	}
 }
