@@ -251,6 +251,12 @@ type soulLookupSearch struct {
 	Domain string
 }
 
+func newExactQualifiedSoulLookupSearch(domain string, localID string) soulLookupSearch {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	localID = strings.ToLower(strings.TrimSpace(localID))
+	return soulLookupSearch{Query: domain + "/" + localID}
+}
+
 func isSoulAgentID(q string) bool {
 	q = strings.TrimSpace(q)
 	if !strings.HasPrefix(q, "0x") {
@@ -457,7 +463,7 @@ func normalizeRemoteActivityPubHandle(raw string, allowBareRemoteHandleFallback 
 		if !ok {
 			return soulLookupSearch{}, false
 		}
-		return soulLookupSearch{Query: localID, Domain: domain}, true
+		return newExactQualifiedSoulLookupSearch(domain, localID), true
 	}
 
 	if !allowBareRemoteHandleFallback || strings.Count(raw, "@") != 1 {
@@ -473,7 +479,7 @@ func normalizeRemoteActivityPubHandle(raw string, allowBareRemoteHandleFallback 
 	if !ok {
 		return soulLookupSearch{}, false
 	}
-	return soulLookupSearch{Query: localID, Domain: domain}, true
+	return newExactQualifiedSoulLookupSearch(domain, localID), true
 }
 
 func normalizeLookupDomain(raw string) (string, bool) {
@@ -520,7 +526,7 @@ func normalizeCanonicalRemoteActorURL(raw string) (soulLookupSearch, bool, error
 	if !ok {
 		return soulLookupSearch{}, true, unsupportedRemoteActorURLError(raw)
 	}
-	return soulLookupSearch{Query: localID, Domain: domain}, true, nil
+	return newExactQualifiedSoulLookupSearch(domain, localID), true, nil
 }
 
 func unsupportedRemoteActorURLError(query string) error {

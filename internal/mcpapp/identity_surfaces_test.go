@@ -65,7 +65,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
-			if domain == "remote.example" && q == "steward" {
+			if domain == "" && q == "remote.example/steward" {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
@@ -301,7 +301,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		t.Fatalf("identity_lookup should not attempt managed-email resolution for current-instance local IDs, got %+v", emailResolveQueries)
 	}
 
-	// identity_lookup should normalize remote ActivityPub identifiers into the existing domain-qualified soul search contract.
+	// identity_lookup should normalize exact remote ActivityPub identifiers into the exact qualified soul search contract.
 	for _, tc := range []struct {
 		name             string
 		query            string
@@ -312,21 +312,21 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		{
 			name:             "acct_form",
 			query:            "@steward@remote.example",
-			wantSearchQ:      "steward",
-			wantSearchDomain: "remote.example",
+			wantSearchQ:      "remote.example/steward",
+			wantSearchDomain: "",
 		},
 		{
 			name:             "bare_handle_falls_back_after_email_miss",
 			query:            "steward@remote.example",
-			wantSearchQ:      "steward",
-			wantSearchDomain: "remote.example",
+			wantSearchQ:      "remote.example/steward",
+			wantSearchDomain: "",
 			wantEmailResolve: []string{"steward@remote.example"},
 		},
 		{
 			name:             "canonical_actor_url",
 			query:            "https://remote.example/users/steward",
-			wantSearchQ:      "steward",
-			wantSearchDomain: "remote.example",
+			wantSearchQ:      "remote.example/steward",
+			wantSearchDomain: "",
 		},
 	} {
 		searchQueries = nil

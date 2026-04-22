@@ -245,14 +245,14 @@ func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
 		{
 			name: "acct_form",
 			raw:  "@steward@remote.example",
-			want: soulLookupSearch{Query: "steward", Domain: "remote.example"},
+			want: soulLookupSearch{Query: "remote.example/steward"},
 			ok:   true,
 		},
 		{
 			name:                    "bare_form_with_fallback",
 			raw:                     "steward@remote.example",
 			allowBareHandleFallback: true,
-			want:                    soulLookupSearch{Query: "steward", Domain: "remote.example"},
+			want:                    soulLookupSearch{Query: "remote.example/steward"},
 			ok:                      true,
 		},
 		{
@@ -264,7 +264,7 @@ func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
 		{
 			name: "ens_like_local_part_supported",
 			raw:  "@ops.eth@remote.example",
-			want: soulLookupSearch{Query: "ops.eth", Domain: "remote.example"},
+			want: soulLookupSearch{Query: "remote.example/ops.eth"},
 			ok:   true,
 		},
 		{
@@ -294,7 +294,7 @@ func TestNormalizeCanonicalRemoteActorURL(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("canonical actor url: handled=%v err=%v", handled, err)
 	}
-	if search != (soulLookupSearch{Query: "steward", Domain: "remote.example"}) {
+	if search != (soulLookupSearch{Query: "remote.example/steward"}) {
 		t.Fatalf("canonical actor url: got %+v", search)
 	}
 
@@ -302,7 +302,7 @@ func TestNormalizeCanonicalRemoteActorURL(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("canonical actor url with dotted local id: handled=%v err=%v", handled, err)
 	}
-	if search != (soulLookupSearch{Query: "ops.eth", Domain: "remote.example"}) {
+	if search != (soulLookupSearch{Query: "remote.example/ops.eth"}) {
 		t.Fatalf("canonical actor url with dotted local id: got %+v", search)
 	}
 

@@ -310,9 +310,10 @@ Notes:
   - current-instance local IDs such as `medic`
   - remote ActivityPub handles in `@user@domain` form
   - canonical remote actor URLs in `https://domain/users/user` form
-- For bare `user@domain` inputs, `identity_lookup` first tries managed-email resolution. If that returns not found, lesser-body falls back to treating the input as a remote ActivityPub handle and searches with `q=user` plus `domain=domain`.
+- For bare `user@domain` inputs, `identity_lookup` first tries managed-email resolution. If that returns not found, lesser-body falls back to treating the input as a remote ActivityPub handle and resolves it through the exact qualified host search form.
 - When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.
   Cross-instance lookups should use an explicit domain-qualified form such as `@user@domain` or a canonical actor URL instead of relying on bare local IDs.
+- Remote ActivityPub handles and canonical actor URLs resolve through an exact domain-qualified host query instead of the fuzzy `q=<local>&domain=<domain>` path.
 - Remote actor URL support is intentionally narrow and deterministic. Unsupported remote URL shapes return a tool-level `invalid_request` error instead of passing the URL through unchanged to lesser-host.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for the deprecated managed-instance-key compatibility path.
