@@ -685,7 +685,144 @@ func TestM5_ProfileReadRejectsNonObjectArguments(t *testing.T) {
 	}
 }
 
-func TestM5_NotificationsReadPersistsCursor(t *testing.T) {
+func TestM5_NotificationsReadTimestampSinceFiltersRecentRemoteCreates(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.RawQuery {
+		case "limit=30":
+			_, _ = w.Write([]byte(`[
+				{"id":"old-mention","type":"mention","created_at":"2026-04-04T12:00:00Z","account":{"id":"acct-old","acct":"old@example.com"},"status":{"id":"old-post","content":"old mention","visibility":"public"}},
+				{"id":"remote-create-mention-9addcb94","type":"mention","created_at":"2026-04-24T20:07:34.02332832Z","account":{"id":"https://dev.theory.greater.website/users/steward","acct":"steward@dev.theory.greater.website","display_name":"Steward"},"status":{"id":"remote-status-mention","content":"PROJECT20-1248-DEDUPE","visibility":"public"}},
+				{"id":"remote-create-reply-a33f4d5","type":"reply","created_at":"2026-04-24T20:07:40.451151151Z","account":{"id":"https://dev.theory.greater.website/users/steward","acct":"steward@dev.theory.greater.website","display_name":"Steward"},"status":{"id":"remote-status-reply","content":"PROJECT20-1248-REPLY","in_reply_to_id":"parent-1","visibility":"public"}}
+			]`))
+		case "limit=30&types%5B%5D=mention":
+			_, _ = w.Write([]byte(`[
+				{"id":"old-typed-mention","type":"mention","created_at":"2026-04-04T12:00:00Z","account":{"id":"acct-old","acct":"old@example.com"},"status":{"id":"old-post","content":"old mention","visibility":"public"}},
+				{"id":"remote-create-mention-9addcb94","type":"mention","created_at":"2026-04-24T20:07:34.02332832Z","account":{"id":"https://dev.theory.greater.website/users/steward","acct":"steward@dev.theory.greater.website","display_name":"Steward"},"status":{"id":"remote-status-mention","content":"PROJECT20-1248-DEDUPE","visibility":"public"}}
+			]`))
+		case "limit=30&types%5B%5D=reply":
+			_, _ = w.Write([]byte(`[
+				{"id":"remote-create-reply-a33f4d5","type":"reply","created_at":"2026-04-24T20:07:40.451151151Z","account":{"id":"https://dev.theory.greater.website/users/steward","acct":"steward@dev.theory.greater.website","display_name":"Steward"},"status":{"id":"remote-status-reply","content":"PROJECT20-1248-REPLY","in_reply_to_id":"parent-1","visibility":"public"}}
+			]`))
+		default:
+			t.Fatalf("unexpected notifications query: %q", r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callNotifications := func(id int, arguments map[string]any) map[string]any {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "notifications_read",
+			"arguments": arguments,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{
+			JSONRPC: "2.0",
+			ID:      id,
+			Method:  "tools/call",
+			Params:  callParams,
+		})
+		if resp.Status != 200 {
+			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal notifications_read: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		return data
+	}
+
+	data := callNotifications(2, map[string]any{
+		"limit": 30,
+		"since": "2026-04-24T20:06:00Z",
+	})
+	if data["count"] != float64(2) {
+		t.Fatalf("expected two fresh notifications after timestamp since, got %+v", data)
+	}
+	if data["nextSince"] != "2026-04-24T20:07:40.451151151Z" {
+		t.Fatalf("expected timestamp nextSince from newest notification, got %+v", data)
+	}
+	notifications, _ := data["notifications"].([]any)
+	seen := map[string]bool{}
+	for _, item := range notifications {
+		n, _ := item.(map[string]any)
+		seen[n["id"].(string)] = true
+	}
+	if !seen["remote-create-mention-9addcb94"] || !seen["remote-create-reply-a33f4d5"] || seen["old-mention"] {
+		t.Fatalf("unexpected timestamp-filtered notifications: %+v", notifications)
+	}
+
+	typed := callNotifications(3, map[string]any{
+		"limit": 30,
+		"since": "2026-04-24T20:06:00Z",
+		"types": []string{"mention", "reply"},
+	})
+	if typed["count"] != float64(2) {
+		t.Fatalf("expected fresh mention and reply after typed timestamp since, got %+v", typed)
+	}
+
+	wantQueries := []string{
+		"limit=30",
+		"limit=30&types%5B%5D=mention",
+		"limit=30&types%5B%5D=reply",
+	}
+	if len(gotQueries) != len(wantQueries) {
+		t.Fatalf("expected %d notifications queries, got %v", len(wantQueries), gotQueries)
+	}
+	for i, want := range wantQueries {
+		if gotQueries[i] != want {
+			t.Fatalf("query %d: want %q, got %q", i, want, gotQueries[i])
+		}
+		if strings.Contains(gotQueries[i], "max_id=") {
+			t.Fatalf("timestamp since must not be forwarded as max_id: %v", gotQueries)
+		}
+	}
+}
+
+func TestM5_NotificationsReadSeparatesTimestampSinceAndCursor(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
@@ -705,13 +842,14 @@ func TestM5_NotificationsReadPersistsCursor(t *testing.T) {
 				{"id":"n3","type":"mention","created_at":"2026-03-01T03:00:00Z","account":{"id":"acct-3","acct":"agent3","display_name":"Agent 3"},"status":{"id":"post-3","content":"Newest","visibility":"public"}},
 				{"id":"n2","type":"mention","created_at":"2026-03-01T02:00:00Z","account":{"id":"acct-2","acct":"agent2","display_name":"Agent 2"},"status":{"id":"post-2","content":"Older","visibility":"public"}}
 			]`))
-		case "limit=5&max_id=n3":
+		case "limit=5&max_id=notif%2320260301030000%23n3":
+			w.Header().Set("Link", `<https://example.test/api/v1/notifications?max_id=notif%2320260301020000%23n2&limit=5>; rel="next"`)
 			_, _ = w.Write([]byte(`[
-				{"id":"n4","type":"mention","created_at":"2026-03-01T04:00:00Z","account":{"id":"acct-4","acct":"agent4","display_name":"Agent 4"},"status":{"id":"post-4","content":"After cursor","visibility":"public"}}
+				{"id":"n2","type":"mention","created_at":"2026-03-01T02:00:00Z","account":{"id":"acct-2","acct":"agent2","display_name":"Agent 2"},"status":{"id":"post-2","content":"Cursor page","visibility":"public"}}
 			]`))
 		case "limit=5&max_id=n1":
 			_, _ = w.Write([]byte(`[
-				{"id":"n5","type":"mention","created_at":"2026-03-01T05:00:00Z","account":{"id":"acct-5","acct":"agent5","display_name":"Agent 5"},"status":{"id":"post-5","content":"Explicit override","visibility":"public"}}
+				{"id":"n1-old","type":"mention","created_at":"2026-03-01T01:00:00Z","account":{"id":"acct-1","acct":"agent1","display_name":"Agent 1"},"status":{"id":"post-1","content":"Legacy cursor","visibility":"public"}}
 			]`))
 		default:
 			t.Fatalf("unexpected notifications query: %q", r.URL.RawQuery)
@@ -794,38 +932,46 @@ func TestM5_NotificationsReadPersistsCursor(t *testing.T) {
 	}
 
 	first := callTool(2, "notifications_read", map[string]any{"limit": 5})
-	if first["since"] != "" {
-		t.Fatalf("expected empty since on first call, got %+v", first)
+	if first["since"] != "" || first["cursor"] != "" {
+		t.Fatalf("expected empty since/cursor on first call, got %+v", first)
+	}
+	if first["nextSince"] != "2026-03-01T03:00:00Z" {
+		t.Fatalf("expected timestamp nextSince on first call, got %+v", first)
 	}
 	if readCursor(3) != "n3" {
-		t.Fatalf("expected cursor n3 after first call")
+		t.Fatalf("expected legacy cursor n3 after first call")
 	}
 
 	second := callTool(4, "notifications_read", map[string]any{"limit": 5})
-	if second["since"] != "n3" {
-		t.Fatalf("expected stored since n3 on second call, got %+v", second)
-	}
-	if readCursor(5) != "n4" {
-		t.Fatalf("expected cursor n4 after second call")
+	if second["since"] != "" || second["cursor"] != "" {
+		t.Fatalf("expected omitted since to avoid implicit cursor, got %+v", second)
 	}
 
-	override := callTool(6, "notifications_read", map[string]any{"limit": 5, "since": "n1"})
-	if override["since"] != "n1" {
-		t.Fatalf("expected explicit since n1, got %+v", override)
-	}
-	if readCursor(7) != "n5" {
-		t.Fatalf("expected cursor n5 after explicit override")
+	cursor := callTool(5, "notifications_read", map[string]any{"limit": 5, "cursor": "notif#20260301030000#n3"})
+	if cursor["cursor"] != "notif#20260301030000#n3" || cursor["nextCursor"] != "notif#20260301020000#n2" {
+		t.Fatalf("expected explicit cursor and nextCursor, got %+v", cursor)
 	}
 
-	reset := callTool(8, "notifications_read", map[string]any{"limit": 5, "since": ""})
-	if reset["since"] != "" {
+	legacy := callTool(6, "notifications_read", map[string]any{"limit": 5, "since": "n1"})
+	if legacy["since"] != "n1" || legacy["cursor"] != "n1" {
+		t.Fatalf("expected legacy non-timestamp since to act as cursor alias, got %+v", legacy)
+	}
+
+	reset := callTool(7, "notifications_read", map[string]any{"limit": 5, "since": ""})
+	if reset["since"] != "" || reset["cursor"] != "" {
 		t.Fatalf("expected empty since on reset call, got %+v", reset)
 	}
 	if reset["count"] != float64(2) {
 		t.Fatalf("expected reset call to return full list, got %+v", reset)
 	}
 
-	wantQueries := []string{"limit=5", "limit=5&max_id=n3", "limit=5&max_id=n1", "limit=5"}
+	wantQueries := []string{
+		"limit=5",
+		"limit=5",
+		"limit=5&max_id=notif%2320260301030000%23n3",
+		"limit=5&max_id=n1",
+		"limit=5",
+	}
 	if len(gotQueries) != len(wantQueries) {
 		t.Fatalf("expected %d notifications queries, got %v", len(wantQueries), gotQueries)
 	}

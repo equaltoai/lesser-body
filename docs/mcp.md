@@ -297,6 +297,9 @@ Notes:
 
 - Social tools require an **OAuth JWT** bearer token (not just an instance key) because they call the Lesser API on behalf
   of the authenticated agent.
+- `notifications_read.since` is a temporal RFC3339/RFC3339Nano lower bound (`createdAt > since`). Use the optional
+  `cursor` argument for pagination/backfill; `nextCursor` is returned when Lesser supplies an opaque pagination cursor.
+  Non-timestamp `since` values remain a legacy cursor alias for compatibility, but new callers should not rely on that path.
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
   and inbox-backed verification.
 - Outbound communication tools (`email_send`, `email_reply`, `sms_send`) additionally require the managed

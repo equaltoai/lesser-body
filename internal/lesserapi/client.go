@@ -79,13 +79,18 @@ func (e *APIError) Error() string {
 }
 
 func (c *Client) DoJSON(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, error) {
+	out, _, err := c.DoJSONWithHeaders(ctx, method, path, query, bearerToken, body)
+	return out, err
+}
+
+func (c *Client) DoJSONWithHeaders(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, http.Header, error) {
 	if c == nil || c.baseURL == nil || c.http == nil {
-		return nil, fmt.Errorf("lesser api client not initialized")
+		return nil, nil, fmt.Errorf("lesser api client not initialized")
 	}
 	method = strings.ToUpper(strings.TrimSpace(method))
 	path = strings.TrimSpace(path)
 	if method == "" || path == "" {
-		return nil, fmt.Errorf("missing method or path")
+		return nil, nil, fmt.Errorf("missing method or path")
 	}
 
 	endpoint := *c.baseURL
@@ -98,14 +103,14 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("marshal request body: %w", err)
+			return nil, nil, fmt.Errorf("marshal request body: %w", err)
 		}
 		reader = bytes.NewReader(b)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, nil, fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -118,28 +123,29 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	headers := resp.Header.Clone()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{Status: resp.StatusCode, Body: respBody}
+		return nil, headers, &APIError{Status: resp.StatusCode, Body: respBody}
 	}
 
 	if len(respBody) == 0 {
-		return map[string]any{}, nil
+		return map[string]any{}, headers, nil
 	}
 
 	var out any
 	if err := json.Unmarshal(respBody, &out); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	return out, nil
+	return out, headers, nil
 }
 
 func resolveBaseURL() (*url.URL, error) {

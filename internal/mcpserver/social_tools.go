@@ -339,9 +339,10 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Types []string `json:"types,omitempty"`
-		Since *string  `json:"since"`
-		Limit int      `json:"limit,omitempty"`
+		Types  []string `json:"types,omitempty"`
+		Since  *string  `json:"since"`
+		Cursor string   `json:"cursor,omitempty"`
+		Limit  int      `json:"limit,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
@@ -350,13 +351,14 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	explicitSince := in.Since != nil
 	requestedSince := trimDeref(in.Since)
 	effectiveSince := requestedSince
+	effectiveCursor := strings.TrimSpace(in.Cursor)
+	sinceTime, hasTemporalSince := parseNotificationSince(requestedSince)
 
-	if !explicitSince {
-		if storedCursor, err := readNotificationCursor(ctx); err == nil {
-			effectiveSince = storedCursor
-		}
-	} else if requestedSince == "" {
+	if explicitSince && requestedSince == "" {
 		_ = clearNotificationCursor(ctx)
+	}
+	if explicitSince && requestedSince != "" && !hasTemporalSince && effectiveCursor == "" {
+		effectiveCursor = requestedSince
 	}
 
 	token, err := requireOAuthBearer(ctx)
@@ -368,15 +370,19 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		return nil, err
 	}
 
-	list, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, effectiveSince)
+	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, effectiveCursor)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
 
 	notifications := socialNotificationsFromAPI(list)
+	if hasTemporalSince {
+		notifications = filterSocialNotificationsAfter(notifications, sinceTime)
+	}
 	if len(requestedTypes) > 0 {
 		notifications = filterSocialNotificationsByType(notifications, requestedTypes)
 	}
+	sortSocialNotificationsNewestFirst(notifications)
 	if in.Limit > 0 && len(notifications) > in.Limit {
 		notifications = notifications[:in.Limit]
 	}
@@ -385,15 +391,26 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if len(notifications) > 0 {
 		if newest, ok := notifications[0].(map[string]any); ok {
 			_ = writeNotificationCursor(ctx, strings.TrimSpace(firstNonEmptyStringMap(newest, "id")))
+			if hasTemporalSince || effectiveCursor == "" {
+				if createdAt, ok := notificationCreatedAt(newest); ok {
+					nextSince = createdAt.Format(time.RFC3339Nano)
+				}
+			}
 		}
-		if oldest, ok := notifications[len(notifications)-1].(map[string]any); ok {
-			nextSince = strings.TrimSpace(firstNonEmptyStringMap(oldest, "id"))
+		if nextSince == "" {
+			if oldest, ok := notifications[len(notifications)-1].(map[string]any); ok {
+				nextSince = strings.TrimSpace(firstNonEmptyStringMap(oldest, "id"))
+			}
 		}
+	} else if hasTemporalSince {
+		nextSince = sinceTime.Format(time.RFC3339Nano)
 	}
 
 	return toolJSONResult(map[string]any{
 		"since":         effectiveSince,
+		"cursor":        effectiveCursor,
 		"nextSince":     nextSince,
+		"nextCursor":    nextCursor,
 		"count":         len(notifications),
 		"types":         requestedTypes,
 		"notifications": notifications,
@@ -719,6 +736,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 			"properties":{
 				"types":{"type":"array","items":{"type":"string"}},
 				"since":{"type":"string"},
+				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80}
 			}
 		}`),
@@ -891,9 +909,9 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
 	return requested, upstream
 }
 
-func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, since string) ([]any, error) {
+func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, cursor string) ([]any, string, error) {
 	if client == nil {
-		return nil, fmt.Errorf("lesser api client not initialized")
+		return nil, "", fmt.Errorf("lesser api client not initialized")
 	}
 
 	queries := upstreamTypes
@@ -902,15 +920,15 @@ func readSocialNotifications(ctx context.Context, client *lesserapi.Client, toke
 	}
 
 	if len(queries) <= 1 {
-		return readSocialNotificationsByType(ctx, client, token, firstString(queries), limit, since)
+		return readSocialNotificationsByType(ctx, client, token, firstString(queries), limit, cursor)
 	}
 
 	combined := make([]map[string]any, 0, len(queries)*max(1, limit))
 	seenIDs := make(map[string]struct{}, len(queries)*max(1, limit))
 	for _, typ := range queries {
-		items, err := readSocialNotificationsByType(ctx, client, token, typ, limit, since)
+		items, _, err := readSocialNotificationsByType(ctx, client, token, typ, limit, cursor)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		for _, item := range items {
 			raw, ok := item.(map[string]any)
@@ -944,31 +962,31 @@ func readSocialNotifications(ctx context.Context, client *lesserapi.Client, toke
 	for _, item := range combined {
 		out = append(out, item)
 	}
-	return out, nil
+	return out, "", nil
 }
 
-func readSocialNotificationsByType(ctx context.Context, client *lesserapi.Client, token string, notificationType string, limit int, since string) ([]any, error) {
+func readSocialNotificationsByType(ctx context.Context, client *lesserapi.Client, token string, notificationType string, limit int, cursor string) ([]any, string, error) {
 	query := url.Values{}
 	if limit > 0 {
 		query.Set("limit", strconv.Itoa(limit))
 	}
-	if strings.TrimSpace(since) != "" {
-		query.Set("max_id", strings.TrimSpace(since))
+	if strings.TrimSpace(cursor) != "" {
+		query.Set("max_id", strings.TrimSpace(cursor))
 	}
 	if strings.TrimSpace(notificationType) != "" {
 		query.Add("types[]", strings.TrimSpace(notificationType))
 	}
 
-	out, err := client.DoJSON(ctx, "GET", "/api/v1/notifications", query, token, nil)
+	out, headers, err := client.DoJSONWithHeaders(ctx, "GET", "/api/v1/notifications", query, token, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	list, ok := out.([]any)
 	if !ok {
-		return nil, fmt.Errorf("unexpected notifications response")
+		return nil, "", fmt.Errorf("unexpected notifications response")
 	}
-	return list, nil
+	return list, nextNotificationCursorFromHeaders(headers), nil
 }
 
 func socialNotificationsFromAPI(items []any) []any {
@@ -1002,6 +1020,39 @@ func filterSocialNotificationsByType(items []any, want []string) []any {
 		}
 	}
 	return out
+}
+
+func filterSocialNotificationsAfter(items []any, since time.Time) []any {
+	if since.IsZero() {
+		return items
+	}
+
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		notification, _ := item.(map[string]any)
+		createdAt, ok := notificationCreatedAt(notification)
+		if !ok || !createdAt.After(since) {
+			continue
+		}
+		out = append(out, notification)
+	}
+	return out
+}
+
+func sortSocialNotificationsNewestFirst(items []any) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left, _ := items[i].(map[string]any)
+		right, _ := items[j].(map[string]any)
+		leftTime, leftOK := notificationCreatedAt(left)
+		rightTime, rightOK := notificationCreatedAt(right)
+		switch {
+		case leftOK && rightOK && !leftTime.Equal(rightTime):
+			return leftTime.After(rightTime)
+		case leftOK != rightOK:
+			return leftOK
+		}
+		return strings.TrimSpace(firstNonEmptyStringMap(left, "id")) > strings.TrimSpace(firstNonEmptyStringMap(right, "id"))
+	})
 }
 
 func normalizeSocialNotification(raw map[string]any) map[string]any {
@@ -1103,11 +1154,54 @@ func notificationCreatedAt(raw map[string]any) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, false
 	}
-	t, err := time.Parse(time.RFC3339, value)
+	t, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return time.Time{}, false
 	}
 	return t.UTC(), true
+}
+
+func parseNotificationSince(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
+
+func nextNotificationCursorFromHeaders(headers map[string][]string) string {
+	for _, link := range headers["Link"] {
+		if cursor := nextNotificationCursorFromLink(link); cursor != "" {
+			return cursor
+		}
+	}
+	return ""
+}
+
+func nextNotificationCursorFromLink(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.Contains(part, `rel="next"`) && !strings.Contains(part, `rel=next`) {
+			continue
+		}
+		start := strings.Index(part, "<")
+		end := strings.Index(part, ">")
+		if start < 0 || end <= start {
+			continue
+		}
+		u, err := url.Parse(part[start+1 : end])
+		if err != nil {
+			continue
+		}
+		if cursor := strings.TrimSpace(u.Query().Get("max_id")); cursor != "" {
+			return cursor
+		}
+	}
+	return ""
 }
 
 func firstString(values []string) string {
