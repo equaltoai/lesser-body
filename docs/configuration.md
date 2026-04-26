@@ -42,13 +42,13 @@ Variables:
 - `LESSER_HOST_INSTANCE_KEY` (string, optional)
   - If set, supports two distinct roles:
     - deprecated inbound MCP compatibility when legacy instance-key auth is enabled
-    - outbound lesser-host service auth for communication tools
+    - lesser-host service auth for host-backed communication tools (mailbox reads/state plus outbound send/reply)
 - `LESSER_HOST_INSTANCE_KEY_ARN` (string, optional)
   - If set, fetches the managed instance key from Secrets Manager.
   - Managed CDK deploys can inject this directly via the optional `LesserHostInstanceKeyARN` template/context input.
   - If not set in a managed deployment, lesser-body falls back to the persisted Lesser `TRUST_CONFIG.instanceKeySecretARN`
     record in `LESSER_TABLE_NAME`.
-  - Do not remove this just because inbound MCP clients migrate to OAuth; outbound communication tools still use it.
+  - Do not remove this just because inbound MCP clients migrate to OAuth; host-backed communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 
 ### MCP session and stream persistence
@@ -104,8 +104,8 @@ Variables:
   - The Lesser stage DynamoDB table name.
   - Also used to resolve managed trust configuration (`TRUST_CONFIG`) for soul API base URL and instance-key secret ARN.
   - CDK also grants Secrets Manager read access for both the legacy `<app>/instance-key*` path and the current managed
-    `lesser-host/<control-plane-stage>/instances/<app>/instance-key*` namespace so outbound comm tools keep working
-    after managed secret-path migrations.
+    `lesser-host/<control-plane-stage>/instances/<app>/instance-key*` namespace so host-backed communication tools keep
+    working after managed secret-path migrations.
   - The managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is still required for soul API fallback routing and
     instance-key secret resolution, but not for the protected-resource `authorization_servers` value.
   - Startup reachability checks for `/.well-known/oauth-authorization-server` run against the Lesser API host derived

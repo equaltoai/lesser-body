@@ -180,7 +180,7 @@ func requireCommAPIBearer(ctx context.Context) (string, error) {
 	}
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return "", errors.New("LESSER_HOST_INSTANCE_KEY is required for outbound communication")
+		return "", errors.New("LESSER_HOST_INSTANCE_KEY is required for host-backed communication")
 	}
 	return token, nil
 }

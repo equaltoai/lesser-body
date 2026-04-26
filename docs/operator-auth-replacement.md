@@ -14,7 +14,7 @@ The target state is:
 - inbound MCP automation uses OAuth access tokens issued by Lesser
 - the OAuth client identity is explicit and auditable through claims like `client_id` and `client_class`
 - lesser-body does not invent a second local admin secret model once OAuth is available
-- `LESSER_HOST_INSTANCE_KEY` remains a server-to-server credential for lesser-body outbound calls into lesser-host
+- `LESSER_HOST_INSTANCE_KEY` remains a server-to-server credential for lesser-body host-backed communication calls into lesser-host
 
 ## Why this replaces instance-key auth
 
@@ -75,7 +75,7 @@ Operators that currently automate `/mcp` with the managed instance key should mo
 1. register or provision a dedicated operator OAuth client in Lesser
 2. obtain an OAuth token for that operator client using the final Lesser-supported grant
 3. call `https://api.<stageDomain>/mcp` with `Authorization: Bearer <oauth_access_token>`
-4. retain `LESSER_HOST_INSTANCE_KEY` only inside the lesser-body deployment for outbound lesser-host calls
+4. retain `LESSER_HOST_INSTANCE_KEY` only inside the lesser-body deployment for host-backed communication calls
 
 ## Dependency summary
 

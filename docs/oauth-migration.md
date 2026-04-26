@@ -12,8 +12,8 @@ These legacy inbound patterns are deprecated:
 - Simulacrum runtime credentials issued via `delegateToAgent()`
 - managed instance key as a direct `/mcp/{actor}` bearer token
 
-This guide shows how to migrate without removing the outbound `LESSER_HOST_INSTANCE_KEY` that communication tools still
-need for server-to-server calls into lesser-host.
+This guide shows how to migrate without removing the `LESSER_HOST_INSTANCE_KEY` that host-backed communication tools
+still need for server-to-server calls into lesser-host.
 
 ## Before you start
 
@@ -137,8 +137,17 @@ inbound MCP clients moved to OAuth.
 That secret is still used when lesser-body calls lesser-host for:
 
 - `email_send`
+- `email_read`
+- `email_get`
+- `email_get_content`
+- `email_search`
 - `email_reply`
+- `email_delete`
+- `email_mark_read`
+- `email_mark_unread`
 - `sms_send`
+- `sms_read`
+- `voicemail_read`
 
 Inbound client auth and outbound service auth are separate concerns.
 

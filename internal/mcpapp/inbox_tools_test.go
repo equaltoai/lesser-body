@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,62 +12,95 @@ import (
 	"github.com/theory-cloud/apptheory/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/soulapi"
 )
 
-func TestLBM3_InboxToolsFilterNotifications(t *testing.T) {
+func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
 	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
 	auth.ResetForTests()
+	soulapi.ResetForTests()
 
-	var dismissedID string
+	const agentID = "0x1111111111111111111111111111111111111111111111111111111111111111"
+	var gotAuth []string
+	var listQueries []string
+	var statePaths []string
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.URL.Path == "/api/v1/notifications":
-			_, _ = w.Write([]byte(`[
-				{
-					"id":"n1",
-					"type":"communication:inbound",
-					"communication":{
-						"channel":"email",
-						"message_id":"comm-msg-001",
-						"from":{"address":"alice@example.com"},
-						"to":{"address":"agent1@lessersoul.ai"},
-						"subject":"Hi",
-						"body":"Hello",
-						"received_at":"2026-03-04T12:00:00Z"
-					}
-				},
-				{
-					"id":"n2",
-					"type":"communication:inbound",
-					"channel":"sms",
-					"messageId":"comm-msg-002",
-					"from":{"address":"+15550142"},
-					"body":"sms body",
-					"receivedAt":"2026-03-04T12:05:00Z"
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
+			_, _ = w.Write([]byte(`{"version":"3","channels":{},"contactPreferences":{},"boundaries":[]}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages" && r.Method == http.MethodGet:
+			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+			listQueries = append(listQueries, r.URL.RawQuery)
+			channel := r.URL.Query().Get("channelType")
+			query := r.URL.Query().Get("query")
+			switch channel {
+			case "email":
+				if query != "" && !strings.EqualFold(query, "alice") {
+					_, _ = w.Write([]byte(`{"messages":[],"count":0,"hasMore":false}`))
+					return
 				}
-			]`))
-		case strings.HasPrefix(r.URL.Path, "/api/v1/notifications/") && strings.HasSuffix(r.URL.Path, "/dismiss") && r.Method == http.MethodPost:
-			parts := strings.Split(r.URL.Path, "/")
-			if len(parts) >= 5 {
-				dismissedID = parts[4]
+				_, _ = w.Write([]byte(`{
+					"instanceSlug":"inst1",
+					"agentId":"` + agentID + `",
+					"messages":[{
+						"messageRef":"comm-delivery-email",
+						"deliveryId":"comm-delivery-email",
+						"messageId":"comm-msg-email",
+						"threadId":"comm-thread-email",
+						"direction":"inbound",
+						"channelType":"email",
+						"status":"delivered",
+						"from":{"address":"alice@example.com"},
+						"to":{"address":"agent@example.com"},
+						"subject":"Hi",
+						"preview":"Hello preview",
+						"content":{"available":true,"bytes":11,"mimeType":"text/plain","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","contentHref":"/content"},
+						"state":{"read":false,"archived":false,"deleted":false},
+						"createdAt":"2026-03-04T12:00:00Z"
+					}],
+					"count":1,
+					"hasMore":true,
+					"nextCursor":"cursor-2"
+				}`))
+			case "sms":
+				_, _ = w.Write([]byte(`{"messages":[{"messageRef":"comm-delivery-sms","deliveryId":"comm-delivery-sms","messageId":"comm-msg-sms","threadId":"comm-thread-sms","direction":"inbound","channelType":"sms","status":"delivered","from":{"number":"+15550142"},"preview":"sms preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:05:00Z"}],"count":1,"hasMore":false}`))
+			default:
+				_, _ = w.Write([]byte(`{"messages":[],"count":0,"hasMore":false}`))
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email" && r.Method == http.MethodGet:
+			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","deliveryId":"comm-delivery-email","messageId":"comm-msg-email","threadId":"comm-thread-email","direction":"inbound","channelType":"email","status":"delivered","from":{"address":"alice@example.com"},"to":{"address":"agent@example.com"},"subject":"Hi","preview":"Hello preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:00:00Z"}}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email/content" && r.Method == http.MethodGet:
+			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"instanceSlug":"inst1","agentId":"` + agentID + `","messageRef":"comm-delivery-email","deliveryId":"comm-delivery-email","messageId":"comm-msg-email","contentType":"text/plain","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":11,"body":"Full body"}`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email/") && r.Method == http.MethodPost:
+			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+			statePaths = append(statePaths, r.URL.Path)
+			state := `{"read":true,"archived":false,"deleted":false}`
+			if strings.HasSuffix(r.URL.Path, "/archive") {
+				state = `{"read":false,"archived":true,"deleted":false}`
+			}
+			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","deliveryId":"comm-delivery-email","messageId":"comm-msg-email","threadId":"comm-thread-email","direction":"inbound","channelType":"email","status":"delivered","content":{"available":true},"state":` + state + `,"createdAt":"2026-03-04T12:00:00Z"}}`))
 		default:
+			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"not found","path":"` + r.URL.Path + `","body":"` + string(body) + `"}}`))
 		}
 	}))
 	defer server.Close()
 
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
 	t.Setenv("LESSER_API_BASE_URL", server.URL)
-	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -84,134 +118,94 @@ func TestLBM3_InboxToolsFilterNotifications(t *testing.T) {
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
-	// email_read should return only email messages.
-	{
-		callParams, _ := json.Marshal(map[string]any{
-			"name":      "email_read",
-			"arguments": map[string]any{"folder": "inbox", "limit": 10},
-		})
+	callTool := func(id int, name string, arguments map[string]any) map[string]any {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": name, "arguments": arguments})
 		resp := invokeJSON(t, env, app, map[string][]string{
 			"authorization":  {authHeader},
 			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
 		if resp.Status != 200 {
-			t.Fatalf("email_read: status=%d body=%s", resp.Status, string(resp.Body))
+			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
 		}
 		var rpc mcpruntime.Response
 		_ = json.Unmarshal(resp.Body, &rpc)
 		if rpc.Error != nil {
-			t.Fatalf("email_read rpc error: %+v", rpc.Error)
+			t.Fatalf("%s rpc error: %+v", name, rpc.Error)
 		}
 		var out mcpruntime.ToolResult
-		{
-			b, _ := json.Marshal(rpc.Result)
-			_ = json.Unmarshal(b, &out)
-		}
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
 		data, _ := out.StructuredContent["data"].(map[string]any)
-		messages, _ := data["messages"].([]any)
-		if len(messages) != 1 {
-			t.Fatalf("expected 1 email message, got %+v", messages)
-		}
-		msg, _ := messages[0].(map[string]any)
-		if msg["messageId"] != "comm-msg-001" {
-			t.Fatalf("unexpected email message: %+v", msg)
-		}
+		return data
 	}
 
-	// sms_read should return only sms messages.
-	{
-		callParams, _ := json.Marshal(map[string]any{
-			"name":      "sms_read",
-			"arguments": map[string]any{"limit": 10},
-		})
-		resp := invokeJSON(t, env, app, map[string][]string{
-			"authorization":  {authHeader},
-			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 3, Method: "tools/call", Params: callParams})
-		if resp.Status != 200 {
-			t.Fatalf("sms_read: status=%d body=%s", resp.Status, string(resp.Body))
-		}
-		var rpc mcpruntime.Response
-		_ = json.Unmarshal(resp.Body, &rpc)
-		if rpc.Error != nil {
-			t.Fatalf("sms_read rpc error: %+v", rpc.Error)
-		}
-		var out mcpruntime.ToolResult
-		{
-			b, _ := json.Marshal(rpc.Result)
-			_ = json.Unmarshal(b, &out)
-		}
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		messages, _ := data["messages"].([]any)
-		if len(messages) != 1 {
-			t.Fatalf("expected 1 sms message, got %+v", messages)
-		}
-		msg, _ := messages[0].(map[string]any)
-		if msg["messageId"] != "comm-msg-002" {
-			t.Fatalf("unexpected sms message: %+v", msg)
-		}
+	emailRead := callTool(2, "email_read", map[string]any{"folder": "inbox", "limit": 10, "unreadOnly": true})
+	messages, _ := emailRead["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 email message, got %+v", messages)
+	}
+	msg, _ := messages[0].(map[string]any)
+	if msg["messageId"] != "comm-delivery-email" || msg["hostMessageId"] != "comm-msg-email" || msg["body"] != "Hello preview" || msg["bodyIsPreview"] != true {
+		t.Fatalf("unexpected email message: %+v", msg)
+	}
+	if emailRead["nextCursor"] != "cursor-2" || emailRead["nextSince"] != "cursor-2" {
+		t.Fatalf("expected cursor aliases, got %+v", emailRead)
 	}
 
-	// email_search should match on subject/body/from.
-	{
-		callParams, _ := json.Marshal(map[string]any{
-			"name":      "email_search",
-			"arguments": map[string]any{"query": "alice", "limit": 5},
-		})
-		resp := invokeJSON(t, env, app, map[string][]string{
-			"authorization":  {authHeader},
-			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 4, Method: "tools/call", Params: callParams})
-		if resp.Status != 200 {
-			t.Fatalf("email_search: status=%d body=%s", resp.Status, string(resp.Body))
-		}
-		var rpc mcpruntime.Response
-		_ = json.Unmarshal(resp.Body, &rpc)
-		if rpc.Error != nil {
-			t.Fatalf("email_search rpc error: %+v", rpc.Error)
-		}
-		var out mcpruntime.ToolResult
-		{
-			b, _ := json.Marshal(rpc.Result)
-			_ = json.Unmarshal(b, &out)
-		}
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		if data["count"] != 1.0 && data["count"] != 1 {
-			t.Fatalf("expected 1 search hit, got %+v", data)
-		}
+	smsRead := callTool(3, "sms_read", map[string]any{"limit": 10})
+	smsMessages, _ := smsRead["messages"].([]any)
+	if len(smsMessages) != 1 {
+		t.Fatalf("expected 1 sms message, got %+v", smsMessages)
 	}
 
-	// email_delete should dismiss the underlying notification.
-	{
-		dismissedID = ""
-		callParams, _ := json.Marshal(map[string]any{
-			"name": "email_delete",
-			"arguments": map[string]any{
-				"messageId": "comm-msg-001",
-				"action":    "archive",
-			},
-		})
-		resp := invokeJSON(t, env, app, map[string][]string{
-			"authorization":  {authHeader},
-			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 5, Method: "tools/call", Params: callParams})
-		if resp.Status != 200 {
-			t.Fatalf("email_delete: status=%d body=%s", resp.Status, string(resp.Body))
-		}
-		if dismissedID != "n1" {
-			t.Fatalf("expected dismissed notification n1, got %q", dismissedID)
-		}
+	emailSearch := callTool(4, "email_search", map[string]any{"query": "alice", "limit": 5})
+	if emailSearch["strategy"] != "host bounded metadata/preview query" {
+		t.Fatalf("expected host search strategy, got %+v", emailSearch)
 	}
 
-	// agent://email/inbox should be readable.
-	{
-		params, _ := json.Marshal(map[string]any{"uri": "agent://email/inbox"})
-		resp := invokeJSON(t, env, app, map[string][]string{
-			"authorization":  {authHeader},
-			"mcp-session-id": {sessionID},
-		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 6, Method: "resources/read", Params: params})
-		if resp.Status != 200 {
-			t.Fatalf("resources/read agent://email/inbox: status=%d body=%s", resp.Status, string(resp.Body))
+	emailGet := callTool(5, "email_get", map[string]any{"messageId": "comm-delivery-email"})
+	if _, ok := emailGet["message"].(map[string]any); !ok {
+		t.Fatalf("expected email_get message, got %+v", emailGet)
+	}
+
+	content := callTool(6, "email_get_content", map[string]any{"messageId": "comm-delivery-email"})
+	if content["body"] != "Full body" || content["messageId"] != "comm-delivery-email" {
+		t.Fatalf("unexpected content response: %+v", content)
+	}
+
+	readState := callTool(7, "email_mark_read", map[string]any{"messageId": "comm-delivery-email"})
+	state, _ := readState["state"].(map[string]any)
+	if state["read"] != true {
+		t.Fatalf("expected read state true, got %+v", readState)
+	}
+
+	archive := callTool(8, "email_delete", map[string]any{"messageId": "comm-delivery-email", "action": "archive"})
+	if archive["action"] != "archive" {
+		t.Fatalf("expected archive action, got %+v", archive)
+	}
+
+	params, _ := json.Marshal(map[string]any{"uri": "agent://email/inbox"})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 9, Method: "resources/read", Params: params})
+	if resp.Status != 200 {
+		t.Fatalf("resources/read agent://email/inbox: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	for _, authHeader := range gotAuth {
+		if authHeader != "Bearer instance-key-123" {
+			t.Fatalf("expected host mailbox Authorization bearer, got %q", authHeader)
+		}
+	}
+	if len(statePaths) < 2 || !strings.HasSuffix(statePaths[0], "/read") || !strings.HasSuffix(statePaths[1], "/archive") {
+		t.Fatalf("expected read and archive state paths, got %+v", statePaths)
+	}
+	combinedQueries := strings.Join(listQueries, "\n")
+	for _, want := range []string{"channelType=email", "direction=inbound", "unreadOnly=true", "includeArchived=false", "query=alice", "channelType=sms"} {
+		if !strings.Contains(combinedQueries, want) {
+			t.Fatalf("expected mailbox query %q in %s", want, combinedQueries)
 		}
 	}
 }

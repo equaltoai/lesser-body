@@ -82,10 +82,10 @@ its credentials out of band.
 - Canonical for inbound MCP clients: OAuth connector flow against Lesser
 - Transitional only: hardcoded bearer token in MCP client config
 - Transitional only: Simulacrum runtime credentials issued via `delegateToAgent()`
-- Separate outbound service credential: `LESSER_HOST_INSTANCE_KEY` for lesser-body to call lesser-host communication APIs
+- Separate service credential: `LESSER_HOST_INSTANCE_KEY` for lesser-body to call lesser-host communication APIs
 
 Do not remove `LESSER_HOST_INSTANCE_KEY` from the deployment just because MCP clients move to OAuth. That key still
-backs outbound communication tools.
+backs host-backed communication tools.
 
 The Simulacrum runtime-credentials button is still part of the rollout dependency chain tracked in
 `equaltoai/simulacrum#54`. Removing legacy inbound auth in lesser-body before that UI migrates will break that flow.
@@ -121,7 +121,7 @@ fields aligned:
 - `details.refreshRequired`
 - `details.reauthorize`
 
-For outbound communication tools, Lesser-origin auth failures also preserve the Lesser contract fields at the top level
+For host-backed communication tools, lesser-host auth failures also preserve the upstream contract fields at the top level
 of the MCP error payload:
 
 - `error`
@@ -282,13 +282,17 @@ Scope key:
 | `memory_append` | Write | Append a memory event to the authenticated agent's memory timeline. |
 | `memory_query` | Read | Query memory events for the authenticated agent. |
 | `email_send` | Write | Send an email through lesser-host on behalf of the authenticated soul agent. |
-| `email_read` | Read | Read recent email messages from notification-backed inbox data. |
-| `email_search` | Read | Search recent email messages. |
-| `email_reply` | Write | Reply to a specific communication thread by `messageId`. |
-| `email_delete` | Write | Archive or delete an email by dismissing the backing notification. |
+| `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox. |
+| `email_get` | Read | Get email metadata/state by opaque host `messageId`/`messageRef`. |
+| `email_get_content` | Read | Explicitly fetch full email content for a specific mailbox message. |
+| `email_search` | Read | Run bounded host metadata/preview search over the email mailbox. |
+| `email_reply` | Write | Reply to a specific host mailbox message; lesser-host derives recipient/thread/provider context. |
+| `email_delete` | Write | Archive or soft-delete an email in lesser-host's canonical mailbox. |
+| `email_mark_read` | Write | Mark an email read in lesser-host's canonical mailbox. |
+| `email_mark_unread` | Write | Mark an email unread in lesser-host's canonical mailbox. |
 | `sms_send` | Write | Send an SMS through lesser-host; supports `messageId`/`inReplyTo` for threaded replies. |
-| `sms_read` | Read | Read recent inbound SMS messages delivered to the instance. |
-| `voicemail_read` | Read | Read voicemail notifications and transcriptions. |
+| `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
+| `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
 | `identity_lookup` | Read | Resolve a soul identity by full agent ID, managed email, ENS name, a current-instance local ID such as `medic`, a remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
@@ -304,9 +308,17 @@ Notes:
   `since` values remain a legacy cursor alias for compatibility, but new callers should not rely on that path.
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
   and inbox-backed verification.
-- Outbound communication tools (`email_send`, `email_reply`, `sms_send`) additionally require the managed
+- Host-backed communication tools (`email_send`, `email_read`, `email_get`, `email_get_content`, `email_search`,
+  `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`, `sms_read`, `voicemail_read`)
+  additionally require the managed
   `LESSER_HOST_INSTANCE_KEY` (or `LESSER_HOST_INSTANCE_KEY_ARN`) so lesser-body can authenticate to lesser-host's
   `/api/v1/soul/comm/*` endpoints.
+- Mailbox list/get/search results return redacted previews in `body`/`preview`; use `email_get_content` for full
+  content when `content.available=true`. The `messageId` field in mailbox outputs is the opaque host `messageRef`
+  accepted by get/content/state/reply calls; legacy host `messageId` appears as `hostMessageId` when present.
+- Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
+  `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
+  `includeDeleted`/`deleted`.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
 - `identity_lookup` accepts:
   - full soul `agentId`
