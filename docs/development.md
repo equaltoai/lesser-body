@@ -72,3 +72,17 @@ export JWT_SECRET="..." # only if you're minting test tokens locally; deployed a
 ```
 
 See `docs/mcp.md` for the MCP request format.
+
+### Host mailbox canary
+
+After lesser-host Soul Comm Mailbox v1 is deployed for a lab instance, validate body's MCP facade with:
+
+```bash
+MCP_ENDPOINT="https://api.dev.example.com/mcp/<actor>" \
+MCP_BEARER_TOKEN="<oauth-access-token>" \
+scripts/canary_host_mailbox_mcp.py
+```
+
+The canary checks `tools/list`, `email_read`, `email_get`, `email_get_content`, `email_search`,
+`email_mark_read`, `email_mark_unread`, `sms_read`, `voicemail_read`, and a not-found error path. It never prints
+full message bodies, full recipient addresses, or bearer tokens.
