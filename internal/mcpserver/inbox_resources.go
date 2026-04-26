@@ -2,81 +2,73 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
 func resourceEmailInbox(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	out, err := resourceMailboxList(ctx, "agent://email/inbox", commMailboxListOptions{ChannelType: "email", Direction: "inbound", Limit: 20})
 	if err != nil {
-		return authResourceContentsFromError("agent://email/inbox", err)
+		return nil, err
 	}
-	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
-	if err != nil {
-		return lesserResourceContentsFromError("agent://email/inbox", err)
-	}
-	messages := commMessagesFromNotifications(items, "email")
-	return resourceJSON("agent://email/inbox", map[string]any{
-		"count":     len(messages),
-		"messages":  messages,
-		"nextSince": nextSince,
-		"notes":     unreadNotes(),
-	})
+	out["folder"] = "inbox"
+	return resourceJSON("agent://email/inbox", out)
 }
 
 func resourceEmailSent(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	out, err := resourceMailboxList(ctx, "agent://email/sent", commMailboxListOptions{ChannelType: "email", Direction: "outbound", Limit: 20})
 	if err != nil {
-		return authResourceContentsFromError("agent://email/sent", err)
+		return nil, err
 	}
-	items, nextSince, err := readCommNotifications(ctx, token, "outbound", 20, "")
-	if err != nil {
-		return lesserResourceContentsFromError("agent://email/sent", err)
-	}
-	messages := commMessagesFromNotifications(items, "email")
-	return resourceJSON("agent://email/sent", map[string]any{
-		"count":     len(messages),
-		"messages":  messages,
-		"nextSince": nextSince,
-		"strategy":  "notification-backed (type=communication:outbound) when available",
-		"notes": map[string]any{
-			"sentStrategy": "This resource reads instance notifications with type communication:outbound. If the instance does not emit outbound communication notifications, the list may be empty.",
-		},
-	})
+	out["folder"] = "sent"
+	return resourceJSON("agent://email/sent", out)
 }
 
 func resourceSmsMessages(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	out, err := resourceMailboxList(ctx, "agent://sms/messages", commMailboxListOptions{ChannelType: "sms", Direction: "inbound", Limit: 20})
 	if err != nil {
-		return authResourceContentsFromError("agent://sms/messages", err)
+		return nil, err
 	}
-	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
-	if err != nil {
-		return lesserResourceContentsFromError("agent://sms/messages", err)
-	}
-	messages := commMessagesFromNotifications(items, "sms")
-	return resourceJSON("agent://sms/messages", map[string]any{
-		"count":     len(messages),
-		"messages":  messages,
-		"nextSince": nextSince,
-		"notes":     unreadNotes(),
-	})
+	return resourceJSON("agent://sms/messages", out)
 }
 
 func resourceVoicemail(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	out, err := resourceMailboxList(ctx, "agent://voicemail", commMailboxListOptions{ChannelType: "voice", Direction: "inbound", Limit: 20})
 	if err != nil {
-		return authResourceContentsFromError("agent://voicemail", err)
+		return nil, err
 	}
-	items, nextSince, err := readCommNotifications(ctx, token, "inbound", 20, "")
+	return resourceJSON("agent://voicemail", out)
+}
+
+func resourceMailboxList(ctx context.Context, uri string, opts commMailboxListOptions) (map[string]any, error) {
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return lesserResourceContentsFromError("agent://voicemail", err)
+		contents, resErr := commMailboxResourceContentsFromError(uri, err)
+		if resErr != nil {
+			return nil, resErr
+		}
+		return resourceContentsPayload(contents), nil
 	}
-	messages := commMessagesFromNotifications(items, "voicemail")
-	return resourceJSON("agent://voicemail", map[string]any{
-		"count":     len(messages),
-		"messages":  messages,
-		"nextSince": nextSince,
-		"notes":     unreadNotes(),
-	})
+	out, err := listHostMailboxMessages(ctx, deps, opts)
+	if err != nil {
+		contents, resErr := commMailboxResourceContentsFromError(uri, err)
+		if resErr != nil {
+			return nil, resErr
+		}
+		return resourceContentsPayload(contents), nil
+	}
+	return out, nil
+}
+
+func resourceContentsPayload(contents []mcpruntime.ResourceContent) map[string]any {
+	if len(contents) == 0 {
+		return map[string]any{}
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(contents[0].Text), &payload)
+	if payload == nil {
+		return map[string]any{}
+	}
+	return payload
 }

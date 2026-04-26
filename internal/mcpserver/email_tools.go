@@ -98,11 +98,15 @@ func handleEmailReplyStreaming(ctx context.Context, args json.RawMessage, emit f
 
 func handleEmailReplyWithProgress(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		MessageID string `json:"messageId"`
-		Body      string `json:"body"`
-		To        string `json:"to,omitempty"`
-		Subject   string `json:"subject,omitempty"`
-		ReplyAll  bool   `json:"replyAll,omitempty"`
+		MessageID      string   `json:"messageId"`
+		Body           string   `json:"body"`
+		To             string   `json:"to,omitempty"`
+		Subject        string   `json:"subject,omitempty"`
+		CC             []string `json:"cc,omitempty"`
+		BCC            []string `json:"bcc,omitempty"`
+		ReplyTo        string   `json:"replyTo,omitempty"`
+		ReplyAll       bool     `json:"replyAll,omitempty"`
+		IdempotencyKey string   `json:"idempotencyKey,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
@@ -111,60 +115,60 @@ func handleEmailReplyWithProgress(ctx context.Context, args json.RawMessage, emi
 	in.Body = strings.TrimSpace(in.Body)
 	in.To = strings.TrimSpace(in.To)
 	in.Subject = strings.TrimSpace(in.Subject)
+	in.ReplyTo = strings.TrimSpace(in.ReplyTo)
 	if in.MessageID == "" {
 		return toolErrorResult("invalid_request", "messageId is required", 400, nil)
 	}
-
-	if in.To == "" || in.Subject == "" {
-		bearerToken, err := requireOAuthBearer(ctx)
-		if err != nil {
-			return authToolResultFromError(err)
-		}
-
-		notification, err := findCommunicationNotification(ctx, bearerToken, in.MessageID)
-		if err != nil {
-			return identityVerifyNotificationResultFromError(err)
-		}
-		if notification != nil {
-			if in.To == "" {
-				in.To = emailReplyRecipient(notification)
-			}
-			if in.Subject == "" {
-				in.Subject = emailReplySubject(notification)
-			}
-		}
+	if in.Body == "" {
+		return toolErrorResult("invalid_request", "body is required", 400, nil)
 	}
-	if in.To == "" || in.Subject == "" {
-		return toolErrorResult("invalid_request", "unable to resolve reply recipient and subject; provide to and subject explicitly", 400, nil)
-	}
-	in.Subject = ensureBotDisclosurePrefix(in.Subject)
-	in.Body = ensureEmailDisclosureFooter(in.Body)
-	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
 
-	deps, res, err := loadCommSendDependencies(ctx, "email")
-	if res != nil || err != nil {
-		return res, err
+	deps, err := loadCommMailboxDependencies(ctx)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+
+	payload := map[string]any{
+		"body":           ensureEmailDisclosureFooter(in.Body),
+		"idempotencyKey": outboundIdempotencyKey(ctx, in.IdempotencyKey),
+	}
+	if in.Subject != "" {
+		payload["subject"] = ensureBotDisclosurePrefix(in.Subject)
+	}
+	if cc := normalizeStringSlice(in.CC); cc != nil {
+		payload["cc"] = cc
+	}
+	if bcc := normalizeStringSlice(in.BCC); bcc != nil {
+		payload["bcc"] = bcc
+	}
+	if in.ReplyTo != "" {
+		payload["replyTo"] = in.ReplyTo
 	}
 
 	emitCommProgress(emit, 1, 2, "sending reply")
-
-	body := map[string]any{
-		"to":        in.To,
-		"subject":   in.Subject,
-		"body":      in.Body,
-		"inReplyTo": in.MessageID,
-	}
-
-	normalized, err := sendOutboundComm(ctx, deps, "email", body, idempotencyKey)
+	out, err := replyHostMailboxMessage(ctx, deps, in.MessageID, payload)
 	if err != nil {
-		return commToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
 	emitCommProgress(emit, 2, 2, "reply queued")
-	normalized["inReplyTo"] = in.MessageID
-	if in.ReplyAll {
-		normalized["replyAllRequested"] = true
+	out["inReplyTo"] = in.MessageID
+	out["idempotencyKey"] = payload["idempotencyKey"]
+	out["replyResolvedByHost"] = true
+	if in.To != "" || in.ReplyAll {
+		advisory, _ := out["advisory"].(map[string]any)
+		if advisory == nil {
+			advisory = map[string]any{}
+		}
+		if in.To != "" {
+			advisory["toOverrideIgnored"] = true
+		}
+		if in.ReplyAll {
+			advisory["replyAllRequested"] = true
+			advisory["replyAllResolvedByHost"] = false
+		}
+		out["advisory"] = advisory
 	}
-	return toolJSONResult(normalized)
+	return toolJSONResult(out)
 }
 
 func emailReplyRecipient(notification map[string]any) string {
@@ -197,16 +201,35 @@ func normalizeCommSendResult(raw any, advisory map[string]any) map[string]any {
 	}
 
 	if m, ok := raw.(map[string]any); ok {
-		if v, _ := m["messageId"].(string); strings.TrimSpace(v) != "" {
-			out["messageId"] = strings.TrimSpace(v)
-		} else if v, _ := m["message_id"].(string); strings.TrimSpace(v) != "" {
-			out["messageId"] = strings.TrimSpace(v)
-		} else if v, _ := m["id"].(string); strings.TrimSpace(v) != "" {
-			out["messageId"] = strings.TrimSpace(v)
+		messageRef := strings.TrimSpace(stringFromMap(m, "messageRef"))
+		deliveryID := strings.TrimSpace(stringFromMap(m, "deliveryId"))
+		hostMessageID := strings.TrimSpace(stringFromMap(m, "messageId"))
+		if messageRef == "" {
+			messageRef = deliveryID
 		}
-
-		if v, _ := m["status"].(string); strings.TrimSpace(v) != "" {
-			out["status"] = strings.TrimSpace(v)
+		if messageRef == "" {
+			messageRef = hostMessageID
+		}
+		if messageRef == "" {
+			messageRef = strings.TrimSpace(stringFromMap(m, "message_id"))
+		}
+		if messageRef == "" {
+			messageRef = strings.TrimSpace(stringFromMap(m, "id"))
+		}
+		out["messageId"] = messageRef
+		if messageRef != "" {
+			out["messageRef"] = messageRef
+		}
+		if deliveryID != "" {
+			out["deliveryId"] = deliveryID
+		}
+		if hostMessageID != "" {
+			out["hostMessageId"] = hostMessageID
+		}
+		for _, key := range []string{"threadId", "status", "channel", "agentId", "to", "provider", "providerMessageId", "createdAt"} {
+			if v, ok := m[key]; ok {
+				out[key] = v
+			}
 		}
 	}
 
@@ -221,8 +244,12 @@ func maybeHydrateCommStatus(ctx context.Context, client *soulapi.Client, bearerT
 	if client == nil || payload == nil {
 		return nil
 	}
-	messageID, _ := payload["messageId"].(string)
+	messageID, _ := payload["hostMessageId"].(string)
 	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		messageID, _ = payload["messageId"].(string)
+		messageID = strings.TrimSpace(messageID)
+	}
 	if messageID == "" {
 		return nil
 	}

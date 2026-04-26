@@ -75,9 +75,13 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 	for _, name := range []string{
 		"email_send",
 		"email_read",
+		"email_get",
+		"email_get_content",
 		"email_search",
 		"email_reply",
 		"email_delete",
+		"email_mark_read",
+		"email_mark_unread",
 		"sms_send",
 		"sms_read",
 		"voicemail_read",
@@ -155,6 +159,64 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 	}
 
 	{
+		s := mustSchema(t, toolsByName["email_read"])
+		if s.Type != "object" {
+			t.Fatalf("email_read schema type: want object got %q", s.Type)
+		}
+		expectPropType(t, s, "folder", "string")
+		expectPropType(t, s, "unreadOnly", "boolean")
+		expectPropType(t, s, "read", "boolean")
+		expectPropType(t, s, "includeArchived", "boolean")
+		expectPropType(t, s, "archived", "boolean")
+		expectPropType(t, s, "includeDeleted", "boolean")
+		expectPropType(t, s, "deleted", "boolean")
+		limit := expectPropType(t, s, "limit", "integer")
+		if limit["maximum"] != float64(100) {
+			t.Fatalf("email_read limit.maximum: want 100 got %#v", limit["maximum"])
+		}
+		expectPropType(t, s, "cursor", "string")
+		expectPropType(t, s, "since", "string")
+		expectPropType(t, s, "threadId", "string")
+	}
+
+	{
+		for _, name := range []string{"email_get", "email_get_content", "email_mark_read", "email_mark_unread"} {
+			s := mustSchema(t, toolsByName[name])
+			if s.Type != "object" {
+				t.Fatalf("%s schema type: want object got %q", name, s.Type)
+			}
+			if !reflect.DeepEqual(s.Required, []string{"messageId"}) {
+				t.Fatalf("%s required: want [messageId], got %#v", name, s.Required)
+			}
+			expectPropType(t, s, "messageId", "string")
+		}
+	}
+
+	{
+		s := mustSchema(t, toolsByName["email_search"])
+		if s.Type != "object" {
+			t.Fatalf("email_search schema type: want object got %q", s.Type)
+		}
+		if !reflect.DeepEqual(s.Required, []string{"query"}) {
+			t.Fatalf("email_search required: want [query], got %#v", s.Required)
+		}
+		expectPropType(t, s, "query", "string")
+		expectPropType(t, s, "folder", "string")
+		expectPropType(t, s, "read", "boolean")
+		expectPropType(t, s, "unreadOnly", "boolean")
+		expectPropType(t, s, "includeArchived", "boolean")
+		expectPropType(t, s, "archived", "boolean")
+		expectPropType(t, s, "includeDeleted", "boolean")
+		expectPropType(t, s, "deleted", "boolean")
+		limit := expectPropType(t, s, "limit", "integer")
+		if limit["maximum"] != float64(100) {
+			t.Fatalf("email_search limit.maximum: want 100 got %#v", limit["maximum"])
+		}
+		expectPropType(t, s, "cursor", "string")
+		expectPropType(t, s, "threadId", "string")
+	}
+
+	{
 		s := mustSchema(t, toolsByName["email_reply"])
 		if s.Type != "object" {
 			t.Fatalf("email_reply schema type: want object got %q", s.Type)
@@ -166,7 +228,11 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "body", "string")
 		expectPropType(t, s, "to", "string")
 		expectPropType(t, s, "subject", "string")
+		expectPropType(t, s, "cc", "array")
+		expectPropType(t, s, "bcc", "array")
+		expectPropType(t, s, "replyTo", "string")
 		expectPropType(t, s, "replyAll", "boolean")
+		expectPropType(t, s, "idempotencyKey", "string")
 	}
 
 	{
@@ -197,6 +263,30 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "body", "string")
 		expectPropType(t, s, "messageId", "string")
 		expectPropType(t, s, "inReplyTo", "string")
+	}
+
+	{
+		for _, name := range []string{"sms_read", "voicemail_read"} {
+			s := mustSchema(t, toolsByName[name])
+			if s.Type != "object" {
+				t.Fatalf("%s schema type: want object got %q", name, s.Type)
+			}
+			expectPropType(t, s, "unreadOnly", "boolean")
+			expectPropType(t, s, "read", "boolean")
+			expectPropType(t, s, "includeArchived", "boolean")
+			expectPropType(t, s, "archived", "boolean")
+			expectPropType(t, s, "includeDeleted", "boolean")
+			expectPropType(t, s, "deleted", "boolean")
+			limit := expectPropType(t, s, "limit", "integer")
+			if limit["maximum"] != float64(100) {
+				t.Fatalf("%s limit.maximum: want 100 got %#v", name, limit["maximum"])
+			}
+			expectPropType(t, s, "cursor", "string")
+			expectPropType(t, s, "threadId", "string")
+			if name == "sms_read" {
+				expectPropType(t, s, "since", "string")
+			}
+		}
 	}
 
 	{

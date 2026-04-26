@@ -14,10 +14,14 @@ import (
 
 func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Folder     string `json:"folder,omitempty"`
-		UnreadOnly bool   `json:"unreadOnly,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		Since      string `json:"since,omitempty"`
+		Folder          string `json:"folder,omitempty"`
+		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeArchived bool   `json:"includeArchived,omitempty"`
+		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
+		Limit           int    `json:"limit,omitempty"`
+		Cursor          string `json:"cursor,omitempty"`
+		Since           string `json:"since,omitempty"`
+		ThreadID        string `json:"threadId,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
@@ -30,10 +34,16 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if in.Folder != "inbox" && in.Folder != "sent" {
 		return nil, invalidParams("invalid folder (expected inbox or sent)")
 	}
+	read := optionalBoolArg(args, "read")
+	if err := validateMailboxReadFilters(in.UnreadOnly, read); err != nil {
+		return nil, err
+	}
+	archived := optionalBoolArg(args, "archived")
+	deleted := optionalBoolArg(args, "deleted")
 
-	token, err := requireOAuthBearer(ctx)
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return authToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
 
 	direction := "inbound"
@@ -41,28 +51,87 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		direction = "outbound"
 	}
 
-	items, nextSince, err := readCommNotifications(ctx, token, direction, in.Limit, in.Since)
-	if err != nil {
-		return authToolResultFromError(err)
-	}
-
-	messages := commMessagesFromNotifications(items, "email")
-	return toolJSONResult(map[string]any{
-		"folder":     in.Folder,
-		"unreadOnly": in.UnreadOnly,
-		"since":      strings.TrimSpace(in.Since),
-		"nextSince":  nextSince,
-		"count":      len(messages),
-		"messages":   messages,
-		"notes":      unreadNotes(),
+	out, err := listHostMailboxMessages(ctx, deps, commMailboxListOptions{
+		ChannelType:     "email",
+		Direction:       direction,
+		UnreadOnly:      in.UnreadOnly,
+		IncludeArchived: in.IncludeArchived,
+		IncludeDeleted:  in.IncludeDeleted,
+		Archived:        archived,
+		Read:            read,
+		Deleted:         deleted,
+		Limit:           in.Limit,
+		Cursor:          mailboxCursor(in.Cursor, in.Since),
+		ThreadID:        in.ThreadID,
 	})
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["folder"] = in.Folder
+	out["unreadOnly"] = in.UnreadOnly
+	out["includeArchived"] = in.IncludeArchived
+	out["includeDeleted"] = in.IncludeDeleted
+	if read != nil {
+		out["read"] = *read
+	}
+	if archived != nil {
+		out["archived"] = *archived
+	}
+	if deleted != nil {
+		out["deleted"] = *deleted
+	}
+	out["cursor"] = strings.TrimSpace(in.Cursor)
+	out["since"] = strings.TrimSpace(in.Since)
+	return toolJSONResult(out)
+}
+
+func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		MessageID string `json:"messageId"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	deps, err := loadCommMailboxDependencies(ctx)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out, err := getHostMailboxMessage(ctx, deps, in.MessageID)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["source"] = "lesser-host-mailbox"
+	return toolJSONResult(out)
+}
+
+func handleEmailGetContent(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		MessageID string `json:"messageId"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	deps, err := loadCommMailboxDependencies(ctx)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out, err := getHostMailboxContent(ctx, deps, in.MessageID)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	return toolJSONResult(out)
 }
 
 func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Query  string `json:"query"`
-		Folder string `json:"folder,omitempty"`
-		Limit  int    `json:"limit,omitempty"`
+		Query           string `json:"query"`
+		Folder          string `json:"folder,omitempty"`
+		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeArchived bool   `json:"includeArchived,omitempty"`
+		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
+		Limit           int    `json:"limit,omitempty"`
+		Cursor          string `json:"cursor,omitempty"`
+		ThreadID        string `json:"threadId,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
@@ -78,53 +147,55 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	if in.Folder != "inbox" && in.Folder != "sent" {
 		return nil, invalidParams("invalid folder (expected inbox or sent)")
 	}
+	read := optionalBoolArg(args, "read")
+	if err := validateMailboxReadFilters(in.UnreadOnly, read); err != nil {
+		return nil, err
+	}
+	archived := optionalBoolArg(args, "archived")
+	deleted := optionalBoolArg(args, "deleted")
 
-	token, err := requireOAuthBearer(ctx)
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return authToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
 
 	direction := "inbound"
 	if in.Folder == "sent" {
 		direction = "outbound"
 	}
-
-	items, _, err := readCommNotifications(ctx, token, direction, 200, "")
-	if err != nil {
-		return authToolResultFromError(err)
-	}
-	messages := commMessagesFromNotifications(items, "email")
-
-	filtered := make([]any, 0, len(messages))
-	qLower := strings.ToLower(in.Query)
-	for _, m := range messages {
-		msg, _ := m.(map[string]any)
-		if msg == nil {
-			continue
-		}
-		subject, _ := msg["subject"].(string)
-		body, _ := msg["body"].(string)
-		from, _ := msg["from"].(map[string]any)
-		fromAddr, _ := from["address"].(string)
-		if strings.Contains(strings.ToLower(subject), qLower) ||
-			strings.Contains(strings.ToLower(body), qLower) ||
-			strings.Contains(strings.ToLower(fromAddr), qLower) {
-			filtered = append(filtered, msg)
-		}
-		if in.Limit > 0 && len(filtered) >= in.Limit {
-			break
-		}
-	}
-
-	return toolJSONResult(map[string]any{
-		"query":     in.Query,
-		"folder":    in.Folder,
-		"count":     len(filtered),
-		"messages":  filtered,
-		"notes":     unreadNotes(),
-		"strategy":  "best-effort search over recent notification-backed messages",
-		"maxWindow": 200,
+	out, err := listHostMailboxMessages(ctx, deps, commMailboxListOptions{
+		ChannelType:     "email",
+		Direction:       direction,
+		UnreadOnly:      in.UnreadOnly,
+		IncludeArchived: in.IncludeArchived,
+		IncludeDeleted:  in.IncludeDeleted,
+		Archived:        archived,
+		Read:            read,
+		Deleted:         deleted,
+		Limit:           in.Limit,
+		Cursor:          in.Cursor,
+		ThreadID:        in.ThreadID,
+		Query:           in.Query,
 	})
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["query"] = in.Query
+	out["folder"] = in.Folder
+	out["unreadOnly"] = in.UnreadOnly
+	out["includeArchived"] = in.IncludeArchived
+	out["includeDeleted"] = in.IncludeDeleted
+	if read != nil {
+		out["read"] = *read
+	}
+	if archived != nil {
+		out["archived"] = *archived
+	}
+	if deleted != nil {
+		out["deleted"] = *deleted
+	}
+	out["strategy"] = "host bounded metadata/preview query"
+	return toolJSONResult(out)
 }
 
 func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -144,103 +215,154 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, invalidParams("invalid action (expected delete or archive)")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return authToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
-	client, err := lesserapi.Default()
+	out, err := mutateHostMailboxMessage(ctx, deps, in.MessageID, in.Action)
 	if err != nil {
-		return nil, err
+		return commMailboxToolResultFromError(err)
 	}
+	out["source"] = "lesser-host-mailbox"
+	return toolJSONResult(out)
+}
 
-	// Strategy: map delete/archive to dismissing the underlying notification.
-	// messageId may refer to either:
-	// - Lesser notification id (fast path), or
-	// - comm-worker messageId embedded in the notification payload.
-	notificationID, err := resolveNotificationIDForMessage(ctx, token, in.MessageID)
-	if err != nil {
-		return authToolResultFromError(err)
-	}
-	if notificationID == "" {
-		return toolJSONResult(map[string]any{
-			"messageId": in.MessageID,
-			"action":    in.Action,
-			"dismissed": false,
-			"notes":     "no matching notification found (message may already be dismissed/archived)",
-		})
-	}
+func handleEmailMarkRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	return handleEmailReadState(ctx, args, "read")
+}
 
-	_, err = client.DoJSON(ctx, "POST", "/api/v1/notifications/"+url.PathEscape(notificationID)+"/dismiss", nil, token, map[string]any{})
-	if err != nil {
-		return authToolResultFromError(err)
-	}
+func handleEmailMarkUnread(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	return handleEmailReadState(ctx, args, "unread")
+}
 
-	return toolJSONResult(map[string]any{
-		"messageId":       in.MessageID,
-		"notificationId":  notificationID,
-		"action":          in.Action,
-		"dismissed":       true,
-		"dismissBehavior": "mapped to /api/v1/notifications/{id}/dismiss",
-	})
+func handleEmailReadState(ctx context.Context, args json.RawMessage, action string) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		MessageID string `json:"messageId"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	deps, err := loadCommMailboxDependencies(ctx)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out, err := mutateHostMailboxMessage(ctx, deps, in.MessageID, action)
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["source"] = "lesser-host-mailbox"
+	return toolJSONResult(out)
 }
 
 func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		UnreadOnly bool   `json:"unreadOnly,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		Since      string `json:"since,omitempty"`
+		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeArchived bool   `json:"includeArchived,omitempty"`
+		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
+		Limit           int    `json:"limit,omitempty"`
+		Cursor          string `json:"cursor,omitempty"`
+		Since           string `json:"since,omitempty"`
+		ThreadID        string `json:"threadId,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
-		return authToolResultFromError(err)
+	read := optionalBoolArg(args, "read")
+	if err := validateMailboxReadFilters(in.UnreadOnly, read); err != nil {
+		return nil, err
 	}
+	archived := optionalBoolArg(args, "archived")
+	deleted := optionalBoolArg(args, "deleted")
 
-	items, nextSince, err := readCommNotifications(ctx, token, "inbound", in.Limit, in.Since)
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return authToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
-
-	messages := commMessagesFromNotifications(items, "sms")
-	return toolJSONResult(map[string]any{
-		"unreadOnly": in.UnreadOnly,
-		"since":      strings.TrimSpace(in.Since),
-		"nextSince":  nextSince,
-		"count":      len(messages),
-		"messages":   messages,
-		"notes":      unreadNotes(),
+	out, err := listHostMailboxMessages(ctx, deps, commMailboxListOptions{
+		ChannelType:     "sms",
+		Direction:       "inbound",
+		UnreadOnly:      in.UnreadOnly,
+		IncludeArchived: in.IncludeArchived,
+		IncludeDeleted:  in.IncludeDeleted,
+		Archived:        archived,
+		Read:            read,
+		Deleted:         deleted,
+		Limit:           in.Limit,
+		Cursor:          mailboxCursor(in.Cursor, in.Since),
+		ThreadID:        in.ThreadID,
 	})
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["unreadOnly"] = in.UnreadOnly
+	out["includeArchived"] = in.IncludeArchived
+	out["includeDeleted"] = in.IncludeDeleted
+	if read != nil {
+		out["read"] = *read
+	}
+	if archived != nil {
+		out["archived"] = *archived
+	}
+	if deleted != nil {
+		out["deleted"] = *deleted
+	}
+	out["cursor"] = strings.TrimSpace(in.Cursor)
+	out["since"] = strings.TrimSpace(in.Since)
+	return toolJSONResult(out)
 }
 
 func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		UnreadOnly bool `json:"unreadOnly,omitempty"`
-		Limit      int  `json:"limit,omitempty"`
+		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeArchived bool   `json:"includeArchived,omitempty"`
+		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
+		Limit           int    `json:"limit,omitempty"`
+		Cursor          string `json:"cursor,omitempty"`
+		ThreadID        string `json:"threadId,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-
-	token, err := requireOAuthBearer(ctx)
-	if err != nil {
-		return authToolResultFromError(err)
+	read := optionalBoolArg(args, "read")
+	if err := validateMailboxReadFilters(in.UnreadOnly, read); err != nil {
+		return nil, err
 	}
+	archived := optionalBoolArg(args, "archived")
+	deleted := optionalBoolArg(args, "deleted")
 
-	items, _, err := readCommNotifications(ctx, token, "inbound", in.Limit, "")
+	deps, err := loadCommMailboxDependencies(ctx)
 	if err != nil {
-		return authToolResultFromError(err)
+		return commMailboxToolResultFromError(err)
 	}
-
-	messages := commMessagesFromNotifications(items, "voicemail")
-	return toolJSONResult(map[string]any{
-		"unreadOnly": in.UnreadOnly,
-		"count":      len(messages),
-		"messages":   messages,
-		"notes":      unreadNotes(),
+	out, err := listHostMailboxMessages(ctx, deps, commMailboxListOptions{
+		ChannelType:     "voice",
+		Direction:       "inbound",
+		UnreadOnly:      in.UnreadOnly,
+		IncludeArchived: in.IncludeArchived,
+		IncludeDeleted:  in.IncludeDeleted,
+		Archived:        archived,
+		Read:            read,
+		Deleted:         deleted,
+		Limit:           in.Limit,
+		Cursor:          in.Cursor,
+		ThreadID:        in.ThreadID,
 	})
+	if err != nil {
+		return commMailboxToolResultFromError(err)
+	}
+	out["unreadOnly"] = in.UnreadOnly
+	out["includeArchived"] = in.IncludeArchived
+	out["includeDeleted"] = in.IncludeDeleted
+	if read != nil {
+		out["read"] = *read
+	}
+	if archived != nil {
+		out["archived"] = *archived
+	}
+	if deleted != nil {
+		out["deleted"] = *deleted
+	}
+	return toolJSONResult(out)
 }
 
 func readCommNotifications(ctx context.Context, bearerToken string, direction string, limit int, since string) ([]any, string, error) {

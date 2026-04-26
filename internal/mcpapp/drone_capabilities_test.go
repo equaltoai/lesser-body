@@ -72,7 +72,11 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		if !have["post_create"] || !have["memory_query"] {
 			t.Fatalf("expected social and memory tools for drone runtime, got %+v", out.Tools)
 		}
-		for _, blocked := range []string{"email_send", "sms_send", "identity_whoami"} {
+		for _, blocked := range []string{
+			"email_send", "email_read", "email_get", "email_get_content", "email_search", "email_reply",
+			"email_delete", "email_mark_read", "email_mark_unread", "sms_send", "sms_read", "voicemail_read",
+			"identity_whoami",
+		} {
 			if have[blocked] {
 				t.Fatalf("did not expect %q in drone tools/list: %+v", blocked, out.Tools)
 			}
@@ -239,8 +243,16 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		if droneProfile.CommunicationsEnabled || droneProfile.WalletAccessEnabled {
 			t.Fatalf("expected drone discovery profile to disable comms and wallet access, got %+v", droneProfile)
 		}
-		if !containsString(droneProfile.Tools, "post_create") || containsString(droneProfile.Tools, "email_send") {
+		if !containsString(droneProfile.Tools, "post_create") {
 			t.Fatalf("unexpected drone discovery tools: %+v", droneProfile.Tools)
+		}
+		for _, blocked := range []string{
+			"email_send", "email_read", "email_get", "email_get_content", "email_search", "email_reply",
+			"email_delete", "email_mark_read", "email_mark_unread", "sms_send", "sms_read", "voicemail_read",
+		} {
+			if containsString(droneProfile.Tools, blocked) {
+				t.Fatalf("unexpected drone discovery tool %q: %+v", blocked, droneProfile.Tools)
+			}
 		}
 	})
 }
@@ -324,8 +336,14 @@ func TestDroneRuntimeCapabilityContractFailsClosedWhenSoulbindingIsUnavailable(t
 			for _, tool := range listOut.Tools {
 				have[tool.Name] = true
 			}
-			if have["email_send"] || have["sms_send"] || have["identity_whoami"] {
-				t.Fatalf("expected fail-closed tool list for %s, got %+v", scenario.wantSource, listOut.Tools)
+			for _, blocked := range []string{
+				"email_send", "email_read", "email_get", "email_get_content", "email_search", "email_reply",
+				"email_delete", "email_mark_read", "email_mark_unread", "sms_send", "sms_read", "voicemail_read",
+				"identity_whoami",
+			} {
+				if have[blocked] {
+					t.Fatalf("expected fail-closed tool list for %s; found %q in %+v", scenario.wantSource, blocked, listOut.Tools)
+				}
 			}
 
 			params, _ := json.Marshal(map[string]any{"uri": "agent://capabilities"})

@@ -187,6 +187,18 @@ Expected headers include:
 
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 
+For host-backed communication validation in lab, run the mailbox canary with an actor-scoped OAuth token. The script
+redacts credentials and prints hashes/lengths instead of message bodies:
+
+```bash
+MCP_ENDPOINT="https://api.<stageDomain>/mcp/<actor>" \
+MCP_BEARER_TOKEN="<oauth-access-token>" \
+scripts/canary_host_mailbox_mcp.py
+```
+
+Set `MAILBOX_MESSAGE_ID=<messageRef>` when the inbox has no recent email message but you have a known host mailbox
+reference to validate get/content/state paths.
+
 For production clients, prefer OAuth connector registration rather than a static bearer token in client config.
 `docs/oauth-migration.md` includes the step-by-step migration sequence and compatibility notes.
 

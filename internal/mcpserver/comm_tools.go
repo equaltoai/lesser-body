@@ -20,9 +20,13 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 	}{
 		{Def: emailSendDef(), Handler: handleEmailSend, Streaming: handleEmailSendStreaming},
 		{Def: emailReadDef(), Handler: handleEmailRead},
+		{Def: emailGetDef(), Handler: handleEmailGet},
+		{Def: emailGetContentDef(), Handler: handleEmailGetContent},
 		{Def: emailSearchDef(), Handler: handleEmailSearch},
 		{Def: emailReplyDef(), Handler: handleEmailReply, Streaming: handleEmailReplyStreaming},
 		{Def: emailDeleteDef(), Handler: handleEmailDelete},
+		{Def: emailMarkReadDef(), Handler: handleEmailMarkRead},
+		{Def: emailMarkUnreadDef(), Handler: handleEmailMarkUnread},
 		{Def: smsSendDef(), Handler: handleSmsSend, Streaming: handleSmsSendStreaming},
 		{Def: smsReadDef(), Handler: handleSmsRead},
 		{Def: voicemailReadDef(), Handler: handleVoicemailRead},
@@ -72,15 +76,50 @@ func emailSendDef() mcpruntime.ToolDef {
 func emailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_read",
-		Description: "Read recent emails delivered to the agent's inbox.",
+		Description: "List recent email metadata/previews from lesser-host's canonical mailbox.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"folder":{"type":"string"},
+				"folder":{"type":"string","enum":["inbox","sent"]},
 				"unreadOnly":{"type":"boolean"},
-				"limit":{"type":"integer","minimum":1,"maximum":200},
-				"since":{"type":"string"}
+				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
+				"includeArchived":{"type":"boolean"},
+				"archived":{"type":"boolean","description":"Exact archive-state filter."},
+				"includeDeleted":{"type":"boolean"},
+				"deleted":{"type":"boolean","description":"Exact delete-state filter."},
+				"limit":{"type":"integer","minimum":1,"maximum":100},
+				"cursor":{"type":"string"},
+				"since":{"type":"string","description":"Legacy alias for cursor."},
+				"threadId":{"type":"string"}
 			}
+		}`),
+	}
+}
+
+func emailGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "email_get",
+		Description: "Get canonical email metadata/state by opaque host message reference.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_send/email_reply."}
+			},
+			"required":["messageId"]
+		}`),
+	}
+}
+
+func emailGetContentDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "email_get_content",
+		Description: "Fetch full email content explicitly from lesser-host's canonical mailbox.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_get."}
+			},
+			"required":["messageId"]
 		}`),
 	}
 }
@@ -88,13 +127,21 @@ func emailReadDef() mcpruntime.ToolDef {
 func emailSearchDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_search",
-		Description: "Search the agent's email (inbox abstraction).",
+		Description: "Run a bounded lesser-host metadata/preview search over the agent's email mailbox.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"query":{"type":"string"},
-				"folder":{"type":"string"},
-				"limit":{"type":"integer","minimum":1,"maximum":200}
+				"folder":{"type":"string","enum":["inbox","sent"]},
+				"includeArchived":{"type":"boolean"},
+				"archived":{"type":"boolean","description":"Exact archive-state filter."},
+				"includeDeleted":{"type":"boolean"},
+				"deleted":{"type":"boolean","description":"Exact delete-state filter."},
+				"read":{"type":"boolean","description":"Exact read-state filter."},
+				"unreadOnly":{"type":"boolean"},
+				"limit":{"type":"integer","minimum":1,"maximum":100},
+				"cursor":{"type":"string"},
+				"threadId":{"type":"string"}
 			},
 			"required":["query"]
 		}`),
@@ -108,11 +155,15 @@ func emailReplyDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"messageId":{"type":"string"},
+				"messageId":{"type":"string","description":"Opaque host messageRef for the source email."},
 				"body":{"type":"string"},
-				"to":{"type":"string"},
+				"to":{"type":"string","description":"Deprecated for host-backed replies; recipient is resolved by host."},
 				"subject":{"type":"string"},
-				"replyAll":{"type":"boolean"}
+				"cc":{"type":"array","items":{"type":"string"}},
+				"bcc":{"type":"array","items":{"type":"string"}},
+				"replyTo":{"type":"string"},
+				"replyAll":{"type":"boolean"},
+				"idempotencyKey":{"type":"string"}
 			},
 			"required":["messageId","body"]
 		}`),
@@ -122,14 +173,42 @@ func emailReplyDef() mcpruntime.ToolDef {
 func emailDeleteDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_delete",
-		Description: "Delete or archive an email message.",
+		Description: "Delete or archive an email message in lesser-host's canonical mailbox.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"messageId":{"type":"string"},
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_get."},
 				"action":{"type":"string","enum":["delete","archive"]}
 			},
 			"required":["messageId","action"]
+		}`),
+	}
+}
+
+func emailMarkReadDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "email_mark_read",
+		Description: "Mark an email read in lesser-host's canonical mailbox.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_get."}
+			},
+			"required":["messageId"]
+		}`),
+	}
+}
+
+func emailMarkUnreadDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "email_mark_unread",
+		Description: "Mark an email unread in lesser-host's canonical mailbox.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_get."}
+			},
+			"required":["messageId"]
 		}`),
 	}
 }
@@ -154,13 +233,20 @@ func smsSendDef() mcpruntime.ToolDef {
 func smsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "sms_read",
-		Description: "Read received SMS messages delivered to the instance.",
+		Description: "Read received SMS metadata/previews from lesser-host's canonical mailbox.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
-				"limit":{"type":"integer","minimum":1,"maximum":200},
-				"since":{"type":"string"}
+				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
+				"includeArchived":{"type":"boolean"},
+				"archived":{"type":"boolean","description":"Exact archive-state filter."},
+				"includeDeleted":{"type":"boolean"},
+				"deleted":{"type":"boolean","description":"Exact delete-state filter."},
+				"limit":{"type":"integer","minimum":1,"maximum":100},
+				"cursor":{"type":"string"},
+				"since":{"type":"string","description":"Legacy alias for cursor."},
+				"threadId":{"type":"string"}
 			}
 		}`),
 	}
@@ -187,12 +273,19 @@ func phoneCallDef() mcpruntime.ToolDef {
 func voicemailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "voicemail_read",
-		Description: "Read voicemail transcriptions delivered to the instance.",
+		Description: "Read voicemail metadata/previews from lesser-host's canonical mailbox.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
-				"limit":{"type":"integer","minimum":1,"maximum":200}
+				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
+				"includeArchived":{"type":"boolean"},
+				"archived":{"type":"boolean","description":"Exact archive-state filter."},
+				"includeDeleted":{"type":"boolean"},
+				"deleted":{"type":"boolean","description":"Exact delete-state filter."},
+				"limit":{"type":"integer","minimum":1,"maximum":100},
+				"cursor":{"type":"string"},
+				"threadId":{"type":"string"}
 			}
 		}`),
 	}

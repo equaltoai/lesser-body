@@ -120,7 +120,7 @@ Fix:
 Symptoms:
 
 - `tools/list` works, but soul-backed tools like `identity_whoami`, `identity_lookup`, `identity_verify`, `email_send`,
-  or `sms_send` fail.
+  `email_read`, `email_get_content`, or `sms_send` fail.
 - Errors include public `app.not_found` for `/api/v1/soul/*` or configuration messages mentioning
   `LESSER_SOUL_API_BASE_URL` / managed `TRUST_CONFIG`.
 
@@ -133,10 +133,33 @@ Fix:
 
 - In managed AWS deployments, make sure `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` in `LESSER_TABLE_NAME` has:
   - `managed.baseURL`
-  - `managed.instanceKeySecretARN` for outbound communication tools
+  - `managed.instanceKeySecretARN` for host-backed communication tools
 - For local/manual runs, set:
   - `LESSER_SOUL_API_BASE_URL=https://<stage>.lesser.host`
-  - optionally `LESSER_HOST_INSTANCE_KEY` or `LESSER_HOST_INSTANCE_KEY_ARN` for outbound comm tools
+  - optionally `LESSER_HOST_INSTANCE_KEY` or `LESSER_HOST_INSTANCE_KEY_ARN` for host-backed comm tools
+
+## Host mailbox tools return empty results or 4xx errors
+
+Symptoms:
+
+- `email_read`, `email_search`, `email_get`, `email_get_content`, `email_mark_read`, `email_mark_unread`, `sms_read`, or
+  `voicemail_read` returns an MCP tool error sourced from lesser-host.
+- Pagination returns no `nextCursor`, or a `messageId` that worked in notification-backed tools no longer resolves.
+
+Common causes:
+
+- The deployment is pointed at a lesser-host build before Soul Comm Mailbox v1.
+- The caller is passing a legacy host `messageId` that is ambiguous; mailbox APIs prefer the opaque `messageRef` returned
+  as `messageId` by lesser-body.
+- The mailbox item is archived/deleted and the read tool was called without `includeArchived` / `includeDeleted` or an
+  exact `archived` / `deleted` filter.
+
+Fix:
+
+- Confirm lesser-host exposes `/api/v1/soul/comm/mailbox/{agentId}/messages`.
+- Use the `messageId` returned from `email_read` / `email_search` / `email_get` for follow-up get/content/state/reply
+  calls.
+- Use `cursor`/`nextCursor` for mailbox pagination. `since` remains a legacy alias only.
 
 ## Memory tools fail (`LESSER_TABLE_NAME is required`)
 

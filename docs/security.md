@@ -39,6 +39,7 @@ JWT callers are authorized by scope on `tools/call`:
 Write tools include:
 
 - `post_create`, `post_boost`, `post_favorite`, `follow`, `unfollow`, `profile_update`, `memory_append`
+- `email_send`, `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`
 
 The managed instance key compatibility path bypasses scope checks (treat as `admin`), which is why it should not
 remain the long-term inbound client auth model.

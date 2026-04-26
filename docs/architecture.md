@@ -14,6 +14,7 @@ MCP client (AgentCore / other)
               └── Lambda (lesser-body)
                     ├── MCP server (tools/resources/prompts)
                     ├── Calls Lesser REST API for social tools
+                    ├── Calls lesser-host Soul Comm APIs for email/SMS/voice mailbox and send/reply
                     └── Reads/writes Lesser DynamoDB table for memory events
 ```
 
@@ -52,6 +53,14 @@ Notes:
 - `internal/lesserapi/`
   - `LESSER_API_BASE_URL` or `MCP_ENDPOINT`-derived base URL
   - calls Mastodon-compatible endpoints (for example: `/api/v1/accounts/verify_credentials`)
+
+### Communication tools (delegate to lesser-host)
+
+- `internal/soulapi/`
+  - `LESSER_SOUL_API_BASE_URL` / managed `TRUST_CONFIG.baseURL` points at lesser-host
+  - uses `LESSER_HOST_INSTANCE_KEY` / `LESSER_HOST_INSTANCE_KEY_ARN` as the server-to-server credential
+  - reads mailbox metadata/content/state through `/api/v1/soul/comm/mailbox/*`
+  - sends and replies through lesser-host so body never becomes mailbox authority or delivery provider
 
 ### Memory store (writes to Lesser DynamoDB)
 
