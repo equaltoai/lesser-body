@@ -138,7 +138,7 @@ func usernameFromJWTForTests(token string) string {
 	return strings.TrimSpace(claims.Username)
 }
 
-func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
+func TestMcpAuth_RejectsJwtOlderThan24Hours(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
@@ -160,8 +160,8 @@ func TestMcpAuth_AllowsOldButUnexpiredJwt(t *testing.T) {
 		Method:  "initialize",
 	})
 
-	if resp.Status != 200 {
-		t.Fatalf("expected 200 for old but unexpired token, got %d (%s)", resp.Status, string(resp.Body))
+	if resp.Status != 401 {
+		t.Fatalf("expected 401 for token older than 24h, got %d (%s)", resp.Status, string(resp.Body))
 	}
 }
 
