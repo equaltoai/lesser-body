@@ -80,6 +80,9 @@ func TestManagedDeployTemplateSupportsExactLesserHostInstanceKeyARN(t *testing.T
 	if got, ok := param["Default"].(string); !ok || got != "" {
 		t.Fatalf("expected LesserHostInstanceKeyARN default empty string, got %#v", param["Default"])
 	}
+	if pattern, ok := param["AllowedPattern"].(string); !ok || !strings.Contains(pattern, "secretsmanager") || !strings.Contains(pattern, "^$|^arn:") {
+		t.Fatalf("expected exact Secrets Manager ARN allowed pattern, got %#v", param["AllowedPattern"])
+	}
 
 	lambda := firstLambdaFunction(t, mustResources(t, template))
 	props, ok := lambda["Properties"].(map[string]any)
@@ -113,6 +116,104 @@ func TestManagedDeployTemplateSupportsExactLesserHostInstanceKeyARN(t *testing.T
 	}
 	if !foundConditionalExactGrant {
 		t.Fatalf("expected an IAM secret read resource wired to LesserHostInstanceKeyARN")
+	}
+}
+
+func TestManagedDeployTemplateRequiresAppScopedLesserParameterPaths(t *testing.T) {
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		_ = NewLesserBodyDeployTemplateStack(app, "TestStack", &LesserBodyDeployTemplateStackProps{
+			StackProps: awscdk.StackProps{
+				Env: &awscdk.Environment{
+					Account: jsii.String("123456789012"),
+					Region:  jsii.String("us-east-1"),
+				},
+			},
+			ServiceVersion: "test",
+			Stage:          "dev",
+		})
+	})
+
+	params, ok := template["Parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("template missing Parameters")
+	}
+	for _, name := range []string{
+		"JWTSecretArnParamPath",
+		"JWTSecretKeyArnParamPath",
+		"LesserStageDomainParamPath",
+		"LesserTableNameParamPath",
+	} {
+		param, ok := params[name].(map[string]any)
+		if !ok {
+			t.Fatalf("template missing %s parameter", name)
+		}
+		if _, ok := param["Default"]; ok {
+			t.Fatalf("%s must not default to /lesser/...; deploy helper must pass app-scoped override, got %s", name, mustJSON(t, param["Default"]))
+		}
+	}
+}
+
+func TestLesserTablePolicyUsesLeastPrivilegePrimaryTableAccess(t *testing.T) {
+	assetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write bootstrap: %v", err)
+	}
+
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		stack := awscdk.NewStack(app, jsii.String("TestStack"), &awscdk.StackProps{
+			Env: &awscdk.Environment{
+				Account: jsii.String("123456789012"),
+				Region:  jsii.String("us-east-1"),
+			},
+		})
+
+		configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
+			AppName:               jsii.String("theory"),
+			Stage:                 jsii.String("dev"),
+			Code:                  awslambda.Code_FromAsset(jsii.String(assetDir), nil),
+			ServiceVersion:        jsii.String("test"),
+			PublicEndpoint:        jsii.String("https://api.dev.example.com/mcp/{actor}"),
+			LesserAPIBaseURL:      jsii.String("https://api.dev.example.com"),
+			AllowedOrigins:        jsii.String("https://claude.ai"),
+			JWTSecretArnParamPath: jsii.String("/theory/shared/secrets/jwt-secret-arn"),
+			JWTSecretKeyParamPath: jsii.String("/theory/shared/kms/encryption-key-arn"),
+			LesserTableParamPath:  jsii.String("/theory/dev/lesser/exports/v1/table_name"),
+		})
+	})
+
+	var lesserTableStatement map[string]any
+	for _, statement := range allPolicyStatements(t, mustResources(t, template)) {
+		if strings.Contains(mustJSON(t, extractStatementResourcesFromMap(statement)), "/theory/dev/lesser/exports/v1/table_name") {
+			lesserTableStatement = statement
+			break
+		}
+	}
+	if lesserTableStatement == nil {
+		t.Fatalf("expected Lesser table IAM statement")
+	}
+	statementJSON := mustJSON(t, lesserTableStatement)
+	for _, want := range []string{
+		`"dynamodb:DescribeTable"`,
+		`"dynamodb:GetItem"`,
+		`"dynamodb:PutItem"`,
+		`"dynamodb:Query"`,
+	} {
+		if !strings.Contains(statementJSON, want) {
+			t.Fatalf("expected least-privilege DynamoDB action %s in %s", want, statementJSON)
+		}
+	}
+	for _, unwanted := range []string{
+		`"dynamodb:BatchGetItem"`,
+		`"dynamodb:BatchWriteItem"`,
+		`"dynamodb:ConditionCheckItem"`,
+		`"dynamodb:DeleteItem"`,
+		`"dynamodb:Scan"`,
+		`"dynamodb:UpdateItem"`,
+		`/index/`,
+	} {
+		if strings.Contains(statementJSON, unwanted) {
+			t.Fatalf("expected Lesser table policy to omit %s, got %s", unwanted, statementJSON)
+		}
 	}
 }
 

@@ -178,25 +178,14 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		Resource:     jsii.String("table"),
 		ResourceName: tableName,
 	})
-	indexArn := stack.FormatArn(&awscdk.ArnComponents{
-		Service:      jsii.String("dynamodb"),
-		Resource:     jsii.String("table"),
-		ResourceName: tokenJoin("/", tableName, jsii.String("index"), jsii.String("*")),
-	})
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{
-			jsii.String("dynamodb:BatchGetItem"),
 			jsii.String("dynamodb:Query"),
 			jsii.String("dynamodb:GetItem"),
-			jsii.String("dynamodb:Scan"),
-			jsii.String("dynamodb:ConditionCheckItem"),
-			jsii.String("dynamodb:BatchWriteItem"),
 			jsii.String("dynamodb:PutItem"),
-			jsii.String("dynamodb:UpdateItem"),
-			jsii.String("dynamodb:DeleteItem"),
 			jsii.String("dynamodb:DescribeTable"),
 		},
-		Resources: &[]*string{tableArn, indexArn},
+		Resources: &[]*string{tableArn},
 	}))
 
 	mcpLambdaArnParam := awsssm.NewCfnParameter(stack, jsii.String("McpLambdaArnParam"), &awsssm.CfnParameterProps{

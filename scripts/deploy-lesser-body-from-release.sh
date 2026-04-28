@@ -159,13 +159,14 @@ if [[ -n "${BASE_DOMAIN}" ]]; then
   parameter_overrides+=("BaseDomain=${BASE_DOMAIN}")
 fi
 if [[ -n "${LESSER_HOST_INSTANCE_KEY_ARN}" ]]; then
-  case "${LESSER_HOST_INSTANCE_KEY_ARN}" in
-    arn:*) ;;
-    *)
-      echo "--lesser-host-instance-key-arn must start with arn:" >&2
-      exit 1
-      ;;
-  esac
+  if [[ "${LESSER_HOST_INSTANCE_KEY_ARN}" == *"*"* || "${LESSER_HOST_INSTANCE_KEY_ARN}" == *"?"* ]]; then
+    echo "--lesser-host-instance-key-arn must be an exact Secrets Manager secret ARN without wildcards" >&2
+    exit 1
+  fi
+  if [[ ! "${LESSER_HOST_INSTANCE_KEY_ARN}" =~ ^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]]; then
+    echo "--lesser-host-instance-key-arn must be an exact Secrets Manager secret ARN" >&2
+    exit 1
+  fi
   parameter_overrides+=("LesserHostInstanceKeyARN=${LESSER_HOST_INSTANCE_KEY_ARN}")
 fi
 
