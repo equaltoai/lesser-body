@@ -24,6 +24,9 @@ import (
 const (
 	notificationCursorMemoryPrefix = "notification_cursor:"
 	notificationCursorMemoryTag    = "notification_cursor"
+	notificationReadDefaultLimit   = 30
+	notificationReadMaxLimit       = 80
+	notificationReadMaxTypes       = 8
 )
 
 var notificationCursorEventIDs = struct {
@@ -347,16 +350,17 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-	requestedTypes, upstreamTypes := normalizeRequestedNotificationTypes(in.Types)
+	requestedTypes, upstreamTypes, err := normalizeRequestedNotificationTypes(in.Types)
+	if err != nil {
+		return nil, err
+	}
+	limit := boundedNotificationReadLimit(in.Limit)
 	explicitSince := in.Since != nil
 	requestedSince := trimDeref(in.Since)
 	effectiveSince := requestedSince
 	effectiveCursor := strings.TrimSpace(in.Cursor)
 	sinceTime, hasTemporalSince := parseNotificationSince(requestedSince)
 
-	if explicitSince && requestedSince == "" {
-		_ = clearNotificationCursor(ctx)
-	}
 	if explicitSince && requestedSince != "" && !hasTemporalSince && effectiveCursor == "" {
 		effectiveCursor = requestedSince
 	}
@@ -370,7 +374,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		return nil, err
 	}
 
-	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, in.Limit, effectiveCursor)
+	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, limit, effectiveCursor)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -383,14 +387,13 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		notifications = filterSocialNotificationsByType(notifications, requestedTypes)
 	}
 	sortSocialNotificationsNewestFirst(notifications)
-	if in.Limit > 0 && len(notifications) > in.Limit {
-		notifications = notifications[:in.Limit]
+	if len(notifications) > limit {
+		notifications = notifications[:limit]
 	}
 
 	nextSince := ""
 	if len(notifications) > 0 {
 		if newest, ok := notifications[0].(map[string]any); ok {
-			_ = writeNotificationCursor(ctx, strings.TrimSpace(firstNonEmptyStringMap(newest, "id")))
 			if hasTemporalSince || effectiveCursor == "" {
 				if createdAt, ok := notificationCreatedAt(newest); ok {
 					nextSince = createdAt.Format(time.RFC3339Nano)
@@ -878,9 +881,9 @@ func ternaryString(cond bool, yes string, no string) string {
 	return no
 }
 
-func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
+func normalizeRequestedNotificationTypes(in []string) ([]string, []string, error) {
 	if len(in) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	requested := make([]string, 0, len(in))
@@ -896,7 +899,13 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
 		case "favorite":
 			typ = "favourite"
 		}
+		if !allowedNotificationType(typ) {
+			return nil, nil, invalidParams("unsupported notification type: " + typ)
+		}
 		if _, ok := seenRequested[typ]; !ok {
+			if len(requested) >= notificationReadMaxTypes {
+				return nil, nil, invalidParams("too many notification types requested")
+			}
 			seenRequested[typ] = struct{}{}
 			requested = append(requested, typ)
 		}
@@ -906,7 +915,27 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string) {
 		}
 	}
 
-	return requested, upstream
+	return requested, upstream, nil
+}
+
+func allowedNotificationType(typ string) bool {
+	switch strings.TrimSpace(typ) {
+	case "mention", "reply", "favourite", "reblog", "follow", "follow_request", "poll", "status", "update", "admin.sign_up", "admin.report":
+		return true
+	default:
+		return false
+	}
+}
+
+func boundedNotificationReadLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return notificationReadDefaultLimit
+	case limit > notificationReadMaxLimit:
+		return notificationReadMaxLimit
+	default:
+		return limit
+	}
 }
 
 func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, cursor string) ([]any, string, error) {
@@ -923,8 +952,9 @@ func readSocialNotifications(ctx context.Context, client *lesserapi.Client, toke
 		return readSocialNotificationsByType(ctx, client, token, firstString(queries), limit, cursor)
 	}
 
-	combined := make([]map[string]any, 0, len(queries)*max(1, limit))
-	seenIDs := make(map[string]struct{}, len(queries)*max(1, limit))
+	capacityHint := len(queries) * max(1, boundedNotificationReadLimit(limit))
+	combined := make([]map[string]any, 0, capacityHint)
+	seenIDs := make(map[string]struct{}, capacityHint)
 	for _, typ := range queries {
 		items, _, err := readSocialNotificationsByType(ctx, client, token, typ, limit, cursor)
 		if err != nil {
