@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -210,12 +211,24 @@ func parseBaseURL(raw string) (*url.URL, error) {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return nil, fmt.Errorf("unsupported base url scheme: %s", u.Scheme)
 	}
+	if u.Scheme == "http" && !isLocalHTTPHost(u.Hostname()) {
+		return nil, fmt.Errorf("http base url is only allowed for localhost or loopback hosts")
+	}
 	if strings.TrimSpace(u.Host) == "" {
 		return nil, fmt.Errorf("base url host is empty")
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u, nil
+}
+
+func isLocalHTTPHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 func resolveTimeout() time.Duration {
