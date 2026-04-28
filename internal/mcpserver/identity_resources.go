@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/equaltoai/lesser-body/internal/soulapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -55,6 +56,32 @@ func identityErrorPayload(err error) map[string]any {
 		}
 		if len(userErr.Details) > 0 {
 			payload["details"] = userErr.Details
+		}
+		return payload
+	}
+
+	if failure := soulAuthFailureFromError(err); failure != nil {
+		return failure.payload()
+	}
+
+	var apiErr *soulapi.APIError
+	if errors.As(err, &apiErr) {
+		code := identityErrorCodeForStatus(apiErr.Status)
+		message, parsed := commExtractAPIErrorMessage(apiErr.Body)
+		payload := map[string]any{
+			"code":    code,
+			"message": message,
+			"status":  apiErr.Status,
+		}
+		details := map[string]any{}
+		if parsed != nil {
+			details["apiError"] = parsed
+		}
+		if retryAfter := apiErr.RetryAfterSeconds(); retryAfter > 0 {
+			details["retryAfterSeconds"] = retryAfter
+		}
+		if len(details) > 0 {
+			payload["details"] = details
 		}
 		return payload
 	}

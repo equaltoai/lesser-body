@@ -216,9 +216,6 @@ func resolveOutboundCommIdempotencyKey(ctx context.Context, value string) string
 	if value != "" {
 		return value
 	}
-	if requestID := auth.RequestIDFromToolContext(ctx); requestID != "" {
-		return requestID
-	}
 	return uuid.NewString()
 }
 
@@ -294,16 +291,15 @@ func ensureBotDisclosurePrefix(value string) string {
 func hasBotDisclosurePrefix(value string) bool {
 	value = strings.TrimSpace(value)
 	for value != "" {
-		lower := strings.ToLower(value)
 		switch {
-		case strings.HasPrefix(lower, "re:"):
+		case len(value) >= 3 && strings.EqualFold(value[:3], "re:"):
 			value = strings.TrimSpace(value[3:])
-		case strings.HasPrefix(lower, "fw:"):
+		case len(value) >= 3 && strings.EqualFold(value[:3], "fw:"):
 			value = strings.TrimSpace(value[3:])
-		case strings.HasPrefix(lower, "fwd:"):
+		case len(value) >= 4 && strings.EqualFold(value[:4], "fwd:"):
 			value = strings.TrimSpace(value[4:])
 		default:
-			return strings.HasPrefix(strings.ToLower(value), strings.ToLower(botDisclosurePrefix))
+			return len(value) >= len(botDisclosurePrefix) && strings.EqualFold(value[:len(botDisclosurePrefix)], botDisclosurePrefix)
 		}
 	}
 	return false

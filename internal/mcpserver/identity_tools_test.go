@@ -170,14 +170,19 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/soul/agents/"+agentID {
+		switch r.URL.Path {
+		case "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 	}))
 	defer server.Close()
 
 	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
 
 	client, err := soulapi.Default()
 	if err != nil {
@@ -188,7 +193,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		Type:     auth.PrincipalTypeOAuthToken,
 		Identity: "Agent1",
 		Claims:   &auth.Claims{Username: "Agent1"},
-	}, "")
+	}, "test-token")
 
 	search, err := prepareSoulLookupSearch(ctx, client, "medic", false, false)
 	if err != nil {
@@ -241,6 +246,7 @@ func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
 		allowBareHandleFallback bool
 		want                    soulLookupSearch
 		ok                      bool
+		wantErr                 bool
 	}{
 		{
 			name: "acct_form",
@@ -268,9 +274,10 @@ func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "invalid_domain",
-			raw:  "@steward@remote.example/path",
-			ok:   false,
+			name:    "invalid_domain",
+			raw:     "@steward@remote.example/path",
+			ok:      true,
+			wantErr: true,
 		},
 	}
 
@@ -279,9 +286,9 @@ func TestNormalizeRemoteActivityPubHandle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := normalizeRemoteActivityPubHandle(tc.raw, tc.allowBareHandleFallback)
-			if got != tc.want || ok != tc.ok {
-				t.Fatalf("normalizeRemoteActivityPubHandle(%q, %v) = (%+v, %v), want (%+v, %v)", tc.raw, tc.allowBareHandleFallback, got, ok, tc.want, tc.ok)
+			got, ok, err := normalizeRemoteActivityPubHandle(tc.raw, tc.allowBareHandleFallback)
+			if got != tc.want || ok != tc.ok || (err != nil) != tc.wantErr {
+				t.Fatalf("normalizeRemoteActivityPubHandle(%q, %v) = (%+v, %v, %v), want (%+v, %v, err=%v)", tc.raw, tc.allowBareHandleFallback, got, ok, err, tc.want, tc.ok, tc.wantErr)
 			}
 		})
 	}

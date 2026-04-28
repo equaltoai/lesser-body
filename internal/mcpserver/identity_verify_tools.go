@@ -116,7 +116,11 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 		return toolJSONResult(result)
 	}
 
-	result["reason"] = "sender_does_not_match_resolved_identity"
+	if !senderHasAuthoritativeAgentID(from) {
+		result["reason"] = "message_lacks_authoritative_sender_provenance"
+	} else {
+		result["reason"] = "sender_does_not_match_resolved_identity"
+	}
 	return toolJSONResult(result)
 }
 
@@ -247,20 +251,12 @@ func senderVerificationMarkers(from map[string]any) verificationMarkers {
 	for _, key := range []string{"soulAgentId", "soul_agent_id", "agentId", "agent_id"} {
 		out.addAgentID(stringFromMap(from, key))
 	}
-	for _, key := range []string{"address", "email", "identifier", "name"} {
-		value := stringFromMap(from, key)
-		out.addEmail(value)
-		out.addPhone(value)
-		out.addENS(value)
-	}
-	for _, key := range []string{"number", "phone"} {
-		out.addPhone(stringFromMap(from, key))
-	}
-	for _, key := range []string{"ens"} {
-		out.addENS(stringFromMap(from, key))
-	}
 
 	return out
+}
+
+func senderHasAuthoritativeAgentID(from map[string]any) bool {
+	return len(senderVerificationMarkers(from).agentIDs) > 0
 }
 
 func newVerificationMarkers() verificationMarkers {

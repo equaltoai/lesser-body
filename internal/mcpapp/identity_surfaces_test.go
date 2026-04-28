@@ -56,12 +56,14 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
+		case r.URL.Path == "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			q := r.URL.Query().Get("q")
 			domain := r.URL.Query().Get("domain")
 			searchQueries = append(searchQueries, q)
 			searchDomains = append(searchDomains, domain)
-			if domain == "test.example.com" && (q == "agent-alice" || q == "ops.v2" || q == "ops.eth") {
+			if domain == "test.example.com" && (q == "agent-alice" || q == "ops.v2") {
 				_, _ = w.Write([]byte(`{"version":"1","results":[{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}],"count":1,"has_more":false}`))
 				return
 			}
@@ -121,6 +123,16 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"subject":"Hi",
 					"body":"Hello there",
 					"receivedAt":"2026-03-09T12:00:00Z"
+				},
+				{
+					"id":"n-spoof",
+					"type":"communication:inbound",
+					"channel":"email",
+					"messageId":"comm-msg-spoof",
+					"from":{"name":"agent-alice@lessersoul.ai","address":"attacker@example.net"},
+					"subject":"Spoof",
+					"body":"Pretending",
+					"receivedAt":"2026-03-09T12:01:00Z"
 				}
 			]`))
 		default:
@@ -255,7 +267,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	emailResolveQueries = nil
 
 	// identity_lookup should normalize current-instance local IDs and carry the authenticated instance domain explicitly.
-	for _, q := range []string{"agent-alice", "@agent-alice", "ops.v2", "ops.eth"} {
+	for _, q := range []string{"agent-alice", "@agent-alice", "ops.v2"} {
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_lookup",
 			"arguments": map[string]any{"query": q},
@@ -291,10 +303,10 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
 		}
 	}
-	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2", "ops.eth"}) {
+	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2"}) {
 		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
 	}
-	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com", "test.example.com", "test.example.com"}) {
+	if !reflect.DeepEqual(searchDomains, []string{"test.example.com", "test.example.com", "test.example.com"}) {
 		t.Fatalf("identity_lookup should provide current-instance domain context for local queries, got %+v", searchDomains)
 	}
 	if len(emailResolveQueries) != 0 {
@@ -375,6 +387,83 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 	}
 
+	// ENS-like names that miss the authoritative ENS resolver must not fall back
+	// to current-instance local-id search.
+	{
+		searchQueries = nil
+		searchDomains = nil
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": "ops.eth"},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 33, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_lookup(ops.eth): status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_lookup(ops.eth) rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		if !out.IsError {
+			t.Fatalf("expected not_found tool result for unresolved ENS name, got %+v", out)
+		}
+		errPayload, _ := out.StructuredContent["error"].(map[string]any)
+		if errPayload["code"] != "not_found" {
+			t.Fatalf("expected not_found for unresolved ENS name, got %+v", errPayload)
+		}
+		if len(searchQueries) != 0 || len(searchDomains) != 0 {
+			t.Fatalf("unresolved ENS name should not use local search, got q=%+v domains=%+v", searchQueries, searchDomains)
+		}
+	}
+
+	// identity_lookup should reject internal-looking remote handle domains instead
+	// of forwarding them as generic soul search queries.
+	{
+		searchQueries = nil
+		searchDomains = nil
+		emailResolveQueries = nil
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": "steward@localhost"},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 34, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_lookup(steward@localhost): status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_lookup(steward@localhost) rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		if !out.IsError {
+			t.Fatalf("expected invalid_request tool result for internal remote handle, got %+v", out)
+		}
+		errPayload, _ := out.StructuredContent["error"].(map[string]any)
+		if errPayload["code"] != "invalid_request" {
+			t.Fatalf("expected invalid_request for internal remote handle, got %+v", errPayload)
+		}
+		if len(searchQueries) != 0 || len(searchDomains) != 0 {
+			t.Fatalf("internal remote handle should not use soul search, got q=%+v domains=%+v", searchQueries, searchDomains)
+		}
+	}
+
 	// agent://channels + agent://channels/preferences should read successfully.
 	{
 		params, _ := json.Marshal(map[string]any{"uri": "agent://channels"})
@@ -430,8 +519,46 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if data["verified"] != true {
 			t.Fatalf("expected verified identity match, got %+v", data)
 		}
-		if data["matchedBy"] != "sender.agentId" && data["matchedBy"] != "sender.email" {
+		if data["matchedBy"] != "sender.agentId" {
 			t.Fatalf("expected sender provenance match, got %+v", data)
+		}
+	}
+
+	// identity_verify must not trust spoofable sender display/name/address fields
+	// without authoritative soul agent provenance on the message.
+	{
+		callParams, _ := json.Marshal(map[string]any{
+			"name": "identity_verify",
+			"arguments": map[string]any{
+				"channel":    "email",
+				"identifier": "agent-alice@lessersoul.ai",
+				"messageId":  "comm-msg-spoof",
+			},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 61, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_verify spoofed sender: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_verify spoofed sender rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data["verified"] != false {
+			t.Fatalf("expected spoofed sender to remain unverified, got %+v", data)
+		}
+		if data["reason"] != "message_lacks_authoritative_sender_provenance" {
+			t.Fatalf("expected missing provenance reason, got %+v", data)
 		}
 	}
 
@@ -498,6 +625,8 @@ func TestLBM1_IdentityLookupBareLocalFailsWithoutTrustworthyCurrentInstanceDomai
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
+		case r.URL.Path == "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice"}}]}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/search":
@@ -602,6 +731,8 @@ func TestLBM1_IdentityLookupMalformedLocalIdentifierReturnsBadRequest(t *testing
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
+		case r.URL.Path == "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			gotSearchQuery = r.URL.Query().Get("q")
 			gotSearchDomain = r.URL.Query().Get("domain")
@@ -707,6 +838,8 @@ func TestLBM1_IdentityLookupUnsupportedRemoteActorURLReturnsBadRequest(t *testin
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
+		case r.URL.Path == "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			searchCalled = true
 			_, _ = w.Write([]byte(`{"version":"1","results":[],"count":0,"has_more":false}`))
