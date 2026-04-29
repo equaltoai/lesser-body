@@ -50,6 +50,33 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def redacted_payload_summary(value: Any) -> str:
+    try:
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raw = str(value)
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"len={len(raw)} sha256_12={digest}"
+
+
+def sanitized_error_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"payload": redacted_payload_summary(value)}
+
+    safe: dict[str, Any] = {}
+    for key in ("code", "status", "message"):
+        if key not in value:
+            continue
+        item = value.get(key)
+        if isinstance(item, str):
+            safe[key] = item[:160]
+        elif isinstance(item, (int, float, bool)) or item is None:
+            safe[key] = item
+    if not safe:
+        safe["payload"] = redacted_payload_summary(value)
+    return safe
+
+
 def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     global next_id, session_id
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": next_id, "method": method}
@@ -77,17 +104,19 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
             if not session_id:
                 session_id = resp.headers.get("mcp-session-id", "").strip()
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise CanaryError(f"{method} HTTP {exc.code}: {body[:500]}") from exc
+        body = exc.read()
+        digest = hashlib.sha256(body).hexdigest()[:12]
+        raise CanaryError(f"{method} HTTP {exc.code}: body_len={len(body)} body_sha256_12={digest}") from exc
     except urllib.error.URLError as exc:
         raise CanaryError(f"{method} request failed: {exc}") from exc
 
     try:
         data = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise CanaryError(f"{method} returned non-JSON body: {body[:500]}") from exc
+        digest = hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()[:12]
+        raise CanaryError(f"{method} returned non-JSON body: len={len(body)} sha256_12={digest}") from exc
     if data.get("error"):
-        raise CanaryError(f"{method} RPC error: {json.dumps(data['error'], sort_keys=True)}")
+        raise CanaryError(f"{method} RPC error: {json.dumps(sanitized_error_payload(data['error']), sort_keys=True)}")
     return data.get("result", {})
 
 
@@ -103,7 +132,7 @@ def tool_call(name: str, arguments: dict[str, Any], *, expect_error: bool = Fals
         return error_payload
     if is_error:
         error_payload = structured.get("error") or result
-        raise CanaryError(f"{name} tool error: {json.dumps(error_payload, sort_keys=True)[:500]}")
+        raise CanaryError(f"{name} tool error: {json.dumps(sanitized_error_payload(error_payload), sort_keys=True)}")
     data = structured.get("data")
     if not isinstance(data, dict):
         raise CanaryError(f"{name} missing structuredContent.data")

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
@@ -14,7 +15,10 @@ import (
 	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 )
 
-const contextKeyPrincipal = "lesser_body_principal"
+const (
+	contextKeyPrincipal = "lesser_body_principal"
+	maxAccessTokenAge   = 24 * time.Hour
+)
 
 type PrincipalType string
 
@@ -203,6 +207,12 @@ func validateAccessToken(ctx context.Context, tokenString string) (*Claims, erro
 	}
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
+		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+	}
+	if claims.IssuedAt == nil || claims.IssuedAt.Time.IsZero() {
+		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+	}
+	if time.Since(claims.IssuedAt.Time) > maxAccessTokenAge {
 		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
 	}
 

@@ -822,6 +822,80 @@ func TestM5_NotificationsReadTimestampSinceFiltersRecentRemoteCreates(t *testing
 	}
 }
 
+func TestM5_NotificationsReadBoundsLimitAndRejectsUnknownTypes(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.RawQuery != "limit=80" {
+			t.Fatalf("expected capped limit query, got %q", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, arguments map[string]any) *mcpruntime.Response {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "notifications_read",
+			"arguments": arguments,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal notifications_read: %v", err)
+		}
+		return &rpc
+	}
+
+	if rpc := call(2, map[string]any{"limit": 500}); rpc.Error != nil {
+		t.Fatalf("expected capped limit request to succeed, got %+v", rpc.Error)
+	}
+	if len(gotQueries) != 1 {
+		t.Fatalf("expected one upstream request, got %v", gotQueries)
+	}
+
+	rpc := call(3, map[string]any{"limit": 5, "types": []string{"mention", "not-a-real-type"}})
+	if rpc.Error == nil {
+		t.Fatalf("expected unknown notification type to fail before upstream fanout")
+	}
+	if len(gotQueries) != 1 {
+		t.Fatalf("invalid type should not fan out upstream, got %v", gotQueries)
+	}
+}
+
 func TestM5_NotificationsReadSeparatesTimestampSinceAndCursor(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -916,21 +990,6 @@ func TestM5_NotificationsReadSeparatesTimestampSinceAndCursor(t *testing.T) {
 		return data
 	}
 
-	readCursor := func(id int) string {
-		data := callTool(id, "memory_query", map[string]any{
-			"query": "notification_cursor:",
-			"limit": 1,
-			"order": "desc",
-		})
-		events, _ := data["events"].([]any)
-		if len(events) == 0 {
-			return ""
-		}
-		event, _ := events[0].(map[string]any)
-		content, _ := event["content"].(string)
-		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
-	}
-
 	first := callTool(2, "notifications_read", map[string]any{"limit": 5})
 	if first["since"] != "" || first["cursor"] != "" {
 		t.Fatalf("expected empty since/cursor on first call, got %+v", first)
@@ -938,26 +997,23 @@ func TestM5_NotificationsReadSeparatesTimestampSinceAndCursor(t *testing.T) {
 	if first["nextSince"] != "2026-03-01T03:00:00Z" {
 		t.Fatalf("expected timestamp nextSince on first call, got %+v", first)
 	}
-	if readCursor(3) != "n3" {
-		t.Fatalf("expected legacy cursor n3 after first call")
-	}
 
-	second := callTool(4, "notifications_read", map[string]any{"limit": 5})
+	second := callTool(3, "notifications_read", map[string]any{"limit": 5})
 	if second["since"] != "" || second["cursor"] != "" {
 		t.Fatalf("expected omitted since to avoid implicit cursor, got %+v", second)
 	}
 
-	cursor := callTool(5, "notifications_read", map[string]any{"limit": 5, "cursor": "notif#20260301030000#n3"})
+	cursor := callTool(4, "notifications_read", map[string]any{"limit": 5, "cursor": "notif#20260301030000#n3"})
 	if cursor["cursor"] != "notif#20260301030000#n3" || cursor["nextCursor"] != "notif#20260301020000#n2" {
 		t.Fatalf("expected explicit cursor and nextCursor, got %+v", cursor)
 	}
 
-	legacy := callTool(6, "notifications_read", map[string]any{"limit": 5, "since": "n1"})
+	legacy := callTool(5, "notifications_read", map[string]any{"limit": 5, "since": "n1"})
 	if legacy["since"] != "n1" || legacy["cursor"] != "n1" {
 		t.Fatalf("expected legacy non-timestamp since to act as cursor alias, got %+v", legacy)
 	}
 
-	reset := callTool(7, "notifications_read", map[string]any{"limit": 5, "since": ""})
+	reset := callTool(6, "notifications_read", map[string]any{"limit": 5, "since": ""})
 	if reset["since"] != "" || reset["cursor"] != "" {
 		t.Fatalf("expected empty since on reset call, got %+v", reset)
 	}
@@ -1080,20 +1136,20 @@ func TestM5_NotificationDismissClearsCursorOnDismissAll(t *testing.T) {
 		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
 	}
 
-	_ = callTool(2, "notifications_read", map[string]any{"limit": 5})
-	if readCursor(3) != "n7" {
-		t.Fatalf("expected cursor n7 after seed read")
-	}
+	_ = callTool(2, "memory_append", map[string]any{
+		"content":  "notification_cursor:n7",
+		"event_id": "01JMY4Y6A00000000000000007",
+	})
 
-	out := callTool(4, "notification_dismiss", map[string]any{})
+	out := callTool(3, "notification_dismiss", map[string]any{})
 	if out["ok"] != true || out["dismiss"] != "all" {
 		t.Fatalf("unexpected dismiss-all response: %+v", out)
 	}
-	if readCursor(5) != "" {
+	if readCursor(4) != "" {
 		t.Fatalf("expected dismiss-all to clear cursor")
 	}
 
-	wantRequests := []string{"GET /api/v1/notifications", "POST /api/v1/notifications/clear"}
+	wantRequests := []string{"POST /api/v1/notifications/clear"}
 	if len(gotRequests) != len(wantRequests) {
 		t.Fatalf("expected requests %v, got %v", wantRequests, gotRequests)
 	}
@@ -1203,12 +1259,15 @@ func TestM5_NotificationDismissSingleKeepsCursorAndHandlesNotFound(t *testing.T)
 		return strings.TrimSpace(strings.TrimPrefix(content, "notification_cursor:"))
 	}
 
-	rpc, _ := callTool(2, "notifications_read", map[string]any{"limit": 5})
+	rpc, _ := callTool(2, "memory_append", map[string]any{
+		"content":  "notification_cursor:n9",
+		"event_id": "01JMY4Y6A00000000000000009",
+	})
 	if rpc.Error != nil {
-		t.Fatalf("notifications_read error: %+v", rpc.Error)
+		t.Fatalf("memory_append error: %+v", rpc.Error)
 	}
 	if readCursor(3) != "n9" {
-		t.Fatalf("expected cursor n9 after seed read")
+		t.Fatalf("expected cursor n9 after seed append")
 	}
 
 	rpc, out := callTool(4, "notification_dismiss", map[string]any{"id": "n9"})

@@ -44,6 +44,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
@@ -128,8 +130,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if gotBody["to"] != "alice@example.com" || gotBody["subject"] != "[bot] Hello" || gotBody["body"] != "Hi there\n\n"+expectedFooter {
 			t.Fatalf("unexpected comm api payload fields: %+v", gotBody)
 		}
-		if gotBody["idempotencyKey"] != "req-email-send-123" {
-			t.Fatalf("expected request-id-backed idempotencyKey, got %+v", gotBody)
+		idempotencyKey, _ := gotBody["idempotencyKey"].(string)
+		if idempotencyKey == "" || idempotencyKey == "req-email-send-123" {
+			t.Fatalf("expected generated idempotencyKey distinct from request id, got %+v", gotBody)
 		}
 		if gotBody["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected inReplyTo=comm-msg-prev, got %+v", gotBody)
@@ -149,8 +152,8 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if data["messageId"] != "comm-msg-001" || data["status"] != "sent" {
 			t.Fatalf("unexpected tool data: %+v", data)
 		}
-		if data["idempotencyKey"] != "req-email-send-123" {
-			t.Fatalf("expected tool data to include request idempotencyKey, got %+v", data)
+		if data["idempotencyKey"] != idempotencyKey {
+			t.Fatalf("expected tool data to include generated idempotencyKey, got %+v", data)
 		}
 		if data["inReplyTo"] != "comm-msg-prev" {
 			t.Fatalf("expected tool data to include inReplyTo, got %+v", data)

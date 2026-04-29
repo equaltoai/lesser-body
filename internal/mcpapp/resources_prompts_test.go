@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -218,5 +219,59 @@ func TestM9_ResourcesAndPrompts(t *testing.T) {
 		if rpc.Error != nil {
 			t.Fatalf("prompts/get error: %+v", rpc.Error)
 		}
+	}
+}
+
+func TestMCPAuth_ResourcesReadAndPromptsGetRequireReadScope(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	token := newTestToken(t, "test", "agent1", nil)
+	authHeader := "Bearer " + token
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		params map[string]any
+	}{
+		{
+			name:   "resource_read",
+			method: "resources/read",
+			params: map[string]any{"uri": "agent://profile"},
+		},
+		{
+			name:   "prompt_get",
+			method: "prompts/get",
+			params: map[string]any{"name": "compose_post"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params, _ := json.Marshal(tc.params)
+			resp := invokeJSON(t, env, app, map[string][]string{
+				"authorization":  {authHeader},
+				"mcp-session-id": {sessionID},
+			}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: tc.method, Params: params})
+			if resp.Status != 403 {
+				t.Fatalf("%s: expected 403, got %d (%s)", tc.method, resp.Status, string(resp.Body))
+			}
+			if got := firstHeader(resp.Headers, "www-authenticate"); !strings.Contains(got, "insufficient_scope") || !strings.Contains(got, `scope="read"`) {
+				t.Fatalf("%s: expected insufficient_scope read challenge, got %q", tc.method, got)
+			}
+		})
 	}
 }

@@ -1,7 +1,6 @@
 package stacks
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -50,28 +49,26 @@ func NewLesserBodyDeployTemplateStack(scope constructs.Construct, id string, pro
 	})
 	jwtSecretArnParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("JWTSecretArnParamPath"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
-		Default:     jsii.String(defaultSsmParamPath("lesser", "shared", "secrets", "jwt-secret-arn")),
-		Description: jsii.String("SSM parameter path containing the shared JWT secret ARN for the target app."),
+		Description: jsii.String("Required SSM parameter path containing the shared JWT secret ARN for the target app, for example /<app>/shared/secrets/jwt-secret-arn."),
 	})
 	jwtSecretKeyParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("JWTSecretKeyArnParamPath"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
-		Default:     jsii.String(defaultSsmParamPath("lesser", "shared", "kms", "encryption-key-arn")),
-		Description: jsii.String("SSM parameter path containing the shared KMS key ARN for the target app."),
+		Description: jsii.String("Required SSM parameter path containing the shared KMS key ARN for the target app, for example /<app>/shared/kms/encryption-key-arn."),
 	})
 	lesserStageDomainParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("LesserStageDomainParamPath"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
-		Default:     jsii.String(defaultSsmParamPath("lesser", stage, "lesser", "exports", "v1", "domain")),
-		Description: jsii.String("SSM parameter path containing the Lesser stage domain for the target app and stage."),
+		Description: jsii.String("Required SSM parameter path containing the Lesser stage domain for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/domain."),
 	})
 	lesserTableParamPathParam := awscdk.NewCfnParameter(stack, jsii.String("LesserTableNameParamPath"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
-		Default:     jsii.String(defaultSsmParamPath("lesser", stage, "lesser", "exports", "v1", "table_name")),
-		Description: jsii.String("SSM parameter path containing the Lesser table name for the target app and stage."),
+		Description: jsii.String("Required SSM parameter path containing the Lesser table name for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/table_name."),
 	})
 	lesserHostInstanceKeyArnParam := awscdk.NewCfnParameter(stack, jsii.String("LesserHostInstanceKeyARN"), &awscdk.CfnParameterProps{
-		Type:        jsii.String("String"),
-		Default:     jsii.String(""),
-		Description: jsii.String("Optional exact Secrets Manager ARN for the managed lesser-host instance key. When provided, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and grants direct read access to that secret."),
+		Type:                  jsii.String("String"),
+		Default:               jsii.String(""),
+		AllowedPattern:        jsii.String(`^$|^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$`),
+		ConstraintDescription: jsii.String("Must be empty or an exact AWS Secrets Manager secret ARN without wildcards."),
+		Description:           jsii.String("Optional exact Secrets Manager ARN for the managed lesser-host instance key. When provided, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and grants direct read access to that secret."),
 	})
 
 	stageDomain := resolvedStageDomainFromDeployInputs(
@@ -123,8 +120,4 @@ func resolvedStageDomainFromDeployInputs(stack awscdk.Stack, stage string, baseD
 		),
 		nil,
 	)
-}
-
-func defaultSsmParamPath(parts ...string) string {
-	return fmt.Sprintf("/%s", strings.Join(parts, "/"))
 }

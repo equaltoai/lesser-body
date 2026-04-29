@@ -43,6 +43,8 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/api/v1/souls/mine":
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-carol"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-carol","status":"active"}}`))
 		case "/api/v1/soul/agents/" + agentID + "/registration":
@@ -138,7 +140,7 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		}
 	})
 
-	t.Run("sms send uses request id as fallback idempotency key", func(t *testing.T) {
+	t.Run("sms send generates fallback idempotency key", func(t *testing.T) {
 		gotAuth = ""
 		gotBody = nil
 
@@ -157,8 +159,9 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("sms_send fallback idempotency: status=%d body=%s", resp.Status, string(resp.Body))
 		}
-		if gotBody["idempotencyKey"] != "req-sms-send-123" {
-			t.Fatalf("expected sms fallback idempotencyKey=req-sms-send-123, got %+v", gotBody)
+		idempotencyKey, _ := gotBody["idempotencyKey"].(string)
+		if idempotencyKey == "" || idempotencyKey == "req-sms-send-123" {
+			t.Fatalf("expected generated sms fallback idempotencyKey distinct from request id, got %+v", gotBody)
 		}
 		if _, ok := gotBody["inReplyTo"]; ok {
 			t.Fatalf("expected no inReplyTo for non-reply sms, got %+v", gotBody)
@@ -175,7 +178,7 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 			_ = json.Unmarshal(b, &out)
 		}
 		data, _ := out.StructuredContent["data"].(map[string]any)
-		if data["idempotencyKey"] != "req-sms-send-123" {
+		if data["idempotencyKey"] != idempotencyKey {
 			t.Fatalf("expected sms fallback result idempotencyKey, got %+v", data)
 		}
 	})

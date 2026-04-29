@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -484,9 +483,6 @@ func outboundIdempotencyKey(ctx context.Context, explicit string) string {
 	explicit = strings.TrimSpace(explicit)
 	if explicit != "" {
 		return explicit
-	}
-	if requestID := auth.RequestIDFromToolContext(ctx); requestID != "" {
-		return requestID
 	}
 	return resolveOutboundCommIdempotencyKey(ctx, "")
 }

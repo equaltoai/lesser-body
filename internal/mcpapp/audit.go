@@ -19,7 +19,7 @@ func WithAudit(next apptheory.Handler, logger *slog.Logger) apptheory.Handler {
 	}
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		if err := authorizeTools(ctx); err != nil {
+		if err := authorizeMCPRequests(ctx); err != nil {
 			auditMcp(ctx, logger)
 			if stepUp, ok := err.(*mcpStepUpRequiredError); ok {
 				return insufficientScopeMCPResponse(ctx, stepUp.GrantedScopes, stepUp.RequiredScopes), nil
@@ -43,7 +43,7 @@ func (e *mcpStepUpRequiredError) Error() string {
 	return "insufficient scope"
 }
 
-func authorizeTools(ctx *apptheory.Context) error {
+func authorizeMCPRequests(ctx *apptheory.Context) error {
 	if ctx == nil {
 		return nil
 	}
@@ -60,7 +60,7 @@ func authorizeTools(ctx *apptheory.Context) error {
 			return nil
 		}
 		for _, req := range reqs {
-			if err := authorizeToolsRequest(ctx, req); err != nil {
+			if err := authorizeMCPRequest(ctx, req); err != nil {
 				return err
 			}
 		}
@@ -71,21 +71,16 @@ func authorizeTools(ctx *apptheory.Context) error {
 	if err != nil {
 		return nil
 	}
-	return authorizeToolsRequest(ctx, req)
+	return authorizeMCPRequest(ctx, req)
 }
 
-func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) error {
-	if ctx == nil || req == nil || req.Method != "tools/call" {
+func authorizeMCPRequest(ctx *apptheory.Context, req *mcpruntime.Request) error {
+	if ctx == nil || req == nil {
 		return nil
 	}
 
-	var params struct {
-		Name string `json:"name"`
-	}
-	_ = json.Unmarshal(req.Params, &params)
-	toolName := strings.TrimSpace(params.Name)
-	if toolName == "" {
-		// Let the MCP runtime return Invalid params.
+	requiredScopes := requiredScopesForMCPRequest(req)
+	if len(requiredScopes) == 0 {
 		return nil
 	}
 
@@ -103,12 +98,11 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 	}
 
-	// M5 tool policy: read tools require read (or write/admin), write tools require write (or admin).
+	// M5 policy: read surfaces require read (or write/admin), write surfaces require write (or admin).
 	if hasAnyScope(p.Claims.Scopes, "admin") {
 		return nil
 	}
 
-	requiredScopes := requiredScopesForTool(toolName)
 	allowedScopes := append([]string(nil), requiredScopes...)
 	if len(requiredScopes) == 1 && requiredScopes[0] == "read" {
 		allowedScopes = append(allowedScopes, "write")
@@ -120,6 +114,46 @@ func authorizeToolsRequest(ctx *apptheory.Context, req *mcpruntime.Request) erro
 	return &mcpStepUpRequiredError{
 		GrantedScopes:  append([]string(nil), p.Claims.Scopes...),
 		RequiredScopes: requiredScopes,
+	}
+}
+
+func requiredScopesForMCPRequest(req *mcpruntime.Request) []string {
+	if req == nil {
+		return nil
+	}
+
+	switch req.Method {
+	case "tools/call":
+		var params struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
+		toolName := strings.TrimSpace(params.Name)
+		if toolName == "" {
+			// Let the MCP runtime return Invalid params.
+			return nil
+		}
+		return requiredScopesForTool(toolName)
+	case "resources/read":
+		var params struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
+		if strings.TrimSpace(params.URI) == "" {
+			return nil
+		}
+		return []string{"read"}
+	case "prompts/get":
+		var params struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
+		if strings.TrimSpace(params.Name) == "" {
+			return nil
+		}
+		return []string{"read"}
+	default:
+		return nil
 	}
 }
 
