@@ -34,7 +34,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 
 		switch {
 		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":

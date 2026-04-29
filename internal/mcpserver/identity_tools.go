@@ -144,21 +144,25 @@ func authenticatedAgentID(ctx context.Context) (string, error) {
 	if bearerToken == "" {
 		return "", oauthBearerRequiredFailure("missing_bearer_token")
 	}
-	if err := verifyAuthenticatedAgentWithLesser(ctx, bearerToken, agentID); err != nil {
+	if err := verifyAuthenticatedAgentWithLesser(ctx, bearerToken, agentID, username); err != nil {
 		return "", err
 	}
 
 	return agentID, nil
 }
 
-func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string, agentID string) error {
+func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string, agentID string, username string) error {
 	agentID = normalizeSoulAgentID(agentID)
 	bearerToken = strings.TrimSpace(bearerToken)
+	username = normalizeLocalAgentUsername(username)
 	if agentID == "" {
 		return newLocalAuthFailure("missing bound soul identity", "missing_bound_soul")
 	}
 	if bearerToken == "" {
 		return oauthBearerRequiredFailure("missing_bearer_token")
+	}
+	if username == "" {
+		return newLocalAuthFailure("missing authenticated agent identity", "missing_authenticated_identity")
 	}
 
 	client, err := lesser(ctx)
@@ -182,7 +186,13 @@ func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string,
 	for _, item := range items {
 		im, _ := item.(map[string]any)
 		agent, _ := im["agent"].(map[string]any)
-		if normalizeSoulAgentID(stringFromMap(agent, "agent_id")) == agentID {
+		if normalizeSoulAgentID(stringFromMap(agent, "agent_id")) != agentID {
+			continue
+		}
+
+		binding, _ := im["binding"].(map[string]any)
+		if strings.ToLower(stringFromMap(im, "binding_state")) == "bound" &&
+			normalizeLocalAgentUsername(stringFromMap(binding, "agent_username")) == username {
 			return nil
 		}
 	}
@@ -199,6 +209,10 @@ func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string,
 			"reason":          "soul_binding_not_authorized",
 		},
 	}
+}
+
+func normalizeLocalAgentUsername(username string) string {
+	return strings.ToLower(strings.TrimSpace(username))
 }
 
 func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {

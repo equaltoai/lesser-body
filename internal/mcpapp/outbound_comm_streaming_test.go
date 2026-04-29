@@ -37,7 +37,7 @@ func TestSmsSendStreamingEmitsProgressAndFinalResult(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-dana"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-dana"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-dana","status":"active"}}`))
 		case "/api/v1/soul/agents/" + agentID + "/registration":

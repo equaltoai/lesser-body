@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
@@ -129,6 +130,61 @@ func installSoulBindingLookup(t *testing.T, username string, agentID string) {
 	})
 }
 
+func TestVerifyAuthenticatedAgentWithLesserRequiresBoundLocalAgent(t *testing.T) {
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "unbound",
+			response: `{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"unbound","binding":null}]}`,
+		},
+		{
+			name:     "bound to another local agent",
+			response: `{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent2"}}]}`,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			lesserapi.ResetForTests()
+			t.Cleanup(lesserapi.ResetForTests)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path != "/api/v1/souls/mine" {
+					t.Fatalf("unexpected path: %s", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
+					t.Fatalf("expected OAuth bearer passthrough, got %q", got)
+				}
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			defer server.Close()
+
+			t.Setenv("LESSER_API_BASE_URL", server.URL)
+
+			err := verifyAuthenticatedAgentWithLesser(context.Background(), "oauth-token", agentID, "Agent1")
+			if err == nil {
+				t.Fatalf("expected stale local binding to be rejected")
+			}
+			failure := mcpAuthFailureFromError(err)
+			if failure == nil {
+				t.Fatalf("expected MCP auth failure, got %T %v", err, err)
+			}
+			if failure.Code != "forbidden" || failure.Status != http.StatusForbidden {
+				t.Fatalf("unexpected failure: %+v", failure)
+			}
+			if failure.Details["reason"] != "soul_binding_not_authorized" {
+				t.Fatalf("unexpected failure details: %+v", failure.Details)
+			}
+		})
+	}
+}
+
 func TestNormalizeCurrentInstanceLocalLookupQuery(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +221,8 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	installSoulBindingLookup(t, "Agent1", agentID)
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
 	soulapi.ResetForTests()
 	t.Cleanup(soulapi.ResetForTests)
 
@@ -172,7 +230,7 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		default:

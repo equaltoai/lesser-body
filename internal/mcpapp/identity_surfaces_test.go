@@ -57,7 +57,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 
 		switch {
 		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			q := r.URL.Query().Get("q")
 			domain := r.URL.Query().Get("domain")
@@ -626,7 +626,7 @@ func TestLBM1_IdentityLookupBareLocalFailsWithoutTrustworthyCurrentInstanceDomai
 
 		switch {
 		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/search":
@@ -732,7 +732,7 @@ func TestLBM1_IdentityLookupMalformedLocalIdentifierReturnsBadRequest(t *testing
 
 		switch {
 		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			gotSearchQuery = r.URL.Query().Get("q")
 			gotSearchDomain = r.URL.Query().Get("domain")
@@ -839,7 +839,7 @@ func TestLBM1_IdentityLookupUnsupportedRemoteActorURLReturnsBadRequest(t *testin
 
 		switch {
 		case r.URL.Path == "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"}}]}`))
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
 		case r.URL.Path == "/api/v1/soul/search":
 			searchCalled = true
 			_, _ = w.Write([]byte(`{"version":"1","results":[],"count":0,"has_more":false}`))
