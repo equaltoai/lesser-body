@@ -28,13 +28,16 @@ This doc describes the implemented security posture of `lesser-body`.
 - Tokens must include a non-empty `username` claim (used as the request identity).
 - Tokens are rejected if `iat` is older than 24 hours (a safety check independent of `exp`).
 
-### Scope enforcement (tool calls)
+### Scope enforcement (MCP calls)
 
-JWT callers are authorized by scope on `tools/call`:
+JWT callers are authorized by scope on `tools/call`, `resources/read`, and `prompts/get`:
 
 - `admin`: all tools
 - `write`: write tools + read tools
 - `read`: read tools only
+
+Data-bearing resources and prompts require at least `read` scope. Tool-specific write operations require `write`
+scope (or `admin`).
 
 Write tools include:
 
@@ -65,7 +68,11 @@ It does not log bearer tokens or tool arguments by default.
 At a minimum, the MCP Lambda needs:
 
 - `secretsmanager:GetSecretValue` for `JWT_SECRET_ARN` (and `LESSER_HOST_INSTANCE_KEY_ARN` if used)
-- DynamoDB read/write on the Lesser stage table (for memory events)
+- DynamoDB access on scoped Lesser stage table partition keys used by lesser-body. Read-only access covers
+  `LBMEMORY#*` memory events, `SOUL_BODY_BINDING_USERNAME#*` soul-binding records, and `INSTANCE#CONFIG` managed
+  trust configuration. Write access is limited to `LBMEMORY#*` memory events. CDK enforces these prefixes with
+  `dynamodb:LeadingKeys` conditions and splits table description, scoped reads, and memory-only writes into separate
+  policy statements.
 - DynamoDB read/write on the MCP session table (if enabled)
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
