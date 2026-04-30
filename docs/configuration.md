@@ -64,11 +64,13 @@ Variables:
 
 ### Endpoints
 
-- `MCP_ENDPOINT` (string, optional but recommended)
+- `MCP_ENDPOINT` (string, required for public discovery/OAuth metadata)
   - The public MCP endpoint template clients should use (for example: `https://api.dev.example.com/mcp/{actor}`).
   - Used by `GET /.well-known/mcp.json` and by the `agent://config` resource.
-  - When set, discovery validates that inbound requests are arriving on the same public MCP URL instead of emitting
+  - Discovery validates that inbound requests are arriving on the same public MCP URL instead of emitting
     mismatched `resource` metadata.
+  - Public discovery fails closed when unset; lesser-body does not infer OAuth resource metadata from `Host` or
+    `X-Forwarded-Host` headers.
 - `MCP_ALLOWED_ORIGINS` (string, optional but recommended for browser clients)
   - Comma-separated list of allowed browser origins for discovery and MCP responses.
   - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.

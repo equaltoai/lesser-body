@@ -40,7 +40,7 @@ var publicOAuthDiscoveryScopes = []string{"read", "write", "follow", "push"}
 
 func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		endpoint, err := validatedMcpEndpointForRequest(ctx)
+		endpoint, err := publicDiscoveryMcpEndpointForRequest(ctx)
 		if err != nil {
 			return invalidDiscoveryConfigResponse(err), nil
 		}
@@ -91,7 +91,7 @@ func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer stri
 	probedAuthorizationServerIssuer = strings.TrimSpace(probedAuthorizationServerIssuer)
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		endpoint, err := validatedMcpEndpointForRequest(ctx)
+		endpoint, err := publicDiscoveryMcpEndpointForRequest(ctx)
 		if err != nil {
 			return invalidDiscoveryConfigResponse(err), nil
 		}
@@ -149,24 +149,14 @@ func mcpEndpointForRequest(ctx *apptheory.Context) string {
 }
 
 func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
-	endpoint, err := configuredMcpEndpointForRequest(ctx)
-	if err != nil {
-		endpoint = ""
-	}
-	if endpoint == "" {
-		endpoint = mcpEndpointForRequest(ctx)
+	endpoint, err := publicDiscoveryMcpEndpointForRequest(ctx)
+	if err != nil || endpoint == "" {
+		return ""
 	}
 	if url, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(endpoint); ok {
 		return url
 	}
-	if ctx == nil {
-		return ""
-	}
-	url, ok := oauthruntime.ProtectedResourceMetadataURLForRequest(ctx.Request.Headers)
-	if !ok {
-		return ""
-	}
-	return url
+	return ""
 }
 
 func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {

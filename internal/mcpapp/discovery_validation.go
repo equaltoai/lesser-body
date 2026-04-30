@@ -122,6 +122,13 @@ func validatedMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
 	return resolvedConfigured, nil
 }
 
+func publicDiscoveryMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
+	if strings.TrimSpace(os.Getenv("MCP_ENDPOINT")) == "" {
+		return "", fmt.Errorf("MCP_ENDPOINT is required for public discovery metadata")
+	}
+	return validatedMcpEndpointForRequest(ctx)
+}
+
 func configuredMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {
 	configured := strings.TrimSpace(os.Getenv("MCP_ENDPOINT"))
 	if configured == "" {

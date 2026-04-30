@@ -120,6 +120,7 @@ func TestNew_CachesAuthorizationServerIssuerFromMetadataProbe(t *testing.T) {
 
 func TestNew_SkipsAuthorizationServerMetadataProbeWithoutMCPEndpoint(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "")
 
 	previousLoader := loadEffectiveTrustConfig
 	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
@@ -147,6 +148,66 @@ func TestNew_SkipsAuthorizationServerMetadataProbeWithoutMCPEndpoint(t *testing.
 	}
 	if probeCalled {
 		t.Fatalf("expected metadata probe to be skipped without MCP_ENDPOINT")
+	}
+}
+
+func TestWellKnownOAuthProtectedResource_RejectsMissingConfiguredEndpoint(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "")
+
+	previousLoader := loadEffectiveTrustConfig
+	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	}
+	t.Cleanup(func() {
+		loadEffectiveTrustConfig = previousLoader
+	})
+
+	app, err := New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/oauth-protected-resource/mcp/agent1",
+		Headers: map[string][]string{
+			"x-forwarded-proto": {"https"},
+			"x-forwarded-host":  {"evil.example"},
+		},
+	})
+	if resp.Status != 500 {
+		t.Fatalf("expected 500, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	body := string(resp.Body)
+	if !strings.Contains(body, "MCP_ENDPOINT is required") {
+		t.Fatalf("expected missing MCP_ENDPOINT error, got %s", body)
+	}
+	if strings.Contains(body, "evil.example") {
+		t.Fatalf("missing MCP_ENDPOINT path must not infer metadata from untrusted host headers: %s", body)
+	}
+
+	discoveryResp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/mcp.json",
+		Headers: map[string][]string{
+			"x-forwarded-proto": {"https"},
+			"x-forwarded-host":  {"evil.example"},
+		},
+	})
+	if discoveryResp.Status != 500 {
+		t.Fatalf("expected discovery 500, got %d (%s)", discoveryResp.Status, string(discoveryResp.Body))
+	}
+	discoveryBody := string(discoveryResp.Body)
+	if !strings.Contains(discoveryBody, "MCP_ENDPOINT is required") {
+		t.Fatalf("expected missing MCP_ENDPOINT discovery error, got %s", discoveryBody)
+	}
+	if strings.Contains(discoveryBody, "evil.example") {
+		t.Fatalf("discovery must not infer endpoint from untrusted host headers: %s", discoveryBody)
 	}
 }
 

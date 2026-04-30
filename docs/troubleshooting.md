@@ -102,6 +102,7 @@ Symptoms:
 
 Common causes:
 
+- `MCP_ENDPOINT` is unset.
 - `MCP_ENDPOINT` is malformed or does not include `/mcp` as its terminal resource path.
 - Clients are reaching a different public host than the one configured in `MCP_ENDPOINT`.
 - Managed `TRUST_CONFIG.baseURL` / `TrustBaseURL` is empty or points at the wrong Lesser environment.
