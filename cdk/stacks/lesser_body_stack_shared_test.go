@@ -181,17 +181,16 @@ func TestLesserTablePolicyUsesLeastPrivilegePrimaryTableAccess(t *testing.T) {
 		})
 	})
 
-	var lesserTableStatement map[string]any
+	var lesserTableStatements []map[string]any
 	for _, statement := range allPolicyStatements(t, mustResources(t, template)) {
 		if strings.Contains(mustJSON(t, extractStatementResourcesFromMap(statement)), "/theory/dev/lesser/exports/v1/table_name") {
-			lesserTableStatement = statement
-			break
+			lesserTableStatements = append(lesserTableStatements, statement)
 		}
 	}
-	if lesserTableStatement == nil {
+	if len(lesserTableStatements) != 3 {
 		t.Fatalf("expected Lesser table IAM statement")
 	}
-	statementJSON := mustJSON(t, lesserTableStatement)
+	statementJSON := mustJSON(t, lesserTableStatements)
 	for _, want := range []string{
 		`"dynamodb:DescribeTable"`,
 		`"dynamodb:GetItem"`,
@@ -214,6 +213,59 @@ func TestLesserTablePolicyUsesLeastPrivilegePrimaryTableAccess(t *testing.T) {
 		if strings.Contains(statementJSON, unwanted) {
 			t.Fatalf("expected Lesser table policy to omit %s, got %s", unwanted, statementJSON)
 		}
+	}
+
+	foundDescribe := false
+	foundRead := false
+	foundMemoryWrite := false
+	for _, statement := range lesserTableStatements {
+		statementJSON := mustJSON(t, statement)
+		switch {
+		case strings.Contains(statementJSON, `"dynamodb:DescribeTable"`):
+			foundDescribe = true
+			if strings.Contains(statementJSON, `"Condition"`) {
+				t.Fatalf("DescribeTable statement should not carry unsupported LeadingKeys condition: %s", statementJSON)
+			}
+		case strings.Contains(statementJSON, `"dynamodb:Query"`) || strings.Contains(statementJSON, `"dynamodb:GetItem"`):
+			foundRead = true
+			for _, want := range []string{
+				`"dynamodb:Query"`,
+				`"dynamodb:GetItem"`,
+				`"dynamodb:LeadingKeys"`,
+				`"LBMEMORY#*"`,
+				`"SOUL_BODY_BINDING_USERNAME#*"`,
+			} {
+				if !strings.Contains(statementJSON, want) {
+					t.Fatalf("expected scoped read policy to contain %s, got %s", want, statementJSON)
+				}
+			}
+			if strings.Contains(statementJSON, `"dynamodb:PutItem"`) {
+				t.Fatalf("expected read and write Lesser table policies to be split, got %s", statementJSON)
+			}
+		case strings.Contains(statementJSON, `"dynamodb:PutItem"`):
+			foundMemoryWrite = true
+			for _, want := range []string{
+				`"dynamodb:PutItem"`,
+				`"dynamodb:LeadingKeys"`,
+				`"LBMEMORY#*"`,
+			} {
+				if !strings.Contains(statementJSON, want) {
+					t.Fatalf("expected scoped memory write policy to contain %s, got %s", want, statementJSON)
+				}
+			}
+			for _, unwanted := range []string{
+				`"SOUL_BODY_BINDING_USERNAME#*"`,
+				`"dynamodb:Query"`,
+				`"dynamodb:GetItem"`,
+			} {
+				if strings.Contains(statementJSON, unwanted) {
+					t.Fatalf("expected memory write policy to omit %s, got %s", unwanted, statementJSON)
+				}
+			}
+		}
+	}
+	if !foundDescribe || !foundRead || !foundMemoryWrite {
+		t.Fatalf("expected separate describe/read/write Lesser table policies, got %s", mustJSON(t, lesserTableStatements))
 	}
 }
 

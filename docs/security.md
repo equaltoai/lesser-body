@@ -69,7 +69,9 @@ At a minimum, the MCP Lambda needs:
 
 - `secretsmanager:GetSecretValue` for `JWT_SECRET_ARN` (and `LESSER_HOST_INSTANCE_KEY_ARN` if used)
 - DynamoDB read/write on scoped Lesser stage table partition keys used by lesser-body (`LBMEMORY#*` for memory
-  events and `SOUL_BODY_BINDING_USERNAME#*` for soul-binding reads)
+  events and `SOUL_BODY_BINDING_USERNAME#*` for soul-binding reads). CDK enforces these prefixes with
+  `dynamodb:LeadingKeys` conditions and splits table description, scoped reads, and memory-only writes into separate
+  policy statements.
 - DynamoDB read/write on the MCP session table (if enabled)
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 

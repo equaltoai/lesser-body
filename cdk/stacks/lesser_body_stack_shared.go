@@ -180,12 +180,24 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	})
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{
-			jsii.String("dynamodb:Query"),
-			jsii.String("dynamodb:GetItem"),
-			jsii.String("dynamodb:PutItem"),
 			jsii.String("dynamodb:DescribeTable"),
 		},
 		Resources: &[]*string{tableArn},
+	}))
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("dynamodb:Query"),
+			jsii.String("dynamodb:GetItem"),
+		},
+		Resources:  &[]*string{tableArn},
+		Conditions: dynamodbLeadingKeysCondition("LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*"),
+	}))
+	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions: &[]*string{
+			jsii.String("dynamodb:PutItem"),
+		},
+		Resources:  &[]*string{tableArn},
+		Conditions: dynamodbLeadingKeysCondition("LBMEMORY#*"),
 	}))
 
 	mcpLambdaArnParam := awsssm.NewCfnParameter(stack, jsii.String("McpLambdaArnParam"), &awsssm.CfnParameterProps{
@@ -249,6 +261,20 @@ func ssmResourceName(parts ...*string) *string {
 
 func tokenJoin(delimiter string, parts ...*string) *string {
 	return awscdk.Fn_Join(jsii.String(delimiter), &parts)
+}
+
+func dynamodbLeadingKeysCondition(keys ...string) *map[string]interface{} {
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return &map[string]interface{}{
+		"ForAllValues:StringLike": map[string]interface{}{
+			"dynamodb:LeadingKeys": values,
+		},
+	}
 }
 
 func importStringParameter(scope constructs.Construct, id *string, parameterName *string) awsssm.IStringParameter {
