@@ -234,6 +234,7 @@ func TestLesserTablePolicyUsesLeastPrivilegePrimaryTableAccess(t *testing.T) {
 				`"dynamodb:LeadingKeys"`,
 				`"LBMEMORY#*"`,
 				`"SOUL_BODY_BINDING_USERNAME#*"`,
+				`"INSTANCE#CONFIG"`,
 			} {
 				if !strings.Contains(statementJSON, want) {
 					t.Fatalf("expected scoped read policy to contain %s, got %s", want, statementJSON)
@@ -255,6 +256,7 @@ func TestLesserTablePolicyUsesLeastPrivilegePrimaryTableAccess(t *testing.T) {
 			}
 			for _, unwanted := range []string{
 				`"SOUL_BODY_BINDING_USERNAME#*"`,
+				`"INSTANCE#CONFIG"`,
 				`"dynamodb:Query"`,
 				`"dynamodb:GetItem"`,
 			} {

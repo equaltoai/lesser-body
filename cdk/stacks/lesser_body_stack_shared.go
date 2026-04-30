@@ -190,7 +190,7 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 			jsii.String("dynamodb:GetItem"),
 		},
 		Resources:  &[]*string{tableArn},
-		Conditions: dynamodbLeadingKeysCondition("LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*"),
+		Conditions: dynamodbLeadingKeysCondition("LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"),
 	}))
 	handler.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions: &[]*string{

@@ -68,8 +68,9 @@ It does not log bearer tokens or tool arguments by default.
 At a minimum, the MCP Lambda needs:
 
 - `secretsmanager:GetSecretValue` for `JWT_SECRET_ARN` (and `LESSER_HOST_INSTANCE_KEY_ARN` if used)
-- DynamoDB read/write on scoped Lesser stage table partition keys used by lesser-body (`LBMEMORY#*` for memory
-  events and `SOUL_BODY_BINDING_USERNAME#*` for soul-binding reads). CDK enforces these prefixes with
+- DynamoDB access on scoped Lesser stage table partition keys used by lesser-body. Read-only access covers
+  `LBMEMORY#*` memory events, `SOUL_BODY_BINDING_USERNAME#*` soul-binding records, and `INSTANCE#CONFIG` managed
+  trust configuration. Write access is limited to `LBMEMORY#*` memory events. CDK enforces these prefixes with
   `dynamodb:LeadingKeys` conditions and splits table description, scoped reads, and memory-only writes into separate
   policy statements.
 - DynamoDB read/write on the MCP session table (if enabled)
