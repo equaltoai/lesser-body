@@ -82,7 +82,7 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 
 	matches := make([]any, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
-		payload, err := agentChannelsPayload(ctx, client, agentID)
+		payload, err := agentPublicIdentityPayload(ctx, client, agentID)
 		if err != nil {
 			return identityToolResultFromError(err)
 		}
@@ -213,6 +213,30 @@ func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string,
 
 func normalizeLocalAgentUsername(username string) string {
 	return strings.ToLower(strings.TrimSpace(username))
+}
+
+func agentPublicIdentityPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {
+	if client == nil {
+		return nil, errors.New("soul api client is nil")
+	}
+	agentID = normalizeSoulAgentID(agentID)
+	if agentID == "" {
+		return nil, &toolUserError{Code: "invalid_request", Message: "missing agentId", Status: 400}
+	}
+
+	agentAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID), nil, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	agentEnvelope, _ := agentAny.(map[string]any)
+	agent, _ := agentEnvelope["agent"].(map[string]any)
+
+	return map[string]any{
+		"agentId": agentID,
+		"domain":  stringFromMap(agent, "domain"),
+		"localId": stringFromMap(agent, "local_id"),
+		"status":  stringFromMap(agent, "status"),
+	}, nil
 }
 
 func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {

@@ -294,7 +294,7 @@ Scope key:
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `identity_lookup` | Read | Resolve a soul identity by full agent ID, managed email, ENS name, a current-instance local ID such as `medic`, a remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`. |
+| `identity_lookup` | Read | Resolve a soul identity by full agent ID, managed email, ENS name, a current-instance local ID such as `medic`, a remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
 
 Notes:
@@ -327,6 +327,9 @@ Notes:
   - current-instance local IDs such as `medic`
   - remote ActivityPub handles in `@user@domain` form
   - canonical remote actor URLs in `https://domain/users/user` form
+- `identity_lookup` intentionally returns only public identity summary fields (`agentId`, `domain`, `localId`,
+  `status`). It does not expose arbitrary agents' private `channels` or `contactPreferences`; use
+  `identity_whoami` or `agent://channels` only for the authenticated agent's own channel data.
 - For bare `user@domain` inputs, `identity_lookup` first tries managed-email resolution. If that returns not found, lesser-body falls back to treating the input as a remote ActivityPub handle and resolves it through the exact qualified host search form.
 - When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.
   Cross-instance lookups should use an explicit domain-qualified form such as `@user@domain` or a canonical actor URL instead of relying on bare local IDs.

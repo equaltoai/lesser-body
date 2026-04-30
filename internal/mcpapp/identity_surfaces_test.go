@@ -167,6 +167,15 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
+	assertPublicLookupMatch := func(label string, match map[string]any) {
+		t.Helper()
+		if _, ok := match["channels"]; ok {
+			t.Fatalf("%s: identity_lookup must not expose channels in public matches: %+v", label, match)
+		}
+		if _, ok := match["contactPreferences"]; ok {
+			t.Fatalf("%s: identity_lookup must not expose contactPreferences in public matches: %+v", label, match)
+		}
+	}
 
 	// identity_whoami should resolve the authenticated local agent via the soul binding and return channels + preferences.
 	{
@@ -251,6 +260,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if match["agentId"] != agentID {
 			t.Fatalf("identity_lookup(%q): agentId want %s got %v", q, agentID, match["agentId"])
 		}
+		assertPublicLookupMatch(q, match)
 	}
 	if len(searchQueries) != 0 {
 		t.Fatalf("identity_lookup for managed identifiers should resolve directly, got search queries %+v", searchQueries)
@@ -302,6 +312,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if match["localId"] != "agent-alice" {
 			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
 		}
+		assertPublicLookupMatch(q, match)
 	}
 	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2"}) {
 		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
@@ -376,6 +387,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if match["agentId"] != agentID {
 			t.Fatalf("%s identity_lookup(%q): agentId want %s got %v", tc.name, tc.query, agentID, match["agentId"])
 		}
+		assertPublicLookupMatch(tc.name, match)
 		if !reflect.DeepEqual(searchQueries, []string{tc.wantSearchQ}) {
 			t.Fatalf("%s identity_lookup(%q): search q want [%s] got %+v", tc.name, tc.query, tc.wantSearchQ, searchQueries)
 		}
