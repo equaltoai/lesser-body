@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -130,6 +132,38 @@ func installSoulBindingLookup(t *testing.T, username string, agentID string) {
 	})
 }
 
+func boundSelfResponse(agentID string, username string, domain string, localID string) string {
+	return fmt.Sprintf(`{"agent":{"agent_id":%q,"domain":%q,"local_id":%q,"status":"active","lifecycle_status":"active"},"binding_state":"bound","binding":{"agent_username":%q}}`, agentID, domain, localID, username)
+}
+
+func TestVerifyAuthenticatedAgentWithLesserAcceptsBoundSelfRuntimeAgent(t *testing.T) {
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/souls/mine" {
+			t.Fatalf("must not fall back to wallet inventory endpoint")
+		}
+		if r.URL.Path != "/api/v1/souls/bound/me" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
+			t.Fatalf("expected OAuth bearer passthrough, got %q", got)
+		}
+		_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-alice")))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+
+	if err := verifyAuthenticatedAgentWithLesser(context.Background(), "oauth-token", agentID, "Agent1"); err != nil {
+		t.Fatalf("verifyAuthenticatedAgentWithLesser: %v", err)
+	}
+}
+
 func TestVerifyAuthenticatedAgentWithLesserRequiresBoundLocalAgent(t *testing.T) {
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -139,11 +173,15 @@ func TestVerifyAuthenticatedAgentWithLesserRequiresBoundLocalAgent(t *testing.T)
 	}{
 		{
 			name:     "unbound",
-			response: `{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"unbound","binding":null}]}`,
+			response: `{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"unbound","binding":{"agent_username":"agent1"}}`,
 		},
 		{
 			name:     "bound to another local agent",
-			response: `{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent2"}}]}`,
+			response: `{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent2"}}`,
+		},
+		{
+			name:     "bound to another soul agent",
+			response: `{"agent":{"agent_id":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}`,
 		},
 	}
 
@@ -155,7 +193,7 @@ func TestVerifyAuthenticatedAgentWithLesserRequiresBoundLocalAgent(t *testing.T)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path != "/api/v1/souls/mine" {
+				if r.URL.Path != "/api/v1/souls/bound/me" {
 					t.Fatalf("unexpected path: %s", r.URL.Path)
 				}
 				if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
@@ -182,6 +220,46 @@ func TestVerifyAuthenticatedAgentWithLesserRequiresBoundLocalAgent(t *testing.T)
 				t.Fatalf("unexpected failure details: %+v", failure.Details)
 			}
 		})
+	}
+}
+
+func TestVerifyAuthenticatedAgentWithLesserDoesNotFallbackToSoulsMine(t *testing.T) {
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+
+	var mineCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"no bound soul for authenticated principal","error_description":"no bound soul for authenticated principal","error_code":"soul_not_bound"}`))
+		case "/api/v1/souls/mine":
+			mineCalled = true
+			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `"},"binding_state":"bound","binding":{"agent_username":"agent1"}}],"count":1}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+
+	err := verifyAuthenticatedAgentWithLesser(context.Background(), "oauth-token", agentID, "Agent1")
+	if err == nil {
+		t.Fatalf("expected bound-self 404 to fail closed")
+	}
+	if mineCalled {
+		t.Fatalf("must not fall back to /api/v1/souls/mine after bound-self denial")
+	}
+	var userErr *toolUserError
+	if !errors.As(err, &userErr) {
+		t.Fatalf("expected toolUserError for bound-self denial, got %T %v", err, err)
+	}
+	if userErr.Code != "not_found" || userErr.Status != http.StatusNotFound {
+		t.Fatalf("unexpected bound-self denial: %+v", userErr)
 	}
 }
 
@@ -229,8 +307,8 @@ func TestPrepareSoulLookupSearch_CurrentInstanceLocalQueryUsesAuthenticatedDomai
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/souls/mine":
-			_, _ = w.Write([]byte(`{"souls":[{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice"},"binding_state":"bound","binding":{"agent_username":"agent1"}}]}`))
+		case "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-alice")))
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		default:

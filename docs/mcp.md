@@ -307,7 +307,9 @@ Notes:
   separate Lesser notification queries, so their per-type cursors are not collapsed into one `nextCursor`. Non-timestamp
   `since` values remain a legacy cursor alias for compatibility, but new callers should not rely on that path.
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
-  and inbox-backed verification.
+  and inbox-backed verification. For self-identity checks, lesser-body passes that bearer to Lesser's
+  `GET /api/v1/souls/bound/me` endpoint and fails closed if Lesser does not confirm an active bound soul for the
+  authenticated local username.
 - Host-backed communication tools (`email_send`, `email_read`, `email_get`, `email_get_content`, `email_search`,
   `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`, `sms_read`, `voicemail_read`)
   additionally require the managed

@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -139,6 +140,10 @@ func installSoulBindingLookup(t testing.TB, username string, agentID string) {
 			},
 		}, nil
 	})
+}
+
+func boundSelfResponse(agentID string, username string, domain string, localID string) string {
+	return fmt.Sprintf(`{"agent":{"agent_id":%q,"domain":%q,"local_id":%q,"status":"active","lifecycle_status":"active"},"binding_state":"bound","binding":{"agent_username":%q}}`, agentID, domain, localID, username)
 }
 
 func installMissingSoulBindingLookup(t testing.TB) {
