@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -170,33 +171,30 @@ func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string,
 		return &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
 	}
 
-	mineAny, err := client.DoJSON(ctx, "GET", "/api/v1/souls/mine", nil, bearerToken, nil)
+	boundAny, err := client.DoJSON(ctx, "GET", "/api/v1/souls/bound/me", nil, bearerToken, nil)
 	if err != nil {
-		return err
+		return boundSelfVerificationError(err)
 	}
-	mine, ok := mineAny.(map[string]any)
+	bound, ok := boundAny.(map[string]any)
 	if !ok {
-		return fmt.Errorf("unexpected souls/mine response")
+		return fmt.Errorf("unexpected souls/bound/me response")
 	}
 
-	items, _ := mine["souls"].([]any)
-	if len(items) == 0 {
-		return &toolUserError{Code: "not_found", Message: "no soul agents found for this identity", Status: 404}
-	}
-	for _, item := range items {
-		im, _ := item.(map[string]any)
-		agent, _ := im["agent"].(map[string]any)
-		if normalizeSoulAgentID(stringFromMap(agent, "agent_id")) != agentID {
-			continue
-		}
-
-		binding, _ := im["binding"].(map[string]any)
-		if strings.ToLower(stringFromMap(im, "binding_state")) == "bound" &&
-			normalizeLocalAgentUsername(stringFromMap(binding, "agent_username")) == username {
-			return nil
-		}
+	agent, _ := bound["agent"].(map[string]any)
+	if normalizeSoulAgentID(stringFromMap(agent, "agent_id")) != agentID {
+		return boundSoulNotAuthorizedFailure()
 	}
 
+	binding, _ := bound["binding"].(map[string]any)
+	if strings.ToLower(stringFromMap(bound, "binding_state")) != "bound" ||
+		normalizeLocalAgentUsername(stringFromMap(binding, "agent_username")) != username {
+		return boundSoulNotAuthorizedFailure()
+	}
+
+	return nil
+}
+
+func boundSoulNotAuthorizedFailure() *mcpAuthFailure {
 	return &mcpAuthFailure{
 		Code:    "forbidden",
 		Message: "OAuth identity is not authorized for this bound soul",
@@ -209,6 +207,54 @@ func verifyAuthenticatedAgentWithLesser(ctx context.Context, bearerToken string,
 			"reason":          "soul_binding_not_authorized",
 		},
 	}
+}
+
+func boundSelfVerificationError(err error) error {
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return failure
+	}
+
+	var apiErr *lesserapi.APIError
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+
+	message, parsed := boundSelfAPIErrorMessage(apiErr.Body)
+	if message == "" {
+		message = "bound soul self-verification failed"
+	}
+	details := map[string]any{
+		"source":       "lesser_bound_self",
+		"upstreamCode": apiErr.Status,
+	}
+	if parsed != nil {
+		details["apiError"] = parsed
+		if reason := extractString(parsed, "error_code"); reason != "" {
+			details["reason"] = reason
+		}
+	}
+
+	return &toolUserError{
+		Code:    identityErrorCodeForStatus(apiErr.Status),
+		Message: message,
+		Status:  apiErr.Status,
+		Details: details,
+	}
+}
+
+func boundSelfAPIErrorMessage(body []byte) (string, map[string]any) {
+	message, parsed := commExtractAPIErrorMessage(body)
+	if parsed == nil {
+		return message, nil
+	}
+	if msg := firstNonEmpty(
+		extractString(parsed, "error_description"),
+		extractString(parsed, "error"),
+		extractString(parsed, "message"),
+	); msg != "" {
+		return msg, parsed
+	}
+	return message, parsed
 }
 
 func normalizeLocalAgentUsername(username string) string {

@@ -127,11 +127,16 @@ Symptoms:
 
 Common causes:
 
+- The Lesser instance does not yet expose `GET /api/v1/souls/bound/me`, or the endpoint returns a fail-closed
+  `soul_not_bound` / `soul_not_available` response for the authenticated runtime agent.
 - `LESSER_SOUL_API_BASE_URL` points at the Lesser instance API (`https://api.<stageDomain>`) instead of lesser-host.
 - In a managed deployment, Lesser `TRUST_CONFIG` is missing `baseURL` and/or `instanceKeySecretARN`.
 
 Fix:
 
+- Verify the authenticated runtime-agent OAuth bearer succeeds against the Lesser bound-self endpoint:
+  `GET https://api.<stageDomain>/api/v1/souls/bound/me`. A healthy souled runtime agent returns
+  `binding_state: "bound"` with `binding.agent_username` matching the token username.
 - In managed AWS deployments, make sure `PK=INSTANCE#CONFIG, SK=TRUST_CONFIG` in `LESSER_TABLE_NAME` has:
   - `managed.baseURL`
   - `managed.instanceKeySecretARN` for host-backed communication tools
