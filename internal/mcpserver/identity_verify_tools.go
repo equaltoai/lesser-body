@@ -129,15 +129,11 @@ func resolveIdentityForVerification(ctx context.Context, client *soulapi.Client,
 		return nil, nil, errors.New("soul api client is nil")
 	}
 
-	resolvePath := "/api/v1/soul/resolve/email/" + url.PathEscape(identifier)
-	switch channel {
-	case "ens":
-		resolvePath = "/api/v1/soul/resolve/ens/" + url.PathEscape(identifier)
-	case "phone":
-		resolvePath = "/api/v1/soul/resolve/phone/" + url.PathEscape(identifier)
+	if channel == "email" || channel == "phone" {
+		return nil, nil, privateReachabilityUnavailableError(channel, "identity_verify")
 	}
 
-	resolvedAny, err := client.DoJSON(ctx, "GET", resolvePath, nil, "", nil)
+	resolvedAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/resolve/ens/"+url.PathEscape(identifier), nil, "", nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -152,15 +148,7 @@ func resolveIdentityForVerification(ctx context.Context, client *soulapi.Client,
 		return nil, nil, errors.New("unexpected resolve response")
 	}
 
-	channelsAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID)+"/channels", nil, "", nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	channelsPayload, _ := channelsAny.(map[string]any)
-	if channelsPayload == nil {
-		channelsPayload = map[string]any{}
-	}
-	return agent, channelsPayload, nil
+	return agent, map[string]any{}, nil
 }
 
 func summarizeResolvedAgent(agent map[string]any) map[string]any {

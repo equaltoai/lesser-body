@@ -302,7 +302,7 @@ func identityWhoamiDef() mcpruntime.ToolDef {
 func identityLookupDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "identity_lookup",
-		Description: "Look up a soul identity by full agentId, managed email, ENS name, a current-instance local ID such as medic, a remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward.",
+		Description: "Look up a public soul identity by full agentId, ENS name, a current-instance local ID such as medic, an explicit remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward. Private email/phone reachability lookup fails closed until lesser-host exposes a body-facing resolver.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -316,7 +316,7 @@ func identityLookupDef() mcpruntime.ToolDef {
 func identityVerifyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "identity_verify",
-		Description: "Verify that a communication came from a specific soul identity.",
+		Description: "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed until lesser-host exposes a body-facing resolver.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

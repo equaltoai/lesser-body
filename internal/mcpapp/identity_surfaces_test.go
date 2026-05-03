@@ -39,6 +39,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	var searchQueries []string
 	var searchDomains []string
 	var emailResolveQueries []string
+	var channelResolveQueries []string
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
 		return &fakeTableTheoryDB{
 			firstFn: func(dest any, where map[string]any) error {
@@ -90,6 +91,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 				}
 			}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/channels":
+			channelResolveQueries = append(channelResolveQueries, agentID)
 			_, _ = w.Write([]byte(`{
 				"agentId":"` + agentID + `",
 				"channels":{
@@ -176,6 +178,27 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("%s: identity_lookup must not expose contactPreferences in public matches: %+v", label, match)
 		}
 	}
+	assertToolErrorPayload := func(label string, body []byte, wantCode string) map[string]any {
+		t.Helper()
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("%s rpc error: %+v", label, rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		if !out.IsError {
+			t.Fatalf("%s expected isError tool result, got %+v", label, out)
+		}
+		errPayload, _ := out.StructuredContent["error"].(map[string]any)
+		if errPayload["code"] != wantCode {
+			t.Fatalf("%s expected error code %q, got %+v", label, wantCode, errPayload)
+		}
+		return errPayload
+	}
 
 	// identity_whoami should resolve the authenticated local agent via the soul binding and return channels + preferences.
 	{
@@ -227,8 +250,8 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 	}
 
-	// identity_lookup should resolve managed email/ENS directly without stripping them to bare localIds.
-	for _, q := range []string{"agent-alice@lessersoul.ai", "agent-alice.lessersoul.eth"} {
+	// identity_lookup should resolve public ENS directly without stripping it to a bare localId.
+	for _, q := range []string{"agent-alice.lessersoul.eth"} {
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_lookup",
 			"arguments": map[string]any{"query": q},
@@ -263,13 +286,40 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		assertPublicLookupMatch(q, match)
 	}
 	if len(searchQueries) != 0 {
-		t.Fatalf("identity_lookup for managed identifiers should resolve directly, got search queries %+v", searchQueries)
+		t.Fatalf("identity_lookup for ENS should resolve directly, got search queries %+v", searchQueries)
 	}
 	if len(searchDomains) != 0 {
-		t.Fatalf("identity_lookup for managed identifiers should not set search domains, got %+v", searchDomains)
+		t.Fatalf("identity_lookup for ENS should not set search domains, got %+v", searchDomains)
 	}
-	if !reflect.DeepEqual(emailResolveQueries, []string{"agent-alice@lessersoul.ai"}) {
-		t.Fatalf("identity_lookup for managed identifiers should only resolve supported managed email directly, got %+v", emailResolveQueries)
+	if len(emailResolveQueries) != 0 {
+		t.Fatalf("identity_lookup for ENS should not call managed email resolution, got %+v", emailResolveQueries)
+	}
+
+	searchQueries = nil
+	searchDomains = nil
+	emailResolveQueries = nil
+
+	// identity_lookup should fail closed for private reachability identifiers until
+	// lesser-host exposes a body-facing instance-authenticated resolver.
+	for _, q := range []string{"agent-alice@lessersoul.ai", "+15550142"} {
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": q},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 30, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_lookup(%q): status=%d body=%s", q, resp.Status, string(resp.Body))
+		}
+		errPayload := assertToolErrorPayload("identity_lookup("+q+")", resp.Body, "private_reachability_unavailable")
+		if errPayload["status"] != float64(501) {
+			t.Fatalf("identity_lookup(%q): expected status 501, got %+v", q, errPayload)
+		}
+	}
+	if len(searchQueries) != 0 || len(searchDomains) != 0 || len(emailResolveQueries) != 0 {
+		t.Fatalf("identity_lookup private reachability should fail before host/search calls: search=%+v domains=%+v email=%+v", searchQueries, searchDomains, emailResolveQueries)
 	}
 
 	searchQueries = nil
@@ -339,13 +389,6 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			wantSearchDomain: "",
 		},
 		{
-			name:             "bare_handle_falls_back_after_email_miss",
-			query:            "steward@remote.example",
-			wantSearchQ:      "remote.example/steward",
-			wantSearchDomain: "",
-			wantEmailResolve: []string{"steward@remote.example"},
-		},
-		{
 			name:             "canonical_actor_url",
 			query:            "https://remote.example/users/steward",
 			wantSearchQ:      "remote.example/steward",
@@ -396,6 +439,30 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 		if !reflect.DeepEqual(emailResolveQueries, tc.wantEmailResolve) {
 			t.Fatalf("%s identity_lookup(%q): email resolves want %+v got %+v", tc.name, tc.query, tc.wantEmailResolve, emailResolveQueries)
+		}
+	}
+
+	// Bare user@domain input is ambiguous with private managed email reachability.
+	// It now fails closed instead of probing host email resolution anonymously; callers
+	// should use @user@domain for public ActivityPub handles.
+	{
+		searchQueries = nil
+		searchDomains = nil
+		emailResolveQueries = nil
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_lookup",
+			"arguments": map[string]any{"query": "steward@remote.example"},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 321, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_lookup(bare user@domain): status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		_ = assertToolErrorPayload("identity_lookup(bare user@domain)", resp.Body, "private_reachability_unavailable")
+		if len(searchQueries) != 0 || len(searchDomains) != 0 || len(emailResolveQueries) != 0 {
+			t.Fatalf("identity_lookup bare user@domain should fail before host/search calls: search=%+v domains=%+v email=%+v", searchQueries, searchDomains, emailResolveQueries)
 		}
 	}
 
@@ -499,13 +566,21 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 	}
 
-	// identity_verify should resolve the identity and verify a concrete inbound message.
-	{
+	// identity_verify should fail closed for private email/phone reachability until
+	// lesser-host exposes a body-facing instance-authenticated resolver.
+	for _, tc := range []struct {
+		channel    string
+		identifier string
+	}{
+		{channel: "email", identifier: "agent-alice@lessersoul.ai"},
+		{channel: "phone", identifier: "+15550142"},
+	} {
+		channelResolveQueries = nil
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "identity_verify",
 			"arguments": map[string]any{
-				"channel":    "email",
-				"identifier": "agent-alice@lessersoul.ai",
+				"channel":    tc.channel,
+				"identifier": tc.identifier,
 				"messageId":  "comm-msg-001",
 			},
 		})
@@ -514,36 +589,23 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			"mcp-session-id": {sessionID},
 		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 6, Method: "tools/call", Params: callParams})
 		if resp.Status != 200 {
-			t.Fatalf("identity_verify email: status=%d body=%s", resp.Status, string(resp.Body))
+			t.Fatalf("identity_verify %s: status=%d body=%s", tc.channel, resp.Status, string(resp.Body))
 		}
-
-		var rpc mcpruntime.Response
-		_ = json.Unmarshal(resp.Body, &rpc)
-		if rpc.Error != nil {
-			t.Fatalf("identity_verify email rpc error: %+v", rpc.Error)
-		}
-		var out mcpruntime.ToolResult
-		{
-			b, _ := json.Marshal(rpc.Result)
-			_ = json.Unmarshal(b, &out)
-		}
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		if data["verified"] != true {
-			t.Fatalf("expected verified identity match, got %+v", data)
-		}
-		if data["matchedBy"] != "sender.agentId" {
-			t.Fatalf("expected sender provenance match, got %+v", data)
+		_ = assertToolErrorPayload("identity_verify "+tc.channel, resp.Body, "private_reachability_unavailable")
+		if len(channelResolveQueries) != 0 {
+			t.Fatalf("identity_verify %s should not fetch private /channels, got %+v", tc.channel, channelResolveQueries)
 		}
 	}
 
 	// identity_verify must not trust spoofable sender display/name/address fields
 	// without authoritative soul agent provenance on the message.
 	{
+		channelResolveQueries = nil
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "identity_verify",
 			"arguments": map[string]any{
-				"channel":    "email",
-				"identifier": "agent-alice@lessersoul.ai",
+				"channel":    "ens",
+				"identifier": "agent-alice.lessersoul.eth",
 				"messageId":  "comm-msg-spoof",
 			},
 		})
@@ -572,10 +634,14 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if data["reason"] != "message_lacks_authoritative_sender_provenance" {
 			t.Fatalf("expected missing provenance reason, got %+v", data)
 		}
+		if len(channelResolveQueries) != 0 {
+			t.Fatalf("identity_verify spoofed sender should not fetch private /channels, got %+v", channelResolveQueries)
+		}
 	}
 
 	// identity_verify should also work when resolving the sender by ENS and using the same message provenance.
 	{
+		channelResolveQueries = nil
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "identity_verify",
 			"arguments": map[string]any{
@@ -605,6 +671,12 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		if data["verified"] != true {
 			t.Fatalf("expected ENS verification to succeed, got %+v", data)
+		}
+		if data["matchedBy"] != "sender.agentId" {
+			t.Fatalf("expected sender provenance match, got %+v", data)
+		}
+		if len(channelResolveQueries) != 0 {
+			t.Fatalf("identity_verify ENS should not fetch private /channels, got %+v", channelResolveQueries)
 		}
 	}
 }

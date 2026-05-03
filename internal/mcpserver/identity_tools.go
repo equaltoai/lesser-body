@@ -741,7 +741,12 @@ func resolveAgentIDByIdentifier(ctx context.Context, client *soulapi.Client, q s
 	var path string
 	switch {
 	case looksLikeEmail(q):
-		path = "/api/v1/soul/resolve/email/" + url.PathEscape(q)
+		if _, ok := emailLikeLookupDomain(q); !ok {
+			return "", unsupportedRemoteActorHandleError(q)
+		}
+		return "", privateReachabilityUnavailableError("email", "identity_lookup")
+	case looksLikePhoneIdentifier(q):
+		return "", privateReachabilityUnavailableError("phone", "identity_lookup")
 	case looksLikeENSName(q):
 		path = "/api/v1/soul/resolve/ens/" + url.PathEscape(q)
 	default:
@@ -758,6 +763,39 @@ func resolveAgentIDByIdentifier(ctx context.Context, client *soulapi.Client, q s
 	return normalizeSoulAgentID(stringFromMap(agent, "agent_id")), nil
 }
 
+func privateReachabilityUnavailableError(channel string, toolName string) *toolUserError {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		channel = "reachability"
+	}
+	toolName = strings.TrimSpace(toolName)
+
+	details := map[string]any{
+		"source":           "lesser_host_reachability",
+		"channel":          channel,
+		"requiredContract": "body_facing_instance_key_resolver",
+	}
+	if toolName != "" {
+		details["tool"] = toolName
+	}
+	if channel == "email" {
+		details["publicAlternatives"] = []string{
+			"ENS name",
+			"full agentId",
+			"current-instance local ID",
+			"explicit ActivityPub handle in @user@domain form",
+			"canonical actor URL",
+		}
+	}
+
+	return &toolUserError{
+		Code:    "private_reachability_unavailable",
+		Message: fmt.Sprintf("private %s reachability resolution requires a body-facing lesser-host resolver; request fails closed until that instance-authenticated contract is available", channel),
+		Status:  501,
+		Details: details,
+	}
+}
+
 func looksLikeEmail(q string) bool {
 	q = strings.TrimSpace(q)
 	if q == "" || strings.Contains(q, " ") {
@@ -765,6 +803,18 @@ func looksLikeEmail(q string) bool {
 	}
 	parts := strings.Split(q, "@")
 	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != ""
+}
+
+func emailLikeLookupDomain(q string) (string, bool) {
+	parts := strings.SplitN(strings.TrimSpace(q), "@", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	return normalizeLookupDomain(parts[1])
+}
+
+func looksLikePhoneIdentifier(q string) bool {
+	return normalizeVerificationPhone(q) != ""
 }
 
 func looksLikeENSName(q string) bool {

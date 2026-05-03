@@ -294,8 +294,8 @@ Scope key:
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `identity_lookup` | Read | Resolve a soul identity by full agent ID, managed email, ENS name, a current-instance local ID such as `medic`, a remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
-| `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using channel resolution plus notification provenance. |
+| `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
+| `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone reachability verification fails closed until lesser-host exposes a body-facing resolver. |
 
 Notes:
 
@@ -324,15 +324,18 @@ Notes:
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
 - `identity_lookup` accepts:
   - full soul `agentId`
-  - managed email address
   - ENS name
   - current-instance local IDs such as `medic`
   - remote ActivityPub handles in `@user@domain` form
   - canonical remote actor URLs in `https://domain/users/user` form
+- Managed email and phone reverse lookup are private reachability surfaces in lesser-host. Until lesser-host exposes a
+  body-facing, instance-authenticated resolver, `identity_lookup` and `identity_verify` fail closed for private
+  email/phone identifiers with `private_reachability_unavailable` instead of probing those routes anonymously.
 - `identity_lookup` intentionally returns only public identity summary fields (`agentId`, `domain`, `localId`,
   `status`). It does not expose arbitrary agents' private `channels` or `contactPreferences`; use
   `identity_whoami` or `agent://channels` only for the authenticated agent's own channel data.
-- For bare `user@domain` inputs, `identity_lookup` first tries managed-email resolution. If that returns not found, lesser-body falls back to treating the input as a remote ActivityPub handle and resolves it through the exact qualified host search form.
+- Bare `user@domain` inputs are ambiguous with private managed email reachability and fail closed. Use the explicit
+  ActivityPub handle form `@user@domain` when the input is meant to be a public actor handle.
 - When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.
   Cross-instance lookups should use an explicit domain-qualified form such as `@user@domain` or a canonical actor URL instead of relying on bare local IDs.
 - Remote ActivityPub handles and canonical actor URLs resolve through an exact domain-qualified host query instead of the fuzzy `q=<local>&domain=<domain>` path.
