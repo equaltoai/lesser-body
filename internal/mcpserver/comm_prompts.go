@@ -9,7 +9,7 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
-const identityLookupPromptQueryForms = "managed email, ENS name, full agentId, current-instance local ID, remote ActivityPub handle such as @steward@remote.example, or canonical actor URL such as https://remote.example/users/steward"
+const identityLookupPromptQueryForms = "ENS name, full agentId, current-instance local ID, explicit remote ActivityPub handle such as @steward@remote.example, or canonical actor URL such as https://remote.example/users/steward; private email/phone reachability lookup currently fails closed until lesser-host exposes a body-facing resolver"
 
 func promptComposeEmail(_ context.Context, args json.RawMessage) (*mcpruntime.PromptResult, error) {
 	var in struct {

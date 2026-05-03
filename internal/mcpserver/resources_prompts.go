@@ -149,7 +149,7 @@ func registerPrompts(srv *Server) error {
 				Title:       "Respect preferences",
 				Description: "Choose how to contact a target agent based on their declared contact preferences.",
 				Arguments: []mcpruntime.PromptArgument{
-					{Name: "query", Description: "ENS name, agentId, or email address.", Required: true},
+					{Name: "query", Description: "ENS name, agentId, current-instance local ID, explicit @user@domain ActivityPub handle, or canonical actor URL. Private email/phone lookup currently fails closed.", Required: true},
 				},
 			},
 			Handler: promptRespectPreferences,

@@ -144,6 +144,29 @@ Fix:
   - `LESSER_SOUL_API_BASE_URL=https://<stage>.lesser.host`
   - optionally `LESSER_HOST_INSTANCE_KEY` or `LESSER_HOST_INSTANCE_KEY_ARN` for host-backed comm tools
 
+## Identity lookup or verify returns `private_reachability_unavailable`
+
+Symptoms:
+
+- `identity_lookup` with a bare email-like query such as `user@example.com` returns
+  `private_reachability_unavailable`.
+- `identity_verify` with `channel=email` or `channel=phone` returns `private_reachability_unavailable`.
+- `identity_verify` with `channel=ens` succeeds or fails based on public ENS resolution plus authoritative sender
+  provenance, without fetching private `/agents/{id}/channels` data.
+
+Common cause:
+
+- lesser-host private reachability hardening makes email/phone reverse lookup and arbitrary agent channel reads
+  non-public. lesser-body fails closed instead of calling those routes anonymously.
+
+Fix:
+
+- For public actor lookup, use an ENS name, full agent ID, current-instance local ID, explicit ActivityPub handle
+  (`@user@domain`), or canonical actor URL.
+- For private email/phone reachability lookup, wait for the body-facing, instance-authenticated lesser-host resolver
+  contract. That resolver must use the managed instance key, be scoped to the managed instance/domain, and return only
+  bounded contactability fields.
+
 ## Host mailbox tools return empty results or 4xx errors
 
 Symptoms:
