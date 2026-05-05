@@ -75,6 +75,8 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 				}`))
 			case "sms":
 				_, _ = w.Write([]byte(`{"messages":[{"messageRef":"comm-delivery-sms","deliveryId":"comm-delivery-sms","messageId":"comm-msg-sms","threadId":"comm-thread-sms","direction":"inbound","channelType":"sms","status":"delivered","from":{"number":"+15550142"},"preview":"sms preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:05:00Z"}],"count":1,"hasMore":false}`))
+			case "voice":
+				_, _ = w.Write([]byte(`{"messages":[{"messageRef":"comm-delivery-voice","deliveryId":"comm-delivery-voice","messageId":"comm-msg-voice","threadId":"comm-thread-voice","direction":"inbound","channelType":"voice","status":"delivered","from":{"number":"+15550143"},"preview":"voice preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:10:00Z"}],"count":1,"hasMore":false}`))
 			default:
 				_, _ = w.Write([]byte(`{"messages":[],"count":0,"hasMore":false}`))
 			}
@@ -151,14 +153,43 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	if msg["messageId"] != "comm-delivery-email" || msg["hostMessageId"] != "comm-msg-email" || msg["body"] != "Hello preview" || msg["bodyIsPreview"] != true {
 		t.Fatalf("unexpected email message: %+v", msg)
 	}
+	if _, ok := msg["raw"]; ok {
+		t.Fatalf("raw field should be absent by default: %+v", msg)
+	}
+	if _, ok := msg["_raw"]; ok {
+		t.Fatalf("_raw field should be absent by default: %+v", msg)
+	}
 	if emailRead["nextCursor"] != "cursor-2" || emailRead["nextSince"] != "cursor-2" {
 		t.Fatalf("expected cursor aliases, got %+v", emailRead)
+	}
+
+	emailReadRaw := callTool(20, "email_read", map[string]any{"folder": "inbox", "limit": 10, "include_raw": true})
+	rawMessages, _ := emailReadRaw["messages"].([]any)
+	rawMsg, _ := rawMessages[0].(map[string]any)
+	if _, ok := rawMsg["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected include_raw=true to expose _raw, got %+v", rawMsg)
+	}
+	if _, ok := rawMsg["raw"]; ok {
+		t.Fatalf("include_raw=true should use _raw, not raw: %+v", rawMsg)
 	}
 
 	smsRead := callTool(3, "sms_read", map[string]any{"limit": 10})
 	smsMessages, _ := smsRead["messages"].([]any)
 	if len(smsMessages) != 1 {
 		t.Fatalf("expected 1 sms message, got %+v", smsMessages)
+	}
+	smsReadRaw := callTool(21, "sms_read", map[string]any{"limit": 10, "include_raw": true})
+	smsRawMessages, _ := smsReadRaw["messages"].([]any)
+	smsRawMsg, _ := smsRawMessages[0].(map[string]any)
+	if _, ok := smsRawMsg["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected sms include_raw=true to expose _raw, got %+v", smsRawMsg)
+	}
+
+	voicemailReadRaw := callTool(22, "voicemail_read", map[string]any{"limit": 10, "include_raw": true})
+	voicemailRawMessages, _ := voicemailReadRaw["messages"].([]any)
+	voicemailRawMsg, _ := voicemailRawMessages[0].(map[string]any)
+	if _, ok := voicemailRawMsg["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected voicemail include_raw=true to expose _raw, got %+v", voicemailRawMsg)
 	}
 
 	emailSearch := callTool(4, "email_search", map[string]any{"query": "alice", "limit": 5})
@@ -169,6 +200,11 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	emailGet := callTool(5, "email_get", map[string]any{"messageId": "comm-delivery-email"})
 	if _, ok := emailGet["message"].(map[string]any); !ok {
 		t.Fatalf("expected email_get message, got %+v", emailGet)
+	}
+	emailGetRaw := callTool(23, "email_get", map[string]any{"messageId": "comm-delivery-email", "include_raw": true})
+	emailGetRawMessage, _ := emailGetRaw["message"].(map[string]any)
+	if _, ok := emailGetRawMessage["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected email_get include_raw=true to expose _raw, got %+v", emailGetRawMessage)
 	}
 
 	content := callTool(6, "email_get_content", map[string]any{"messageId": "comm-delivery-email"})

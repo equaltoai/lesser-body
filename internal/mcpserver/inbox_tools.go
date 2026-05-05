@@ -16,6 +16,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	var in struct {
 		Folder          string `json:"folder,omitempty"`
 		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeRaw      bool   `json:"include_raw,omitempty"`
 		IncludeArchived bool   `json:"includeArchived,omitempty"`
 		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
 		Limit           int    `json:"limit,omitempty"`
@@ -55,6 +56,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		ChannelType:     "email",
 		Direction:       direction,
 		UnreadOnly:      in.UnreadOnly,
+		IncludeRaw:      in.IncludeRaw,
 		IncludeArchived: in.IncludeArchived,
 		IncludeDeleted:  in.IncludeDeleted,
 		Archived:        archived,
@@ -87,7 +89,8 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 
 func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		MessageID string `json:"messageId"`
+		MessageID  string `json:"messageId"`
+		IncludeRaw bool   `json:"include_raw,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
@@ -96,7 +99,7 @@ func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
-	out, err := getHostMailboxMessage(ctx, deps, in.MessageID)
+	out, err := getHostMailboxMessage(ctx, deps, in.MessageID, in.IncludeRaw)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -127,6 +130,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		Query           string `json:"query"`
 		Folder          string `json:"folder,omitempty"`
 		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeRaw      bool   `json:"include_raw,omitempty"`
 		IncludeArchived bool   `json:"includeArchived,omitempty"`
 		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
 		Limit           int    `json:"limit,omitempty"`
@@ -167,6 +171,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		ChannelType:     "email",
 		Direction:       direction,
 		UnreadOnly:      in.UnreadOnly,
+		IncludeRaw:      in.IncludeRaw,
 		IncludeArchived: in.IncludeArchived,
 		IncludeDeleted:  in.IncludeDeleted,
 		Archived:        archived,
@@ -257,6 +262,7 @@ func handleEmailReadState(ctx context.Context, args json.RawMessage, action stri
 func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeRaw      bool   `json:"include_raw,omitempty"`
 		IncludeArchived bool   `json:"includeArchived,omitempty"`
 		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
 		Limit           int    `json:"limit,omitempty"`
@@ -282,6 +288,7 @@ func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		ChannelType:     "sms",
 		Direction:       "inbound",
 		UnreadOnly:      in.UnreadOnly,
+		IncludeRaw:      in.IncludeRaw,
 		IncludeArchived: in.IncludeArchived,
 		IncludeDeleted:  in.IncludeDeleted,
 		Archived:        archived,
@@ -314,6 +321,7 @@ func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
+		IncludeRaw      bool   `json:"include_raw,omitempty"`
 		IncludeArchived bool   `json:"includeArchived,omitempty"`
 		IncludeDeleted  bool   `json:"includeDeleted,omitempty"`
 		Limit           int    `json:"limit,omitempty"`
@@ -338,6 +346,7 @@ func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime
 		ChannelType:     "voice",
 		Direction:       "inbound",
 		UnreadOnly:      in.UnreadOnly,
+		IncludeRaw:      in.IncludeRaw,
 		IncludeArchived: in.IncludeArchived,
 		IncludeDeleted:  in.IncludeDeleted,
 		Archived:        archived,

@@ -82,6 +82,7 @@ func emailReadDef() mcpruntime.ToolDef {
 			"properties":{
 				"folder":{"type":"string","enum":["inbox","sent"]},
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
@@ -103,7 +104,8 @@ func emailGetDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_send/email_reply."}
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_send/email_reply."},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."}
 			},
 			"required":["messageId"]
 		}`),
@@ -133,6 +135,7 @@ func emailSearchDef() mcpruntime.ToolDef {
 			"properties":{
 				"query":{"type":"string"},
 				"folder":{"type":"string","enum":["inbox","sent"]},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
 				"includeDeleted":{"type":"boolean"},
@@ -238,6 +241,7 @@ func smsReadDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
@@ -278,6 +282,7 @@ func voicemailReadDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},

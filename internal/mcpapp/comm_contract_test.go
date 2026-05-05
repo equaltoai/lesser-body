@@ -165,6 +165,7 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		}
 		expectPropType(t, s, "folder", "string")
 		expectPropType(t, s, "unreadOnly", "boolean")
+		expectPropType(t, s, "include_raw", "boolean")
 		expectPropType(t, s, "read", "boolean")
 		expectPropType(t, s, "includeArchived", "boolean")
 		expectPropType(t, s, "archived", "boolean")
@@ -189,6 +190,9 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 				t.Fatalf("%s required: want [messageId], got %#v", name, s.Required)
 			}
 			expectPropType(t, s, "messageId", "string")
+			if name == "email_get" {
+				expectPropType(t, s, "include_raw", "boolean")
+			}
 		}
 	}
 
@@ -202,6 +206,7 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		}
 		expectPropType(t, s, "query", "string")
 		expectPropType(t, s, "folder", "string")
+		expectPropType(t, s, "include_raw", "boolean")
 		expectPropType(t, s, "read", "boolean")
 		expectPropType(t, s, "unreadOnly", "boolean")
 		expectPropType(t, s, "includeArchived", "boolean")
@@ -272,6 +277,7 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 				t.Fatalf("%s schema type: want object got %q", name, s.Type)
 			}
 			expectPropType(t, s, "unreadOnly", "boolean")
+			expectPropType(t, s, "include_raw", "boolean")
 			expectPropType(t, s, "read", "boolean")
 			expectPropType(t, s, "includeArchived", "boolean")
 			expectPropType(t, s, "archived", "boolean")

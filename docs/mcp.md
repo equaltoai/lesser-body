@@ -318,6 +318,9 @@ Notes:
 - Mailbox list/get/search results return redacted previews in `body`/`preview`; use `email_get_content` for full
   content when `content.available=true`. The `messageId` field in mailbox outputs is the opaque host `messageRef`
   accepted by get/content/state/reply calls; legacy host `messageId` appears as `hostMessageId` when present.
+  Verbose upstream mailbox payloads are omitted by default. `email_read`, `email_get`, `email_search`, `sms_read`,
+  and `voicemail_read` accept optional `include_raw=true` for audit/debug use cases, which adds the upstream payload
+  under `_raw` on each returned message.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.
