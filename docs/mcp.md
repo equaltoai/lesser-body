@@ -324,6 +324,10 @@ Notes:
 - Mailbox and memory tools use dual MCP result surfaces: `content[0].text` contains the JSON payload for text-reading
   clients, and `structuredContent` contains the same typed fields directly (for example `messages` or `events` at the
   top level) rather than nesting them under a `data` wrapper.
+- Mailbox and memory tools publish MCP annotations in `tools/list`: read-only hints for mailbox reads/search/content
+  fetches and `memory_query`, destructive hints for send/reply/delete tools, and idempotent hints for mailbox read-state
+  mutation tools. `memory_append` remains an additive write and is only idempotent when callers provide `event_id`, so
+  it is not advertised as unconditionally idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.

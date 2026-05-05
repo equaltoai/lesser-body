@@ -163,6 +163,7 @@ func memoryAppendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "memory_append",
 		Description: "Append a memory event to the authenticated agent's memory timeline.",
+		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -181,6 +182,7 @@ func memoryQueryDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "memory_query",
 		Description: "Query memory events for the authenticated agent.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
