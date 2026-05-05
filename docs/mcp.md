@@ -321,6 +321,9 @@ Notes:
   Verbose upstream mailbox payloads are omitted by default. `email_read`, `email_get`, `email_search`, `sms_read`,
   and `voicemail_read` accept optional `include_raw=true` for audit/debug use cases, which adds the upstream payload
   under `_raw` on each returned message.
+- Mailbox and memory tools use dual MCP result surfaces: `content[0].text` contains the JSON payload for text-reading
+  clients, and `structuredContent` contains the same typed fields directly (for example `messages` or `events` at the
+  top level) rather than nesting them under a `data` wrapper.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.

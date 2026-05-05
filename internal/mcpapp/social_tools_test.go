@@ -986,6 +986,9 @@ func TestM5_NotificationsReadSeparatesTimestampSinceAndCursor(t *testing.T) {
 			b, _ := json.Marshal(rpc.Result)
 			_ = json.Unmarshal(b, &out)
 		}
+		if name == "memory_append" || name == "memory_query" {
+			return out.StructuredContent
+		}
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		return data
 	}
@@ -1116,6 +1119,9 @@ func TestM5_NotificationDismissClearsCursorOnDismissAll(t *testing.T) {
 		{
 			b, _ := json.Marshal(rpc.Result)
 			_ = json.Unmarshal(b, &out)
+		}
+		if name == "memory_append" || name == "memory_query" {
+			return out.StructuredContent
 		}
 		data, _ := out.StructuredContent["data"].(map[string]any)
 		return data
@@ -1249,8 +1255,7 @@ func TestM5_NotificationDismissSingleKeepsCursorAndHandlesNotFound(t *testing.T)
 		if rpc.Error != nil {
 			t.Fatalf("memory_query error: %+v", rpc.Error)
 		}
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		events, _ := data["events"].([]any)
+		events, _ := out.StructuredContent["events"].([]any)
 		if len(events) == 0 {
 			return ""
 		}

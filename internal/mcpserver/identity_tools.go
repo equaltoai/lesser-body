@@ -47,7 +47,7 @@ func handleIdentityWhoami(ctx context.Context, args json.RawMessage) (*mcpruntim
 		return identityToolResultFromError(err)
 	}
 
-	return toolJSONResult(payload)
+	return toolJSONResult(payload, nil)
 }
 
 func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -94,7 +94,7 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 		"query":   q,
 		"matches": matches,
 		"count":   len(matches),
-	})
+	}, nil)
 }
 
 func whoamiChannelsPayload(ctx context.Context) (map[string]any, error) {

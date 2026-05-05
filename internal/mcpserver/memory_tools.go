@@ -82,7 +82,11 @@ func handleMemoryAppend(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, err
 	}
 
-	return toolJSONResult(res)
+	structured, err := toolStructuredContent(res)
+	if err != nil {
+		return nil, err
+	}
+	return toolJSONResult(res, structured)
 }
 
 func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -133,7 +137,11 @@ func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, err
 	}
 
-	return toolJSONResult(res)
+	structured, err := toolStructuredContent(res)
+	if err != nil {
+		return nil, err
+	}
+	return toolJSONResult(res, structured)
 }
 
 func parseRFC3339Optional(raw string) (time.Time, error) {

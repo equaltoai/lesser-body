@@ -75,7 +75,7 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 	}
 
 	if in.MessageID == "" {
-		return toolJSONResult(result)
+		return toolJSONResult(result, nil)
 	}
 
 	token, err := requireOAuthBearer(ctx)
@@ -94,7 +94,7 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 		result["verified"] = false
 		result["messageFound"] = false
 		result["reason"] = "message_not_found"
-		return toolJSONResult(result)
+		return toolJSONResult(result, nil)
 	}
 
 	from := commFrom(notification)
@@ -113,7 +113,7 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 	}
 	if match {
 		result["matchedBy"] = matchedBy
-		return toolJSONResult(result)
+		return toolJSONResult(result, nil)
 	}
 
 	if !senderHasAuthoritativeAgentID(from) {
@@ -121,7 +121,7 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 	} else {
 		result["reason"] = "sender_does_not_match_resolved_identity"
 	}
-	return toolJSONResult(result)
+	return toolJSONResult(result, nil)
 }
 
 func resolveIdentityForVerification(ctx context.Context, client *soulapi.Client, channel string, identifier string) (map[string]any, map[string]any, error) {

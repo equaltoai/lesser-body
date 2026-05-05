@@ -84,7 +84,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	}
 	out["cursor"] = strings.TrimSpace(in.Cursor)
 	out["since"] = strings.TrimSpace(in.Since)
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -104,7 +104,7 @@ func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		return commMailboxToolResultFromError(err)
 	}
 	out["source"] = "lesser-host-mailbox"
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleEmailGetContent(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -122,7 +122,7 @@ func handleEmailGetContent(ctx context.Context, args json.RawMessage) (*mcprunti
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -200,7 +200,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		out["deleted"] = *deleted
 	}
 	out["strategy"] = "host bounded metadata/preview query"
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -229,7 +229,7 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return commMailboxToolResultFromError(err)
 	}
 	out["source"] = "lesser-host-mailbox"
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleEmailMarkRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -256,7 +256,7 @@ func handleEmailReadState(ctx context.Context, args json.RawMessage, action stri
 		return commMailboxToolResultFromError(err)
 	}
 	out["source"] = "lesser-host-mailbox"
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -315,7 +315,7 @@ func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 	}
 	out["cursor"] = strings.TrimSpace(in.Cursor)
 	out["since"] = strings.TrimSpace(in.Since)
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -371,7 +371,7 @@ func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime
 	if deleted != nil {
 		out["deleted"] = *deleted
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, out)
 }
 
 func readCommNotifications(ctx context.Context, bearerToken string, direction string, limit int, since string) ([]any, string, error) {

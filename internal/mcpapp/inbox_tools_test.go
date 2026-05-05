@@ -140,8 +140,10 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 		var out mcpruntime.ToolResult
 		b, _ := json.Marshal(rpc.Result)
 		_ = json.Unmarshal(b, &out)
-		data, _ := out.StructuredContent["data"].(map[string]any)
-		return data
+		if _, ok := out.StructuredContent["data"]; ok {
+			t.Fatalf("%s should expose flat structuredContent, got %+v", name, out.StructuredContent)
+		}
+		return out.StructuredContent
 	}
 
 	emailRead := callTool(2, "email_read", map[string]any{"folder": "inbox", "limit": 10, "unreadOnly": true})
