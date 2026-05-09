@@ -33,6 +33,7 @@ type commMailboxListOptions struct {
 	Cursor          string
 	ThreadID        string
 	Query           string
+	IncludeRaw      bool
 	IncludeArchived bool
 	IncludeDeleted  bool
 	Archived        *bool
@@ -180,10 +181,10 @@ func listHostMailboxMessages(ctx context.Context, deps *commMailboxDependencies,
 	if err != nil {
 		return nil, err
 	}
-	return normalizeMailboxListResult(raw), nil
+	return normalizeMailboxListResult(raw, opts.IncludeRaw), nil
 }
 
-func getHostMailboxMessage(ctx context.Context, deps *commMailboxDependencies, messageRef string) (map[string]any, error) {
+func getHostMailboxMessage(ctx context.Context, deps *commMailboxDependencies, messageRef string, includeRaw bool) (map[string]any, error) {
 	messageRef = strings.TrimSpace(messageRef)
 	if messageRef == "" {
 		return nil, invalidParams("messageId is required")
@@ -193,7 +194,7 @@ func getHostMailboxMessage(ctx context.Context, deps *commMailboxDependencies, m
 		return nil, err
 	}
 	m, _ := raw.(map[string]any)
-	message := normalizeMailboxMessage(m["message"])
+	message := normalizeMailboxMessage(m["message"], includeRaw)
 	return map[string]any{"message": message}, nil
 }
 
@@ -225,7 +226,7 @@ func mutateHostMailboxMessage(ctx context.Context, deps *commMailboxDependencies
 		return nil, err
 	}
 	m, _ := raw.(map[string]any)
-	message := normalizeMailboxMessage(m["message"])
+	message := normalizeMailboxMessage(m["message"], false)
 	return map[string]any{
 		"messageId":  firstNonEmptyString(message, "messageId", "messageRef", "deliveryId"),
 		"messageRef": firstNonEmptyString(message, "messageRef", "deliveryId", "messageId"),
@@ -250,12 +251,12 @@ func replyHostMailboxMessage(ctx context.Context, deps *commMailboxDependencies,
 	return normalizeCommSendResult(raw, nil), nil
 }
 
-func normalizeMailboxListResult(raw any) map[string]any {
+func normalizeMailboxListResult(raw any, includeRaw bool) map[string]any {
 	m, _ := raw.(map[string]any)
 	messagesRaw, _ := m["messages"].([]any)
 	messages := make([]any, 0, len(messagesRaw))
 	for _, item := range messagesRaw {
-		messages = append(messages, normalizeMailboxMessage(item))
+		messages = append(messages, normalizeMailboxMessage(item, includeRaw))
 	}
 
 	out := map[string]any{
@@ -277,7 +278,7 @@ func normalizeMailboxListResult(raw any) map[string]any {
 	return out
 }
 
-func normalizeMailboxMessage(raw any) map[string]any {
+func normalizeMailboxMessage(raw any, includeRaw bool) map[string]any {
 	m, _ := raw.(map[string]any)
 	messageRef := strings.TrimSpace(stringFromMap(m, "messageRef"))
 	deliveryID := strings.TrimSpace(stringFromMap(m, "deliveryId"))
@@ -316,7 +317,9 @@ func normalizeMailboxMessage(raw any) map[string]any {
 		"createdAt":     createdAt,
 		"receivedAt":    createdAt,
 		"updatedAt":     strings.TrimSpace(stringFromMap(m, "updatedAt")),
-		"raw":           m,
+	}
+	if includeRaw {
+		out["_raw"] = m
 	}
 	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(out["direction"])), "outbound") {
 		out["sentAt"] = createdAt

@@ -94,6 +94,12 @@ func TestM6_MemoryAppendAndQuery(t *testing.T) {
 		if len(tool.Content) != 1 || tool.Content[0].Type != "text" || tool.Content[0].Text == "" {
 			t.Fatalf("unexpected tool result: %+v", tool)
 		}
+		if _, ok := tool.StructuredContent["data"]; ok {
+			t.Fatalf("memory_append should expose flat structuredContent, got %+v", tool.StructuredContent)
+		}
+		if _, ok := tool.StructuredContent["event"].(map[string]any); !ok {
+			t.Fatalf("memory_append structuredContent should include event directly, got %+v", tool.StructuredContent)
+		}
 
 		var out struct {
 			Created bool `json:"created"`
@@ -159,6 +165,13 @@ func TestM6_MemoryAppendAndQuery(t *testing.T) {
 		{
 			b, _ := json.Marshal(rpc.Result)
 			_ = json.Unmarshal(b, &tool)
+		}
+		if _, ok := tool.StructuredContent["data"]; ok {
+			t.Fatalf("memory_query should expose flat structuredContent, got %+v", tool.StructuredContent)
+		}
+		structuredEvents, _ := tool.StructuredContent["events"].([]any)
+		if len(structuredEvents) != 2 {
+			t.Fatalf("memory_query structuredContent should include events directly, got %+v", tool.StructuredContent)
 		}
 
 		var out struct {

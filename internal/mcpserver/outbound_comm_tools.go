@@ -76,7 +76,7 @@ func handleSmsSendWithProgress(ctx context.Context, args json.RawMessage, emit f
 	if replyRef != "" {
 		normalized["inReplyTo"] = replyRef
 	}
-	return toolJSONResult(normalized)
+	return toolJSONResult(normalized, nil)
 }
 
 func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -129,7 +129,7 @@ func handlePhoneCall(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if replyRef != "" {
 		normalized["inReplyTo"] = replyRef
 	}
-	return toolJSONResult(normalized)
+	return toolJSONResult(normalized, nil)
 }
 
 func loadCommSendDependencies(ctx context.Context, channel string) (*commSendDependencies, *mcpruntime.ToolResult, error) {

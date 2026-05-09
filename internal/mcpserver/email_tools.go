@@ -85,7 +85,7 @@ func handleEmailSendWithProgress(ctx context.Context, args json.RawMessage, emit
 	if replyRef != "" {
 		normalized["inReplyTo"] = replyRef
 	}
-	return toolJSONResult(normalized)
+	return toolJSONResult(normalized, nil)
 }
 
 func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -168,7 +168,7 @@ func handleEmailReplyWithProgress(ctx context.Context, args json.RawMessage, emi
 		}
 		out["advisory"] = advisory
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func emailReplyRecipient(notification map[string]any) string {

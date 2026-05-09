@@ -68,20 +68,44 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 	return nil
 }
 
-func toolJSONResult(payload any) (*mcpruntime.ToolResult, error) {
+func toolJSONResult(payload any, structured map[string]any) (*mcpruntime.ToolResult, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal tool result: %w", err)
+	}
+	if structured == nil {
+		structured = map[string]any{
+			"data": payload,
+		}
 	}
 	return &mcpruntime.ToolResult{
 		Content: []mcpruntime.ContentBlock{{
 			Type: "text",
 			Text: string(b),
 		}},
-		StructuredContent: map[string]any{
-			"data": payload,
-		},
+		StructuredContent: structured,
 	}, nil
+}
+
+func toolStructuredContent(payload any) (map[string]any, error) {
+	if payload == nil {
+		return map[string]any{}, nil
+	}
+	if structured, ok := payload.(map[string]any); ok {
+		return structured, nil
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal structured tool result: %w", err)
+	}
+	var structured map[string]any
+	if err := json.Unmarshal(b, &structured); err != nil {
+		return nil, fmt.Errorf("unmarshal structured tool result: %w", err)
+	}
+	if structured == nil {
+		structured = map[string]any{}
+	}
+	return structured, nil
 }
 
 func requireOAuthBearer(ctx context.Context) (string, error) {
@@ -127,7 +151,7 @@ func handleProfileRead(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -178,7 +202,7 @@ func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -214,7 +238,7 @@ func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -261,7 +285,7 @@ func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -308,7 +332,7 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -337,7 +361,7 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -417,7 +441,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"count":         len(notifications),
 		"types":         requestedTypes,
 		"notifications": notifications,
-	})
+	}, nil)
 }
 
 func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -462,7 +486,7 @@ func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpr
 		"ok":      true,
 		"id":      in.ID,
 		"dismiss": ternaryString(in.ID == "", "all", "single"),
-	})
+	}, nil)
 }
 
 func handlePostCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -504,7 +528,7 @@ func handlePostCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handlePostBoost(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -532,7 +556,7 @@ func handlePostBoost(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -560,7 +584,7 @@ func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -588,7 +612,7 @@ func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolRe
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleUnfollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -616,7 +640,7 @@ func handleUnfollow(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func handleProfileUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -660,7 +684,7 @@ func handleProfileUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out)
+	return toolJSONResult(out, nil)
 }
 
 func profileReadDef() mcpruntime.ToolDef {

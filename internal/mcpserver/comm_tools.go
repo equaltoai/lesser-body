@@ -56,6 +56,7 @@ func emailSendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_send",
 		Description: "Send an email from the agent's address via lesser-host (no provider credentials).",
+		Annotations: destructiveToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -77,11 +78,13 @@ func emailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_read",
 		Description: "List recent email metadata/previews from lesser-host's canonical mailbox.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"folder":{"type":"string","enum":["inbox","sent"]},
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
@@ -100,10 +103,12 @@ func emailGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_get",
 		Description: "Get canonical email metadata/state by opaque host message reference.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_send/email_reply."}
+				"messageId":{"type":"string","description":"Opaque host messageRef returned by email_read/email_search/email_send/email_reply."},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."}
 			},
 			"required":["messageId"]
 		}`),
@@ -114,6 +119,7 @@ func emailGetContentDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_get_content",
 		Description: "Fetch full email content explicitly from lesser-host's canonical mailbox.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -128,11 +134,13 @@ func emailSearchDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_search",
 		Description: "Run a bounded lesser-host metadata/preview search over the agent's email mailbox.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"query":{"type":"string"},
 				"folder":{"type":"string","enum":["inbox","sent"]},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
 				"includeDeleted":{"type":"boolean"},
@@ -152,6 +160,7 @@ func emailReplyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_reply",
 		Description: "Reply to a specific email message.",
+		Annotations: destructiveToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -174,6 +183,7 @@ func emailDeleteDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_delete",
 		Description: "Delete or archive an email message in lesser-host's canonical mailbox.",
+		Annotations: destructiveToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -189,6 +199,7 @@ func emailMarkReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_mark_read",
 		Description: "Mark an email read in lesser-host's canonical mailbox.",
+		Annotations: idempotentMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -203,6 +214,7 @@ func emailMarkUnreadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_mark_unread",
 		Description: "Mark an email unread in lesser-host's canonical mailbox.",
+		Annotations: idempotentMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -217,6 +229,7 @@ func smsSendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "sms_send",
 		Description: "Send an SMS from the agent's number via lesser-host.",
+		Annotations: destructiveToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -234,10 +247,12 @@ func smsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "sms_read",
 		Description: "Read received SMS metadata/previews from lesser-host's canonical mailbox.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},
@@ -274,10 +289,12 @@ func voicemailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "voicemail_read",
 		Description: "Read voicemail metadata/previews from lesser-host's canonical mailbox.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"unreadOnly":{"type":"boolean"},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream mailbox data under _raw. Defaults to false."},
 				"read":{"type":"boolean","description":"Exact read-state filter. Conflicts with unreadOnly=true when read=true."},
 				"includeArchived":{"type":"boolean"},
 				"archived":{"type":"boolean","description":"Exact archive-state filter."},

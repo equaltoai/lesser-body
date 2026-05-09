@@ -82,7 +82,11 @@ func handleMemoryAppend(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, err
 	}
 
-	return toolJSONResult(res)
+	structured, err := toolStructuredContent(res)
+	if err != nil {
+		return nil, err
+	}
+	return toolJSONResult(res, structured)
 }
 
 func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -133,7 +137,11 @@ func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, err
 	}
 
-	return toolJSONResult(res)
+	structured, err := toolStructuredContent(res)
+	if err != nil {
+		return nil, err
+	}
+	return toolJSONResult(res, structured)
 }
 
 func parseRFC3339Optional(raw string) (time.Time, error) {
@@ -155,6 +163,7 @@ func memoryAppendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "memory_append",
 		Description: "Append a memory event to the authenticated agent's memory timeline.",
+		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -173,6 +182,7 @@ func memoryQueryDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "memory_query",
 		Description: "Query memory events for the authenticated agent.",
+		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
