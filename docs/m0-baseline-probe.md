@@ -31,6 +31,18 @@ export PROBE_SAFE_SEND_EMAIL=true
 export PROBE_SELF_EMAIL_TO='self@example.com'
 ```
 
+Optional closure-gate notification workflow probe, enabled only after `equaltoai/lesser#944` is deployed:
+
+```bash
+export PROBE_M0_CLOSURE=true
+export PROBE_LESSER_API_BASE_URL='https://api.<stage-domain>'
+# Optional: target a specific list-returned ID or run one workflow per type filter.
+export PROBE_NOTIFICATION_WORKFLOW_ID='notification-id-from-list'
+export PROBE_NOTIFICATION_WORKFLOW_TYPES='mention,reply'
+# Optional wrong-user negative controls, where a safe second actor token is available.
+export PROBE_WRONG_USER_BEARER_TOKEN='<OAuth token for a different actor>'
+```
+
 ## Command
 
 ```bash
@@ -38,7 +50,9 @@ scripts/m0_baseline_mcp_probe.py | tee m0-baseline-probe.jsonl
 ```
 
 The script prints one line per probe with pass/fail/skip, elapsed time, HTTP response size, and compact metadata. It
-prints a final `SUMMARY` JSON object suitable for attaching to the Project 21 issue or deploy notes.
+prints a final `SUMMARY` JSON object suitable for attaching to the Project 21 issue or deploy notes. The summary includes
+`mode`, `closureRequired`, `closureReady`, and `closureProbeNames` so smoke/read-surface passes cannot be mistaken for
+full M0 closure evidence.
 
 The probe treats semantic failure payloads as failures, not successful MCP transport:
 
@@ -46,6 +60,10 @@ The probe treats semantic failure payloads as failures, not successful MCP trans
 - `notifications_read` default calls must include diagnostics and must not expose `raw` or `_raw` notification payloads;
 - `email_read`, `sms_read`, and `voicemail_read` must not return an empty page with `hasMore:true`, and any
   `hasMore:true` page must include `nextCursor`.
+- when `PROBE_M0_CLOSURE=true`, a list-returned notification ID must pass the semantic workflow
+  list -> same-user single-get -> optional wrong-user negative control -> MCP `notification_dismiss` ->
+  follow-up list/read-state. A 404 or semantic error in the same-user state transition remains a failure; the probe does
+  not add body-side fallback behavior for `lesser#944`.
 
 ## Required evidence
 
@@ -56,6 +74,9 @@ The report must include:
 - approximate payload size for large read paths;
 - `notifications_read.diagnostics` timing/size fields;
 - whether default notification output omitted raw/debug payloads;
+- whether the run is smoke-only or closure-mode (`SUMMARY.mode` and `SUMMARY.closureReady`);
+- for closure-mode runs, notification workflow details: selected notification type/id (redacted), direct Lesser
+  single-get status, MCP dismiss result, follow-up list/read-state evidence, and whether wrong-user negative controls ran;
 - whether failures appear to be Lesser API latency, body shaping/serialization, or MCP transport timeout.
 
 ## Closure expectations
@@ -66,4 +87,9 @@ M0 is not closed until Ops reports repeatable baseline usability in the deployed
 - Host mailbox messageRef verification works where authoritative sender provenance exists;
 - email/SMS/voicemail filtered pagination is sane;
 - identity lookup/verify and timestamp-since notification reads do not regress;
-- no baseline read-tool output is truncated under realistic mailbox/notification state.
+- no baseline read-tool output is truncated under realistic mailbox/notification state;
+- `SUMMARY.closureReady` is `true` from a closure-mode run after `lesser#944` is merged and deployed.
+
+Smoke/read-surface runs without `PROBE_M0_CLOSURE=true` are useful deploy evidence, but they are not M0 closure. They
+should be attached as smoke evidence and followed by a closure-mode run once Lesser's user-scoped canonical notification
+identity fix is available.

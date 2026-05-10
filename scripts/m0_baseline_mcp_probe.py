@@ -14,6 +14,11 @@ Recommended probe inputs:
   PROBE_PHONE                 Sender phone for fail-closed and message-scoped verification
   PROBE_MESSAGE_REF           Host mailbox messageRef / comm-delivery-* for identity_verify
   PROBE_NOTIFICATION_SINCE    RFC3339 timestamp for typed notification reads (default: now-24h)
+  PROBE_M0_CLOSURE            Set true to require mutating notification workflow closure checks
+  PROBE_LESSER_API_BASE_URL   Lesser API base URL for direct notification single-get probes
+  PROBE_NOTIFICATION_WORKFLOW_ID Optional specific list-returned notification ID to exercise
+  PROBE_NOTIFICATION_WORKFLOW_TYPES Optional comma-separated notification types to exercise separately
+  PROBE_WRONG_USER_BEARER_TOKEN Optional wrong-user token for negative notification controls
   PROBE_SAFE_SEND_EMAIL       Set true to run self-email send/search/readback
   PROBE_SELF_EMAIL_TO         Recipient for the safe self-email send
 
@@ -30,6 +35,7 @@ import sys
 import time
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,6 +56,10 @@ def require_env(name: str) -> str:
     return value
 
 
+def env_bool(name: str) -> bool:
+    return env(name).lower() in ("1", "true", "yes", "on")
+
+
 ENDPOINT = require_env("MCP_ENDPOINT")
 AUTHORIZATION = env("MCP_AUTHORIZATION")
 if not AUTHORIZATION:
@@ -67,6 +77,7 @@ class ProbeResult:
 
 
 results: list[ProbeResult] = []
+closure_required_names: set[str] = set()
 _session_id = ""
 _next_id = 1
 
@@ -119,6 +130,45 @@ def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, An
     return parsed, elapsed_ms, len(raw)
 
 
+def lesser_api_base() -> str:
+    return env("PROBE_LESSER_API_BASE_URL").rstrip("/")
+
+
+def api_json(
+    method: str,
+    path: str,
+    authorization: str = AUTHORIZATION,
+    body_value: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], int, int, int]:
+    base = lesser_api_base()
+    if not base:
+        raise ProbeError("PROBE_LESSER_API_BASE_URL is required for notification workflow closure probes")
+    body = None
+    if body_value is not None:
+        body = json.dumps(body_value, separators=(",", ":")).encode("utf-8")
+    headers = {
+        "Accept": "application/json",
+        "Authorization": authorization,
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(base + path, data=body, headers=headers, method=method)
+    started = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=130) as resp:
+            raw = resp.read()
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except json.JSONDecodeError:
+        parsed = {}
+    return parsed, status, elapsed_ms, len(raw)
+
+
 def tool_result(parsed: dict[str, Any]) -> dict[str, Any]:
     if parsed.get("error"):
         raise ProbeError(f"JSON-RPC error: {parsed['error']}")
@@ -160,6 +210,11 @@ def run_probe(name: str, fn) -> None:  # type: ignore[no-untyped-def]
         record(name, "fail", error=str(exc))
     except Exception as exc:  # noqa: BLE001 - top-level probe isolation
         record(name, "fail", error=f"{type(exc).__name__}: {exc}")
+
+
+def run_closure_probe(name: str, fn) -> None:  # type: ignore[no-untyped-def]
+    closure_required_names.add(name)
+    run_probe(name, fn)
 
 
 def skip(name: str, reason: str) -> None:
@@ -257,6 +312,82 @@ def assert_mailbox_page_sane(data: dict[str, Any], context: str) -> None:
         raise ProbeError(f"{context} returned hasMore=true without nextCursor")
 
 
+def notifications_list(data: dict[str, Any]) -> list[dict[str, Any]]:
+    values = data.get("notifications")
+    if not isinstance(values, list):
+        return []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def notification_id(item: dict[str, Any]) -> str:
+    for key in ("id", "notificationId", "notification_id"):
+        value = str(item.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def find_notification(data: dict[str, Any], wanted_id: str) -> dict[str, Any] | None:
+    for item in notifications_list(data):
+        if notification_id(item) == wanted_id:
+            return item
+    return None
+
+
+def extract_notification(value: dict[str, Any]) -> dict[str, Any]:
+    for key in ("notification", "data"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            return nested
+    return value
+
+
+def notification_readish_state(item: dict[str, Any]) -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    for key in ("read", "isRead", "is_read", "dismissed", "isDismissed", "is_dismissed"):
+        if key in item:
+            state[key] = item.get(key)
+    for key in ("readAt", "read_at", "dismissedAt", "dismissed_at"):
+        value = str(item.get(key, "")).strip()
+        if value:
+            state[key] = value
+    return state
+
+
+def is_read_or_dismissed(item: dict[str, Any]) -> bool:
+    state = notification_readish_state(item)
+    for value in state.values():
+        if value is True:
+            return True
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def wrong_user_authorization() -> str:
+    value = env("PROBE_WRONG_USER_AUTHORIZATION")
+    if value:
+        return value
+    token = env("PROBE_WRONG_USER_BEARER_TOKEN")
+    if token:
+        return "Bearer " + token
+    return ""
+
+
+def workflow_read_args(notification_type: str = "") -> dict[str, Any]:
+    limit = 20
+    raw_limit = env("PROBE_NOTIFICATION_WORKFLOW_LIMIT")
+    if raw_limit:
+        try:
+            limit = max(1, min(80, int(raw_limit)))
+        except ValueError as exc:
+            raise ProbeError(f"invalid PROBE_NOTIFICATION_WORKFLOW_LIMIT {raw_limit!r}") from exc
+    args: dict[str, Any] = {"limit": limit}
+    if notification_type:
+        args["types"] = [notification_type]
+    return args
+
+
 def probe_verified_identity(name: str, channel: str, identifier: str, message_id: str = "") -> None:
     args = {"channel": channel, "identifier": identifier}
     if message_id:
@@ -292,6 +423,112 @@ def probe_notifications_read(name: str, args: dict[str, Any]) -> None:
             if k in diagnostics
         }
     record(name, "pass", elapsed, size, **details)
+
+
+def probe_notification_workflow(name: str, args: dict[str, Any]) -> None:
+    total_elapsed = 0
+    total_size = 0
+
+    result, listed, elapsed, size = tool("notifications_read", args)
+    total_elapsed += elapsed
+    total_size += size
+    assert_tool_ok(result)
+    assert_notification_baseline(listed, name + " list")
+
+    wanted_id = env("PROBE_NOTIFICATION_WORKFLOW_ID")
+    selected = find_notification(listed, wanted_id) if wanted_id else None
+    if wanted_id and selected is None:
+        raise ProbeError(f"configured notification {redact(wanted_id)} was not present in the list result")
+    if selected is None:
+        notifications = notifications_list(listed)
+        if not notifications:
+            raise ProbeError("notification workflow requires at least one list-returned notification")
+        selected = notifications[0]
+
+    selected_id = notification_id(selected)
+    if not selected_id:
+        raise ProbeError("selected list-returned notification had no id")
+    encoded_id = urllib.parse.quote(selected_id, safe="")
+    path = f"/api/v1/notifications/{encoded_id}"
+
+    before, status, elapsed, size = api_json("GET", path)
+    total_elapsed += elapsed
+    total_size += size
+    if status != 200:
+        raise ProbeError(f"same-user single-get for list-returned notification returned HTTP {status}")
+    single_get_status = status
+    before_notification = extract_notification(before)
+
+    wrong_auth = wrong_user_authorization()
+    wrong_user_checked = False
+    if wrong_auth:
+        _wrong_before, wrong_status, elapsed, size = api_json("GET", path, wrong_auth)
+        total_elapsed += elapsed
+        total_size += size
+        if wrong_status not in (403, 404):
+            raise ProbeError(f"wrong-user single-get returned HTTP {wrong_status}, expected 403/404")
+
+        _wrong_dismiss, wrong_status, elapsed, size = api_json("POST", path + "/dismiss", wrong_auth, {})
+        total_elapsed += elapsed
+        total_size += size
+        if wrong_status not in (403, 404):
+            raise ProbeError(f"wrong-user dismiss returned HTTP {wrong_status}, expected 403/404")
+
+        _same_after_wrong, status, elapsed, size = api_json("GET", path)
+        total_elapsed += elapsed
+        total_size += size
+        if status != 200:
+            raise ProbeError("wrong-user dismiss changed same-user single-get visibility")
+        wrong_user_checked = True
+
+    dismiss_result, dismiss_data, elapsed, size = tool("notification_dismiss", {"id": selected_id})
+    total_elapsed += elapsed
+    total_size += size
+    assert_tool_ok(dismiss_result)
+    if dismiss_data.get("ok") is not True:
+        raise ProbeError(f"notification_dismiss did not report ok:true: {dismiss_data}")
+
+    after, after_status, elapsed, size = api_json("GET", path)
+    total_elapsed += elapsed
+    total_size += size
+
+    result, relisted, elapsed, size = tool("notifications_read", args)
+    total_elapsed += elapsed
+    total_size += size
+    assert_tool_ok(result)
+    assert_notification_baseline(relisted, name + " follow-up list")
+
+    still_listed = find_notification(relisted, selected_id) is not None
+    transition = "list_absence" if not still_listed else ""
+    after_state: dict[str, Any] = {}
+    if after_status == 200:
+        after_notification = extract_notification(after)
+        after_state = notification_readish_state(after_notification)
+        if is_read_or_dismissed(after_notification):
+            transition = "read_state"
+    elif after_status == 404 and not still_listed:
+        transition = "gone_after_dismiss"
+    elif after_status != 200:
+        raise ProbeError(f"follow-up same-user single-get returned HTTP {after_status}")
+
+    if not transition:
+        raise ProbeError("follow-up list/read-state did not reflect notification dismiss/mark-read")
+
+    details = {
+        "id": redact(selected_id),
+        "type": selected.get("type") or before_notification.get("type"),
+        "initialCount": read_count(listed, "notifications"),
+        "followUpCount": read_count(relisted, "notifications"),
+        "singleGetStatus": single_get_status,
+        "dismiss": dismiss_data.get("dismiss"),
+        "followUpGetStatus": after_status,
+        "followUpInList": still_listed,
+        "transition": transition,
+        "beforeState": notification_readish_state(before_notification),
+        "afterState": after_state,
+        "wrongUserNegativeControl": wrong_user_checked,
+    }
+    record(name, "pass", total_elapsed, total_size, **details)
 
 
 def probe_mailbox_read(name: str, tool_name: str, args: dict[str, Any]) -> tuple[dict[str, Any], int, int]:
@@ -334,8 +571,10 @@ def probe_tool_success(name: str, tool_name: str, args: dict[str, Any] | None = 
 
 
 def main() -> int:
+    closure_mode = env_bool("PROBE_M0_CLOSURE")
     print("Project 21 M0 baseline MCP usability probe")
     print(f"endpoint={ENDPOINT}")
+    print(f"mode={'closure' if closure_mode else 'smoke'}")
     run_probe("initialize", init)
     if not _session_id:
         print("initialize failed before session establishment", file=sys.stderr)
@@ -400,6 +639,26 @@ def main() -> int:
             ),
         )
 
+    if closure_mode:
+        workflow_types = [part.strip() for part in env("PROBE_NOTIFICATION_WORKFLOW_TYPES").split(",") if part.strip()]
+        if workflow_types:
+            for typ in workflow_types:
+                run_closure_probe(
+                    f"notification workflow {typ}",
+                    lambda typ=typ: probe_notification_workflow(
+                        f"notification workflow {typ}", workflow_read_args(typ)
+                    ),
+                )
+        else:
+            run_closure_probe(
+                "notification workflow list->get->dismiss->read-state",
+                lambda: probe_notification_workflow(
+                    "notification workflow list->get->dismiss->read-state", workflow_read_args()
+                ),
+            )
+    else:
+        skip("notification workflow closure gate", "set PROBE_M0_CLOSURE=true after lesser#944 is deployed")
+
     inbox_message_id = ""
     for folder in ("inbox", "sent"):
         def email_read(folder: str = folder) -> None:
@@ -437,9 +696,27 @@ def main() -> int:
     failed = sum(1 for r in results if r.status == "fail")
     skipped = sum(1 for r in results if r.status == "skip")
     passed = sum(1 for r in results if r.status == "pass")
-    summary = {"passed": passed, "failed": failed, "skipped": skipped, "results": [r.__dict__ for r in results]}
+    by_name = {r.name: r for r in results}
+    closure_ready = bool(closure_required_names) and all(
+        by_name.get(name) is not None and by_name[name].status == "pass"
+        for name in closure_required_names
+    )
+    summary = {
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "mode": "closure" if closure_mode else "smoke",
+        "closureRequired": closure_mode,
+        "closureReady": closure_mode and failed == 0 and closure_ready,
+        "closureProbeNames": sorted(closure_required_names),
+        "results": [r.__dict__ for r in results],
+    }
     print("SUMMARY " + json.dumps(summary, sort_keys=True, separators=(",", ":")))
-    return 1 if failed else 0
+    if failed:
+        return 1
+    if closure_mode and not summary["closureReady"]:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
