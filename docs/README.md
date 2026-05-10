@@ -60,6 +60,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - Security posture: `docs/security.md`
 - Troubleshoot: `docs/troubleshooting.md`
 - Release artifacts: `docs/release.md`
+- Project 21 M0 baseline probe: `docs/m0-baseline-probe.md`
 
 ### Developers
 
