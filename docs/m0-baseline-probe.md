@@ -40,6 +40,13 @@ scripts/m0_baseline_mcp_probe.py | tee m0-baseline-probe.jsonl
 The script prints one line per probe with pass/fail/skip, elapsed time, HTTP response size, and compact metadata. It
 prints a final `SUMMARY` JSON object suitable for attaching to the Project 21 issue or deploy notes.
 
+The probe treats semantic failure payloads as failures, not successful MCP transport:
+
+- message-scoped `identity_verify` must return `messageFound:true` and `verified:true`;
+- `notifications_read` default calls must include diagnostics and must not expose `raw` or `_raw` notification payloads;
+- `email_read`, `sms_read`, and `voicemail_read` must not return an empty page with `hasMore:true`, and any
+  `hasMore:true` page must include `nextCursor`.
+
 ## Required evidence
 
 The report must include:
@@ -47,8 +54,8 @@ The report must include:
 - pass/fail/skip per probe;
 - elapsed time per probe;
 - approximate payload size for large read paths;
-- `notifications_read.diagnostics` timing/size fields when present;
-- whether default output omitted raw/debug payloads;
+- `notifications_read.diagnostics` timing/size fields;
+- whether default notification output omitted raw/debug payloads;
 - whether failures appear to be Lesser API latency, body shaping/serialization, or MCP transport timeout.
 
 ## Closure expectations

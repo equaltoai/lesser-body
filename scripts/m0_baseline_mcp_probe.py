@@ -209,6 +209,107 @@ def read_count(data: dict[str, Any], key: str) -> int:
     return int(count) if isinstance(count, (int, float)) else 0
 
 
+def assert_verified_identity(data: dict[str, Any], context: str) -> None:
+    if data.get("verified") is not True:
+        reason = data.get("reason", "verified was not true")
+        raise ProbeError(f"{context} did not verify: {reason}")
+
+
+def assert_verified_message_identity(data: dict[str, Any], context: str) -> None:
+    if data.get("messageFound") is not True:
+        reason = data.get("reason", "messageFound was not true")
+        raise ProbeError(f"{context} did not find the message: {reason}")
+    assert_verified_identity(data, context)
+
+
+def assert_notification_baseline(data: dict[str, Any], context: str) -> None:
+    diagnostics = data.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        raise ProbeError(f"{context} missing notifications_read diagnostics")
+    missing = [
+        key
+        for key in ("lesserAPIMs", "normalizationMs", "responseBytes", "mcpPayloadBytes")
+        if key not in diagnostics
+    ]
+    if missing:
+        raise ProbeError(f"{context} diagnostics missing fields: {', '.join(missing)}")
+
+    notifications = data.get("notifications")
+    if not isinstance(notifications, list):
+        raise ProbeError(f"{context} missing notifications list")
+    for index, item in enumerate(notifications):
+        if not isinstance(item, dict):
+            continue
+        if "raw" in item or "_raw" in item:
+            raise ProbeError(f"{context} notification {index} exposed raw payload by default")
+
+
+def assert_mailbox_page_sane(data: dict[str, Any], context: str) -> None:
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        raise ProbeError(f"{context} missing messages list")
+    count = read_count(data, "messages")
+    has_more = data.get("hasMore") is True
+    next_cursor = str(data.get("nextCursor", "")).strip()
+    if has_more and count == 0:
+        raise ProbeError(f"{context} returned count=0 with hasMore=true")
+    if has_more and not next_cursor:
+        raise ProbeError(f"{context} returned hasMore=true without nextCursor")
+
+
+def probe_verified_identity(name: str, channel: str, identifier: str, message_id: str = "") -> None:
+    args = {"channel": channel, "identifier": identifier}
+    if message_id:
+        args["messageId"] = message_id
+    result, data, elapsed, size = tool("identity_verify", args)
+    assert_tool_ok(result)
+    if message_id:
+        assert_verified_message_identity(data, name)
+    else:
+        assert_verified_identity(data, name)
+    details = {
+        "verified": data.get("verified"),
+        "matchedBy": data.get("matchedBy"),
+    }
+    message = data.get("message")
+    if isinstance(message, dict):
+        details["messageSource"] = message.get("source")
+    record(name, "pass", elapsed, size, **details)
+
+
+def probe_notifications_read(name: str, args: dict[str, Any]) -> None:
+    result, data, elapsed, size = tool("notifications_read", args)
+    assert_tool_ok(result)
+    assert_notification_baseline(data, name)
+    diagnostics = data.get("diagnostics")
+    details: dict[str, Any] = {
+        "count": read_count(data, "notifications"),
+    }
+    if isinstance(diagnostics, dict):
+        details["diagnostics"] = {
+            k: diagnostics.get(k)
+            for k in ("lesserAPIMs", "normalizationMs", "responseBytes", "mcpPayloadBytes")
+            if k in diagnostics
+        }
+    record(name, "pass", elapsed, size, **details)
+
+
+def probe_mailbox_read(name: str, tool_name: str, args: dict[str, Any]) -> tuple[dict[str, Any], int, int]:
+    result, data, elapsed, size = tool(tool_name, args)
+    assert_tool_ok(result)
+    assert_mailbox_page_sane(data, name)
+    record(
+        name,
+        "pass",
+        elapsed,
+        size,
+        count=read_count(data, "messages"),
+        hasMore=data.get("hasMore"),
+        nextCursor=bool(str(data.get("nextCursor", "")).strip()),
+    )
+    return data, elapsed, size
+
+
 def notification_since_default() -> str:
     return (dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)).isoformat().replace("+00:00", "Z")
 
@@ -254,7 +355,7 @@ def main() -> int:
 
     ens = env("PROBE_ENS")
     if ens:
-        run_probe("identity_verify ENS identifier", lambda: probe_tool_success("identity_verify ENS identifier", "identity_verify", {"channel": "ens", "identifier": ens}))
+        run_probe("identity_verify ENS identifier", lambda: probe_verified_identity("identity_verify ENS identifier", "ens", ens))
     else:
         skip("identity_verify ENS identifier", "missing PROBE_ENS")
 
@@ -272,29 +373,40 @@ def main() -> int:
     message_ref = env("PROBE_MESSAGE_REF")
     if message_ref:
         if ens:
-            run_probe("identity_verify ENS messageRef", lambda: probe_tool_success("identity_verify ENS messageRef", "identity_verify", {"channel": "ens", "identifier": ens, "messageId": message_ref}))
+            run_probe("identity_verify ENS messageRef", lambda: probe_verified_identity("identity_verify ENS messageRef", "ens", ens, message_ref))
         for channel, env_name in [("email", "PROBE_EMAIL"), ("phone", "PROBE_PHONE")]:
             value = env(env_name)
             if value:
-                run_probe(f"identity_verify {channel} messageRef", lambda channel=channel, value=value: probe_tool_success(f"identity_verify {channel} messageRef", "identity_verify", {"channel": channel, "identifier": value, "messageId": message_ref}))
+                run_probe(
+                    f"identity_verify {channel} messageRef",
+                    lambda channel=channel, value=value: probe_verified_identity(
+                        f"identity_verify {channel} messageRef", channel, value, message_ref
+                    ),
+                )
     else:
         skip("identity_verify messageRef", "missing PROBE_MESSAGE_REF")
 
-    probe_tool_success("notifications_read limit=20", "notifications_read", {"limit": 20}, "notifications")
-    probe_tool_success("notifications_read since empty limit=30", "notifications_read", {"since": "", "limit": 30}, "notifications")
+    run_probe("notifications_read limit=20", lambda: probe_notifications_read("notifications_read limit=20", {"limit": 20}))
+    run_probe(
+        "notifications_read since empty limit=30",
+        lambda: probe_notifications_read("notifications_read since empty limit=30", {"since": "", "limit": 30}),
+    )
     since = env("PROBE_NOTIFICATION_SINCE", notification_since_default())
     for typ in ("mention", "reply"):
-        probe_tool_success(f"notifications_read {typ} timestamp", "notifications_read", {"since": since, "limit": 30, "types": [typ]}, "notifications")
+        run_probe(
+            f"notifications_read {typ} timestamp",
+            lambda typ=typ: probe_notifications_read(
+                f"notifications_read {typ} timestamp", {"since": since, "limit": 30, "types": [typ]}
+            ),
+        )
 
     inbox_message_id = ""
     for folder in ("inbox", "sent"):
         def email_read(folder: str = folder) -> None:
             nonlocal inbox_message_id
-            result, data, elapsed, size = tool("email_read", {"folder": folder, "limit": 20})
-            assert_tool_ok(result)
+            data, elapsed, size = probe_mailbox_read(f"email_read {folder} limit=20", "email_read", {"folder": folder, "limit": 20})
             if folder == "inbox":
                 inbox_message_id = first_message_id(data)
-            record(f"email_read {folder} limit=20", "pass", elapsed, size, count=read_count(data, "messages"), firstMessage=bool(first_message_id(data)))
         run_probe(f"email_read {folder} limit=20", email_read)
 
     if inbox_message_id:
@@ -312,8 +424,8 @@ def main() -> int:
     else:
         skip("self-email send/search/readback", "set PROBE_SAFE_SEND_EMAIL=true to run")
 
-    probe_tool_success("sms_read limit=20", "sms_read", {"limit": 20}, "messages")
-    probe_tool_success("voicemail_read limit=20", "voicemail_read", {"limit": 20}, "messages")
+    run_probe("sms_read limit=20", lambda: probe_mailbox_read("sms_read limit=20", "sms_read", {"limit": 20}))
+    run_probe("voicemail_read limit=20", lambda: probe_mailbox_read("voicemail_read limit=20", "voicemail_read", {"limit": 20}))
 
     event_id = "01" + uuid.uuid4().hex[:24].upper()
     run_probe("memory_append", lambda: probe_tool_success("memory_append", "memory_append", {"event_id": event_id, "content": "M0 baseline probe memory event", "tags": ["m0-probe"]}))
