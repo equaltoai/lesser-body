@@ -69,9 +69,11 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		_ = json.Unmarshal(b, &result)
 	}
 
+	toolsByName := map[string]mcpruntime.ToolDef{}
 	have := map[string]bool{}
 	for _, tool := range result.Tools {
 		have[tool.Name] = true
+		toolsByName[tool.Name] = tool
 	}
 
 	for _, name := range []string{
@@ -93,6 +95,25 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		if !have[name] {
 			t.Fatalf("expected tool %q in tools/list", name)
 		}
+	}
+
+	var notificationSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(toolsByName["notifications_read"].InputSchema, &notificationSchema); err != nil {
+		t.Fatalf("unmarshal notifications_read schema: %v", err)
+	}
+	if propType, _ := notificationSchema.Properties["include_raw"]["type"].(string); propType != "boolean" {
+		t.Fatalf("notifications_read include_raw should be boolean, got %+v", notificationSchema.Properties["include_raw"])
+	}
+	var conversationSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(toolsByName["conversations_read"].InputSchema, &conversationSchema); err != nil {
+		t.Fatalf("unmarshal conversations_read schema: %v", err)
+	}
+	if propType, _ := conversationSchema.Properties["include_raw"]["type"].(string); propType != "boolean" {
+		t.Fatalf("conversations_read include_raw should be boolean, got %+v", conversationSchema.Properties["include_raw"])
 	}
 }
 
@@ -487,6 +508,114 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 	}
 }
 
+func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/conversations" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"conv-1",
+				"unread":true,
+				"updated_at":"2026-05-10T13:00:00Z",
+				"accounts":[{"id":"acct-1","username":"alice","acct":"alice@example.com","display_name":"Alice","note":"` + strings.Repeat("bio ", 200) + `"}],
+				"last_status":{"id":"post-1","content":"` + strings.Repeat("conversation-content ", 80) + `","created_at":"2026-05-10T12:59:00Z","visibility":"direct"},
+				"debugPayload":{"large":"` + strings.Repeat("x", 4096) + `"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, args map[string]any) map[string]any {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": "conversations_read", "arguments": args})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("conversations_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal conversations_read: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("conversations_read rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data == nil {
+			t.Fatalf("expected structured data, got %+v", out.StructuredContent)
+		}
+		return data
+	}
+
+	defaultData := call(2, map[string]any{})
+	if gotQueries[0] != "limit=20" {
+		t.Fatalf("expected bounded default limit query, got %q", gotQueries[0])
+	}
+	conversations, _ := defaultData["conversations"].([]any)
+	if len(conversations) != 1 {
+		t.Fatalf("expected one conversation, got %+v", defaultData)
+	}
+	conversation, _ := conversations[0].(map[string]any)
+	if _, ok := conversation["raw"]; ok {
+		t.Fatalf("raw field should be absent by default: %+v", conversation)
+	}
+	if _, ok := conversation["_raw"]; ok {
+		t.Fatalf("_raw field should be absent by default: %+v", conversation)
+	}
+	participants, _ := conversation["participants"].([]any)
+	if len(participants) != 1 {
+		t.Fatalf("expected compact participants, got %+v", conversation)
+	}
+	lastPost, _ := conversation["lastPost"].(map[string]any)
+	if content, _ := lastPost["content"].(string); len([]rune(content)) > 500 {
+		t.Fatalf("expected bounded lastPost content, got %d runes", len([]rune(content)))
+	}
+
+	rawData := call(3, map[string]any{"limit": 200, "include_raw": true})
+	if gotQueries[1] != "limit=80" {
+		t.Fatalf("expected max bounded limit query, got %q", gotQueries[1])
+	}
+	rawConversations, _ := rawData["conversations"].([]any)
+	rawConversation, _ := rawConversations[0].(map[string]any)
+	if _, ok := rawConversation["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected include_raw=true to expose _raw, got %+v", rawConversation)
+	}
+}
+
 func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -616,6 +745,126 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 	favourite, _ := notifications[0].(map[string]any)
 	if favourite["type"] != "favourite" {
 		t.Fatalf("expected favourite notification type, got %+v", favourite)
+	}
+}
+
+func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"n-mail",
+				"type":"communication:inbound",
+				"created_at":"2026-05-10T12:00:00Z",
+				"channel":"email",
+				"messageId":"comm-delivery-email",
+				"from":{"name":"Sender","address":"sender@example.com","soulAgentId":"0xabc"},
+				"to":[{"address":"agent@example.com"}],
+				"subject":"Hello",
+				"body":"` + strings.Repeat("long-body ", 80) + `",
+				"status":{"id":"post-1","content":"` + strings.Repeat("long-post ", 120) + `","visibility":"public"},
+				"debugPayload":{"large":"` + strings.Repeat("x", 4096) + `"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, args map[string]any) map[string]any {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": "notifications_read", "arguments": args})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal notifications_read: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data == nil {
+			t.Fatalf("expected structured data, got %+v", out.StructuredContent)
+		}
+		return data
+	}
+
+	defaultData := call(2, map[string]any{"limit": 20})
+	notifications, _ := defaultData["notifications"].([]any)
+	if len(notifications) != 1 {
+		t.Fatalf("expected one notification, got %+v", defaultData)
+	}
+	notification, _ := notifications[0].(map[string]any)
+	if _, ok := notification["raw"]; ok {
+		t.Fatalf("raw field should be absent by default: %+v", notification)
+	}
+	if _, ok := notification["_raw"]; ok {
+		t.Fatalf("_raw field should be absent by default: %+v", notification)
+	}
+	comm, _ := notification["communication"].(map[string]any)
+	if comm["messageId"] != "comm-delivery-email" || comm["channel"] != "email" {
+		t.Fatalf("expected compact communication summary, got %+v", comm)
+	}
+	if preview, _ := comm["preview"].(string); len([]rune(preview)) > 240 {
+		t.Fatalf("expected bounded communication preview, got %d runes", len([]rune(preview)))
+	}
+	post, _ := notification["targetPost"].(map[string]any)
+	if content, _ := post["content"].(string); len([]rune(content)) > 500 {
+		t.Fatalf("expected bounded targetPost content, got %d runes", len([]rune(content)))
+	}
+	diagnostics, _ := defaultData["diagnostics"].(map[string]any)
+	if diagnostics["upstreamCount"] != float64(1) || diagnostics["normalizedCount"] != float64(1) {
+		t.Fatalf("expected notification diagnostics counts, got %+v", diagnostics)
+	}
+	if diagnostics["responseBytes"] == float64(0) || diagnostics["mcpPayloadBytes"] == float64(0) {
+		t.Fatalf("expected response size diagnostics, got %+v", diagnostics)
+	}
+
+	rawData := call(3, map[string]any{"limit": 20, "include_raw": true})
+	rawNotifications, _ := rawData["notifications"].([]any)
+	rawNotification, _ := rawNotifications[0].(map[string]any)
+	if _, ok := rawNotification["_raw"].(map[string]any); !ok {
+		t.Fatalf("expected include_raw=true to expose _raw, got %+v", rawNotification)
+	}
+	if _, ok := rawNotification["raw"]; ok {
+		t.Fatalf("include_raw=true should use _raw, not raw: %+v", rawNotification)
 	}
 }
 

@@ -1,0 +1,450 @@
+#!/usr/bin/env python3
+"""Run the Project 21 M0 baseline MCP usability probe.
+
+Required environment:
+  MCP_ENDPOINT        Actor-scoped endpoint, e.g. https://api.dev.example.com/mcp/agent
+  MCP_BEARER_TOKEN   OAuth token for that actor (or MCP_AUTHORIZATION="Bearer ...")
+
+Recommended probe inputs:
+  PROBE_LOCAL_ID              Current-instance local id for identity_lookup
+  PROBE_ENS                   ENS name for identity_lookup / identity_verify
+  PROBE_REMOTE_AP_HANDLE      Remote ActivityPub handle, e.g. @user@example.social
+  PROBE_ACTOR_URL             Canonical remote actor URL
+  PROBE_EMAIL                 Sender email for fail-closed and message-scoped verification
+  PROBE_PHONE                 Sender phone for fail-closed and message-scoped verification
+  PROBE_MESSAGE_REF           Host mailbox messageRef / comm-delivery-* for identity_verify
+  PROBE_NOTIFICATION_SINCE    RFC3339 timestamp for typed notification reads (default: now-24h)
+  PROBE_SAFE_SEND_EMAIL       Set true to run self-email send/search/readback
+  PROBE_SELF_EMAIL_TO         Recipient for the safe self-email send
+
+The script prints only probe status, timing, sizes, and compact metadata. It never prints bearer tokens,
+message bodies, full tool JSON, or full recipient lists.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import sys
+import time
+import uuid
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any
+
+
+class ProbeError(RuntimeError):
+    pass
+
+
+def env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def require_env(name: str) -> str:
+    value = env(name)
+    if not value:
+        raise ProbeError(f"{name} is required")
+    return value
+
+
+ENDPOINT = require_env("MCP_ENDPOINT")
+AUTHORIZATION = env("MCP_AUTHORIZATION")
+if not AUTHORIZATION:
+    token = require_env("MCP_BEARER_TOKEN")
+    AUTHORIZATION = "Bearer " + token
+
+
+@dataclass
+class ProbeResult:
+    name: str
+    status: str
+    elapsed_ms: int = 0
+    response_bytes: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+results: list[ProbeResult] = []
+_session_id = ""
+_next_id = 1
+
+
+def redact(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    if "@" in value:
+        local, _, domain = value.partition("@")
+        return (local[:2] + "…@" + domain) if local else "…@" + domain
+    if value.startswith("+") and len(value) > 5:
+        return value[:3] + "…" + value[-2:]
+    if len(value) > 16:
+        return value[:8] + "…" + value[-4:]
+    return value
+
+
+def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], int, int]:
+    global _next_id, _session_id
+    request_id = _next_id
+    _next_id += 1
+    payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": AUTHORIZATION,
+    }
+    if _session_id:
+        headers["Mcp-Session-Id"] = _session_id
+    req = urllib.request.Request(ENDPOINT, data=body, headers=headers, method="POST")
+    started = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=130) as resp:
+            raw = resp.read()
+            if resp.headers.get("Mcp-Session-Id"):
+                _session_id = resp.headers["Mcp-Session-Id"].strip()
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except json.JSONDecodeError as exc:
+        raise ProbeError(f"{method} returned non-JSON HTTP {status}: {exc}") from exc
+    return parsed, elapsed_ms, len(raw)
+
+
+def tool_result(parsed: dict[str, Any]) -> dict[str, Any]:
+    if parsed.get("error"):
+        raise ProbeError(f"JSON-RPC error: {parsed['error']}")
+    result = parsed.get("result")
+    if not isinstance(result, dict):
+        raise ProbeError(f"missing tool result: {parsed}")
+    return result
+
+
+def structured(result: dict[str, Any]) -> dict[str, Any]:
+    value = result.get("structuredContent")
+    if not isinstance(value, dict):
+        return {}
+    data = value.get("data")
+    if isinstance(data, dict):
+        return data
+    return value
+
+
+def tool(name: str, arguments: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any], int, int]:
+    parsed, elapsed_ms, size = rpc("tools/call", {"name": name, "arguments": arguments or {}})
+    result = tool_result(parsed)
+    return result, structured(result), elapsed_ms, size
+
+
+def record(name: str, status: str, elapsed_ms: int = 0, response_bytes: int = 0, **details: Any) -> None:
+    clean = {k: v for k, v in details.items() if v not in (None, "", [], {})}
+    results.append(ProbeResult(name=name, status=status, elapsed_ms=elapsed_ms, response_bytes=response_bytes, details=clean))
+    suffix = ""
+    if clean:
+        suffix = " " + json.dumps(clean, sort_keys=True, separators=(",", ":"))
+    print(f"{status.upper():7} {name:48} {elapsed_ms:5d}ms {response_bytes:7d}B{suffix}")
+
+
+def run_probe(name: str, fn) -> None:  # type: ignore[no-untyped-def]
+    try:
+        fn()
+    except ProbeError as exc:
+        record(name, "fail", error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - top-level probe isolation
+        record(name, "fail", error=f"{type(exc).__name__}: {exc}")
+
+
+def skip(name: str, reason: str) -> None:
+    record(name, "skip", reason=reason)
+
+
+def require_input(probe_name: str, env_name: str) -> str | None:
+    value = env(env_name)
+    if not value:
+        skip(probe_name, f"missing {env_name}")
+        return None
+    return value
+
+
+def assert_tool_ok(result: dict[str, Any]) -> None:
+    if result.get("isError") is True:
+        raise ProbeError(f"tool returned isError: {structured(result).get('error', {})}")
+
+
+def expect_tool_error_code(result: dict[str, Any], want_code: str) -> None:
+    if result.get("isError") is not True:
+        raise ProbeError(f"expected tool error {want_code}, got success")
+    err = structured(result).get("error")
+    if not isinstance(err, dict) or err.get("code") != want_code:
+        raise ProbeError(f"expected tool error {want_code}, got {err}")
+
+
+def first_message_id(data: dict[str, Any]) -> str:
+    messages = data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return ""
+    first = messages[0]
+    if not isinstance(first, dict):
+        return ""
+    for key in ("messageId", "messageRef", "deliveryId"):
+        value = str(first.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def read_count(data: dict[str, Any], key: str) -> int:
+    value = data.get(key)
+    if isinstance(value, list):
+        return len(value)
+    count = data.get("count")
+    return int(count) if isinstance(count, (int, float)) else 0
+
+
+def assert_verified_identity(data: dict[str, Any], context: str) -> None:
+    if data.get("verified") is not True:
+        reason = data.get("reason", "verified was not true")
+        raise ProbeError(f"{context} did not verify: {reason}")
+
+
+def assert_verified_message_identity(data: dict[str, Any], context: str) -> None:
+    if data.get("messageFound") is not True:
+        reason = data.get("reason", "messageFound was not true")
+        raise ProbeError(f"{context} did not find the message: {reason}")
+    assert_verified_identity(data, context)
+
+
+def assert_notification_baseline(data: dict[str, Any], context: str) -> None:
+    diagnostics = data.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        raise ProbeError(f"{context} missing notifications_read diagnostics")
+    missing = [
+        key
+        for key in ("lesserAPIMs", "normalizationMs", "responseBytes", "mcpPayloadBytes")
+        if key not in diagnostics
+    ]
+    if missing:
+        raise ProbeError(f"{context} diagnostics missing fields: {', '.join(missing)}")
+
+    notifications = data.get("notifications")
+    if not isinstance(notifications, list):
+        raise ProbeError(f"{context} missing notifications list")
+    for index, item in enumerate(notifications):
+        if not isinstance(item, dict):
+            continue
+        if "raw" in item or "_raw" in item:
+            raise ProbeError(f"{context} notification {index} exposed raw payload by default")
+
+
+def assert_mailbox_page_sane(data: dict[str, Any], context: str) -> None:
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        raise ProbeError(f"{context} missing messages list")
+    count = read_count(data, "messages")
+    has_more = data.get("hasMore") is True
+    next_cursor = str(data.get("nextCursor", "")).strip()
+    if has_more and count == 0:
+        raise ProbeError(f"{context} returned count=0 with hasMore=true")
+    if has_more and not next_cursor:
+        raise ProbeError(f"{context} returned hasMore=true without nextCursor")
+
+
+def probe_verified_identity(name: str, channel: str, identifier: str, message_id: str = "") -> None:
+    args = {"channel": channel, "identifier": identifier}
+    if message_id:
+        args["messageId"] = message_id
+    result, data, elapsed, size = tool("identity_verify", args)
+    assert_tool_ok(result)
+    if message_id:
+        assert_verified_message_identity(data, name)
+    else:
+        assert_verified_identity(data, name)
+    details = {
+        "verified": data.get("verified"),
+        "matchedBy": data.get("matchedBy"),
+    }
+    message = data.get("message")
+    if isinstance(message, dict):
+        details["messageSource"] = message.get("source")
+    record(name, "pass", elapsed, size, **details)
+
+
+def probe_notifications_read(name: str, args: dict[str, Any]) -> None:
+    result, data, elapsed, size = tool("notifications_read", args)
+    assert_tool_ok(result)
+    assert_notification_baseline(data, name)
+    diagnostics = data.get("diagnostics")
+    details: dict[str, Any] = {
+        "count": read_count(data, "notifications"),
+    }
+    if isinstance(diagnostics, dict):
+        details["diagnostics"] = {
+            k: diagnostics.get(k)
+            for k in ("lesserAPIMs", "normalizationMs", "responseBytes", "mcpPayloadBytes")
+            if k in diagnostics
+        }
+    record(name, "pass", elapsed, size, **details)
+
+
+def probe_mailbox_read(name: str, tool_name: str, args: dict[str, Any]) -> tuple[dict[str, Any], int, int]:
+    result, data, elapsed, size = tool(tool_name, args)
+    assert_tool_ok(result)
+    assert_mailbox_page_sane(data, name)
+    record(
+        name,
+        "pass",
+        elapsed,
+        size,
+        count=read_count(data, "messages"),
+        hasMore=data.get("hasMore"),
+        nextCursor=bool(str(data.get("nextCursor", "")).strip()),
+    )
+    return data, elapsed, size
+
+
+def notification_since_default() -> str:
+    return (dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+
+
+def init() -> None:
+    parsed, elapsed, size = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "lesser-body-m0-probe", "version": "1"}})
+    if parsed.get("error"):
+        raise ProbeError(f"initialize failed: {parsed['error']}")
+    record("initialize", "pass", elapsed, size, session=bool(_session_id))
+
+
+def probe_tool_success(name: str, tool_name: str, args: dict[str, Any] | None = None, count_key: str = "") -> None:
+    result, data, elapsed, size = tool(tool_name, args)
+    assert_tool_ok(result)
+    details: dict[str, Any] = {}
+    if count_key:
+        details["count"] = read_count(data, count_key)
+    diagnostics = data.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        details["diagnostics"] = {k: diagnostics.get(k) for k in ("lesserAPIMs", "normalizationMs", "responseBytes", "mcpPayloadBytes") if k in diagnostics}
+    record(name, "pass", elapsed, size, **details)
+
+
+def main() -> int:
+    print("Project 21 M0 baseline MCP usability probe")
+    print(f"endpoint={ENDPOINT}")
+    run_probe("initialize", init)
+    if not _session_id:
+        print("initialize failed before session establishment", file=sys.stderr)
+        return 1
+
+    probe_tool_success("identity_whoami", "identity_whoami")
+
+    for probe_name, env_name in [
+        ("identity_lookup local ID", "PROBE_LOCAL_ID"),
+        ("identity_lookup ENS", "PROBE_ENS"),
+        ("identity_lookup remote AP handle", "PROBE_REMOTE_AP_HANDLE"),
+        ("identity_lookup actor URL", "PROBE_ACTOR_URL"),
+    ]:
+        value = require_input(probe_name, env_name)
+        if value:
+            run_probe(probe_name, lambda value=value, probe_name=probe_name: probe_tool_success(probe_name, "identity_lookup", {"query": value}, "matches"))
+
+    ens = env("PROBE_ENS")
+    if ens:
+        run_probe("identity_verify ENS identifier", lambda: probe_verified_identity("identity_verify ENS identifier", "ens", ens))
+    else:
+        skip("identity_verify ENS identifier", "missing PROBE_ENS")
+
+    for channel, env_name in [("email", "PROBE_EMAIL"), ("phone", "PROBE_PHONE")]:
+        value = env(env_name)
+        if not value:
+            skip(f"identity_verify {channel} fail-closed", f"missing {env_name}")
+            continue
+        def fail_closed(channel: str = channel, value: str = value) -> None:
+            result, _data, elapsed, size = tool("identity_verify", {"channel": channel, "identifier": value})
+            expect_tool_error_code(result, "private_reachability_unavailable")
+            record(f"identity_verify {channel} fail-closed", "pass", elapsed, size, identifier=redact(value))
+        run_probe(f"identity_verify {channel} fail-closed", fail_closed)
+
+    message_ref = env("PROBE_MESSAGE_REF")
+    if message_ref:
+        if ens:
+            run_probe("identity_verify ENS messageRef", lambda: probe_verified_identity("identity_verify ENS messageRef", "ens", ens, message_ref))
+        for channel, env_name in [("email", "PROBE_EMAIL"), ("phone", "PROBE_PHONE")]:
+            value = env(env_name)
+            if value:
+                run_probe(
+                    f"identity_verify {channel} messageRef",
+                    lambda channel=channel, value=value: probe_verified_identity(
+                        f"identity_verify {channel} messageRef", channel, value, message_ref
+                    ),
+                )
+    else:
+        skip("identity_verify messageRef", "missing PROBE_MESSAGE_REF")
+
+    run_probe("notifications_read limit=20", lambda: probe_notifications_read("notifications_read limit=20", {"limit": 20}))
+    run_probe(
+        "notifications_read since empty limit=30",
+        lambda: probe_notifications_read("notifications_read since empty limit=30", {"since": "", "limit": 30}),
+    )
+    since = env("PROBE_NOTIFICATION_SINCE", notification_since_default())
+    for typ in ("mention", "reply"):
+        run_probe(
+            f"notifications_read {typ} timestamp",
+            lambda typ=typ: probe_notifications_read(
+                f"notifications_read {typ} timestamp", {"since": since, "limit": 30, "types": [typ]}
+            ),
+        )
+
+    inbox_message_id = ""
+    for folder in ("inbox", "sent"):
+        def email_read(folder: str = folder) -> None:
+            nonlocal inbox_message_id
+            data, elapsed, size = probe_mailbox_read(f"email_read {folder} limit=20", "email_read", {"folder": folder, "limit": 20})
+            if folder == "inbox":
+                inbox_message_id = first_message_id(data)
+        run_probe(f"email_read {folder} limit=20", email_read)
+
+    if inbox_message_id:
+        run_probe("email_get_content listed message", lambda: probe_tool_success("email_get_content listed message", "email_get_content", {"messageId": inbox_message_id}))
+    else:
+        skip("email_get_content listed message", "email_read inbox returned no messageId")
+
+    if env("PROBE_SAFE_SEND_EMAIL").lower() == "true":
+        to = require_input("self-email send/search/readback", "PROBE_SELF_EMAIL_TO")
+        if to:
+            message_id = "m0-probe-" + uuid.uuid4().hex
+            subject = "lesser-body M0 baseline probe " + message_id[-8:]
+            run_probe("self-email send", lambda: probe_tool_success("self-email send", "email_send", {"to": to, "subject": subject, "body": "M0 baseline probe self-email.", "messageId": message_id}))
+            run_probe("self-email search/readback", lambda: probe_tool_success("self-email search/readback", "email_search", {"query": subject, "limit": 5}, "messages"))
+    else:
+        skip("self-email send/search/readback", "set PROBE_SAFE_SEND_EMAIL=true to run")
+
+    run_probe("sms_read limit=20", lambda: probe_mailbox_read("sms_read limit=20", "sms_read", {"limit": 20}))
+    run_probe("voicemail_read limit=20", lambda: probe_mailbox_read("voicemail_read limit=20", "voicemail_read", {"limit": 20}))
+
+    event_id = "01" + uuid.uuid4().hex[:24].upper()
+    run_probe("memory_append", lambda: probe_tool_success("memory_append", "memory_append", {"event_id": event_id, "content": "M0 baseline probe memory event", "tags": ["m0-probe"]}))
+    probe_tool_success("memory_query", "memory_query", {"query": "M0 baseline probe", "limit": 5}, "events")
+
+    probe_tool_success("conversations_read", "conversations_read", {"limit": 20}, "conversations")
+    probe_tool_success("timeline_read home", "timeline_read", {"timeline": "home", "limit": 20})
+
+    failed = sum(1 for r in results if r.status == "fail")
+    skipped = sum(1 for r in results if r.status == "skip")
+    passed = sum(1 for r in results if r.status == "pass")
+    summary = {"passed": passed, "failed": failed, "skipped": skipped, "results": [r.__dict__ for r in results]}
+    print("SUMMARY " + json.dumps(summary, sort_keys=True, separators=(",", ":")))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except ProbeError as exc:
+        print(f"probe setup failed: {exc}", file=sys.stderr)
+        raise SystemExit(2)
