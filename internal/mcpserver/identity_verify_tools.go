@@ -48,6 +48,10 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 	if resolvedIdentifier == "" {
 		return toolErrorResult("invalid_request", "identifier format is invalid for the selected channel", 400, nil)
 	}
+	if in.MessageID != "" {
+		return handleMessageScopedIdentityVerify(ctx, client, in.Channel, resolvedIdentifier, in.MessageID)
+	}
+
 	agent, channelsPayload, err := resolveIdentityForVerification(ctx, client, in.Channel, resolvedIdentifier)
 	if err != nil {
 		return identityToolResultFromError(err)
@@ -74,43 +78,74 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 		}(),
 	}
 
-	if in.MessageID == "" {
-		return toolJSONResult(result, nil)
-	}
+	return toolJSONResult(result, nil)
+}
 
+func handleMessageScopedIdentityVerify(ctx context.Context, client *soulapi.Client, channel string, identifier string, messageID string) (*mcpruntime.ToolResult, error) {
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
 
-	notification, err := findCommunicationNotification(ctx, token, in.MessageID)
+	message, source, err := findCommunicationMessage(ctx, token, messageID)
 	if err != nil {
-		return identityVerifyNotificationResultFromError(err)
+		return identityVerifyMessageResultFromError(err)
 	}
 
-	result["verificationScope"] = "message"
-	result["messageId"] = in.MessageID
-	if notification == nil {
+	result := map[string]any{
+		"channel":           channel,
+		"identifier":        identifier,
+		"verificationScope": "message",
+		"identityResolved":  false,
+		"verified":          false,
+		"messageId":         messageID,
+	}
+
+	if message == nil {
 		result["verified"] = false
 		result["messageFound"] = false
 		result["reason"] = "message_not_found"
 		return toolJSONResult(result, nil)
 	}
 
-	from := commFrom(notification)
-	match, matchedBy := verifySenderAgainstResolvedIdentity(agentID, in.Channel, resolvedIdentifier, channelsPayload, from)
+	from := commFrom(message)
 	result["messageFound"] = true
-	result["verified"] = match
-	result["message"] = map[string]any{
-		"messageId":      firstNonEmpty(in.MessageID, commMessageID(notification)),
-		"notificationId": strings.TrimSpace(stringFromMap(notification, "id")),
-		"channel":        notificationChannel(notification),
-		"from":           from,
-		"to":             commTo(notification),
-		"subject":        commSubject(notification),
-		"body":           commBody(notification),
-		"receivedAt":     commReceivedAt(notification),
+	result["message"] = communicationMessageSummary(message, messageID, source)
+
+	if channel == "email" || channel == "phone" {
+		agentID := firstSenderAgentID(from)
+		if agentID == "" {
+			result["reason"] = "message_lacks_authoritative_sender_provenance"
+			return toolJSONResult(result, nil)
+		}
+		if !senderIdentifierMatches(channel, identifier, from) {
+			result["reason"] = "sender_does_not_match_resolved_identity"
+			result["agent"] = map[string]any{"agentId": agentID}
+			result["identityResolved"] = true
+			return toolJSONResult(result, nil)
+		}
+		result["verified"] = true
+		result["identityResolved"] = true
+		result["agent"] = map[string]any{"agentId": agentID}
+		result["matchedBy"] = "message.from." + channel + "+sender.soulAgentId"
+		return toolJSONResult(result, nil)
 	}
+
+	agent, channelsPayload, err := resolveIdentityForVerification(ctx, client, channel, identifier)
+	if err != nil {
+		return identityToolResultFromError(err)
+	}
+	agentID := normalizeSoulAgentID(stringFromMap(agent, "agent_id"))
+	if agentID == "" {
+		return toolErrorResult("upstream_error", "resolved identity missing agent_id", 502, nil)
+	}
+
+	match, matchedBy := verifySenderAgainstResolvedIdentity(agentID, channel, identifier, channelsPayload, from)
+	result["identityResolved"] = true
+	result["verified"] = match
+	result["agent"] = summarizeResolvedAgent(agent)
+	result["channels"] = mapOrEmpty(channelsPayload, "channels")
+	result["contactPreferences"] = mapOrEmpty(channelsPayload, "contactPreferences")
 	if match {
 		result["matchedBy"] = matchedBy
 		return toolJSONResult(result, nil)
@@ -122,6 +157,31 @@ func handleIdentityVerify(ctx context.Context, args json.RawMessage) (*mcpruntim
 		result["reason"] = "sender_does_not_match_resolved_identity"
 	}
 	return toolJSONResult(result, nil)
+}
+
+func communicationMessageSummary(message map[string]any, requestedMessageID string, source string) map[string]any {
+	if message == nil {
+		return map[string]any{}
+	}
+	out := map[string]any{
+		"messageId":  firstNonEmpty(requestedMessageID, commMessageID(message), firstNonEmptyStringMap(message, "messageId", "messageRef", "deliveryId")),
+		"channel":    notificationChannel(message),
+		"from":       commFrom(message),
+		"to":         commTo(message),
+		"subject":    commSubject(message),
+		"body":       commBody(message),
+		"receivedAt": commReceivedAt(message),
+	}
+	if notificationID := strings.TrimSpace(stringFromMap(message, "id")); notificationID != "" {
+		out["notificationId"] = notificationID
+	}
+	if source != "" {
+		out["source"] = source
+	}
+	if ref := strings.TrimSpace(firstNonEmptyStringMap(message, "messageRef", "deliveryId", "hostMessageId")); ref != "" {
+		out["messageRef"] = ref
+	}
+	return out
 }
 
 func resolveIdentityForVerification(ctx context.Context, client *soulapi.Client, channel string, identifier string) (map[string]any, map[string]any, error) {
@@ -189,6 +249,62 @@ func findCommunicationNotification(ctx context.Context, bearerToken string, mess
 	return nil, nil
 }
 
+func findCommunicationMessage(ctx context.Context, bearerToken string, messageID string) (map[string]any, string, error) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, "", nil
+	}
+
+	if isHostMailboxMessageRef(messageID) {
+		message, err := findHostMailboxMessage(ctx, messageID)
+		if err != nil {
+			if isHostMailboxNotFound(err) {
+				return nil, "lesser-host-mailbox", nil
+			}
+			return nil, "lesser-host-mailbox", err
+		}
+		return message, "lesser-host-mailbox", nil
+	}
+
+	notification, err := findCommunicationNotification(ctx, bearerToken, messageID)
+	if err != nil {
+		return nil, "lesser-notification", err
+	}
+	return notification, "lesser-notification", nil
+}
+
+func findHostMailboxMessage(ctx context.Context, messageID string) (map[string]any, error) {
+	deps, err := loadCommMailboxDependencies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := getHostMailboxMessage(ctx, deps, messageID, false)
+	if err != nil {
+		return nil, err
+	}
+	message, _ := out["message"].(map[string]any)
+	if message == nil {
+		return nil, errors.New("unexpected mailbox message response")
+	}
+	return message, nil
+}
+
+func isHostMailboxMessageRef(messageID string) bool {
+	messageID = strings.ToLower(strings.TrimSpace(messageID))
+	return strings.HasPrefix(messageID, "comm-delivery-") ||
+		strings.HasPrefix(messageID, "delivery-") ||
+		strings.HasPrefix(messageID, "mailbox-") ||
+		strings.HasPrefix(messageID, "message-ref-")
+}
+
+func isHostMailboxNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *soulapi.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == 404
+}
+
 func verifySenderAgainstResolvedIdentity(agentID string, channel string, identifier string, channelsPayload map[string]any, from map[string]any) (bool, string) {
 	expected := resolvedVerificationMarkers(agentID, channel, identifier, mapOrEmpty(channelsPayload, "channels"))
 	actual := senderVerificationMarkers(from)
@@ -245,6 +361,44 @@ func senderVerificationMarkers(from map[string]any) verificationMarkers {
 
 func senderHasAuthoritativeAgentID(from map[string]any) bool {
 	return len(senderVerificationMarkers(from).agentIDs) > 0
+}
+
+func firstSenderAgentID(from map[string]any) string {
+	markers := senderVerificationMarkers(from)
+	for agentID := range markers.agentIDs {
+		return agentID
+	}
+	return ""
+}
+
+func senderIdentifierMatches(channel string, identifier string, from map[string]any) bool {
+	if from == nil {
+		return false
+	}
+	switch channel {
+	case "email":
+		want := normalizeVerificationEmail(identifier)
+		for _, key := range []string{"address", "email", "identifier"} {
+			if normalizeVerificationEmail(stringFromMap(from, key)) == want {
+				return true
+			}
+		}
+	case "phone":
+		want := normalizeVerificationPhone(identifier)
+		for _, key := range []string{"phone", "number", "identifier"} {
+			if normalizeVerificationPhone(stringFromMap(from, key)) == want {
+				return true
+			}
+		}
+	case "ens":
+		want := normalizeVerificationENS(identifier)
+		for _, key := range []string{"ens", "name", "identifier"} {
+			if normalizeVerificationENS(stringFromMap(from, key)) == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func newVerificationMarkers() verificationMarkers {
@@ -346,9 +500,19 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func identityVerifyNotificationResultFromError(err error) (*mcpruntime.ToolResult, error) {
+func identityVerifyMessageResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	if err == nil {
 		return toolErrorResult("upstream_error", "error", 500, nil)
+	}
+
+	var userErr *toolUserError
+	if errors.As(err, &userErr) {
+		return toolErrorResult(userErr.Code, userErr.Message, userErr.Status, userErr.Details)
+	}
+
+	var soulErr *soulapi.APIError
+	if errors.As(err, &soulErr) {
+		return commToolResultFromError(err)
 	}
 
 	var apiErr *lesserapi.APIError

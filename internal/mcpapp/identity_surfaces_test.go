@@ -25,6 +25,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
 	soulbinding.ResetForTests()
@@ -114,6 +115,78 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/resolve/ens/ops.eth":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email":
+			if got := r.Header.Get("Authorization"); got != "Bearer instance-key-123" {
+				t.Fatalf("expected host instance bearer for mailbox lookup, got %q", got)
+			}
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-email",
+					"deliveryId":"comm-delivery-email",
+					"channelType":"email",
+					"direction":"inbound",
+					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"to":[{"address":"agent1@test.example.com"}],
+					"subject":"Host email",
+					"preview":"Hello from host",
+					"createdAt":"2026-05-10T12:00:00Z"
+				}
+			}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-phone":
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-phone",
+					"deliveryId":"comm-delivery-phone",
+					"channelType":"sms",
+					"direction":"inbound",
+					"from":{"number":"+15550142","soulAgentId":"` + agentID + `"},
+					"to":{"number":"+15550199"},
+					"preview":"SMS from host",
+					"createdAt":"2026-05-10T12:01:00Z"
+				}
+			}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-ens":
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-ens",
+					"deliveryId":"comm-delivery-ens",
+					"channelType":"email",
+					"direction":"inbound",
+					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"subject":"ENS host email",
+					"preview":"ENS verified",
+					"createdAt":"2026-05-10T12:02:00Z"
+				}
+			}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-spoof":
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-spoof",
+					"deliveryId":"comm-delivery-spoof",
+					"channelType":"email",
+					"direction":"inbound",
+					"from":{"name":"agent-alice@lessersoul.ai","address":"agent-alice@lessersoul.ai"},
+					"subject":"Spoof",
+					"preview":"No authoritative sender provenance",
+					"createdAt":"2026-05-10T12:03:00Z"
+				}
+			}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-wrong-agent":
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-wrong-agent",
+					"deliveryId":"comm-delivery-wrong-agent",
+					"channelType":"email",
+					"direction":"inbound",
+					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+					"subject":"Wrong agent",
+					"preview":"Wrong provenance",
+					"createdAt":"2026-05-10T12:04:00Z"
+				}
+			}`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/soul/comm/mailbox/"+agentID+"/messages/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"message not found"}}`))
 		case r.URL.Path == "/api/v1/notifications":
 			_, _ = w.Write([]byte(`[
 				{
@@ -581,7 +654,6 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			"arguments": map[string]any{
 				"channel":    tc.channel,
 				"identifier": tc.identifier,
-				"messageId":  "comm-msg-001",
 			},
 		})
 		resp := invokeJSON(t, env, app, map[string][]string{
@@ -594,6 +666,88 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		_ = assertToolErrorPayload("identity_verify "+tc.channel, resp.Body, "private_reachability_unavailable")
 		if len(channelResolveQueries) != 0 {
 			t.Fatalf("identity_verify %s should not fetch private /channels, got %+v", tc.channel, channelResolveQueries)
+		}
+	}
+
+	callIdentityVerify := func(id int, channel string, identifier string, messageID string) map[string]any {
+		t.Helper()
+		args := map[string]any{
+			"channel":    channel,
+			"identifier": identifier,
+		}
+		if messageID != "" {
+			args["messageId"] = messageID
+		}
+		callParams, _ := json.Marshal(map[string]any{
+			"name":      "identity_verify",
+			"arguments": args,
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("identity_verify(%s,%s,%s): status=%d body=%s", channel, identifier, messageID, resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("identity_verify(%s,%s,%s) rpc error: %+v", channel, identifier, messageID, rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		{
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+		}
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data == nil {
+			t.Fatalf("identity_verify(%s,%s,%s): expected structured data, got %+v", channel, identifier, messageID, out.StructuredContent)
+		}
+		return data
+	}
+
+	// Host mailbox messageRefs are the canonical provenance source for message-scoped identity_verify.
+	{
+		emailResolveQueries = nil
+		data := callIdentityVerify(60, "email", "agent-alice@lessersoul.ai", "comm-delivery-email")
+		if data["verified"] != true {
+			t.Fatalf("expected host email message verification to succeed, got %+v", data)
+		}
+		if data["matchedBy"] != "message.from.email+sender.soulAgentId" {
+			t.Fatalf("expected email sender provenance match, got %+v", data)
+		}
+		message, _ := data["message"].(map[string]any)
+		if message["source"] != "lesser-host-mailbox" || message["messageRef"] != "comm-delivery-email" {
+			t.Fatalf("expected host mailbox message summary, got %+v", message)
+		}
+		if len(emailResolveQueries) != 0 {
+			t.Fatalf("message-scoped email verify must not call private reachability resolver, got %+v", emailResolveQueries)
+		}
+
+		data = callIdentityVerify(61, "phone", "+1 (555) 0142", "comm-delivery-phone")
+		if data["verified"] != true || data["matchedBy"] != "message.from.phone+sender.soulAgentId" {
+			t.Fatalf("expected host phone message verification to succeed, got %+v", data)
+		}
+
+		data = callIdentityVerify(62, "ens", "agent-alice.lessersoul.eth", "comm-delivery-ens")
+		if data["verified"] != true || data["matchedBy"] != "sender.agentId" {
+			t.Fatalf("expected host ENS message verification to succeed, got %+v", data)
+		}
+
+		data = callIdentityVerify(63, "email", "agent-alice@lessersoul.ai", "comm-delivery-spoof")
+		if data["verified"] != false || data["reason"] != "message_lacks_authoritative_sender_provenance" {
+			t.Fatalf("expected spoofed host sender to fail missing provenance, got %+v", data)
+		}
+
+		data = callIdentityVerify(64, "ens", "agent-alice.lessersoul.eth", "comm-delivery-wrong-agent")
+		if data["verified"] != false || data["reason"] != "sender_does_not_match_resolved_identity" {
+			t.Fatalf("expected wrong host sender agent to fail mismatch, got %+v", data)
+		}
+
+		data = callIdentityVerify(65, "ens", "agent-alice.lessersoul.eth", "comm-delivery-missing")
+		if data["verified"] != false || data["messageFound"] != false || data["reason"] != "message_not_found" {
+			t.Fatalf("expected missing host message to be explicit, got %+v", data)
 		}
 	}
 
