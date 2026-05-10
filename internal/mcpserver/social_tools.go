@@ -22,11 +22,13 @@ import (
 )
 
 const (
-	notificationCursorMemoryPrefix = "notification_cursor:"
-	notificationCursorMemoryTag    = "notification_cursor"
-	notificationReadDefaultLimit   = 30
-	notificationReadMaxLimit       = 80
-	notificationReadMaxTypes       = 8
+	notificationCursorMemoryPrefix  = "notification_cursor:"
+	notificationCursorMemoryTag     = "notification_cursor"
+	notificationReadDefaultLimit    = 30
+	notificationReadMaxLimit        = 80
+	notificationReadMaxTypes        = 8
+	notificationContentPreviewRunes = 500
+	notificationCommPreviewRunes    = 240
 )
 
 var notificationCursorEventIDs = struct {
@@ -366,14 +368,16 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Types  []string `json:"types,omitempty"`
-		Since  *string  `json:"since"`
-		Cursor string   `json:"cursor,omitempty"`
-		Limit  int      `json:"limit,omitempty"`
+		Types      []string `json:"types,omitempty"`
+		Since      *string  `json:"since"`
+		Cursor     string   `json:"cursor,omitempty"`
+		Limit      int      `json:"limit,omitempty"`
+		IncludeRaw bool     `json:"include_raw,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
+	startedAt := time.Now()
 	requestedTypes, upstreamTypes, err := normalizeRequestedNotificationTypes(in.Types)
 	if err != nil {
 		return nil, err
@@ -398,12 +402,15 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		return nil, err
 	}
 
+	apiStartedAt := time.Now()
 	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, limit, effectiveCursor)
+	apiDuration := time.Since(apiStartedAt)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
 
-	notifications := socialNotificationsFromAPI(list)
+	normalizeStartedAt := time.Now()
+	notifications := socialNotificationsFromAPI(list, in.IncludeRaw)
 	if hasTemporalSince {
 		notifications = filterSocialNotificationsAfter(notifications, sinceTime)
 	}
@@ -433,7 +440,8 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		nextSince = sinceTime.Format(time.RFC3339Nano)
 	}
 
-	return toolJSONResult(map[string]any{
+	normalizeDuration := time.Since(normalizeStartedAt)
+	payload := map[string]any{
 		"since":         effectiveSince,
 		"cursor":        effectiveCursor,
 		"nextSince":     nextSince,
@@ -441,7 +449,17 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"count":         len(notifications),
 		"types":         requestedTypes,
 		"notifications": notifications,
-	}, nil)
+		"includeRaw":    in.IncludeRaw,
+	}
+	attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
+		API:             apiDuration,
+		Normalize:       normalizeDuration,
+		Total:           time.Since(startedAt),
+		UpstreamCount:   len(list),
+		NormalizedCount: len(notifications),
+		RawIncluded:     in.IncludeRaw,
+	})
+	return toolJSONResult(payload, nil)
 }
 
 func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -764,7 +782,8 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"types":{"type":"array","items":{"type":"string"}},
 				"since":{"type":"string"},
 				"cursor":{"type":"string"},
-				"limit":{"type":"integer","minimum":1,"maximum":80}
+				"limit":{"type":"integer","minimum":1,"maximum":80},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream notification payloads under _raw for audit/debug use. Defaults to false and increases response size."}
 			}
 		}`),
 	}
@@ -1043,14 +1062,14 @@ func readSocialNotificationsByType(ctx context.Context, client *lesserapi.Client
 	return list, nextNotificationCursorFromHeaders(headers), nil
 }
 
-func socialNotificationsFromAPI(items []any) []any {
+func socialNotificationsFromAPI(items []any, includeRaw bool) []any {
 	out := make([]any, 0, len(items))
 	for _, item := range items {
 		raw, ok := item.(map[string]any)
 		if !ok || raw == nil {
 			continue
 		}
-		out = append(out, normalizeSocialNotification(raw))
+		out = append(out, normalizeSocialNotification(raw, includeRaw))
 	}
 	return out
 }
@@ -1109,11 +1128,67 @@ func sortSocialNotificationsNewestFirst(items []any) {
 	})
 }
 
-func normalizeSocialNotification(raw map[string]any) map[string]any {
+type notificationReadDiagnostics struct {
+	API             time.Duration
+	Normalize       time.Duration
+	Total           time.Duration
+	UpstreamCount   int
+	NormalizedCount int
+	RawIncluded     bool
+}
+
+func attachNotificationReadDiagnostics(payload map[string]any, d notificationReadDiagnostics) {
+	if payload == nil {
+		return
+	}
+
+	metrics := map[string]any{
+		"lesserAPIMs":      durationMillis(d.API),
+		"normalizationMs":  durationMillis(d.Normalize),
+		"marshalMs":        int64(0),
+		"totalMs":          durationMillis(d.Total),
+		"upstreamCount":    d.UpstreamCount,
+		"normalizedCount":  d.NormalizedCount,
+		"rawIncluded":      d.RawIncluded,
+		"responseBytes":    0,
+		"mcpPayloadBytes":  0,
+		"instrumentation":  "best_effort",
+		"sizeMeasurement":  "json_content_text_bytes; final MCP envelope measured before ToolResult wrapping",
+		"diagnosticFields": []string{"lesserAPIMs", "normalizationMs", "marshalMs", "responseBytes", "mcpPayloadBytes"},
+	}
+	payload["diagnostics"] = metrics
+
+	marshalStartedAt := time.Now()
+	if b, err := json.Marshal(payload); err == nil {
+		metrics["marshalMs"] = durationMillis(time.Since(marshalStartedAt))
+		metrics["responseBytes"] = len(b)
+	}
+	if b, err := json.Marshal(map[string]any{"content": payload, "structuredContent": map[string]any{"data": payload}}); err == nil {
+		metrics["mcpPayloadBytes"] = len(b)
+	}
+	if b, err := json.Marshal(payload); err == nil {
+		metrics["responseBytes"] = len(b)
+	}
+}
+
+func durationMillis(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	ms := d.Round(time.Millisecond).Milliseconds()
+	if ms == 0 {
+		return 1
+	}
+	return ms
+}
+
+func normalizeSocialNotification(raw map[string]any, includeRaw bool) map[string]any {
 	out := map[string]any{
 		"id":   strings.TrimSpace(stringFromMap(raw, "id")),
 		"type": normalizeSocialNotificationType(raw),
-		"raw":  raw,
+	}
+	if includeRaw {
+		out["_raw"] = raw
 	}
 
 	if createdAt := firstNonEmptyStringMap(raw, "created_at", "createdAt"); createdAt != "" {
@@ -1124,6 +1199,9 @@ func normalizeSocialNotification(raw map[string]any) map[string]any {
 	}
 	if post := normalizeSocialNotificationPost(firstMap(raw, "status", "post", "targetPost")); post != nil {
 		out["targetPost"] = post
+	}
+	if comm := normalizeSocialNotificationCommunication(raw); comm != nil {
+		out["communication"] = comm
 	}
 
 	return out
@@ -1164,7 +1242,7 @@ func normalizeSocialNotificationPost(raw map[string]any) map[string]any {
 	out := map[string]any{}
 	putIfNotEmpty(out, "id", firstNonEmptyStringMap(raw, "id"))
 	putIfNotEmpty(out, "url", firstNonEmptyStringMap(raw, "url", "uri"))
-	putIfNotEmpty(out, "content", firstNonEmptyStringMap(raw, "content", "text"))
+	putIfNotEmpty(out, "content", compactString(firstNonEmptyStringMap(raw, "content", "text"), notificationContentPreviewRunes))
 	putIfNotEmpty(out, "createdAt", firstNonEmptyStringMap(raw, "created_at", "createdAt"))
 	putIfNotEmpty(out, "inReplyToId", firstNonEmptyStringMap(raw, "in_reply_to_id", "inReplyToId"))
 	putIfNotEmpty(out, "visibility", firstNonEmptyStringMap(raw, "visibility"))
@@ -1175,6 +1253,102 @@ func normalizeSocialNotificationPost(raw map[string]any) map[string]any {
 		return nil
 	}
 	return out
+}
+
+func normalizeSocialNotificationCommunication(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	channel := notificationChannel(raw)
+	if channel == "" {
+		return nil
+	}
+
+	out := map[string]any{
+		"channel": channel,
+	}
+	putIfNotEmpty(out, "messageId", commMessageID(raw))
+	putIfNotEmpty(out, "subject", commSubject(raw))
+	putIfNotEmpty(out, "receivedAt", commReceivedAt(raw))
+	if from := compactCommunicationEndpoint(commFrom(raw)); from != nil {
+		out["from"] = from
+	}
+	if to := compactCommunicationAny(commTo(raw)); to != nil {
+		out["to"] = to
+	}
+	if preview := compactString(firstNonEmpty(commPreview(raw), commBody(raw)), notificationCommPreviewRunes); preview != "" {
+		out["preview"] = preview
+	}
+	return out
+}
+
+func commPreview(n map[string]any) string {
+	for _, key := range []string{"preview", "snippet", "summary"} {
+		if v, _ := n[key].(string); strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	for _, container := range []string{"communication", "data", "payload"} {
+		if m, ok := n[container].(map[string]any); ok {
+			for _, key := range []string{"preview", "snippet", "summary"} {
+				if v, _ := m[key].(string); strings.TrimSpace(v) != "" {
+					return strings.TrimSpace(v)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func compactCommunicationEndpoint(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for _, key := range []string{"name", "address", "email", "phone", "number", "identifier", "soulAgentId", "soul_agent_id", "agentId", "agent_id"} {
+		putIfNotEmpty(out, key, firstNonEmptyStringMap(raw, key))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func compactCommunicationAny(raw any) any {
+	switch v := raw.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		return compactCommunicationEndpoint(v)
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			if compact := compactCommunicationAny(item); compact != nil {
+				out = append(out, compact)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func compactString(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxRunes <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes <= 1 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 func firstMap(raw map[string]any, keys ...string) map[string]any {
