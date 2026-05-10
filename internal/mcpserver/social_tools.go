@@ -29,6 +29,8 @@ const (
 	notificationReadMaxTypes        = 8
 	notificationContentPreviewRunes = 500
 	notificationCommPreviewRunes    = 240
+	conversationReadDefaultLimit    = 20
+	conversationReadMaxLimit        = 80
 )
 
 var notificationCursorEventIDs = struct {
@@ -339,11 +341,13 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 
 func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Limit int `json:"limit,omitempty"`
+		Limit      int  `json:"limit,omitempty"`
+		IncludeRaw bool `json:"include_raw,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
+	limit := boundedConversationReadLimit(in.Limit)
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
@@ -355,15 +359,23 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	}
 
 	query := url.Values{}
-	if in.Limit > 0 {
-		query.Set("limit", strconv.Itoa(in.Limit))
-	}
+	query.Set("limit", strconv.Itoa(limit))
 
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/conversations", query, token, nil)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	return toolJSONResult(out, nil)
+	conversations, err := socialConversationsFromAPI(out, in.IncludeRaw)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{
+		"conversations": conversations,
+		"count":         len(conversations),
+		"limit":         limit,
+		"includeRaw":    in.IncludeRaw,
+	}
+	return toolJSONResult(payload, nil)
 }
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -792,11 +804,12 @@ func notificationsReadDef() mcpruntime.ToolDef {
 func conversationsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "conversations_read",
-		Description: "Read the authenticated agent's direct message conversations.",
+		Description: "Read compact, bounded direct message conversation summaries. Use include_raw only for audit/debug.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"limit":{"type":"integer","minimum":1,"maximum":80}
+				"limit":{"type":"integer","minimum":1,"maximum":80},
+				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."}
 			}
 		}`),
 	}
@@ -981,6 +994,17 @@ func boundedNotificationReadLimit(limit int) int {
 	}
 }
 
+func boundedConversationReadLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return conversationReadDefaultLimit
+	case limit > conversationReadMaxLimit:
+		return conversationReadMaxLimit
+	default:
+		return limit
+	}
+}
+
 func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, cursor string) ([]any, string, error) {
 	if client == nil {
 		return nil, "", fmt.Errorf("lesser api client not initialized")
@@ -1060,6 +1084,52 @@ func readSocialNotificationsByType(ctx context.Context, client *lesserapi.Client
 		return nil, "", fmt.Errorf("unexpected notifications response")
 	}
 	return list, nextNotificationCursorFromHeaders(headers), nil
+}
+
+func socialConversationsFromAPI(raw any, includeRaw bool) ([]any, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected conversations response")
+	}
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		conversation, ok := item.(map[string]any)
+		if !ok || conversation == nil {
+			continue
+		}
+		out = append(out, normalizeSocialConversation(conversation, includeRaw))
+	}
+	return out, nil
+}
+
+func normalizeSocialConversation(raw map[string]any, includeRaw bool) map[string]any {
+	out := map[string]any{
+		"id": strings.TrimSpace(stringFromMap(raw, "id")),
+	}
+	if includeRaw {
+		out["_raw"] = raw
+	}
+	if unread, ok := raw["unread"].(bool); ok {
+		out["unread"] = unread
+	}
+	if updatedAt := firstNonEmptyStringMap(raw, "updated_at", "updatedAt"); updatedAt != "" {
+		out["updatedAt"] = updatedAt
+	}
+	if accountsRaw, ok := raw["accounts"].([]any); ok {
+		accounts := make([]any, 0, len(accountsRaw))
+		for _, item := range accountsRaw {
+			if account := normalizeSocialNotificationActor(mapFromAny(item)); account != nil {
+				accounts = append(accounts, account)
+			}
+		}
+		if len(accounts) > 0 {
+			out["participants"] = accounts
+		}
+	}
+	if last := normalizeSocialNotificationPost(firstMap(raw, "last_status", "lastStatus", "lastPost")); last != nil {
+		out["lastPost"] = last
+	}
+	return out
 }
 
 func socialNotificationsFromAPI(items []any, includeRaw bool) []any {
