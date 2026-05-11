@@ -86,6 +86,7 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		"sms_read",
 		"voicemail_read",
 		"identity_whoami",
+		"soul_read",
 		"identity_lookup",
 		"identity_verify",
 	} {
@@ -156,6 +157,18 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "replyTo", "string")
 		expectPropType(t, s, "messageId", "string")
 		expectPropType(t, s, "inReplyTo", "string")
+	}
+
+	{
+		s := mustSchema(t, toolsByName["soul_read"])
+		if s.Type != "object" {
+			t.Fatalf("soul_read schema type: want object got %q", s.Type)
+		}
+		expectPropType(t, s, "query", "string")
+		expectPropType(t, s, "agentId", "string")
+		expectPropType(t, s, "ensName", "string")
+		expectPropType(t, s, "limit", "integer")
+		expectPropType(t, s, "include_raw", "boolean")
 	}
 
 	{

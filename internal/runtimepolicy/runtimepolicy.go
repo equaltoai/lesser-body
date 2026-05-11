@@ -70,6 +70,7 @@ var profileContracts = map[Profile]Contract{
 			"profile_update",
 			"memory_append",
 			"memory_query",
+			"soul_read",
 		},
 		Resources: []string{
 			"agent://profile",
@@ -126,6 +127,7 @@ var profileContracts = map[Profile]Contract{
 			"sms_read",
 			"voicemail_read",
 			"identity_whoami",
+			"soul_read",
 			"identity_lookup",
 			"identity_verify",
 		},

@@ -31,6 +31,7 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: smsReadDef(), Handler: handleSmsRead},
 		{Def: voicemailReadDef(), Handler: handleVoicemailRead},
 		{Def: identityWhoamiDef(), Handler: handleIdentityWhoami},
+		{Def: soulReadDef(), Handler: handleSoulRead},
 		{Def: identityLookupDef(), Handler: handleIdentityLookup},
 		{Def: identityVerifyDef(), Handler: handleIdentityVerify},
 	} {
@@ -303,6 +304,24 @@ func voicemailReadDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":100},
 				"cursor":{"type":"string"},
 				"threadId":{"type":"string"}
+			}
+		}`),
+	}
+}
+
+func soulReadDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        "soul_read",
+		Description: "Read a public-only soul identity bundle from Host/Soul public endpoints. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
+		Annotations: readOnlyToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"query":{"type":"string","description":"Full soul agentId, ENS name, current-instance local ID, explicit @user@domain ActivityPub handle, or canonical actor URL."},
+				"agentId":{"type":"string","description":"Full soul agent ID. Takes precedence over query when provided."},
+				"ensName":{"type":"string","description":"Public ENS name. Takes precedence over query when agentId is absent."},
+				"limit":{"type":"integer","minimum":1,"maximum":3,"description":"Maximum matches to compose when query resolves through search. Defaults to 1."},
+				"include_raw":{"type":"boolean","description":"Include raw public Host/Soul endpoint payloads under _raw for audit/debug use. Defaults to false."}
 			}
 		}`),
 	}
