@@ -11,7 +11,10 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
-const soulReadMaxMatches = 3
+const (
+	soulReadMaxMatches        = 3
+	soulReadDefaultClaimLevel = "self-declared"
+)
 
 func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
@@ -309,20 +312,35 @@ func normalizeSoulReadCapabilities(raw any, reg map[string]any) []any {
 	}
 	out := make([]any, 0, len(items))
 	for _, item := range items {
-		m, _ := item.(map[string]any)
-		if m == nil {
+		switch typed := item.(type) {
+		case string:
+			name := strings.TrimSpace(typed)
+			if name == "" {
+				continue
+			}
+			out = append(out, map[string]any{
+				"name":       name,
+				"claimLevel": soulReadDefaultClaimLevel,
+			})
+		case map[string]any:
+			capability := map[string]any{}
+			putFirstAny(capability, "name", typed, "capability", "name")
+			putFirstAny(capability, "scope", typed, "scope")
+			putFirstAny(capability, "constraints", typed, "constraints")
+			putFirstAny(capability, "claimLevel", typed, "claim_level", "claimLevel")
+			putFirstAny(capability, "lastValidated", typed, "last_validated", "lastValidated")
+			putFirstAny(capability, "validationRef", typed, "validation_ref", "validationRef")
+			putFirstAny(capability, "degradesTo", typed, "degrades_to", "degradesTo")
+			if _, ok := capability["name"]; ok {
+				if _, ok := capability["claimLevel"]; !ok {
+					capability["claimLevel"] = soulReadDefaultClaimLevel
+				}
+			}
+			if len(capability) > 0 {
+				out = append(out, capability)
+			}
+		default:
 			continue
-		}
-		capability := map[string]any{}
-		putFirstAny(capability, "name", m, "capability", "name")
-		putFirstAny(capability, "scope", m, "scope")
-		putFirstAny(capability, "constraints", m, "constraints")
-		putFirstAny(capability, "claimLevel", m, "claim_level", "claimLevel")
-		putFirstAny(capability, "lastValidated", m, "last_validated", "lastValidated")
-		putFirstAny(capability, "validationRef", m, "validation_ref", "validationRef")
-		putFirstAny(capability, "degradesTo", m, "degrades_to", "degradesTo")
-		if len(capability) > 0 {
-			out = append(out, capability)
 		}
 	}
 	return out

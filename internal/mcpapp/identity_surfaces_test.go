@@ -1491,7 +1491,7 @@ func TestLBM1_SoulReadComposesRegistrationFallbackBlocks(t *testing.T) {
 						"current_style_name":"Minimal",
 						"styles":[{"style_id":"minimal","style_name":"Minimal","selected":true}]
 					},
-					"capabilities":{"items":[{"name":"memory.read","scope":"public","claim_level":"declared"}]},
+					"capabilities":["social.post"],
 					"boundaries":{"results":[{"boundaryId":"b-reg","category":"safety","statement":"Use public data only","addedAt":"2026-05-11T16:00:00Z","addedInVersion":"7"}]},
 					"transparency":{"ai_generated":true,"operator_disclosed":true}
 				}
@@ -1562,8 +1562,12 @@ func TestLBM1_SoulReadComposesRegistrationFallbackBlocks(t *testing.T) {
 		t.Fatalf("expected registration envelope to normalize, got %+v", registration)
 	}
 	capabilities, _ := soul["capabilities"].([]any)
-	if len(capabilities) != 1 || capabilities[0].(map[string]any)["name"] != "memory.read" {
+	if len(capabilities) != 1 {
 		t.Fatalf("expected capabilities fallback from registration, got %+v", capabilities)
+	}
+	capability, _ := capabilities[0].(map[string]any)
+	if capability["name"] != "social.post" || capability["claimLevel"] != "self-declared" {
+		t.Fatalf("expected v1 flat-string capability promotion, got %+v", capability)
 	}
 	boundaries, _ := soul["boundaries"].([]any)
 	if len(boundaries) != 1 {
