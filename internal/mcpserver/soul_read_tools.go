@@ -4,27 +4,48 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
 const (
-	soulReadMaxMatches        = 3
-	soulReadDefaultClaimLevel = "self-declared"
+	soulReadMaxMatches                      = 3
+	soulReadDefaultClaimLevel               = "self-declared"
+	soulReadPrivateMintConversationsBlock   = "mintConversations"
+	soulReadPrivateDefaultConversationLimit = 20
+	soulReadPrivateMaxConversationLimit     = 50
+	soulReadPrivateConversationIDMaxLen     = 128
 )
 
+var soulReadPrivateConversationIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+type soulReadInput struct {
+	Query                 string   `json:"query"`
+	AgentID               string   `json:"agentId"`
+	ENSName               string   `json:"ensName"`
+	Self                  bool     `json:"self,omitempty"`
+	Limit                 int      `json:"limit,omitempty"`
+	IncludePrivate        []string `json:"include_private,omitempty"`
+	MintConversationID    string   `json:"mintConversationId,omitempty"`
+	MintConversationLimit int      `json:"mintConversationLimit,omitempty"`
+	IncludeRaw            bool     `json:"include_raw,omitempty"`
+}
+
+type soulReadPrivateRequest struct {
+	IncludeMintConversations bool
+	ConversationID           string
+	Limit                    int
+}
+
 func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
-	var in struct {
-		Query      string `json:"query"`
-		AgentID    string `json:"agentId"`
-		ENSName    string `json:"ensName"`
-		Self       bool   `json:"self,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		IncludeRaw bool   `json:"include_raw,omitempty"`
-	}
+	var in soulReadInput
 	if err := json.Unmarshal(args, &in); err != nil {
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
 	}
@@ -40,6 +61,10 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	}
 	if !in.Self && query == "" {
 		return toolErrorResult("invalid_request", "query, agentId, or ensName is required", 400, nil)
+	}
+	privateReq, err := soulReadPrivateRequestFromInput(in)
+	if err != nil {
+		return identityToolResultFromError(err)
 	}
 	if ensNameInput != "" && !looksLikeENSName(ensNameInput) {
 		return toolErrorResult("invalid_request", "ensName must be a public ENS name", 400, map[string]any{"query": ensNameInput})
@@ -91,7 +116,7 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 
 	souls := make([]any, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
-		soul, err := soulReadPayload(ctx, client, agentID, in.IncludeRaw)
+		soul, err := soulReadPayload(ctx, client, agentID, in.IncludeRaw, privateReq)
 		if err != nil {
 			return identityToolResultFromError(err)
 		}
@@ -101,29 +126,99 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	return toolJSONResult(map[string]any{
 		"query":  query,
 		"count":  len(souls),
-		"access": soulReadAccess(accessMode),
+		"access": soulReadAccess(accessMode, privateReq.privateBlocks()),
 		"souls":  souls,
 	}, nil)
 }
 
-func soulReadAccess(mode string) map[string]any {
+func soulReadPrivateRequestFromInput(in soulReadInput) (soulReadPrivateRequest, error) {
+	out := soulReadPrivateRequest{}
+	privateBlocks := map[string]struct{}{}
+	for _, raw := range in.IncludePrivate {
+		block := strings.TrimSpace(raw)
+		switch block {
+		case "":
+			continue
+		case soulReadPrivateMintConversationsBlock:
+			privateBlocks[block] = struct{}{}
+		default:
+			return out, &toolUserError{Code: "invalid_request", Message: "unsupported include_private block: " + block, Status: 400}
+		}
+	}
+
+	_, wantsMintConversations := privateBlocks[soulReadPrivateMintConversationsBlock]
+	conversationID := strings.TrimSpace(in.MintConversationID)
+	if conversationID != "" && !wantsMintConversations {
+		return out, &toolUserError{Code: "invalid_request", Message: "mintConversationId requires include_private=[\"mintConversations\"]", Status: 400}
+	}
+	if in.MintConversationLimit != 0 && !wantsMintConversations {
+		return out, &toolUserError{Code: "invalid_request", Message: "mintConversationLimit requires include_private=[\"mintConversations\"]", Status: 400}
+	}
+	if !wantsMintConversations {
+		return out, nil
+	}
+	if !in.Self {
+		return out, &toolUserError{Code: "invalid_request", Message: "private mint-conversation expansion requires self=true", Status: 400}
+	}
+	if conversationID != "" {
+		if len(conversationID) > soulReadPrivateConversationIDMaxLen || !soulReadPrivateConversationIDPattern.MatchString(conversationID) {
+			return out, &toolUserError{Code: "invalid_request", Message: "mintConversationId must be an opaque safe path value", Status: 400}
+		}
+		if in.MintConversationLimit > 0 {
+			return out, &toolUserError{Code: "invalid_request", Message: "mintConversationLimit cannot be combined with mintConversationId", Status: 400}
+		}
+		out.ConversationID = conversationID
+	}
+
+	limit := in.MintConversationLimit
+	if limit < 0 || limit > soulReadPrivateMaxConversationLimit {
+		return out, &toolUserError{Code: "invalid_request", Message: "mintConversationLimit must be between 1 and 50", Status: 400}
+	}
+	if limit == 0 {
+		limit = soulReadPrivateDefaultConversationLimit
+	}
+	out.IncludeMintConversations = true
+	out.Limit = limit
+	return out, nil
+}
+
+func (r soulReadPrivateRequest) privateBlocks() []any {
+	if !r.IncludeMintConversations {
+		return nil
+	}
+	return []any{soulReadPrivateMintConversationsBlock}
+}
+
+func soulReadAccess(mode string, privateBlocks []any) map[string]any {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	callerRelation := "public"
 	resolution := "public_lookup"
+	authorization := "mcp_read_scope"
+	publicOnly := true
+	privateExpansion := false
 	if mode == "self" {
 		callerRelation = "self"
 		resolution = "bound_caller"
 	} else {
 		mode = "public"
 	}
-	return map[string]any{
+	if len(privateBlocks) > 0 {
+		publicOnly = false
+		privateExpansion = true
+		authorization = "lesser_self_scope_instance_trust"
+	}
+	out := map[string]any{
 		"mode":             mode,
 		"callerRelation":   callerRelation,
-		"publicOnly":       true,
-		"privateExpansion": false,
-		"authorization":    "mcp_read_scope",
+		"publicOnly":       publicOnly,
+		"privateExpansion": privateExpansion,
+		"authorization":    authorization,
 		"resolution":       resolution,
 	}
+	if len(privateBlocks) > 0 {
+		out["privateBlocks"] = privateBlocks
+	}
+	return out
 }
 
 func boundedSoulReadLimit(limit int) int {
@@ -137,7 +232,7 @@ func boundedSoulReadLimit(limit int) int {
 	}
 }
 
-func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string, includeRaw bool) (map[string]any, error) {
+func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string, includeRaw bool, privateReq soulReadPrivateRequest) (map[string]any, error) {
 	agentID = normalizeSoulAgentID(agentID)
 	if agentID == "" {
 		return nil, &toolUserError{Code: "invalid_request", Message: "missing agentId", Status: 400}
@@ -206,7 +301,52 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 			"transparency": transparencyRaw,
 		}
 	}
+	if privateReq.IncludeMintConversations {
+		privatePayload, err := soulReadPrivateMintConversations(ctx, privateReq)
+		if err != nil {
+			return nil, err
+		}
+		payload["private"] = map[string]any{
+			soulReadPrivateMintConversationsBlock: privatePayload,
+		}
+	}
 	return payload, nil
+}
+
+func soulReadPrivateMintConversations(ctx context.Context, privateReq soulReadPrivateRequest) (map[string]any, error) {
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
+	}
+
+	path := "/api/v1/souls/bound/me/mint-conversations"
+	query := url.Values{}
+	mode := "list"
+	if privateReq.ConversationID != "" {
+		path += "/" + url.PathEscape(privateReq.ConversationID)
+		mode = "single"
+	} else {
+		query.Set("limit", strconv.Itoa(privateReq.Limit))
+	}
+
+	raw, headers, err := client.DoJSONWithHeaders(ctx, "GET", path, query, token, nil)
+	if err != nil {
+		return nil, soulReadPrivateLesserError(err, headers)
+	}
+
+	var out map[string]any
+	if mode == "single" {
+		out = normalizeSoulReadMintConversationSingle(raw)
+	} else {
+		out = normalizeSoulReadMintConversationList(raw)
+	}
+	out["mode"] = mode
+	out["source"] = soulReadSource(soulReadPrivateMintConversationsBlock, path, "ok", "")
+	return out, nil
 }
 
 func normalizeSoulReadRegistrationEnvelope(raw any) map[string]any {
@@ -261,6 +401,139 @@ func soulReadSourceEndpoints(sources []map[string]any) map[string]any {
 			}
 		}
 		out[block] = entry
+	}
+	return out
+}
+
+func soulReadPrivateLesserError(err error, headers http.Header) error {
+	if err == nil {
+		return nil
+	}
+	if failure := lesserAuthFailureFromError(err); failure != nil {
+		return failure
+	}
+
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) {
+		message, upstreamCode, parsed := soulReadPrivateLesserErrorMessage(apiErr.Body)
+		details := map[string]any{
+			"source":         "lesser_private_self_scope",
+			"upstreamStatus": apiErr.Status,
+		}
+		if upstreamCode != "" {
+			details["upstreamErrorCode"] = upstreamCode
+		}
+		if parsed != nil {
+			details["apiError"] = parsed
+		}
+		if retryAfter := strings.TrimSpace(headers.Get("Retry-After")); retryAfter != "" {
+			details["retryAfter"] = retryAfter
+		}
+		return &toolUserError{
+			Code:    soulReadPrivateToolErrorCode(apiErr.Status, upstreamCode),
+			Message: message,
+			Status:  apiErr.Status,
+			Details: details,
+		}
+	}
+	return &toolUserError{Code: "upstream_error", Message: err.Error(), Status: 500}
+}
+
+func soulReadPrivateLesserErrorMessage(body []byte) (message string, upstreamCode string, parsed map[string]any) {
+	raw := strings.TrimSpace(string(body))
+	if strings.HasPrefix(raw, "{") {
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+			upstreamCode = firstNonEmptyStringMap(parsed, "error_code", "code")
+			message = firstNonEmptyStringMap(parsed, "error_description", "error", "message")
+			if message != "" {
+				return message, upstreamCode, parsed
+			}
+		}
+	}
+	message, parsed = commExtractAPIErrorMessage(body)
+	upstreamCode = firstNonEmptyStringMap(parsed, "error_code", "code")
+	return message, upstreamCode, parsed
+}
+
+func soulReadPrivateToolErrorCode(status int, upstreamCode string) string {
+	switch strings.ToUpper(strings.TrimSpace(upstreamCode)) {
+	case "SOUL_PRIVATE_RATE_LIMITED":
+		return "rate_limited"
+	case "SOUL_PRIVATE_RESPONSE_TOO_LARGE":
+		return "response_too_large"
+	case "SOUL_PRIVATE_TRUST_NOT_CONFIGURED":
+		return "not_configured"
+	case "SOUL_PRIVATE_INSTANCE_TRUST_REJECTED":
+		return "conflict"
+	case "SOUL_BOUND_AGENT_NOT_FOUND", "SOUL_BOUND_AGENT_NOT_AVAILABLE", "SOUL_PRIVATE_CONVERSATION_NOT_FOUND":
+		return "not_found"
+	case "SOUL_PRIVATE_LIMIT_INVALID", "SOUL_PRIVATE_QUERY_UNSUPPORTED", "SOUL_PRIVATE_CURSOR_UNSUPPORTED", "SOUL_PRIVATE_CONVERSATION_ID_REQUIRED", "SOUL_PRIVATE_CONVERSATION_ID_INVALID", "SOUL_PRIVATE_REQUEST_BODY_UNSUPPORTED", "SOUL_PRIVATE_INVALID_REQUEST":
+		return "invalid_request"
+	}
+	switch status {
+	case 400, 422:
+		return "invalid_request"
+	case 404:
+		return "not_found"
+	case 409:
+		return "conflict"
+	case 413:
+		return "response_too_large"
+	case 429:
+		return "rate_limited"
+	default:
+		if status >= 500 {
+			return "upstream_error"
+		}
+		return "unknown_error"
+	}
+}
+
+func normalizeSoulReadMintConversationList(raw any) map[string]any {
+	m, _ := raw.(map[string]any)
+	out := map[string]any{}
+	putFirstAny(out, "version", m, "version")
+	putFirstAny(out, "count", m, "count")
+	putFirstAny(out, "limit", m, "limit")
+	putFirstAny(out, "nextCursor", m, "next_cursor", "nextCursor")
+	items := firstArrayFromAny(raw, "conversations", "items", "results")
+	conversations := make([]any, 0, len(items))
+	for _, item := range items {
+		conversation, _ := item.(map[string]any)
+		if conversation == nil {
+			continue
+		}
+		conversations = append(conversations, normalizeSoulReadMintConversation(conversation, false))
+	}
+	out["conversations"] = conversations
+	return out
+}
+
+func normalizeSoulReadMintConversationSingle(raw any) map[string]any {
+	m, _ := raw.(map[string]any)
+	conversation := firstMap(m, "conversation")
+	if conversation == nil {
+		conversation = m
+	}
+	out := map[string]any{}
+	putFirstAny(out, "version", m, "version")
+	out["conversation"] = normalizeSoulReadMintConversation(conversation, true)
+	return out
+}
+
+func normalizeSoulReadMintConversation(raw map[string]any, includePrivateContent bool) map[string]any {
+	out := map[string]any{}
+	putFirstAny(out, "agentId", raw, "agent_id", "agentId")
+	putFirstAny(out, "conversationId", raw, "conversation_id", "conversationId")
+	putFirstAny(out, "model", raw, "model")
+	putFirstAny(out, "status", raw, "status")
+	putFirstAny(out, "usage", raw, "usage")
+	putFirstAny(out, "chargedCredits", raw, "charged_credits", "chargedCredits")
+	putFirstAny(out, "createdAt", raw, "created_at", "createdAt")
+	putFirstAny(out, "completedAt", raw, "completed_at", "completedAt")
+	if includePrivateContent {
+		putFirstAny(out, "messages", raw, "messages")
+		putFirstAny(out, "producedDeclarations", raw, "produced_declarations", "producedDeclarations")
 	}
 	return out
 }

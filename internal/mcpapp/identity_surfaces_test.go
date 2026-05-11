@@ -1594,3 +1594,443 @@ func TestLBM1_SoulReadComposesRegistrationFallbackBlocks(t *testing.T) {
 		t.Fatalf("expected identity source endpoint, got %+v", sourceEndpoints)
 	}
 }
+
+func TestLBM2_SoulReadPrivateMintConversationsUsesLesserSelfRoute(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	installSoulBindingLookup(t, "Agent1", agentID)
+
+	var lesserSelfAuth string
+	var privateListAuth string
+	var privateListLimit string
+	var directHostPath string
+	var publicAuthHeaders []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/soul/instance/") {
+			directHostPath = r.URL.Path
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"body must not call host directly"}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			lesserSelfAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-private")))
+		case "/api/v1/soul/agents/" + agentID:
+			publicAuthHeaders = append(publicAuthHeaders, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-private","status":"active"}}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			publicAuthHeaders = append(publicAuthHeaders, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"version":"1"}`))
+		case "/api/v1/soul/agents/" + agentID + "/capabilities",
+			"/api/v1/soul/agents/" + agentID + "/boundaries",
+			"/api/v1/soul/agents/" + agentID + "/transparency":
+			publicAuthHeaders = append(publicAuthHeaders, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{}`))
+		case "/api/v1/souls/bound/me/mint-conversations":
+			privateListAuth = r.Header.Get("Authorization")
+			privateListLimit = r.URL.Query().Get("limit")
+			_, _ = w.Write([]byte(`{
+				"version":"1",
+				"conversations":[{
+					"agent_id":"` + agentID + `",
+					"conversation_id":"conv-1",
+					"model":"gpt-test",
+					"messages":"private list content must not appear",
+					"produced_declarations":"private declarations must not appear",
+					"status":"completed",
+					"usage":{"input_tokens":1},
+					"charged_credits":3,
+					"created_at":"2026-05-11T21:00:00Z",
+					"completed_at":"2026-05-11T21:01:00Z"
+				}],
+				"count":1,
+				"limit":2
+			}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "must-not-be-used-by-soul-read")
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"self":                  true,
+			"include_private":       []string{"mintConversations"},
+			"mintConversationLimit": 2,
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read private list: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if lesserSelfAuth != authHeader || privateListAuth != authHeader {
+		t.Fatalf("expected caller bearer only to Lesser self routes, bound=%q private=%q", lesserSelfAuth, privateListAuth)
+	}
+	if privateListLimit != "2" {
+		t.Fatalf("expected private list limit=2, got %q", privateListLimit)
+	}
+	if directHostPath != "" {
+		t.Fatalf("soul_read must not call Host directly, hit %q", directHostPath)
+	}
+	for _, got := range publicAuthHeaders {
+		if strings.TrimSpace(got) != "" {
+			t.Fatalf("public soul_read endpoint should be unauthenticated, got Authorization=%q", got)
+		}
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	data, _ := toolOut.StructuredContent["data"].(map[string]any)
+	access, _ := data["access"].(map[string]any)
+	if access["mode"] != "self" || access["publicOnly"] != false || access["privateExpansion"] != true || access["authorization"] != "lesser_self_scope_instance_trust" {
+		t.Fatalf("unexpected private access metadata: %+v", access)
+	}
+	souls, _ := data["souls"].([]any)
+	soul, _ := souls[0].(map[string]any)
+	privateBlocks, _ := soul["private"].(map[string]any)
+	mint, _ := privateBlocks["mintConversations"].(map[string]any)
+	if mint["mode"] != "list" || mint["limit"] != float64(2) || mint["count"] != float64(1) {
+		t.Fatalf("unexpected private mint list block: %+v", mint)
+	}
+	conversations, _ := mint["conversations"].([]any)
+	if len(conversations) != 1 {
+		t.Fatalf("expected one conversation summary, got %+v", mint)
+	}
+	summary, _ := conversations[0].(map[string]any)
+	if summary["conversationId"] != "conv-1" || summary["chargedCredits"] != float64(3) {
+		t.Fatalf("unexpected conversation summary: %+v", summary)
+	}
+	if _, ok := summary["messages"]; ok {
+		t.Fatalf("list summaries must not expose messages: %+v", summary)
+	}
+	if _, ok := summary["producedDeclarations"]; ok {
+		t.Fatalf("list summaries must not expose produced declarations: %+v", summary)
+	}
+}
+
+func TestLBM2_SoulReadPrivateMintConversationSingleIncludesExplicitContent(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0x9999999999999999999999999999999999999999999999999999999999999999"
+	const conversationID = "conv:single.1"
+	installSoulBindingLookup(t, "Agent1", agentID)
+
+	var privateGetAuth string
+	var privateGetQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-private")))
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-private","status":"active"}}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration",
+			"/api/v1/soul/agents/" + agentID + "/capabilities",
+			"/api/v1/soul/agents/" + agentID + "/boundaries",
+			"/api/v1/soul/agents/" + agentID + "/transparency":
+			_, _ = w.Write([]byte(`{}`))
+		case "/api/v1/souls/bound/me/mint-conversations/" + conversationID:
+			privateGetAuth = r.Header.Get("Authorization")
+			privateGetQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{
+				"version":"1",
+				"conversation":{
+					"agent_id":"` + agentID + `",
+					"conversation_id":"` + conversationID + `",
+					"model":"gpt-test",
+					"messages":"[{\"role\":\"user\",\"content\":\"private\"}]",
+					"produced_declarations":"{\"capabilities\":[]}",
+					"status":"completed",
+					"usage":{"output_tokens":2},
+					"charged_credits":7,
+					"created_at":"2026-05-11T21:00:00Z",
+					"completed_at":"2026-05-11T21:01:00Z"
+				}
+			}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"self":               true,
+			"include_private":    []string{"mintConversations"},
+			"mintConversationId": conversationID,
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read private single: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if privateGetAuth != authHeader {
+		t.Fatalf("expected caller bearer to Lesser private get route, got %q", privateGetAuth)
+	}
+	if privateGetQuery != "" {
+		t.Fatalf("single conversation read must not send list query, got %q", privateGetQuery)
+	}
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	data, _ := toolOut.StructuredContent["data"].(map[string]any)
+	souls, _ := data["souls"].([]any)
+	soul, _ := souls[0].(map[string]any)
+	privateBlocks, _ := soul["private"].(map[string]any)
+	mint, _ := privateBlocks["mintConversations"].(map[string]any)
+	if mint["mode"] != "single" {
+		t.Fatalf("expected single private mode, got %+v", mint)
+	}
+	conversation, _ := mint["conversation"].(map[string]any)
+	if conversation["conversationId"] != conversationID || !strings.Contains(conversation["messages"].(string), "private") || conversation["producedDeclarations"] == "" {
+		t.Fatalf("unexpected single private conversation: %+v", conversation)
+	}
+}
+
+func TestLBM2_SoulReadPrivateMintConversationsFailsClosed(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installMissingSoulBindingLookup(t)
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0x8888888888888888888888888888888888888888888888888888888888888888"
+	var privateRouteCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-public","status":"active"}}`))
+		case "/api/v1/souls/bound/me/mint-conversations":
+			privateRouteCalled = true
+			_, _ = w.Write([]byte(`{"version":"1","conversations":[],"count":0,"limit":20}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"agentId":         agentID,
+			"include_private": []string{"mintConversations"},
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read non-self private: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	if !toolOut.IsError {
+		t.Fatalf("expected private non-self request to fail closed, got %+v", toolOut)
+	}
+	errPayload, _ := toolOut.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "invalid_request" {
+		t.Fatalf("expected invalid_request, got %+v", errPayload)
+	}
+	if privateRouteCalled {
+		t.Fatalf("private route should not be called for non-self request")
+	}
+}
+
+func TestLBM2_SoulReadPrivateMintConversationsMapsLesserErrors(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0x7777777777777777777777777777777777777777777777777777777777777777"
+	installSoulBindingLookup(t, "Agent1", agentID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-private")))
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{"agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-private","status":"active"}}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration",
+			"/api/v1/soul/agents/" + agentID + "/capabilities",
+			"/api/v1/soul/agents/" + agentID + "/boundaries",
+			"/api/v1/soul/agents/" + agentID + "/transparency":
+			_, _ = w.Write([]byte(`{}`))
+		case "/api/v1/souls/bound/me/mint-conversations":
+			w.Header().Set("Retry-After", "3")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"private soul conversation read rate limited","error_description":"slow down","error_code":"SOUL_PRIVATE_RATE_LIMITED"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "Agent1", []string{"read"})
+	authHeader := "Bearer " + token
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"self":            true,
+			"include_private": []string{"mintConversations"},
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read private rate limited: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	if !toolOut.IsError {
+		t.Fatalf("expected tool error, got %+v", toolOut)
+	}
+	errPayload, _ := toolOut.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "rate_limited" || errPayload["status"] != float64(http.StatusTooManyRequests) {
+		t.Fatalf("unexpected private rate-limit error: %+v", errPayload)
+	}
+	details, _ := errPayload["details"].(map[string]any)
+	if details["upstreamErrorCode"] != "SOUL_PRIVATE_RATE_LIMITED" || details["retryAfter"] != "3" {
+		t.Fatalf("expected upstream error details, got %+v", details)
+	}
+}

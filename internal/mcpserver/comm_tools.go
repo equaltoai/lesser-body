@@ -312,7 +312,7 @@ func voicemailReadDef() mcpruntime.ToolDef {
 func soulReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "soul_read",
-		Description: "Read a public-only soul identity bundle from Host/Soul public endpoints. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
+		Description: "Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -321,6 +321,9 @@ func soulReadDef() mcpruntime.ToolDef {
 				"agentId":{"type":"string","description":"Full soul agent ID. Takes precedence over query when provided."},
 				"ensName":{"type":"string","description":"Public ENS name. Takes precedence over query when agentId is absent."},
 				"self":{"type":"boolean","description":"Read the caller's own bound soul through the OAuth-bound lesser identity. Conflicts with query, agentId, and ensName."},
+				"include_private":{"type":"array","items":{"type":"string","enum":["mintConversations"]},"description":"Explicit private self-scope blocks to include. Requires self=true. M2 supports mintConversations only."},
+				"mintConversationId":{"type":"string","maxLength":128,"description":"Opaque mint-conversation ID for an explicit single-conversation private self read. Requires include_private=[\"mintConversations\"]."},
+				"mintConversationLimit":{"type":"integer","minimum":1,"maximum":50,"description":"Maximum compact mint-conversation summaries for private self list reads. Defaults to 20 and does not affect public search match limit."},
 				"limit":{"type":"integer","minimum":1,"maximum":3,"description":"Maximum matches to compose when query resolves through search. Defaults to 1."},
 				"include_raw":{"type":"boolean","description":"Include raw public Host/Soul endpoint payloads under _raw for audit/debug use. Defaults to false."}
 			}
