@@ -149,7 +149,7 @@ AppTheory’s MCP server implements:
 
 - `drone`
   - Lightweight body before soul promotion.
-  - Social + memory MCP surfaces remain available.
+  - Social, memory, and public soul-read MCP surfaces remain available.
   - Communication surfaces and wallet-backed product semantics stay disabled.
 - `souled`
   - Full lesser-body MCP surface, including communication tooling and soul-linked runtime behavior.
@@ -294,6 +294,7 @@ Scope key:
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
+| `soul_read` | Read | Read a public-only soul identity bundle from Host/Soul public endpoints; private reachability and contact preferences are omitted or marked unavailable. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone reachability verification fails closed until lesser-host exposes a body-facing resolver. |
 
@@ -347,6 +348,19 @@ Notes:
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
+- `soul_read` is the Project 21 M1 public soul read-model tool. It accepts one of `agentId`, `ensName`, or
+  `query` (full soul agent ID, ENS name, current-instance local ID, explicit `@user@domain` ActivityPub handle, or
+  canonical actor URL), plus optional `limit` for search-backed matches and `include_raw=true` for audit/debug. The
+  default response is compact and returns `souls[]`, each with stable MCP blocks: `identity`, `registration`,
+  `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, and `deferred`.
+- `soul_read` uses only public Host/Soul endpoints without `LESSER_HOST_INSTANCE_KEY`: `/api/v1/soul/agents/{agentId}`,
+  `/registration`, `/capabilities`, `/boundaries`, `/transparency`, public ENS resolution, and public search. It must
+  not call private email/phone resolvers, private channel/preference endpoints, contactability APIs, or mailbox APIs for
+  arbitrary public reads.
+- `soul_read.channels` includes public ENS data when available. Email/phone reachability, private contact preferences,
+  availability, and first-contact policy are deferred/private in M1 and are omitted or represented with
+  `status:"unavailable"` and `reason:"deferred_private_reachability"`. Missing avatar/style data is treated as
+  unavailable, not as an error.
 - `identity_lookup` accepts:
   - full soul `agentId`
   - ENS name

@@ -1153,3 +1153,190 @@ func TestLBM1_IdentityLookupUnsupportedRemoteActorURLReturnsBadRequest(t *testin
 		t.Fatalf("identity_lookup should reject unsupported remote actor URLs before search")
 	}
 }
+
+func TestLBM1_SoulReadPublicMVPUsesPublicEndpoints(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installMissingSoulBindingLookup(t)
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	const agentID = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	var publicAuthHeaders []string
+	privatePathCalled := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/resolve/email/") || strings.Contains(r.URL.Path, "/resolve/phone/") || strings.Contains(r.URL.Path, "/channels") || strings.Contains(r.URL.Path, "/comm/") {
+			privatePathCalled = r.URL.Path
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"private endpoint called"}}`))
+			return
+		}
+		publicAuthHeaders = append(publicAuthHeaders, r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{
+				"agent":{
+					"agent_id":"` + agentID + `",
+					"domain":"test.example.com",
+					"local_id":"agent-c",
+					"ens_name":"agent-c.lessersoul.eth",
+					"wallet":"0x1234",
+					"token_id":"42",
+					"meta_uri":"ipfs://meta",
+					"status":"active",
+					"lifecycle_status":"active",
+					"self_description_version":"3",
+					"updated_at":"2026-05-11T15:00:00Z",
+					"avatar":{
+						"token_uri":"ipfs://avatar",
+						"image":"https://cdn.example/avatar.png",
+						"current_style_id":"friendly",
+						"current_style_name":"Friendly",
+						"styles":[{"style_id":"friendly","style_name":"Friendly","selected":true}]
+					}
+				}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			_, _ = w.Write([]byte(`{
+				"version":"3",
+				"selfDescription":{"summary":"public self description"},
+				"transparency":{"ai_generated":true},
+				"channels":{"ens":{"name":"agent-c.lessersoul.eth"}}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/capabilities":
+			_, _ = w.Write([]byte(`{"capabilities":[{"capability":"social.post","scope":"public","claim_level":"declared","degrades_to":"read-only"}]}`))
+		case "/api/v1/soul/agents/" + agentID + "/boundaries":
+			_, _ = w.Write([]byte(`{"boundaries":[{"boundary_id":"b1","category":"communication_policy","statement":"No private channels in public read","added_at":"2026-05-11T15:00:00Z","added_in_version":"3"}]}`))
+		case "/api/v1/soul/agents/" + agentID + "/transparency":
+			_, _ = w.Write([]byte(`{"transparency":{"ai_generated":true,"operator_disclosed":true}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	listResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
+	if listResp.Status != 200 {
+		t.Fatalf("tools/list: status=%d body=%s", listResp.Status, string(listResp.Body))
+	}
+	var listRPC mcpruntime.Response
+	_ = json.Unmarshal(listResp.Body, &listRPC)
+	if listRPC.Error != nil {
+		t.Fatalf("tools/list error: %+v", listRPC.Error)
+	}
+	var listOut struct {
+		Tools []mcpruntime.ToolDef `json:"tools"`
+	}
+	{
+		b, _ := json.Marshal(listRPC.Result)
+		_ = json.Unmarshal(b, &listOut)
+	}
+	haveSoulRead := false
+	for _, tool := range listOut.Tools {
+		if tool.Name == "soul_read" {
+			haveSoulRead = true
+			break
+		}
+	}
+	if !haveSoulRead {
+		t.Fatalf("expected soul_read in drone tools/list, got %+v", listOut.Tools)
+	}
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"agentId": agentID,
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 3, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if privatePathCalled != "" {
+		t.Fatalf("soul_read called private endpoint %q", privatePathCalled)
+	}
+	for _, got := range publicAuthHeaders {
+		if strings.TrimSpace(got) != "" {
+			t.Fatalf("public soul_read endpoint should be unauthenticated, got Authorization=%q", got)
+		}
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal soul_read response: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("soul_read rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	data, _ := toolOut.StructuredContent["data"].(map[string]any)
+	if data["count"] != float64(1) {
+		t.Fatalf("expected count=1, got %+v", data)
+	}
+	souls, _ := data["souls"].([]any)
+	if len(souls) != 1 {
+		t.Fatalf("expected one soul, got %+v", data)
+	}
+	soul, _ := souls[0].(map[string]any)
+	identity, _ := soul["identity"].(map[string]any)
+	if identity["agentId"] != agentID || identity["localId"] != "agent-c" || identity["ensName"] != "agent-c.lessersoul.eth" {
+		t.Fatalf("unexpected identity block: %+v", identity)
+	}
+	capabilities, _ := soul["capabilities"].([]any)
+	if len(capabilities) != 1 || capabilities[0].(map[string]any)["name"] != "social.post" {
+		t.Fatalf("unexpected capabilities: %+v", capabilities)
+	}
+	boundaries, _ := soul["boundaries"].([]any)
+	if len(boundaries) != 1 {
+		t.Fatalf("unexpected boundaries: %+v", boundaries)
+	}
+	boundary, _ := boundaries[0].(map[string]any)
+	if boundary["id"] != "b1" || boundary["issuedAt"] != "2026-05-11T15:00:00Z" || boundary["version"] != "3" || boundary["addedInVersion"] != "3" {
+		t.Fatalf("unexpected normalized boundary: %+v", boundary)
+	}
+	channels, _ := soul["channels"].(map[string]any)
+	emailChannel, _ := channels["email"].(map[string]any)
+	if emailChannel["status"] != "unavailable" || emailChannel["reason"] != "deferred_private_reachability" {
+		t.Fatalf("expected private email channel to be unavailable, got %+v", channels)
+	}
+	avatar, _ := soul["avatar"].(map[string]any)
+	if avatar["status"] != "available" || avatar["currentStyleId"] != "friendly" {
+		t.Fatalf("unexpected avatar block: %+v", avatar)
+	}
+	if _, ok := soul["_raw"]; ok {
+		t.Fatalf("did not expect raw payload by default: %+v", soul)
+	}
+}
