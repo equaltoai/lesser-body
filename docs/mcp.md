@@ -312,8 +312,9 @@ Notes:
   `since` values remain a legacy cursor alias for compatibility, but new callers should not rely on that path.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
-  contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, cursor/since metadata, and
-  best-effort `diagnostics` timing/size fields for Ops probes.
+  contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
+  (`read` when Lesser exposes it, inferred from `unread` where needed), cursor/since metadata, and best-effort
+  `diagnostics` timing/size fields for Ops probes.
 - `conversations_read` defaults to `limit=20` (maximum `80`) and returns compact conversation summaries: id, unread
   state, updated timestamp, compact participants, and bounded `lastPost`. It accepts optional `include_raw=true`, which
   returns `_raw` for audit/debug use.
