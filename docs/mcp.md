@@ -294,7 +294,7 @@ Scope key:
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `soul_read` | Read | Read a public-only soul identity bundle from Host/Soul public endpoints; private reachability and contact preferences are omitted or marked unavailable. |
+| `soul_read` | Read | Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone reachability verification fails closed until lesser-host exposes a body-facing resolver. |
 
@@ -348,7 +348,7 @@ Notes:
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
-- `soul_read` is the Project 21 M1 public soul read-model tool. It accepts either `self=true` (the caller's
+- `soul_read` is the Project 21 public soul read-model tool. It accepts either `self=true` (the caller's
   OAuth-bound soul), or one of `agentId`, `ensName`, or `query` (full soul agent ID, ENS name, current-instance local
   ID, explicit `@user@domain` ActivityPub handle, or canonical actor URL), plus optional `limit` for search-backed
   matches and `include_raw=true` for audit/debug. `self=true` conflicts with `agentId`, `ensName`, and `query`.
@@ -362,7 +362,20 @@ Notes:
 - `soul_read.access` makes caller-self versus public-read behavior explicit. Default public reads return
   `mode:"public"`, `callerRelation:"public"`, `publicOnly:true`, and `privateExpansion:false`. `self=true` verifies the
   caller's bound lesser soul before using the same public Host/Soul read model and returns `mode:"self"` and
-  `callerRelation:"self"`. M1 does not expose private reachability even for `self=true`.
+  `callerRelation:"self"`.
+- Private M2 mint-conversation expansion is explicit and self-only. Callers must send `self=true` and
+  `include_private:["mintConversations"]`. Without `include_private`, `self=true` remains public-only. Compact private
+  list reads use `mintConversationLimit` (default `20`, maximum `50`) and call Lesser's
+  `/api/v1/souls/bound/me/mint-conversations` with the MCP caller bearer. Explicit single-conversation reads use
+  `mintConversationId` (opaque safe path value, maximum `128`) and call
+  `/api/v1/souls/bound/me/mint-conversations/{conversationId}`. The list block returns compact summaries and never
+  exposes `messages` or `producedDeclarations`; those are only returned by explicit single-conversation reads.
+- For private expansion, `soul_read.access` returns `mode:"self"`, `callerRelation:"self"`, `publicOnly:false`,
+  `privateExpansion:true`, `authorization:"lesser_self_scope_instance_trust"`, and
+  `privateBlocks:["mintConversations"]`.
+- Private mint-conversation expansion is Lesser-mediated: lesser-body forwards the MCP caller bearer only to Lesser's
+  `/api/v1/souls/bound/me/...` routes. lesser-body does not call lesser-host directly for this private soul path and
+  does not pass the MCP caller bearer to lesser-host.
 - `soul_read` uses only public Host/Soul endpoints without `LESSER_HOST_INSTANCE_KEY`: `/api/v1/soul/agents/{agentId}`,
   `/registration`, `/capabilities`, `/boundaries`, `/transparency`, public ENS resolution, and public search. It must
   not call private email/phone resolvers, private channel/preference endpoints, contactability APIs, or mailbox APIs for
