@@ -18,6 +18,7 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		Query      string `json:"query"`
 		AgentID    string `json:"agentId"`
 		ENSName    string `json:"ensName"`
+		Self       bool   `json:"self,omitempty"`
 		Limit      int    `json:"limit,omitempty"`
 		IncludeRaw bool   `json:"include_raw,omitempty"`
 	}
@@ -25,12 +26,20 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
 	}
 
-	query := firstNonEmpty(strings.TrimSpace(in.AgentID), strings.TrimSpace(in.ENSName), strings.TrimSpace(in.Query))
-	if query == "" {
+	agentIDInput := strings.TrimSpace(in.AgentID)
+	ensNameInput := strings.TrimSpace(in.ENSName)
+	queryInput := strings.TrimSpace(in.Query)
+	query := firstNonEmpty(agentIDInput, ensNameInput, queryInput)
+	accessMode := "public"
+
+	if in.Self && query != "" {
+		return toolErrorResult("invalid_request", "self cannot be combined with query, agentId, or ensName", 400, nil)
+	}
+	if !in.Self && query == "" {
 		return toolErrorResult("invalid_request", "query, agentId, or ensName is required", 400, nil)
 	}
-	if strings.TrimSpace(in.ENSName) != "" && !looksLikeENSName(in.ENSName) {
-		return toolErrorResult("invalid_request", "ensName must be a public ENS name", 400, map[string]any{"query": strings.TrimSpace(in.ENSName)})
+	if ensNameInput != "" && !looksLikeENSName(ensNameInput) {
+		return toolErrorResult("invalid_request", "ensName must be a public ENS name", 400, map[string]any{"query": ensNameInput})
 	}
 	if looksLikeEmail(query) {
 		return identityToolResultFromError(privateReachabilityUnavailableError("email", "soul_read"))
@@ -46,7 +55,18 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	}
 
 	agentIDs := []string{}
-	if in.AgentID != "" || isSoulAgentID(query) {
+	if in.Self {
+		agentID, err := authenticatedAgentID(ctx)
+		if err != nil {
+			return identityToolResultFromError(err)
+		}
+		if agentID == "" {
+			return toolErrorResult("not_found", "no bound soul found for this agent", 404, nil)
+		}
+		query = "self"
+		accessMode = "self"
+		agentIDs = append(agentIDs, agentID)
+	} else if agentIDInput != "" || isSoulAgentID(query) {
 		agentID := normalizeSoulAgentID(query)
 		if agentID == "" {
 			return toolErrorResult("invalid_request", "agentId must be a full soul agent ID", 400, map[string]any{"query": query})
@@ -76,10 +96,31 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	}
 
 	return toolJSONResult(map[string]any{
-		"query": query,
-		"count": len(souls),
-		"souls": souls,
+		"query":  query,
+		"count":  len(souls),
+		"access": soulReadAccess(accessMode),
+		"souls":  souls,
 	}, nil)
+}
+
+func soulReadAccess(mode string) map[string]any {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	callerRelation := "public"
+	resolution := "public_lookup"
+	if mode == "self" {
+		callerRelation = "self"
+		resolution = "bound_caller"
+	} else {
+		mode = "public"
+	}
+	return map[string]any{
+		"mode":             mode,
+		"callerRelation":   callerRelation,
+		"publicOnly":       true,
+		"privateExpansion": false,
+		"authorization":    "mcp_read_scope",
+		"resolution":       resolution,
+	}
 }
 
 func boundedSoulReadLimit(limit int) int {

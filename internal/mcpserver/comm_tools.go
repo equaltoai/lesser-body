@@ -320,6 +320,7 @@ func soulReadDef() mcpruntime.ToolDef {
 				"query":{"type":"string","description":"Full soul agentId, ENS name, current-instance local ID, explicit @user@domain ActivityPub handle, or canonical actor URL."},
 				"agentId":{"type":"string","description":"Full soul agent ID. Takes precedence over query when provided."},
 				"ensName":{"type":"string","description":"Public ENS name. Takes precedence over query when agentId is absent."},
+				"self":{"type":"boolean","description":"Read the caller's own bound soul through the OAuth-bound lesser identity. Conflicts with query, agentId, and ensName."},
 				"limit":{"type":"integer","minimum":1,"maximum":3,"description":"Maximum matches to compose when query resolves through search. Defaults to 1."},
 				"include_raw":{"type":"boolean","description":"Include raw public Host/Soul endpoint payloads under _raw for audit/debug use. Defaults to false."}
 			}
