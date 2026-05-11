@@ -348,11 +348,21 @@ Notes:
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.
 - Voice is currently receive-only: use `voicemail_read` for inbound voicemail; outbound `phone_call` is intentionally disabled.
-- `soul_read` is the Project 21 M1 public soul read-model tool. It accepts one of `agentId`, `ensName`, or
-  `query` (full soul agent ID, ENS name, current-instance local ID, explicit `@user@domain` ActivityPub handle, or
-  canonical actor URL), plus optional `limit` for search-backed matches and `include_raw=true` for audit/debug. The
-  default response is compact and returns `souls[]`, each with stable MCP blocks: `identity`, `registration`,
-  `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, and `deferred`.
+- `soul_read` is the Project 21 M1 public soul read-model tool. It accepts either `self=true` (the caller's
+  OAuth-bound soul), or one of `agentId`, `ensName`, or `query` (full soul agent ID, ENS name, current-instance local
+  ID, explicit `@user@domain` ActivityPub handle, or canonical actor URL), plus optional `limit` for search-backed
+  matches and `include_raw=true` for audit/debug. `self=true` conflicts with `agentId`, `ensName`, and `query`.
+  Bare current-instance local IDs require trustworthy current-instance domain context; use a full soul `agentId`,
+  ENS name, explicit handle, canonical actor URL, or `self=true` when that context is unavailable. The default response
+  is compact and returns `access` metadata plus `souls[]`, each with stable MCP blocks: `identity`, `registration`,
+  `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, `sourceEndpoints`, and `deferred`.
+- `soul_read` composes from the most-specific public source available. When dedicated public `capabilities`,
+  `boundaries`, or `transparency` endpoints are unavailable, it falls back to the same blocks in public registration
+  data and still records each attempted endpoint under both ordered `sources[]` and keyed `sourceEndpoints`.
+- `soul_read.access` makes caller-self versus public-read behavior explicit. Default public reads return
+  `mode:"public"`, `callerRelation:"public"`, `publicOnly:true`, and `privateExpansion:false`. `self=true` verifies the
+  caller's bound lesser soul before using the same public Host/Soul read model and returns `mode:"self"` and
+  `callerRelation:"self"`. M1 does not expose private reachability even for `self=true`.
 - `soul_read` uses only public Host/Soul endpoints without `LESSER_HOST_INSTANCE_KEY`: `/api/v1/soul/agents/{agentId}`,
   `/registration`, `/capabilities`, `/boundaries`, `/transparency`, public ENS resolution, and public search. It must
   not call private email/phone resolvers, private channel/preference endpoints, contactability APIs, or mailbox APIs for

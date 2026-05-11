@@ -167,6 +167,7 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "query", "string")
 		expectPropType(t, s, "agentId", "string")
 		expectPropType(t, s, "ensName", "string")
+		expectPropType(t, s, "self", "boolean")
 		expectPropType(t, s, "limit", "integer")
 		expectPropType(t, s, "include_raw", "boolean")
 	}
