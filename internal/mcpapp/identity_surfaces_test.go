@@ -1453,3 +1453,140 @@ func TestLBM1_SoulReadSelfModeVerifiesBoundCaller(t *testing.T) {
 		t.Fatalf("unexpected self identity: %+v", identity)
 	}
 }
+
+func TestLBM1_SoulReadComposesRegistrationFallbackBlocks(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installMissingSoulBindingLookup(t)
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{
+				"agent":{
+					"agent_id":"` + agentID + `",
+					"domain":"test.example.com",
+					"local_id":"agent-e",
+					"ens_name":"agent-e.lessersoul.eth",
+					"status":"active"
+				}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			_, _ = w.Write([]byte(`{
+				"registration":{
+					"version":"7",
+					"url":"https://host.example/soul/agents/` + agentID + `/registration",
+					"self_description":{"summary":"public fallback"},
+					"channels":{"ens":{"name":"agent-e.lessersoul.eth"}},
+					"avatar":{
+						"token_uri":"ipfs://avatar-e",
+						"image":"https://cdn.example/avatar-e.png",
+						"current_style_id":"minimal",
+						"current_style_name":"Minimal",
+						"styles":[{"style_id":"minimal","style_name":"Minimal","selected":true}]
+					},
+					"capabilities":{"items":[{"name":"memory.read","scope":"public","claim_level":"declared"}]},
+					"boundaries":{"results":[{"boundaryId":"b-reg","category":"safety","statement":"Use public data only","addedAt":"2026-05-11T16:00:00Z","addedInVersion":"7"}]},
+					"transparency":{"ai_generated":true,"operator_disclosed":true}
+				}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/capabilities",
+			"/api/v1/soul/agents/" + agentID + "/boundaries",
+			"/api/v1/soul/agents/" + agentID + "/transparency":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name":      "soul_read",
+		"arguments": map[string]any{"agentId": agentID},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read(fallback): status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal soul_read fallback response: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("soul_read fallback rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	data, _ := toolOut.StructuredContent["data"].(map[string]any)
+	souls, _ := data["souls"].([]any)
+	if len(souls) != 1 {
+		t.Fatalf("expected one composed soul, got %+v", data)
+	}
+	soul, _ := souls[0].(map[string]any)
+	registration, _ := soul["registration"].(map[string]any)
+	if registration["version"] != "7" || registration["rawAvailable"] != true {
+		t.Fatalf("expected registration envelope to normalize, got %+v", registration)
+	}
+	capabilities, _ := soul["capabilities"].([]any)
+	if len(capabilities) != 1 || capabilities[0].(map[string]any)["name"] != "memory.read" {
+		t.Fatalf("expected capabilities fallback from registration, got %+v", capabilities)
+	}
+	boundaries, _ := soul["boundaries"].([]any)
+	if len(boundaries) != 1 {
+		t.Fatalf("expected boundaries fallback from registration, got %+v", boundaries)
+	}
+	boundary, _ := boundaries[0].(map[string]any)
+	if boundary["id"] != "b-reg" || boundary["issuedAt"] != "2026-05-11T16:00:00Z" || boundary["addedInVersion"] != "7" {
+		t.Fatalf("expected normalized fallback boundary metadata, got %+v", boundary)
+	}
+	transparency, _ := soul["transparency"].(map[string]any)
+	if transparency["aiGenerated"] != true || transparency["operatorDisclosed"] != true {
+		t.Fatalf("expected transparency fallback from registration, got %+v", transparency)
+	}
+	avatar, _ := soul["avatar"].(map[string]any)
+	if avatar["status"] != "available" || avatar["currentStyleId"] != "minimal" {
+		t.Fatalf("expected avatar fallback from registration, got %+v", avatar)
+	}
+	sourceEndpoints, _ := soul["sourceEndpoints"].(map[string]any)
+	capSource, _ := sourceEndpoints["capabilities"].(map[string]any)
+	if capSource["status"] != "unavailable" || capSource["reason"] != "not_found" {
+		t.Fatalf("expected sourceEndpoints to preserve capabilities endpoint status, got %+v", sourceEndpoints)
+	}
+	if _, ok := sourceEndpoints["identity"].(map[string]any); !ok {
+		t.Fatalf("expected identity source endpoint, got %+v", sourceEndpoints)
+	}
+}

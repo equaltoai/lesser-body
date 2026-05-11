@@ -355,7 +355,10 @@ Notes:
   Bare current-instance local IDs require trustworthy current-instance domain context; use a full soul `agentId`,
   ENS name, explicit handle, canonical actor URL, or `self=true` when that context is unavailable. The default response
   is compact and returns `access` metadata plus `souls[]`, each with stable MCP blocks: `identity`, `registration`,
-  `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, and `deferred`.
+  `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, `sourceEndpoints`, and `deferred`.
+- `soul_read` composes from the most-specific public source available. When dedicated public `capabilities`,
+  `boundaries`, or `transparency` endpoints are unavailable, it falls back to the same blocks in public registration
+  data and still records each attempted endpoint under both ordered `sources[]` and keyed `sourceEndpoints`.
 - `soul_read.access` makes caller-self versus public-read behavior explicit. Default public reads return
   `mode:"public"`, `callerRelation:"public"`, `publicOnly:true`, and `privateExpansion:false`. `self=true` verifies the
   caller's bound lesser soul before using the same public Host/Soul read model and returns `mode:"self"` and

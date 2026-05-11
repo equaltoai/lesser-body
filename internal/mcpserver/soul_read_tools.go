@@ -162,7 +162,7 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 	registrationPath := agentPath + "/registration"
 	registrationRaw, registrationSource := soulReadOptional(ctx, client, "registration", registrationPath)
 	sources = append(sources, registrationSource)
-	registration, _ := registrationRaw.(map[string]any)
+	registration := normalizeSoulReadRegistrationEnvelope(registrationRaw)
 
 	capabilitiesPath := agentPath + "/capabilities"
 	capabilitiesRaw, capabilitiesSource := soulReadOptional(ctx, client, "capabilities", capabilitiesPath)
@@ -176,17 +176,23 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 	transparencyRaw, transparencySource := soulReadOptional(ctx, client, "transparency", transparencyPath)
 	sources = append(sources, transparencySource)
 
+	avatar := firstMap(agent, "avatar")
+	if len(avatar) == 0 {
+		avatar = firstMap(registration, "avatar")
+	}
+
 	payload := map[string]any{
-		"agentId":      agentID,
-		"identity":     normalizeSoulReadIdentity(agentID, agent),
-		"registration": normalizeSoulReadRegistration(registration, agent),
-		"capabilities": normalizeSoulReadCapabilities(capabilitiesRaw, registration),
-		"boundaries":   normalizeSoulReadBoundaries(boundariesRaw, registration),
-		"transparency": normalizeSoulReadTransparency(transparencyRaw, registration),
-		"channels":     normalizeSoulReadChannels(agent, registration),
-		"avatar":       normalizeSoulReadAvatar(firstMap(agent, "avatar")),
-		"sources":      sources,
-		"deferred":     deferred,
+		"agentId":         agentID,
+		"identity":        normalizeSoulReadIdentity(agentID, agent),
+		"registration":    normalizeSoulReadRegistration(registration, agent),
+		"capabilities":    normalizeSoulReadCapabilities(capabilitiesRaw, registration),
+		"boundaries":      normalizeSoulReadBoundaries(boundariesRaw, registration),
+		"transparency":    normalizeSoulReadTransparency(transparencyRaw, registration),
+		"channels":        normalizeSoulReadChannels(agent, registration),
+		"avatar":          normalizeSoulReadAvatar(avatar),
+		"sources":         sources,
+		"sourceEndpoints": soulReadSourceEndpoints(sources),
+		"deferred":        deferred,
 	}
 	if includeRaw {
 		payload["_raw"] = map[string]any{
@@ -198,6 +204,14 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 		}
 	}
 	return payload, nil
+}
+
+func normalizeSoulReadRegistrationEnvelope(raw any) map[string]any {
+	m, _ := raw.(map[string]any)
+	if nested := firstMap(m, "registration"); nested != nil {
+		return nested
+	}
+	return m
 }
 
 func soulReadOptional(ctx context.Context, client *soulapi.Client, block string, path string) (any, map[string]any) {
@@ -224,6 +238,26 @@ func soulReadSource(block string, endpoint string, status string, reason string)
 	}
 	if reason != "" {
 		out["reason"] = strings.TrimSpace(reason)
+	}
+	return out
+}
+
+func soulReadSourceEndpoints(sources []map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, source := range sources {
+		block, _ := source["block"].(string)
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		entry := map[string]any{}
+		for _, key := range []string{"endpoint", "status", "reason"} {
+			value, _ := source[key].(string)
+			if strings.TrimSpace(value) != "" {
+				entry[key] = strings.TrimSpace(value)
+			}
+		}
+		out[block] = entry
 	}
 	return out
 }
@@ -435,8 +469,13 @@ func firstArrayFromAny(raw any, keys ...string) []any {
 		return typed
 	case map[string]any:
 		for _, key := range keys {
-			if items, ok := typed[key].([]any); ok {
-				return items
+			switch value := typed[key].(type) {
+			case []any:
+				return value
+			case map[string]any:
+				if items := firstArrayFromAny(value, "items", "results"); len(items) > 0 {
+					return items
+				}
 			}
 		}
 	}
