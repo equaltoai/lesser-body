@@ -265,13 +265,14 @@ func normalizeSoulReadBoundaries(raw any, reg map[string]any) []any {
 			continue
 		}
 		boundary := map[string]any{}
-		putFirstAny(boundary, "id", m, "id")
+		putFirstAny(boundary, "id", m, "id", "boundary_id", "boundaryId")
 		putFirstAny(boundary, "category", m, "category")
 		putFirstAny(boundary, "statement", m, "statement")
 		putFirstAny(boundary, "rationale", m, "rationale")
 		putFirstAny(boundary, "supersedes", m, "supersedes")
-		putFirstAny(boundary, "version", m, "version")
-		putFirstAny(boundary, "issuedAt", m, "issued_at", "issuedAt")
+		putFirstAny(boundary, "version", m, "version", "added_in_version", "addedInVersion")
+		putFirstAny(boundary, "addedInVersion", m, "added_in_version", "addedInVersion")
+		putFirstAny(boundary, "issuedAt", m, "issued_at", "issuedAt", "added_at", "addedAt")
 		if len(boundary) > 0 {
 			out = append(out, boundary)
 		}

@@ -1209,7 +1209,7 @@ func TestLBM1_SoulReadPublicMVPUsesPublicEndpoints(t *testing.T) {
 		case "/api/v1/soul/agents/" + agentID + "/capabilities":
 			_, _ = w.Write([]byte(`{"capabilities":[{"capability":"social.post","scope":"public","claim_level":"declared","degrades_to":"read-only"}]}`))
 		case "/api/v1/soul/agents/" + agentID + "/boundaries":
-			_, _ = w.Write([]byte(`{"boundaries":[{"id":"b1","category":"communication_policy","statement":"No private channels in public read","issued_at":"2026-05-11T15:00:00Z"}]}`))
+			_, _ = w.Write([]byte(`{"boundaries":[{"boundary_id":"b1","category":"communication_policy","statement":"No private channels in public read","added_at":"2026-05-11T15:00:00Z","added_in_version":"3"}]}`))
 		case "/api/v1/soul/agents/" + agentID + "/transparency":
 			_, _ = w.Write([]byte(`{"transparency":{"ai_generated":true,"operator_disclosed":true}}`))
 		default:
@@ -1320,8 +1320,12 @@ func TestLBM1_SoulReadPublicMVPUsesPublicEndpoints(t *testing.T) {
 		t.Fatalf("unexpected capabilities: %+v", capabilities)
 	}
 	boundaries, _ := soul["boundaries"].([]any)
-	if len(boundaries) != 1 || boundaries[0].(map[string]any)["issuedAt"] != "2026-05-11T15:00:00Z" {
+	if len(boundaries) != 1 {
 		t.Fatalf("unexpected boundaries: %+v", boundaries)
+	}
+	boundary, _ := boundaries[0].(map[string]any)
+	if boundary["id"] != "b1" || boundary["issuedAt"] != "2026-05-11T15:00:00Z" || boundary["version"] != "3" || boundary["addedInVersion"] != "3" {
+		t.Fatalf("unexpected normalized boundary: %+v", boundary)
 	}
 	channels, _ := soul["channels"].(map[string]any)
 	emailChannel, _ := channels["email"].(map[string]any)
