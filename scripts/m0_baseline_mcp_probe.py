@@ -344,7 +344,7 @@ def extract_notification(value: dict[str, Any]) -> dict[str, Any]:
 
 def notification_readish_state(item: dict[str, Any]) -> dict[str, Any]:
     state: dict[str, Any] = {}
-    for key in ("read", "isRead", "is_read", "dismissed", "isDismissed", "is_dismissed"):
+    for key in ("read", "isRead", "is_read", "unread", "isUnread", "is_unread", "dismissed", "isDismissed", "is_dismissed"):
         if key in item:
             state[key] = item.get(key)
     for key in ("readAt", "read_at", "dismissedAt", "dismissed_at"):
@@ -354,12 +354,30 @@ def notification_readish_state(item: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def notification_read_value(item: dict[str, Any]) -> bool | None:
+    for key in ("read", "isRead", "is_read"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            return value
+    for key in ("unread", "isUnread", "is_unread"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            return not value
+    return None
+
+
 def is_read_or_dismissed(item: dict[str, Any]) -> bool:
-    state = notification_readish_state(item)
-    for value in state.values():
-        if value is True:
+    read = notification_read_value(item)
+    if read is True:
+        return True
+    if read is False:
+        return False
+    for key in ("dismissed", "isDismissed", "is_dismissed"):
+        if item.get(key) is True:
             return True
-        if isinstance(value, str) and value.strip():
+    for key in ("readAt", "read_at", "dismissedAt", "dismissed_at"):
+        value = str(item.get(key, "")).strip()
+        if value:
             return True
     return False
 
@@ -386,6 +404,10 @@ def workflow_read_args(notification_type: str = "") -> dict[str, Any]:
     if notification_type:
         args["types"] = [notification_type]
     return args
+
+
+def workflow_uses_unread_only_view() -> bool:
+    return env_bool("PROBE_NOTIFICATION_WORKFLOW_UNREAD_ONLY_VIEW")
 
 
 def probe_verified_identity(name: str, channel: str, identifier: str, message_id: str = "") -> None:
@@ -498,18 +520,35 @@ def probe_notification_workflow(name: str, args: dict[str, Any]) -> None:
     assert_tool_ok(result)
     assert_notification_baseline(relisted, name + " follow-up list")
 
-    still_listed = find_notification(relisted, selected_id) is not None
-    transition = "list_absence" if not still_listed else ""
+    relisted_notification = find_notification(relisted, selected_id)
+    still_listed = relisted_notification is not None
+    follow_up_read: bool | None = None
+    transition = ""
     after_state: dict[str, Any] = {}
     if after_status == 200:
         after_notification = extract_notification(after)
         after_state = notification_readish_state(after_notification)
-        if is_read_or_dismissed(after_notification):
-            transition = "read_state"
+        if not is_read_or_dismissed(after_notification):
+            raise ProbeError("direct Lesser single-get did not show read/dismissed state after notification_dismiss")
     elif after_status == 404 and not still_listed:
-        transition = "gone_after_dismiss"
+        raise ProbeError("follow-up same-user single-get returned HTTP 404 after notification_dismiss")
     elif after_status != 200:
         raise ProbeError(f"follow-up same-user single-get returned HTTP {after_status}")
+
+    if still_listed:
+        assert relisted_notification is not None
+        follow_up_read = notification_read_value(relisted_notification)
+        if follow_up_read is not True:
+            raise ProbeError(
+                "follow-up notifications_read kept the notification visible but did not expose read:true"
+            )
+        transition = "notifications_read_read_state"
+    elif workflow_uses_unread_only_view():
+        transition = "unread_view_absence"
+    else:
+        raise ProbeError(
+            "follow-up notifications_read did not include the notification; current all-notifications closure expects the same ID to remain visible with read:true"
+        )
 
     if not transition:
         raise ProbeError("follow-up list/read-state did not reflect notification dismiss/mark-read")
@@ -523,6 +562,7 @@ def probe_notification_workflow(name: str, args: dict[str, Any]) -> None:
         "dismiss": dismiss_data.get("dismiss"),
         "followUpGetStatus": after_status,
         "followUpInList": still_listed,
+        "followUpRead": follow_up_read,
         "transition": transition,
         "beforeState": notification_readish_state(before_notification),
         "afterState": after_state,

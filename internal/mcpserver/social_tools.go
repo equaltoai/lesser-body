@@ -1264,6 +1264,7 @@ func normalizeSocialNotification(raw map[string]any, includeRaw bool) map[string
 	if createdAt := firstNonEmptyStringMap(raw, "created_at", "createdAt"); createdAt != "" {
 		out["createdAt"] = createdAt
 	}
+	attachSocialNotificationReadState(out, raw)
 	if actor := normalizeSocialNotificationActor(firstMap(raw, "account", "actor")); actor != nil {
 		out["actor"] = actor
 	}
@@ -1275,6 +1276,43 @@ func normalizeSocialNotification(raw map[string]any, includeRaw bool) map[string
 	}
 
 	return out
+}
+
+func attachSocialNotificationReadState(out map[string]any, raw map[string]any) {
+	if read, ok := firstBoolMap(raw, "read", "is_read", "isRead"); ok {
+		out["read"] = read
+	}
+	if unread, ok := firstBoolMap(raw, "unread", "is_unread", "isUnread"); ok {
+		out["unread"] = unread
+		if _, hasRead := out["read"]; !hasRead {
+			out["read"] = !unread
+		}
+	}
+	if readAt := firstNonEmptyStringMap(raw, "read_at", "readAt"); readAt != "" {
+		out["readAt"] = readAt
+	}
+}
+
+func firstBoolMap(m map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		value, ok := m[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case bool:
+			return typed, true
+		case string:
+			v := strings.TrimSpace(typed)
+			if strings.EqualFold(v, "true") || v == "1" {
+				return true, true
+			}
+			if strings.EqualFold(v, "false") || v == "0" {
+				return false, true
+			}
+		}
+	}
+	return false, false
 }
 
 func normalizeSocialNotificationType(raw map[string]any) string {

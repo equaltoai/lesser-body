@@ -868,6 +868,95 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T
 	}
 }
 
+func TestM5_NotificationsReadPreservesReadState(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":"n-unread","type":"mention","read":false,"created_at":"2026-05-11T02:00:00Z","account":{"id":"acct-1","acct":"alice@example.com"},"status":{"id":"post-1","content":"hello","visibility":"public"}},
+			{"id":"n-read","type":"reply","read":true,"read_at":"2026-05-11T02:05:00Z","created_at":"2026-05-11T02:04:00Z","account":{"id":"acct-2","acct":"bob@example.com"},"status":{"id":"post-2","content":"read reply","visibility":"public"}},
+			{"id":"n-unread-shape","type":"favourite","unread":true,"created_at":"2026-05-11T02:03:00Z","account":{"id":"acct-3","acct":"carol@example.com"},"status":{"id":"post-3","content":"fav","visibility":"public"}},
+			{"id":"n-read-shape","type":"reblog","unread":false,"created_at":"2026-05-11T02:02:00Z","account":{"id":"acct-4","acct":"drew@example.com"},"status":{"id":"post-4","content":"boost","visibility":"public"}}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{"name": "notifications_read", "arguments": map[string]any{"limit": 20}})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal notifications_read: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	b, _ := json.Marshal(rpc.Result)
+	_ = json.Unmarshal(b, &out)
+	data, _ := out.StructuredContent["data"].(map[string]any)
+	notifications, _ := data["notifications"].([]any)
+	byID := map[string]map[string]any{}
+	for _, item := range notifications {
+		n, _ := item.(map[string]any)
+		id, _ := n["id"].(string)
+		byID[id] = n
+		if _, ok := n["raw"]; ok {
+			t.Fatalf("raw field should be absent by default: %+v", n)
+		}
+		if _, ok := n["_raw"]; ok {
+			t.Fatalf("_raw field should be absent by default: %+v", n)
+		}
+	}
+
+	if byID["n-unread"]["read"] != false {
+		t.Fatalf("expected read:false to be preserved, got %+v", byID["n-unread"])
+	}
+	if byID["n-read"]["read"] != true || byID["n-read"]["readAt"] != "2026-05-11T02:05:00Z" {
+		t.Fatalf("expected read:true and readAt to be preserved, got %+v", byID["n-read"])
+	}
+	if byID["n-unread-shape"]["read"] != false || byID["n-unread-shape"]["unread"] != true {
+		t.Fatalf("expected unread:true to infer read:false and preserve unread, got %+v", byID["n-unread-shape"])
+	}
+	if byID["n-read-shape"]["read"] != true || byID["n-read-shape"]["unread"] != false {
+		t.Fatalf("expected unread:false to infer read:true and preserve unread, got %+v", byID["n-read-shape"])
+	}
+}
+
 func TestM5_ProfileReadRejectsNonObjectArguments(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
