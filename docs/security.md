@@ -63,6 +63,31 @@ remain the long-term inbound client auth model.
 
 It does not log bearer tokens or tool arguments by default.
 
+## Private soul self-scope reads
+
+Project 21 M2 private mint-conversation reads use a Lesser-mediated trust seam:
+
+```text
+MCP caller -> lesser-body /mcp/{actor}
+lesser-body -> Lesser /api/v1/souls/bound/me/...
+Lesser -> lesser-host with managed instance trust
+```
+
+`soul_read` may request bounded private mint-conversation data only when the caller explicitly sends `self=true` and
+`include_private:["mintConversations"]`. `self=true` alone remains public-only. For this path, lesser-body forwards the
+MCP caller bearer only to Lesser's self-scope routes. It does **not** call lesser-host directly, does **not** use
+`LESSER_HOST_INSTANCE_KEY`, and does **not** pass MCP caller bearer tokens to lesser-host control-plane auth.
+
+The rejected unsafe pattern is direct MCP bearer forwarding to lesser-host. MCP bearers are issued by Lesser for an
+actor-scoped MCP resource; lesser-host control-plane auth cannot derive the local account, current instance domain, or
+soul/body binding proof from that token. Lesser owns that self-scope proof, derives the bound Host `agentId`, and then
+uses managed instance trust to call Host.
+
+Private mint-conversation list responses are compact summaries only. Full `messages` and `producedDeclarations` content
+is returned only by explicit single-conversation reads and must not be logged. Error details preserve machine-readable
+upstream reason codes without logging tokens, instance keys, message bodies, produced declarations, or raw private
+conversation content.
+
 ## IAM (least privilege)
 
 At a minimum, the MCP Lambda needs:
