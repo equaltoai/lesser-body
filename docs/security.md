@@ -84,9 +84,13 @@ soul/body binding proof from that token. Lesser owns that self-scope proof, deri
 uses managed instance trust to call Host.
 
 Private mint-conversation list responses are compact summaries only. Full `messages` and `producedDeclarations` content
-is returned only by explicit single-conversation reads and must not be logged. Error details preserve machine-readable
-upstream reason codes without logging tokens, instance keys, message bodies, produced declarations, or raw private
-conversation content.
+is returned only by explicit single-conversation reads and must not be logged. For explicit single reads, full private
+fields are preserved in `structuredContent.data`; the text `content` block omits those verbose fields to avoid
+duplicating private content into MCP stream events. Body measures the resulting MCP delivery envelope against a budget
+derived from `MCP_STREAM_MAX_EVENT_BYTES` with headroom and returns a small `response_too_large` tool error before
+stream-store persistence if the private single-read response exceeds the delivery budget. Error details preserve
+machine-readable upstream reason codes without logging tokens, instance keys, message bodies, produced declarations, or
+raw private conversation content.
 
 ## IAM (least privilege)
 
