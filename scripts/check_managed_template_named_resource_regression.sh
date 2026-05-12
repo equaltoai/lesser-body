@@ -23,68 +23,7 @@ trap cleanup EXIT
 
 refresh_release_metadata() {
   local release_dir="$1"
-  python3 - "${release_dir}" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-
-def digest(path: pathlib.Path) -> tuple[str, int]:
-    data = path.read_bytes()
-    return hashlib.sha256(data).hexdigest(), path.stat().st_size
-
-deploy_path = root / "lesser-body-deploy.json"
-release_path = root / "lesser-body-release.json"
-deploy = json.loads(deploy_path.read_text())
-release = json.loads(release_path.read_text())
-
-template_files = {
-    "dev": "lesser-body-managed-dev.template.json",
-    "staging": "lesser-body-managed-staging.template.json",
-    "live": "lesser-body-managed-live.template.json",
-}
-
-for stage, filename in template_files.items():
-    sha, size = digest(root / filename)
-    deploy["templates"][stage]["sha256"] = sha
-    deploy["templates"][stage]["bytes"] = size
-    release["artifacts"]["deploy_templates"][stage]["sha256"] = sha
-    release["artifacts"]["deploy_templates"][stage]["bytes"] = size
-
-deploy_path.write_text(json.dumps(deploy, indent=2) + "\n")
-deploy_sha, deploy_size = digest(deploy_path)
-
-for artifact_key, filename in {
-    "lambda_zip": "lesser-body.zip",
-    "deploy_script": "deploy-lesser-body-from-release.sh",
-}.items():
-    sha, size = digest(root / filename)
-    release["artifacts"][artifact_key]["sha256"] = sha
-    release["artifacts"][artifact_key]["bytes"] = size
-
-release["artifacts"]["deploy_manifest"]["sha256"] = deploy_sha
-release["artifacts"]["deploy_manifest"]["bytes"] = deploy_size
-release_path.write_text(json.dumps(release, indent=2) + "\n")
-
-checksummed_assets = [
-    "lesser-body.zip",
-    "lesser-body-deploy.json",
-    "lesser-body-managed-dev.template.json",
-    "lesser-body-managed-staging.template.json",
-    "lesser-body-managed-live.template.json",
-    "deploy-lesser-body-from-release.sh",
-    "lesser-body-release.json",
-]
-
-lines = []
-for asset in checksummed_assets:
-    sha, _ = digest(root / asset)
-    lines.append(f"{sha}  {asset}\n")
-
-(root / "checksums.txt").write_text("".join(lines))
-PY
+  python3 "${ROOT_DIR}/scripts/managed_release.py" refresh-metadata "${release_dir}"
 }
 
 LOGICAL_ID_DIR="${TMP_DIR}/release-bad-stream-logical-id"
@@ -155,4 +94,35 @@ if ! grep -Fq 'lesser-body-managed-dev.template.json: McpServerStreamTableC6A2DC
   exit 1
 fi
 
-echo "Regression confirmed: verifier rejects MCP named-resource logical-ID and table-name drift"
+SPILL_BUCKET_DIR="${TMP_DIR}/release-missing-stream-spill-bucket"
+cp -R "${SOURCE_DIR}" "${SPILL_BUCKET_DIR}"
+
+python3 - "${SPILL_BUCKET_DIR}/lesser-body-managed-dev.template.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+template = json.loads(path.read_text())
+resources = template["Resources"]
+for logical_id, resource in list(resources.items()):
+    if resource.get("Type") == "AWS::S3::Bucket" and "LifecycleConfiguration" in resource.get("Properties", {}):
+        resources.pop(logical_id)
+path.write_text(json.dumps(template, indent=2) + "\n")
+PY
+
+refresh_release_metadata "${SPILL_BUCKET_DIR}"
+
+SPILL_BUCKET_ERR="${TMP_DIR}/verify-spill-bucket.err"
+if bash "${ROOT_DIR}/scripts/verify_release_assets.sh" "${VERSION}" "${SPILL_BUCKET_DIR}" > /dev/null 2> "${SPILL_BUCKET_ERR}"; then
+  echo "verify_release_assets.sh unexpectedly accepted a managed template without the stream-spill bucket" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'lesser-body-managed-dev.template.json: expected exactly one stream-spill bucket with lifecycle configuration, found 0' "${SPILL_BUCKET_ERR}"; then
+  echo "verify_release_assets.sh did not report the expected stream-spill bucket regression" >&2
+  cat "${SPILL_BUCKET_ERR}" >&2
+  exit 1
+fi
+
+echo "Regression confirmed: verifier rejects MCP named-resource, table-name, and stream-spill drift"

@@ -50,6 +50,12 @@ jobs:
       - name: Regression check for managed template parameter defaults
         run: bash scripts/check_managed_template_default_regression.sh v0.0.0-test dist/release-test
 
+      - name: Regression check for managed template named resources
+        run: bash scripts/check_managed_template_named_resource_regression.sh v0.0.0-test dist/release-test
+
+      - name: Regression check for managed auxiliary assets
+        run: bash scripts/check_managed_auxiliary_asset_regression.sh v0.0.0-test dist/release-test
+
       - name: Install CDK dependencies
         working-directory: cdk
         run: npm ci

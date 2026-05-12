@@ -26,7 +26,7 @@ if [[ ! -f "${OUT_DIR}/lesser-body-release.json" ]]; then
   bash "${ROOT_DIR}/scripts/build_release_assets.sh" "${VERSION}" "${OUT_DIR}"
 fi
 
-mapfile -t published_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
+mapfile -t published_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh" "${OUT_DIR}")
 mapfile -t checksum_descriptor < <(python3 - "${OUT_DIR}/lesser-body-release.json" <<'PY'
 import json
 import pathlib
@@ -107,16 +107,66 @@ import sys
 root = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 
-deploy = json.loads((root / "lesser-body-deploy.json").read_text())
-release = json.loads((root / "lesser-body-release.json").read_text())
+def read_json(name):
+    return json.loads((root / name).read_text())
 
-assert deploy["schema"] == 1, deploy["schema"]
-assert deploy["version"] == version, deploy["version"]
-assert release["schema"] == 1, release["schema"]
-assert release["version"] == version, release["version"]
-assert release["deploy"]["manifest_path"] == "lesser-body-deploy.json"
-assert release["deploy"]["source_checkout_required"] is False
-assert release["deploy"]["npm_install_required"] is False
+def digest(name):
+    path = root / name
+    data = path.read_bytes()
+    return hashlib.sha256(data).hexdigest(), path.stat().st_size
+
+def err(message):
+    errors.append(message)
+
+def ref_name(value):
+    return value.get("Ref") if isinstance(value, dict) and isinstance(value.get("Ref"), str) else ""
+
+def value_at_path(root_obj, dotted):
+    cur = root_obj
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+def sibling_at_path(root_obj, dotted, sibling):
+    parts = dotted.split(".")
+    if not parts:
+        return None
+    return value_at_path(root_obj, ".".join(parts[:-1] + [sibling]))
+
+def stable_json(value):
+    return json.dumps(value, sort_keys=True)
+
+errors = []
+deploy = read_json("lesser-body-deploy.json")
+release = read_json("lesser-body-release.json")
+
+schema = deploy.get("schema")
+if schema not in (1, 2):
+    err(f"lesser-body-deploy.json has unsupported schema: {schema}")
+if release.get("schema") != schema:
+    err(f"lesser-body-release.json schema must match deploy schema {schema}, got {release.get('schema')}")
+if deploy.get("version") != version:
+    err(f"lesser-body-deploy.json version mismatch: {deploy.get('version')} != {version}")
+if release.get("version") != version:
+    err(f"lesser-body-release.json version mismatch: {release.get('version')} != {version}")
+if release.get("deploy", {}).get("manifest_path") != "lesser-body-deploy.json":
+    err("lesser-body-release.json deploy.manifest_path must be lesser-body-deploy.json")
+if release.get("deploy", {}).get("source_checkout_required") is not False:
+    err("lesser-body-release.json deploy.source_checkout_required must be false")
+if release.get("deploy", {}).get("npm_install_required") is not False:
+    err("lesser-body-release.json deploy.npm_install_required must be false")
+if schema == 2:
+    for label, caps in {
+        "lesser-body-deploy.json required_capabilities": deploy.get("required_capabilities") or [],
+        "lesser-body-release.json deploy.required_capabilities": release.get("deploy", {}).get("required_capabilities") or [],
+    }.items():
+        if "managed_auxiliary_assets_v1" not in caps:
+            err(f"{label} must include managed_auxiliary_assets_v1")
+        for cap in caps:
+            if cap != "managed_auxiliary_assets_v1":
+                err(f"{label} contains unsupported capability {cap}")
 
 expected_template_parameters = {
     "AppName",
@@ -129,8 +179,10 @@ expected_template_parameters = {
     "LesserStageDomainParamPath",
     "LesserTableNameParamPath",
 }
-deploy_template_parameters = {entry["name"] for entry in deploy["template_parameters"]}
-assert expected_template_parameters.issubset(deploy_template_parameters), deploy["template_parameters"]
+deploy_template_parameters = {entry.get("name") for entry in deploy.get("template_parameters", []) if isinstance(entry, dict)}
+missing_template_parameters = sorted(expected_template_parameters.difference(deploy_template_parameters))
+if missing_template_parameters:
+    err(f"lesser-body-deploy.json template_parameters missing {missing_template_parameters}")
 
 expected_artifacts = {
     "lambda_zip": "lesser-body.zip",
@@ -139,17 +191,68 @@ expected_artifacts = {
 }
 
 for key, path_name in expected_artifacts.items():
-    meta = release["artifacts"][key]
-    path = root / path_name
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert meta["path"] == path_name, meta
-    assert meta["sha256"] == digest, (key, meta["sha256"], digest)
-    assert meta["bytes"] == path.stat().st_size, (key, meta["bytes"], path.stat().st_size)
+    meta = release.get("artifacts", {}).get(key, {})
+    actual_sha, actual_bytes = digest(path_name)
+    if meta.get("path") != path_name:
+        err(f"lesser-body-release.json artifacts.{key}.path must be {path_name}, got {meta.get('path')!r}")
+    if meta.get("sha256") != actual_sha:
+        err(f"lesser-body-release.json artifacts.{key}.sha256 mismatch")
+    if meta.get("bytes") != actual_bytes:
+        err(f"lesser-body-release.json artifacts.{key}.bytes mismatch")
 
-assert deploy["lambda"]["sha256"] == release["artifacts"]["lambda_zip"]["sha256"]
-assert deploy["script"]["sha256"] == release["artifacts"]["deploy_script"]["sha256"]
+if deploy.get("lambda", {}).get("sha256") != release.get("artifacts", {}).get("lambda_zip", {}).get("sha256"):
+    err("deploy lambda checksum must match release lambda_zip checksum")
+if deploy.get("script", {}).get("sha256") != release.get("artifacts", {}).get("deploy_script", {}).get("sha256"):
+    err("deploy script checksum must match release deploy_script checksum")
 
-template_errors = []
+release_auxiliary_assets = release.get("artifacts", {}).get("auxiliary_assets") or []
+deploy_auxiliary_assets = deploy.get("auxiliary_assets") or []
+if schema == 1 and (release_auxiliary_assets or deploy_auxiliary_assets):
+    err("schema 1 release must not declare auxiliary assets")
+if schema == 2 and not deploy_auxiliary_assets:
+    err("schema 2 release must declare auxiliary_assets")
+if len(release_auxiliary_assets) != len(deploy_auxiliary_assets):
+    err("release and deploy auxiliary asset counts must match")
+
+release_aux_by_path = {asset.get("path"): asset for asset in release_auxiliary_assets if isinstance(asset, dict)}
+aux_by_param = {}
+aux_by_id = {}
+for asset in deploy_auxiliary_assets:
+    if not isinstance(asset, dict):
+        err("auxiliary asset entries must be objects")
+        continue
+    asset_id = asset.get("id")
+    path_name = asset.get("path")
+    parameter = asset.get("template_parameter")
+    s3_key = asset.get("s3_key")
+    for field, value in (("id", asset_id), ("path", path_name), ("template_parameter", parameter), ("s3_key", s3_key)):
+        if not isinstance(value, str) or not value:
+            err(f"auxiliary asset {asset_id or path_name or '<unknown>'} missing {field}")
+    if isinstance(path_name, str) and path_name:
+        actual_sha, actual_bytes = digest(path_name)
+        if asset.get("sha256") != actual_sha:
+            err(f"auxiliary asset {path_name} sha256 mismatch")
+        if asset.get("bytes") != actual_bytes:
+            err(f"auxiliary asset {path_name} bytes mismatch")
+        release_asset = release_aux_by_path.get(path_name)
+        if not isinstance(release_asset, dict):
+            err(f"release manifest is missing auxiliary asset {path_name}")
+        else:
+            for field in ("id", "sha256", "bytes", "required", "s3_key", "template_parameter", "content_type"):
+                if release_asset.get(field) != asset.get(field):
+                    err(f"auxiliary asset {path_name} {field} does not match release manifest")
+    if isinstance(parameter, str):
+        aux_by_param[parameter] = asset
+    if isinstance(asset_id, str):
+        aux_by_id[asset_id] = asset
+
+for entry in deploy.get("template_parameters", []):
+    if not isinstance(entry, dict):
+        continue
+    derived = entry.get("derived_from_auxiliary_asset")
+    if derived and derived not in aux_by_id:
+        err(f"template parameter {entry.get('name')} derives from unknown auxiliary asset {derived}")
+
 expected_named_tables = {
     "McpServerSessionTable469EA0FB": {
         "type": "AWS::DynamoDB::Table",
@@ -173,90 +276,174 @@ expected_export_refs = {
 forbidden_legacy_resources = {
     "McpStreamTableEDC02B0A": "legacy stream table logical ID",
 }
+expected_spill_env = {
+    "MCP_STREAM_SPILL_BUCKET",
+    "MCP_STREAM_SPILL_PREFIX",
+    "MCP_STREAM_SPILL_INLINE_MAX_BYTES",
+    "MCP_STREAM_MAX_EVENT_BYTES",
+}
 
 for stage in ("dev", "staging", "live"):
     stage_meta = release["artifacts"]["deploy_templates"][stage]
     stage_path = root / stage_meta["path"]
-    digest = hashlib.sha256(stage_path.read_bytes()).hexdigest()
-    assert stage_meta["sha256"] == digest, (stage, stage_meta["sha256"], digest)
-    assert stage_meta["bytes"] == stage_path.stat().st_size, (stage, stage_meta["bytes"], stage_path.stat().st_size)
-    assert deploy["templates"][stage]["sha256"] == stage_meta["sha256"]
+    actual_sha, actual_bytes = digest(stage_meta["path"])
+    if stage_meta.get("sha256") != actual_sha:
+        err(f"{stage_path.name}: release template checksum mismatch")
+    if stage_meta.get("bytes") != actual_bytes:
+        err(f"{stage_path.name}: release template byte size mismatch")
+    if deploy["templates"][stage].get("sha256") != stage_meta.get("sha256"):
+        err(f"{stage_path.name}: deploy template checksum must match release manifest")
 
     template = json.loads(stage_path.read_text())
     template_text = json.dumps(template, sort_keys=True)
-    assert "cdk-hnb659fds" not in template_text
-    assert "aws:asset:path" not in template_text
-    assert "../dist/lesser-body.zip" not in template_text
+    for marker in ("cdk-hnb659fds", "/cdk-bootstrap/", "BootstrapVersion", "aws:asset:path", "../dist/lesser-body.zip"):
+        if marker in template_text:
+            err(f"{stage_path.name}: managed template contains forbidden bootstrap/source marker {marker}")
 
-    required_params = {
-        "AppName",
-        "BaseDomain",
-        "LesserBodyCodeBucketName",
-        "LesserBodyCodeObjectKey",
-        "LesserHostInstanceKeyARN",
-        "JWTSecretArnParamPath",
-        "JWTSecretKeyArnParamPath",
-        "LesserStageDomainParamPath",
-        "LesserTableNameParamPath",
-    }
-    assert required_params.issubset(template["Parameters"].keys()), template["Parameters"].keys()
+    required_params = set(expected_template_parameters)
+    for asset in deploy_auxiliary_assets:
+        if not isinstance(asset, dict):
+            continue
+        for ref in asset.get("template_references") or []:
+            if not isinstance(ref, dict):
+                continue
+            if ref.get("stage") == stage and ref.get("template") == stage_path.name:
+                required_params.add(asset.get("template_parameter"))
+    params = template.get("Parameters", {})
+    if not isinstance(params, dict):
+        err(f"{stage_path.name}: template is missing Parameters")
+        params = {}
+    missing_params = sorted(p for p in required_params if p not in params)
+    if missing_params:
+        err(f"{stage_path.name}: missing required Parameters {missing_params}")
 
-    for param_name, param_spec in template["Parameters"].items():
-        if "Default" in param_spec and not isinstance(param_spec["Default"], str):
-            template_errors.append(
-                f"{stage_path.name}: Parameters.{param_name}.Default must be a string, got {type(param_spec['Default']).__name__}"
-            )
+    for param_name, param_spec in params.items():
+        if isinstance(param_spec, dict) and "Default" in param_spec and not isinstance(param_spec["Default"], str):
+            err(f"{stage_path.name}: Parameters.{param_name}.Default must be a string, got {type(param_spec['Default']).__name__}")
 
     resources = template.get("Resources", {})
     if not isinstance(resources, dict):
-        template_errors.append(f"{stage_path.name}: template is missing Resources")
+        err(f"{stage_path.name}: template is missing Resources")
         continue
 
     for logical_id, label in forbidden_legacy_resources.items():
         if logical_id in resources:
-            template_errors.append(f"{stage_path.name}: forbidden {label} {logical_id} is present")
+            err(f"{stage_path.name}: forbidden {label} {logical_id} is present")
 
     for logical_id, spec in expected_named_tables.items():
         resource = resources.get(logical_id)
         if not isinstance(resource, dict):
-            template_errors.append(f"{stage_path.name}: missing expected resource {logical_id}")
+            err(f"{stage_path.name}: missing expected resource {logical_id}")
             continue
         if resource.get("Type") != spec["type"]:
-            template_errors.append(
-                f"{stage_path.name}: {logical_id} expected type {spec['type']}, got {resource.get('Type')!r}"
-            )
+            err(f"{stage_path.name}: {logical_id} expected type {spec['type']}, got {resource.get('Type')!r}")
             continue
         props = resource.get("Properties", {})
-        table_name_text = json.dumps(props.get("TableName"), sort_keys=True)
+        table_name_text = stable_json(props.get("TableName"))
         if spec["table_name_contains"] not in table_name_text:
-            template_errors.append(
-                f"{stage_path.name}: {logical_id} TableName must contain {spec['table_name_contains']}, got {table_name_text}"
-            )
+            err(f"{stage_path.name}: {logical_id} TableName must contain {spec['table_name_contains']}, got {table_name_text}")
 
     for logical_id, spec in expected_export_refs.items():
         resource = resources.get(logical_id)
         if not isinstance(resource, dict):
-            template_errors.append(f"{stage_path.name}: missing expected resource {logical_id}")
+            err(f"{stage_path.name}: missing expected resource {logical_id}")
             continue
         if resource.get("Type") != "AWS::SSM::Parameter":
-            template_errors.append(
-                f"{stage_path.name}: {logical_id} expected type AWS::SSM::Parameter, got {resource.get('Type')!r}"
-            )
+            err(f"{stage_path.name}: {logical_id} expected type AWS::SSM::Parameter, got {resource.get('Type')!r}")
             continue
         props = resource.get("Properties", {})
-        name_text = json.dumps(props.get("Name"), sort_keys=True)
+        name_text = stable_json(props.get("Name"))
         if spec["name_contains"] not in name_text:
-            template_errors.append(
-                f"{stage_path.name}: {logical_id} Name must contain {spec['name_contains']}, got {name_text}"
-            )
+            err(f"{stage_path.name}: {logical_id} Name must contain {spec['name_contains']}, got {name_text}")
         expected_ref = {"Ref": spec["ref"]}
         if props.get("Value") != expected_ref:
-            template_errors.append(
-                f"{stage_path.name}: {logical_id} Value must equal {expected_ref}, got {props.get('Value')!r}"
-            )
+            err(f"{stage_path.name}: {logical_id} Value must equal {expected_ref}, got {props.get('Value')!r}")
 
-if template_errors:
-    raise SystemExit("\n".join(template_errors))
+    spill_buckets = []
+    for logical_id, resource in resources.items():
+        if isinstance(resource, dict) and resource.get("Type") == "AWS::S3::Bucket":
+            props = resource.get("Properties", {})
+            if isinstance(props, dict) and "LifecycleConfiguration" in props:
+                spill_buckets.append((logical_id, props))
+    if len(spill_buckets) != 1:
+        err(f"{stage_path.name}: expected exactly one stream-spill bucket with lifecycle configuration, found {len(spill_buckets)}")
+        spill_logical_id = None
+    else:
+        spill_logical_id, spill_props = spill_buckets[0]
+        public_block = spill_props.get("PublicAccessBlockConfiguration")
+        expected_public_block = {"BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls", "RestrictPublicBuckets"}
+        if not isinstance(public_block, dict) or not all(public_block.get(flag) is True for flag in expected_public_block):
+            err(f"{stage_path.name}: {spill_logical_id} must block public access, got {stable_json(public_block)}")
+        encryption = stable_json(spill_props.get("BucketEncryption"))
+        if "AES256" not in encryption:
+            err(f"{stage_path.name}: {spill_logical_id} must use S3-managed encryption, got {encryption}")
+        lifecycle = stable_json(spill_props.get("LifecycleConfiguration"))
+        if "ExpirationInDays" not in lifecycle:
+            err(f"{stage_path.name}: {spill_logical_id} must configure lifecycle expiration, got {lifecycle}")
+
+    handlers = []
+    for logical_id, resource in resources.items():
+        if isinstance(resource, dict) and resource.get("Type") == "AWS::Lambda::Function":
+            props = resource.get("Properties", {})
+            if isinstance(props, dict) and props.get("Handler") == "bootstrap":
+                handlers.append((logical_id, props))
+    if len(handlers) != 1:
+        err(f"{stage_path.name}: expected exactly one MCP handler Lambda with Handler=bootstrap, found {len(handlers)}")
+    else:
+        handler_logical_id, handler_props = handlers[0]
+        env = handler_props.get("Environment", {}).get("Variables", {})
+        if not isinstance(env, dict):
+            err(f"{stage_path.name}: {handler_logical_id} missing Environment.Variables")
+        else:
+            missing_env = sorted(expected_spill_env.difference(env))
+            if missing_env:
+                err(f"{stage_path.name}: MCP handler missing stream-spill env vars {missing_env}")
+            elif spill_logical_id is not None and env.get("MCP_STREAM_SPILL_BUCKET") != {"Ref": spill_logical_id}:
+                err(f"{stage_path.name}: MCP_STREAM_SPILL_BUCKET must Ref {spill_logical_id}, got {env.get('MCP_STREAM_SPILL_BUCKET')!r}")
+
+    declared_aux_params = set(aux_by_param)
+    for logical_id, resource in resources.items():
+        if not isinstance(resource, dict) or resource.get("Type") != "AWS::Lambda::Function":
+            continue
+        code = value_at_path(resource, "Properties.Code")
+        if not isinstance(code, dict) or ("S3Bucket" not in code and "S3Key" not in code):
+            continue
+        bucket_ref = ref_name(code.get("S3Bucket"))
+        key_ref = ref_name(code.get("S3Key"))
+        if bucket_ref != "LesserBodyCodeBucketName":
+            err(f"{stage_path.name}: lambda {logical_id} Code.S3Bucket must Ref LesserBodyCodeBucketName; literal, Fn::Sub, and CDK bootstrap buckets are not allowed")
+            continue
+        if not key_ref:
+            err(f"{stage_path.name}: lambda {logical_id} Code.S3Key must Ref LesserBodyCodeObjectKey or a declared auxiliary asset parameter")
+            continue
+        if key_ref == "LesserBodyCodeObjectKey":
+            continue
+        if key_ref not in declared_aux_params:
+            err(f"{stage_path.name}: references auxiliary code key parameter {key_ref} from {logical_id} without a declared auxiliary asset")
+
+    for asset in deploy_auxiliary_assets:
+        if not isinstance(asset, dict):
+            continue
+        for ref in asset.get("template_references") or []:
+            if not isinstance(ref, dict):
+                err(f"auxiliary asset {asset.get('id')} template_references entries must be objects")
+                continue
+            if ref.get("stage") != stage or ref.get("template") != stage_path.name:
+                continue
+            logical_id = ref.get("logical_id")
+            resource = resources.get(logical_id)
+            if not isinstance(resource, dict):
+                err(f"{stage_path.name}: missing auxiliary asset {asset.get('id')} logical resource {logical_id}")
+                continue
+            value = value_at_path(resource, ref.get("property_path", ""))
+            if ref_name(value) != ref.get("key_parameter"):
+                err(f"{stage_path.name}: property {ref.get('property_path')} for auxiliary asset {asset.get('id')} must Ref {ref.get('key_parameter')}")
+            bucket_value = sibling_at_path(resource, ref.get("property_path", ""), "S3Bucket")
+            if ref.get("bucket_parameter") and ref_name(bucket_value) != ref.get("bucket_parameter"):
+                err(f"{stage_path.name}: bucket property for auxiliary asset {asset.get('id')} must Ref {ref.get('bucket_parameter')}")
+
+if errors:
+    raise SystemExit("\n".join(errors))
 PY
 
 RELEASE_ABS_DIR="$(cd "${OUT_DIR}" && pwd)"
@@ -324,6 +511,15 @@ expected_parameter_overrides=(
   'JWTSecretArnParamPath=/lesser/shared/secrets/jwt-secret-arn'
   'JWTSecretKeyArnParamPath=/lesser/shared/kms/encryption-key-arn'
 )
+mapfile -t auxiliary_asset_rows < <(python3 - "${OUT_DIR}/lesser-body-deploy.json" <<'PY'
+import json
+import pathlib
+import sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for asset in manifest.get("auxiliary_assets") or []:
+    print("\t".join([asset["path"], asset["s3_key"], asset["template_parameter"]]))
+PY
+)
 
 for stage in dev staging live; do
   stage_log="${RELEASE_ABS_DIR}/deploy-dry-run-${stage}.log"
@@ -356,6 +552,23 @@ for stage in dev staging live; do
   for override in "${expected_parameter_overrides[@]}"; do
     if ! grep -q -- "${override}" "${stage_log}"; then
       echo "dry-run output did not include expected parameter override (stage: ${stage}): ${override}" >&2
+      exit 1
+    fi
+  done
+
+  for row in "${auxiliary_asset_rows[@]}"; do
+    IFS=$'\t' read -r aux_path aux_s3_key aux_param <<< "${row}"
+    aux_object_key="releases/lesser-body/${VERSION}/${aux_s3_key}"
+    if ! grep -q -- "${RELEASE_ABS_DIR}/${aux_path}" "${stage_log}"; then
+      echo "dry-run output did not stage auxiliary asset from release directory (stage: ${stage}): ${aux_path}" >&2
+      exit 1
+    fi
+    if ! grep -q -- "s3://example-artifacts-bucket/${aux_object_key}" "${stage_log}"; then
+      echo "dry-run output did not upload auxiliary asset to expected object key (stage: ${stage}): ${aux_object_key}" >&2
+      exit 1
+    fi
+    if ! grep -q -- "${aux_param}=${aux_object_key}" "${stage_log}"; then
+      echo "dry-run output did not pass auxiliary parameter override (stage: ${stage}): ${aux_param}=${aux_object_key}" >&2
       exit 1
     fi
   done
