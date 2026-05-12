@@ -23,10 +23,11 @@ Today `bash scripts/build_release_assets.sh <version> dist/release` publishes:
 - `dist/release/checksums.txt`
 - `dist/release/lesser-body-release.json`
 
-For AppTheory v1.5.0 and later, managed releases may also publish auxiliary assets under `dist/release/assets/`.
-Those assets are declared in `lesser-body-deploy.json` `auxiliary_assets[]` and checksum-covered like every other
-managed release artifact. The first expected auxiliary asset class is AppTheory's S3 auto-delete custom resource
-provider for the MCP stream-spill bucket.
+For AppTheory v1.5.0 and later, managed releases may also publish auxiliary assets declared in
+`lesser-body-deploy.json` `auxiliary_assets[]`. They are checksum-covered like every other managed release artifact and
+may be flat or nested relative paths; the current Body release builder emits the AppTheory S3 auto-delete custom resource
+provider for the MCP stream-spill bucket as a flat
+`apptheory-s3-auto-delete-objects-provider-<cdk-source-hash>.zip` asset.
 
 Those assets are sufficient for managed consumers to deploy `lesser-body` without reconstructing a source checkout.
 `checksums.txt` checksum-covers every published managed asset except `checksums.txt` itself, including the canonical

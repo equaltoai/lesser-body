@@ -18,6 +18,11 @@ Every `lesser-body` release now publishes these managed deploy assets:
 - `checksums.txt`
 - `lesser-body-release.json`
 
+Schema-2 releases also publish any additional files declared by `lesser-body-deploy.json` `auxiliary_assets[]`. The
+current AppTheory v1.5.x auxiliary asset is a flat GitHub Release asset named
+`apptheory-s3-auto-delete-objects-provider-<cdk-source-hash>.zip`; consumers must treat the manifest path as
+authoritative rather than deriving it from that example.
+
 The canonical manifest is `lesser-body-release.json`. It contains per-asset paths, sizes, and sha256 values so consumers
 can discover and verify the deploy assets automatically.
 
@@ -127,16 +132,16 @@ Schema 2 adds a backwards-compatible managed asset declaration for AppTheory/CDK
     {
       "id": "apptheory-s3-auto-delete-objects-provider",
       "required": true,
-      "path": "assets/mcp-stream-spill-auto-delete-provider.zip",
+      "path": "apptheory-s3-auto-delete-objects-provider-<cdk-source-hash>.zip",
       "sha256": "<sha256>",
       "bytes": 12345,
       "content_type": "application/zip",
-      "s3_key": "assets/mcp-stream-spill-auto-delete-provider.zip",
+      "s3_key": "apptheory-s3-auto-delete-objects-provider-<cdk-source-hash>.zip",
       "template_parameter": "AppTheoryAutoDeleteObjectsCodeObjectKey",
       "source": {
         "kind": "cdk-file-asset",
         "source_hash": "<cdk-source-hash>",
-        "construct_path": "McpServer/StreamSpillBucket/AutoDeleteObjectsCustomResourceProvider"
+        "construct_path": "LesserBodyManagedTemplate/Custom::S3AutoDeleteObjectsCustomResourceProvider Code"
       },
       "template_references": [
         {
@@ -162,6 +167,9 @@ Field rules:
   `s3://<assetBucket>/<assetPrefix>/<s3_key>`.
 - `template_parameter` names the CloudFormation parameter that receives the resolved object key.
 - `template_references[]` documents every stage template location that was rewritten to use the staged asset.
+- Stage templates must not contain CDK bootstrap bucket references such as `cdk-hnb659fds`, `/cdk-bootstrap/`,
+  `BootstrapVersion`, or `aws:asset:path`. Body rewrites CDK file-asset Lambda code references to the managed artifact
+  bucket plus the auxiliary asset object-key parameter before publishing the release.
 
 The canonical schema-2 fixture lives at:
 
@@ -219,7 +227,8 @@ endpoint metadata.
 Managed consumers should verify release assets in this order:
 
 1. Confirm the published asset set is present: `lesser-body.zip`, `lesser-body-deploy.json`, the three stage-specific
-   templates, `deploy-lesser-body-from-release.sh`, `checksums.txt`, and `lesser-body-release.json`.
+   templates, `deploy-lesser-body-from-release.sh`, `checksums.txt`, `lesser-body-release.json`, and every
+   `auxiliary_assets[].path` entry declared by `lesser-body-deploy.json`.
 2. Check that `checksums.txt` includes every published managed asset except `checksums.txt` itself.
 3. Run `sha256sum -c checksums.txt`.
 4. Check `lesser-body-release.json` for the expected deploy asset paths and sha256 values.
@@ -248,6 +257,7 @@ That verification fails if:
 - a managed template omits the stream-spill bucket or spill-related Lambda environment variables while stream storage is
   enabled
 - a template regresses to CDK asset/bootstrap assumptions
+- a template references an auxiliary Lambda/custom-resource code parameter that is not declared in `auxiliary_assets[]`
 - the helper script no longer operates purely from the produced release directory
 
 Managed consumers should reject the release before trusting `lesser-body-release.json` or `lesser-body-deploy.json` if
