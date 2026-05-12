@@ -84,7 +84,7 @@ func TestManagedDeployTemplateSupportsExactLesserHostInstanceKeyARN(t *testing.T
 		t.Fatalf("expected exact Secrets Manager ARN allowed pattern, got %#v", param["AllowedPattern"])
 	}
 
-	lambda := firstLambdaFunction(t, mustResources(t, template))
+	lambda := mcpHandlerLambdaFunction(t, mustResources(t, template))
 	props, ok := lambda["Properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("lambda missing Properties")
@@ -343,7 +343,7 @@ func TestLesserBodyUsesAppTheoryDurableStreamTableSchema(t *testing.T) {
 		t.Fatalf("expected stream table range key eventId, got %s", mustJSON(t, keySchema[1]))
 	}
 
-	lambda := firstLambdaFunction(t, mustResources(t, template))
+	lambda := mcpHandlerLambdaFunction(t, mustResources(t, template))
 	lambdaProps, ok := lambda["Properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("lambda missing Properties")
@@ -358,6 +358,34 @@ func TestLesserBodyUsesAppTheoryDurableStreamTableSchema(t *testing.T) {
 	}
 	if got, ok := vars["MCP_STREAM_TTL_MINUTES"].(string); !ok || got != "60" {
 		t.Fatalf("expected MCP_STREAM_TTL_MINUTES=60, got %#v", vars["MCP_STREAM_TTL_MINUTES"])
+	}
+	if _, ok := vars["MCP_STREAM_SPILL_BUCKET"]; !ok {
+		t.Fatalf("expected MCP_STREAM_SPILL_BUCKET env var")
+	}
+	if got, ok := vars["MCP_STREAM_SPILL_PREFIX"].(string); !ok || got != "mcp-stream-events" {
+		t.Fatalf("expected MCP_STREAM_SPILL_PREFIX=mcp-stream-events, got %#v", vars["MCP_STREAM_SPILL_PREFIX"])
+	}
+	if got, ok := vars["MCP_STREAM_SPILL_INLINE_MAX_BYTES"].(string); !ok || got != "32768" {
+		t.Fatalf("expected MCP_STREAM_SPILL_INLINE_MAX_BYTES=32768, got %#v", vars["MCP_STREAM_SPILL_INLINE_MAX_BYTES"])
+	}
+	if got, ok := vars["MCP_STREAM_MAX_EVENT_BYTES"].(string); !ok || got != "10485760" {
+		t.Fatalf("expected MCP_STREAM_MAX_EVENT_BYTES=10485760, got %#v", vars["MCP_STREAM_MAX_EVENT_BYTES"])
+	}
+
+	spillBucket := findStreamSpillBucket(t, mustResources(t, template))
+	spillProps, ok := spillBucket["Properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream spill bucket missing Properties")
+	}
+	if !strings.Contains(mustJSON(t, spillProps["PublicAccessBlockConfiguration"]), `"BlockPublicAcls":true`) ||
+		!strings.Contains(mustJSON(t, spillProps["PublicAccessBlockConfiguration"]), `"RestrictPublicBuckets":true`) {
+		t.Fatalf("expected stream spill bucket to block public access, got %s", mustJSON(t, spillProps["PublicAccessBlockConfiguration"]))
+	}
+	if !strings.Contains(mustJSON(t, spillProps["BucketEncryption"]), `"SSEAlgorithm":"AES256"`) {
+		t.Fatalf("expected stream spill bucket to use S3-managed encryption, got %s", mustJSON(t, spillProps["BucketEncryption"]))
+	}
+	if !strings.Contains(mustJSON(t, spillProps["LifecycleConfiguration"]), `"ExpirationInDays":1`) {
+		t.Fatalf("expected stream spill bucket lifecycle expiration, got %s", mustJSON(t, spillProps["LifecycleConfiguration"]))
 	}
 }
 
@@ -615,7 +643,7 @@ func extractStatementResourcesFromMap(statement map[string]any) []any {
 	return nil
 }
 
-func firstLambdaFunction(t *testing.T, resources map[string]any) map[string]any {
+func mcpHandlerLambdaFunction(t *testing.T, resources map[string]any) map[string]any {
 	t.Helper()
 
 	for _, raw := range resources {
@@ -623,11 +651,18 @@ func firstLambdaFunction(t *testing.T, resources map[string]any) map[string]any 
 		if !ok {
 			continue
 		}
-		if typ, _ := resource["Type"].(string); typ == "AWS::Lambda::Function" {
+		if typ, _ := resource["Type"].(string); typ != "AWS::Lambda::Function" {
+			continue
+		}
+		props, ok := resource["Properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if handler, _ := props["Handler"].(string); handler == "bootstrap" {
 			return resource
 		}
 	}
-	t.Fatalf("template missing AWS::Lambda::Function resource")
+	t.Fatalf("template missing MCP handler AWS::Lambda::Function resource")
 	return nil
 }
 
@@ -676,6 +711,30 @@ func findSSMParameterByName(t *testing.T, resources map[string]any, paramName st
 	}
 
 	t.Fatalf("template missing AWS::SSM::Parameter %q", paramName)
+	return nil
+}
+
+func findStreamSpillBucket(t *testing.T, resources map[string]any) map[string]any {
+	t.Helper()
+
+	for _, raw := range resources {
+		resource, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := resource["Type"].(string); typ != "AWS::S3::Bucket" {
+			continue
+		}
+		props, ok := resource["Properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasLifecycle := props["LifecycleConfiguration"]; hasLifecycle {
+			return resource
+		}
+	}
+
+	t.Fatalf("template missing stream spill AWS::S3::Bucket")
 	return nil
 }
 
