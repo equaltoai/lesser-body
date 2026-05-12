@@ -56,7 +56,7 @@ npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
 lesser-body/
 ├── cmd/lesser-body/          # Lambda entrypoint
 ├── internal/                 # MCP server, auth, Lesser API client, memory store
-├── cdk/                      # CDK stack (Lambda + session table + SSM exports)
+├── cdk/                      # CDK stack (Lambda + MCP state tables/spill bucket + SSM exports)
 ├── docs/                     # Operator + developer documentation (canonical)
 ├── scripts/                  # Build + release helpers
 ├── SPEC.md                   # Design specification (reference)

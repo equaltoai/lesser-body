@@ -1,0 +1,36 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Non-deployable lesser-body managed multi-asset fixture for staging.",
+  "Parameters": {
+    "AppName": {"Type": "String", "Default": "lesser"},
+    "LesserBodyCodeBucketName": {"Type": "String"},
+    "LesserBodyCodeObjectKey": {"Type": "String"},
+    "AppTheoryAutoDeleteObjectsCodeObjectKey": {"Type": "String"}
+  },
+  "Resources": {
+    "McpHandler03E6F2E1": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": {"Ref": "LesserBodyCodeBucketName"},
+          "S3Key": {"Ref": "LesserBodyCodeObjectKey"}
+        },
+        "Handler": "bootstrap",
+        "Runtime": "provided.al2023",
+        "Role": "arn:aws:iam::123456789012:role/fixture"
+      }
+    },
+    "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": {"Ref": "LesserBodyCodeBucketName"},
+          "S3Key": {"Ref": "AppTheoryAutoDeleteObjectsCodeObjectKey"}
+        },
+        "Handler": "index.handler",
+        "Runtime": "nodejs22.x",
+        "Role": "arn:aws:iam::123456789012:role/fixture"
+      }
+    }
+  }
+}

@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t published_assets < <(bash scripts/list_release_assets.sh)
+          mapfile -t published_assets < <(bash scripts/list_release_assets.sh dist/release)
           files=()
           for asset in "${published_assets[@]}"; do
             files+=("dist/release/${asset}")

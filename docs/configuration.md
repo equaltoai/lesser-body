@@ -61,6 +61,21 @@ Variables:
   - If set, enables AppTheory's durable DynamoDB-backed MCP stream replay store.
 - `MCP_STREAM_TTL_MINUTES` (string, optional)
   - Stream event TTL in minutes (default is runtime-defined; deployments typically use `60`).
+- `MCP_STREAM_SPILL_BUCKET` (string, optional)
+  - Private S3 bucket used by AppTheory's Dynamo stream store for logical stream events too large to keep inline in
+    DynamoDB. The CDK stack sets this when the stream table is enabled.
+- `MCP_STREAM_SPILL_PREFIX` (string, optional)
+  - S3 key prefix for spilled MCP stream payloads. CDK deployments use `mcp-stream-events`.
+- `MCP_STREAM_SPILL_INLINE_MAX_BYTES` (string, optional)
+  - Inline DynamoDB byte threshold before AppTheory spills the logical event payload to S3. CDK deployments use
+    AppTheory's default `32768`.
+- `MCP_STREAM_MAX_EVENT_BYTES` (string, optional)
+  - Hard maximum size for one logical MCP stream event before AppTheory fails the event closed. CDK deployments use
+    AppTheory's default `10485760`.
+
+`MCP_STREAM_TTL_MINUTES` is the runtime replay window: AppTheory rejects expired stream event records before reading
+inline or S3-spilled payloads. DynamoDB TTL and S3 lifecycle cleanup are best-effort cleanup backstops, not access
+enforcement.
 
 ### Endpoints
 

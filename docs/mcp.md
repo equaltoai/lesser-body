@@ -143,6 +143,11 @@ AppTheory’s MCP server implements:
 - `prompts/list`
 - `prompts/get`
 
+For streamed responses, body preserves the MCP client's logical SSE contract. AppTheory's durable stream store keeps the
+event id / replay index in DynamoDB and, when needed, spills large logical event payloads to the private stream-spill S3
+bucket before rehydrating them for the same `Last-Event-ID` replay path. There are no tool-specific chunk URLs or
+client-visible S3 links.
+
 ## Runtime Profiles
 
 `lesser-body` now publishes and enforces two runtime profiles for the agent-first model:

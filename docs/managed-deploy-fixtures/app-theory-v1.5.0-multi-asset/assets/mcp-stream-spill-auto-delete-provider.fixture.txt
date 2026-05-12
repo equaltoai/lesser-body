@@ -1,0 +1,1 @@
+This is a non-deployable AppTheory CDK auxiliary asset fixture representing the S3 auto-delete custom resource provider.

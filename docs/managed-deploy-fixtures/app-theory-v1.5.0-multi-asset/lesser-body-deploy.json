@@ -1,0 +1,116 @@
+{
+  "schema": 2,
+  "name": "lesser-body-deploy",
+  "version": "v0.0.0-fixture",
+  "required_capabilities": [
+    "managed_auxiliary_assets_v1"
+  ],
+  "asset_prefix_default": "releases/lesser-body/v0.0.0-fixture",
+  "lambda": {
+    "path": "lesser-body.fixture.txt",
+    "sha256": "9204b7b789b2c5ecb4f22a26a1d3cf25afcef905196f2ddcb7a2b614257e748c",
+    "bytes": 107
+  },
+  "templates": {
+    "dev": {
+      "path": "lesser-body-managed-dev.template.json",
+      "sha256": "82035ea1a4a35691f26f89c75a7e7fc7f4599d369a8ecfcd96b163c66fe20057",
+      "bytes": 1205,
+      "format": "cloudformation-json"
+    },
+    "staging": {
+      "path": "lesser-body-managed-staging.template.json",
+      "sha256": "53816f5099161d8c345a97a6cd368217427dedfc9cd7076a17c9a17ff099e59e",
+      "bytes": 1209,
+      "format": "cloudformation-json"
+    },
+    "live": {
+      "path": "lesser-body-managed-live.template.json",
+      "sha256": "b4c23e32d02015d2154ea30f4070cccf74144e52b998405ae586d5076158215a",
+      "bytes": 1206,
+      "format": "cloudformation-json"
+    }
+  },
+  "auxiliary_assets": [
+    {
+      "id": "apptheory-s3-auto-delete-objects-provider",
+      "required": true,
+      "path": "assets/mcp-stream-spill-auto-delete-provider.fixture.txt",
+      "sha256": "c1528493e7fb49534279e0a44b9541ef351de1f66659176337951aaa2303c77a",
+      "bytes": 121,
+      "content_type": "application/octet-stream",
+      "s3_key": "assets/mcp-stream-spill-auto-delete-provider.fixture.txt",
+      "template_parameter": "AppTheoryAutoDeleteObjectsCodeObjectKey",
+      "source": {
+        "kind": "cdk-file-asset",
+        "source_hash": "fixture-source-hash-apptheory-s3-auto-delete",
+        "construct_path": "McpServer/StreamSpillBucket/AutoDeleteObjectsCustomResourceProvider"
+      },
+      "template_references": [
+        {
+          "stage": "dev",
+          "template": "lesser-body-managed-dev.template.json",
+          "logical_id": "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+          "property_path": "Properties.Code.S3Key",
+          "bucket_parameter": "LesserBodyCodeBucketName",
+          "key_parameter": "AppTheoryAutoDeleteObjectsCodeObjectKey"
+        },
+        {
+          "stage": "staging",
+          "template": "lesser-body-managed-staging.template.json",
+          "logical_id": "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+          "property_path": "Properties.Code.S3Key",
+          "bucket_parameter": "LesserBodyCodeBucketName",
+          "key_parameter": "AppTheoryAutoDeleteObjectsCodeObjectKey"
+        },
+        {
+          "stage": "live",
+          "template": "lesser-body-managed-live.template.json",
+          "logical_id": "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+          "property_path": "Properties.Code.S3Key",
+          "bucket_parameter": "LesserBodyCodeBucketName",
+          "key_parameter": "AppTheoryAutoDeleteObjectsCodeObjectKey"
+        }
+      ]
+    }
+  ],
+  "template_parameters": [
+    {
+      "name": "AppName",
+      "required": false,
+      "default": "lesser"
+    },
+    {
+      "name": "LesserBodyCodeBucketName",
+      "required": true
+    },
+    {
+      "name": "LesserBodyCodeObjectKey",
+      "required": true
+    },
+    {
+      "name": "AppTheoryAutoDeleteObjectsCodeObjectKey",
+      "required": true,
+      "derived_from_auxiliary_asset": "apptheory-s3-auto-delete-objects-provider",
+      "description": "S3 object key for the AppTheory stream-spill auto-delete custom resource provider asset."
+    }
+  ],
+  "exports": [
+    {
+      "name": "mcp_lambda_arn",
+      "path": "/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn"
+    },
+    {
+      "name": "mcp_endpoint_url",
+      "path": "/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url"
+    },
+    {
+      "name": "mcp_session_table_name",
+      "path": "/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name"
+    },
+    {
+      "name": "mcp_stream_table_name",
+      "path": "/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name"
+    }
+  ]
+}

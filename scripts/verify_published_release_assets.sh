@@ -100,17 +100,49 @@ if [[ -z "${OUT_DIR}" ]]; then
 fi
 mkdir -p "${OUT_DIR}"
 
-mapfile -t release_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
-download_args=(
-  release download "${VERSION}"
-  --repo "${REPO}"
-  --dir "${OUT_DIR}"
-  --clobber
-)
-for asset in "${release_assets[@]}"; do
-  download_args+=(--pattern "${asset}")
+download_asset() {
+  local asset="$1"
+  local target="${OUT_DIR}/${asset}"
+  local target_dir
+  target_dir="$(dirname "${target}")"
+  mkdir -p "${target_dir}"
+
+  if ! gh release download "${VERSION}" \
+    --repo "${REPO}" \
+    --dir "${OUT_DIR}" \
+    --clobber \
+    --pattern "${asset}"; then
+    if [[ "${asset}" == */* ]]; then
+      gh release download "${VERSION}" \
+        --repo "${REPO}" \
+        --dir "${OUT_DIR}" \
+        --clobber \
+        --pattern "$(basename "${asset}")"
+    else
+      return 1
+    fi
+  fi
+
+  if [[ ! -f "${target}" && "${asset}" == */* && -f "${OUT_DIR}/$(basename "${asset}")" ]]; then
+    mv -f "${OUT_DIR}/$(basename "${asset}")" "${target}"
+  fi
+  if [[ ! -f "${target}" ]]; then
+    echo "downloaded release asset is missing: ${asset}" >&2
+    exit 1
+  fi
+}
+
+mapfile -t base_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh")
+for asset in "${base_assets[@]}"; do
+  download_asset "${asset}"
 done
-gh "${download_args[@]}"
+
+mapfile -t release_assets < <(bash "${ROOT_DIR}/scripts/list_release_assets.sh" "${OUT_DIR}")
+for asset in "${release_assets[@]}"; do
+  if [[ ! -f "${OUT_DIR}/${asset}" ]]; then
+    download_asset "${asset}"
+  fi
+done
 
 GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" bash "${ROOT_DIR}/scripts/verify_release_assets.sh" "${VERSION}" "${OUT_DIR}"
 

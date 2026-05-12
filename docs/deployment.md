@@ -24,6 +24,7 @@ This repo’s CDK stack deploys:
 - A standalone **Remote MCP gateway** (API Gateway REST API v1) via AppTheory CDK (`AppTheoryRemoteMcpServer`)
 - (Recommended) DynamoDB session table for MCP sessions
 - DynamoDB stream table for MCP streaming state
+- Private S3 stream-spill bucket for large logical MCP stream events
 - SSM exports used by the Lesser stack to wire routes
 
 Notes:
@@ -47,6 +48,9 @@ And it publishes these (consumed by Lesser when `soulEnabled=true`):
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name` (when session table is enabled)
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
+
+The stream-spill bucket is internal to body's AppTheory-backed MCP transport. It is not an SSM export and does not
+change the public MCP endpoint contract; clients still resume by logical `Last-Event-ID`.
 
 ## Deploy order (avoid the “missing SSM param” trap)
 

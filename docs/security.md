@@ -99,6 +99,9 @@ At a minimum, the MCP Lambda needs:
   `dynamodb:LeadingKeys` conditions and splits table description, scoped reads, and memory-only writes into separate
   policy statements.
 - DynamoDB read/write on the MCP session table (if enabled)
+- DynamoDB read/write on the MCP stream table and S3 read/write on the private MCP stream-spill bucket when durable
+  stream replay is enabled. The spill bucket holds transient MCP transport payloads only; AppTheory enforces stream TTL
+  before reading spilled data.
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
 ## Client considerations

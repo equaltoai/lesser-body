@@ -1,0 +1,1 @@
+This is a non-deployable lesser-body Lambda fixture used only to test managed multi-asset release parsing.
