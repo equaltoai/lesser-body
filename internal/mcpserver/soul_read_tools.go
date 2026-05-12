@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +24,11 @@ const (
 	soulReadPrivateDefaultConversationLimit = 20
 	soulReadPrivateMaxConversationLimit     = 50
 	soulReadPrivateConversationIDMaxLen     = 128
+	// Keep Body's private single-read MCP response below AppTheory's stream
+	// event limit so callers receive a stable tool error before the MCP stream
+	// store is asked to persist an undeliverable event.
+	soulReadPrivateSingleDefaultMaxStreamEventBytes = 10 * 1024 * 1024
+	soulReadPrivateSingleDeliveryHeadroomBytes      = 64 * 1024
 )
 
 var soulReadPrivateConversationIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
@@ -123,12 +130,104 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		souls = append(souls, soul)
 	}
 
-	return toolJSONResult(map[string]any{
+	payload := map[string]any{
 		"query":  query,
 		"count":  len(souls),
 		"access": soulReadAccess(accessMode, privateReq.privateBlocks()),
 		"souls":  souls,
-	}, nil)
+	}
+	return soulReadToolResult(payload, privateReq)
+}
+
+func soulReadToolResult(payload map[string]any, privateReq soulReadPrivateRequest) (*mcpruntime.ToolResult, error) {
+	textPayload := any(payload)
+	if privateReq.IncludeMintConversations && privateReq.ConversationID != "" {
+		textPayload = soulReadPrivateSingleTextPayload(payload)
+	}
+	b, err := json.Marshal(textPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal soul_read tool result: %w", err)
+	}
+	structured := map[string]any{"data": payload}
+	result := &mcpruntime.ToolResult{
+		Content: []mcpruntime.ContentBlock{{
+			Type: "text",
+			Text: string(b),
+		}},
+		StructuredContent: structured,
+	}
+
+	if privateReq.IncludeMintConversations && privateReq.ConversationID != "" {
+		responseBytes, err := mcpruntime.MarshalResponse(mcpruntime.NewResultResponse("soul_read_delivery_probe", result))
+		if err != nil {
+			return nil, fmt.Errorf("marshal soul_read MCP delivery envelope: %w", err)
+		}
+		maxResponseBytes := soulReadPrivateSingleMaxMCPResponseBytes()
+		if len(responseBytes) > maxResponseBytes {
+			return toolErrorResult("response_too_large", "soul_read private mint-conversation response exceeds MCP delivery limit", http.StatusRequestEntityTooLarge, map[string]any{
+				"source":        "lesser_private_self_scope",
+				"privateBlock":  soulReadPrivateMintConversationsBlock,
+				"mode":          "single",
+				"measuredBytes": len(responseBytes),
+				"maxBytes":      maxResponseBytes,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+func soulReadPrivateSingleMaxMCPResponseBytes() int {
+	streamMax := soulReadPrivateSingleDefaultMaxStreamEventBytes
+	if raw := strings.TrimSpace(os.Getenv("MCP_STREAM_MAX_EVENT_BYTES")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			streamMax = n
+		}
+	}
+	if streamMax <= soulReadPrivateSingleDeliveryHeadroomBytes {
+		return streamMax / 2
+	}
+	return streamMax - soulReadPrivateSingleDeliveryHeadroomBytes
+}
+
+func soulReadPrivateSingleTextPayload(payload map[string]any) map[string]any {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return payload
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil || out == nil {
+		return payload
+	}
+
+	souls, _ := out["souls"].([]any)
+	for _, soulAny := range souls {
+		soul, _ := soulAny.(map[string]any)
+		privateBlocks, _ := soul["private"].(map[string]any)
+		mint, _ := privateBlocks[soulReadPrivateMintConversationsBlock].(map[string]any)
+		if mint == nil || mint["mode"] != "single" {
+			continue
+		}
+		conversation, _ := mint["conversation"].(map[string]any)
+		if conversation == nil {
+			continue
+		}
+		omit := map[string]any{
+			"omitted": true,
+			"reason":  "available_in_structured_content",
+		}
+		if _, ok := conversation["messages"]; ok {
+			conversation["messages"] = omit
+		}
+		if _, ok := conversation["producedDeclarations"]; ok {
+			conversation["producedDeclarations"] = omit
+		}
+		mint["textContentPolicy"] = map[string]any{
+			"privateFieldsOmitted": []any{"messages", "producedDeclarations"},
+			"fullContentLocation":  "structuredContent.data",
+		}
+	}
+	return out
 }
 
 func soulReadPrivateRequestFromInput(in soulReadInput) (soulReadPrivateRequest, error) {

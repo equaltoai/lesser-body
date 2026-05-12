@@ -375,6 +375,11 @@ Notes:
   `mintConversationId` (opaque safe path value, maximum `128`) and call
   `/api/v1/souls/bound/me/mint-conversations/{conversationId}`. The list block returns compact summaries and never
   exposes `messages` or `producedDeclarations`; those are only returned by explicit single-conversation reads.
+  For explicit single reads, `structuredContent.data` is the authoritative location for full private fields. The text
+  `content` block omits verbose private fields and points clients to `structuredContent.data` so MCP stream events do
+  not duplicate private conversation payloads. If the measured MCP delivery envelope still exceeds Body's delivery
+  budget (derived from `MCP_STREAM_MAX_EVENT_BYTES` with headroom), `soul_read` returns a `response_too_large` tool
+  error before asking the MCP stream store to persist the event.
 - For private expansion, `soul_read.access` returns `mode:"self"`, `callerRelation:"self"`, `publicOnly:false`,
   `privateExpansion:true`, `authorization:"lesser_self_scope_instance_trust"`, and
   `privateBlocks:["mintConversations"]`.

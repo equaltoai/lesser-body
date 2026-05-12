@@ -1763,6 +1763,7 @@ func TestLBM2_SoulReadPrivateMintConversationSingleIncludesExplicitContent(t *te
 
 	const agentID = "0x9999999999999999999999999999999999999999999999999999999999999999"
 	const conversationID = "conv:single.1"
+	largePrivateMessage := "private-lab-fixture " + strings.Repeat("private ", 9000)
 	installSoulBindingLookup(t, "Agent1", agentID)
 
 	var privateGetAuth string
@@ -1782,21 +1783,21 @@ func TestLBM2_SoulReadPrivateMintConversationSingleIncludesExplicitContent(t *te
 		case "/api/v1/souls/bound/me/mint-conversations/" + conversationID:
 			privateGetAuth = r.Header.Get("Authorization")
 			privateGetQuery = r.URL.RawQuery
-			_, _ = w.Write([]byte(`{
-				"version":"1",
-				"conversation":{
-					"agent_id":"` + agentID + `",
-					"conversation_id":"` + conversationID + `",
-					"model":"gpt-test",
-					"messages":"[{\"role\":\"user\",\"content\":\"private\"}]",
-					"produced_declarations":"{\"capabilities\":[]}",
-					"status":"completed",
-					"usage":{"output_tokens":2},
-					"charged_credits":7,
-					"created_at":"2026-05-11T21:00:00Z",
-					"completed_at":"2026-05-11T21:01:00Z"
-				}
-			}`))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": "1",
+				"conversation": map[string]any{
+					"agent_id":              agentID,
+					"conversation_id":       conversationID,
+					"model":                 "gpt-test",
+					"messages":              largePrivateMessage,
+					"produced_declarations": map[string]any{"capabilities": []any{}},
+					"status":                "completed",
+					"usage":                 map[string]any{"output_tokens": 2},
+					"charged_credits":       7,
+					"created_at":            "2026-05-11T21:00:00Z",
+					"completed_at":          "2026-05-11T21:01:00Z",
+				},
+			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
@@ -1853,6 +1854,15 @@ func TestLBM2_SoulReadPrivateMintConversationSingleIncludesExplicitContent(t *te
 		b, _ := json.Marshal(rpc.Result)
 		_ = json.Unmarshal(b, &toolOut)
 	}
+	if len(toolOut.Content) != 1 {
+		t.Fatalf("expected one text content block, got %+v", toolOut.Content)
+	}
+	if strings.Contains(toolOut.Content[0].Text, "private-lab-fixture") {
+		t.Fatalf("text content must not duplicate explicit private single-read content")
+	}
+	if !strings.Contains(toolOut.Content[0].Text, "available_in_structured_content") {
+		t.Fatalf("text content should point clients to structuredContent for private fields, got %s", toolOut.Content[0].Text)
+	}
 	data, _ := toolOut.StructuredContent["data"].(map[string]any)
 	souls, _ := data["souls"].([]any)
 	soul, _ := souls[0].(map[string]any)
@@ -1862,8 +1872,11 @@ func TestLBM2_SoulReadPrivateMintConversationSingleIncludesExplicitContent(t *te
 		t.Fatalf("expected single private mode, got %+v", mint)
 	}
 	conversation, _ := mint["conversation"].(map[string]any)
-	if conversation["conversationId"] != conversationID || !strings.Contains(conversation["messages"].(string), "private") || conversation["producedDeclarations"] == "" {
+	if conversation["conversationId"] != conversationID || !strings.Contains(conversation["messages"].(string), "private-lab-fixture") {
 		t.Fatalf("unexpected single private conversation: %+v", conversation)
+	}
+	if _, ok := conversation["producedDeclarations"]; !ok {
+		t.Fatalf("expected produced declarations in explicit single read: %+v", conversation)
 	}
 }
 
