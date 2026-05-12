@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat <<'EOF'
-lesser-body.zip
-lesser-body-deploy.json
-lesser-body-managed-dev.template.json
-lesser-body-managed-staging.template.json
-lesser-body-managed-live.template.json
-deploy-lesser-body-from-release.sh
-checksums.txt
-lesser-body-release.json
-EOF
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RELEASE_DIR="${1:-}"
+
+if [[ -n "${RELEASE_DIR}" ]]; then
+  python3 "${ROOT_DIR}/scripts/managed_release.py" list-assets "${RELEASE_DIR}"
+else
+  python3 "${ROOT_DIR}/scripts/managed_release.py" list-assets
+fi
