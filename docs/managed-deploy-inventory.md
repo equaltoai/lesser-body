@@ -23,6 +23,11 @@ Today `bash scripts/build_release_assets.sh <version> dist/release` publishes:
 - `dist/release/checksums.txt`
 - `dist/release/lesser-body-release.json`
 
+For AppTheory v1.5.0 and later, managed releases may also publish auxiliary assets under `dist/release/assets/`.
+Those assets are declared in `lesser-body-deploy.json` `auxiliary_assets[]` and checksum-covered like every other
+managed release artifact. The first expected auxiliary asset class is AppTheory's S3 auto-delete custom resource
+provider for the MCP stream-spill bucket.
+
 Those assets are sufficient for managed consumers to deploy `lesser-body` without reconstructing a source checkout.
 `checksums.txt` checksum-covers every published managed asset except `checksums.txt` itself, including the canonical
 `lesser-body-release.json` manifest.
@@ -33,8 +38,9 @@ The managed deploy path now consumes release-produced assets directly:
 
 1. Download the published release assets for the requested tag.
 2. Verify the published asset set with `checksums.txt`, `lesser-body-release.json`, and `lesser-body-deploy.json`.
-3. Upload `lesser-body.zip` to the target account's staging bucket.
-4. Deploy the stage-specific CloudFormation template with `deploy-lesser-body-from-release.sh` or equivalent consumer logic.
+3. Upload `lesser-body.zip` and every required `auxiliary_assets[]` file to the target account's staging bucket.
+4. Deploy the stage-specific CloudFormation template with `deploy-lesser-body-from-release.sh` or equivalent consumer logic,
+   passing every derived auxiliary asset object-key parameter.
 
 That path does not require a repo tarball, `npm ci`, or CDK synthesis in the deploy environment.
 
@@ -67,6 +73,7 @@ These values are chosen by the deploy consumer or target environment and remain 
 These are deterministic artifacts produced once at release time and then consumed as immutable inputs:
 
 - the Lambda zip for `cmd/lesser-body`
+- auxiliary AppTheory/CDK file assets required by release-produced templates
 - stage-specific deploy templates that can provision the stack without a source checkout
 - machine-readable metadata describing the deploy asset contract
 - checksums that let consumers verify every published deploy asset automatically
