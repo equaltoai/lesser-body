@@ -16,7 +16,8 @@ This directory contains the canonical operator + developer documentation for `le
 2) Managed release contract: `docs/managed-deploy-contract.md`
 3) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
 4) Managed deploy inventory/history: `docs/managed-deploy-inventory.md`
-5) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
+5) Managed multi-asset fixture: `docs/managed-deploy-fixtures/app-theory-v1.5.0-multi-asset/`
+6) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
 
 ## Start here (developers)
 
@@ -54,6 +55,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - Deploy: `docs/deployment.md`
 - Managed deploy contract: `docs/managed-deploy-contract.md`
 - Managed deploy inventory/history: `docs/managed-deploy-inventory.md`
+- Managed multi-asset fixture: `docs/managed-deploy-fixtures/app-theory-v1.5.0-multi-asset/`
 - Configure: `docs/configuration.md`
 - OAuth migration guide: `docs/oauth-migration.md`
 - Operator auth replacement: `docs/operator-auth-replacement.md`

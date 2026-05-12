@@ -39,6 +39,8 @@ Notes:
 - `internal/mcpserver/`
   - registers tools, resources, and prompts
   - optional DynamoDB-backed session store when `MCP_SESSION_TABLE` is set
+  - optional DynamoDB-backed stream replay store when `MCP_STREAM_TABLE` is set; AppTheory spills large logical stream
+    events to the private `MCP_STREAM_SPILL_BUCKET` without changing the client-visible SSE / `Last-Event-ID` contract
 
 ### Auth
 
