@@ -42,6 +42,7 @@ Local dev guide: `docs/development.md`
 - MCP endpoint: `POST https://api.<stageDomain>/mcp/<actor>`
 
 Protocol + tool catalog: `docs/mcp.md`
+- Skills client flow: `docs/skills-mcp.md`
 
 ## Docs Conventions
 
@@ -69,6 +70,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - Local dev: `docs/development.md`
 - Architecture overview: `docs/architecture.md`
 - MCP surface: `docs/mcp.md`
+- Skills MCP client flow: `docs/skills-mcp.md`
 
 ## What is lesser-body?
 
