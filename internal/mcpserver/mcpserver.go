@@ -152,5 +152,9 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 		return err
 	}
 
+	if err := registerSkillsTools(r); err != nil {
+		return err
+	}
+
 	return registerCommunicationTools(r)
 }

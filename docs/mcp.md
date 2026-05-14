@@ -286,6 +286,8 @@ Scope key:
 | `profile_update` | Write | Update display name, bio, and avatar (best-effort). |
 | `memory_append` | Write | Append a memory event to the authenticated agent's memory timeline. |
 | `memory_query` | Read | Query memory events for the authenticated agent. |
+| `skills_catalog` | Read | List approved skill bundles from Lesser's authoritative skills catalog, preserving bundle digests, provenance, install hints, and exposure metadata. |
+| `skill_bundle_get` | Read | Fetch a selected approved Lesser skill bundle and optionally report local install-state verification from caller-supplied local file bytes. |
 | `email_send` | Write | Send an email through lesser-host on behalf of the authenticated soul agent. |
 | `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox. |
 | `email_get` | Read | Get email metadata/state by opaque host `messageId`/`messageRef`. |
@@ -324,6 +326,21 @@ Notes:
 - `conversations_read` defaults to `limit=20` (maximum `80`) and returns compact conversation summaries: id, unread
   state, updated timestamp, compact participants, and bounded `lastPost`. It accepts optional `include_raw=true`, which
   returns `_raw` for audit/debug use.
+- `skills_catalog` and `skill_bundle_get` are read-only Project 21 M4 skills tools backed by Lesser's authoritative
+  skill publication contract. `skills_catalog` calls `GET /api/v1/skills/catalog`; `skill_bundle_get` calls
+  `GET /api/v1/skills/{skillId}/revisions/{revisionNumber}/bundle` and accepts either `skill_id` + `revision_number`
+  or a catalog `bundle.bundle_id` such as `skill:<skillId>:revision:00000001`. It passes `include_content=true` only
+  when the MCP caller asks for inline bundle content. Responses preserve Lesser's `bundle.bundle_id`, `schema_version`,
+  `digests` (`bundle_digest`, `publication_digest`, `manifest_digest`, `content_digest`, `approval_digest`),
+  `files[].path`, `files[].digest`, `files[].install_path`, `files[].content` / `encoding` / `content_included`,
+  `install_hints`, `provenance`, approval fields, principal fields, and exposure context. lesser-body is not a
+  catalog authority and does not mutate the client's workspace.
+- `skill_bundle_get.verification` is an honest local install-state report. When `local_files` is omitted, body returns
+  `unknown_local_state` because the remote Lambda cannot inspect the MCP client's workspace. When `local_files: []` is
+  supplied, body reports `not_installed`. When caller-supplied local file bytes are present, body hashes those bytes and
+  compares them to Lesser's `bundle.files[].digest`, returning `verified_match` only when every bundle file was actually
+  byte-compared and matched, or `modified_local_copy` when observed local bytes or missing files differ from the bundle.
+  Metadata-only bundles without local file bytes remain `unknown_local_state`.
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
   and inbox-backed verification. For self-identity checks, lesser-body passes that bearer to Lesser's
   `GET /api/v1/souls/bound/me` endpoint and fails closed if Lesser does not confirm an active bound soul for the
@@ -345,10 +362,11 @@ Notes:
 - `timeline_read` remains bounded by caller `limit`/cursor and upstream-shaped in M0 because current baseline evidence
   points to mailbox and notification bloat, not timeline unusability. If Ops probes show timeline truncation/timeout,
   timeline compacting should be scoped as a follow-up MCP-contract change rather than silently changed inside M0.
-- Mailbox and memory tools publish MCP annotations in `tools/list`: read-only hints for mailbox reads/search/content
-  fetches and `memory_query`, destructive hints for send/reply/delete tools, and idempotent hints for mailbox read-state
-  mutation tools. `memory_append` remains an additive write and is only idempotent when callers provide `event_id`, so
-  it is not advertised as unconditionally idempotent.
+- Mailbox, memory, and skills read tools publish MCP annotations in `tools/list`: read-only hints for mailbox
+  reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, and `skill_bundle_get`; destructive hints
+  for send/reply/delete tools; and idempotent hints for mailbox read-state mutation tools. `memory_append` remains an
+  additive write and is only idempotent when callers provide `event_id`, so it is not advertised as unconditionally
+  idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.

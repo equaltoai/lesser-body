@@ -70,6 +70,8 @@ var profileContracts = map[Profile]Contract{
 			"profile_update",
 			"memory_append",
 			"memory_query",
+			"skills_catalog",
+			"skill_bundle_get",
 			"soul_read",
 		},
 		Resources: []string{
@@ -114,6 +116,8 @@ var profileContracts = map[Profile]Contract{
 			"profile_update",
 			"memory_append",
 			"memory_query",
+			"skills_catalog",
+			"skill_bundle_get",
 			"email_send",
 			"email_read",
 			"email_get",

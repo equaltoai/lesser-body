@@ -69,8 +69,8 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		for _, tool := range out.Tools {
 			have[tool.Name] = true
 		}
-		if !have["post_create"] || !have["memory_query"] || !have["soul_read"] {
-			t.Fatalf("expected social, memory, and public soul tools for drone runtime, got %+v", out.Tools)
+		if !have["post_create"] || !have["memory_query"] || !have["soul_read"] || !have["skills_catalog"] || !have["skill_bundle_get"] {
+			t.Fatalf("expected social, memory, public soul, and skills tools for drone runtime, got %+v", out.Tools)
 		}
 		for _, blocked := range []string{
 			"email_send", "email_read", "email_get", "email_get_content", "email_search", "email_reply",
@@ -243,7 +243,7 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		if droneProfile.CommunicationsEnabled || droneProfile.WalletAccessEnabled {
 			t.Fatalf("expected drone discovery profile to disable comms and wallet access, got %+v", droneProfile)
 		}
-		if !containsString(droneProfile.Tools, "post_create") || !containsString(droneProfile.Tools, "soul_read") {
+		if !containsString(droneProfile.Tools, "post_create") || !containsString(droneProfile.Tools, "soul_read") || !containsString(droneProfile.Tools, "skills_catalog") || !containsString(droneProfile.Tools, "skill_bundle_get") {
 			t.Fatalf("unexpected drone discovery tools: %+v", droneProfile.Tools)
 		}
 		for _, blocked := range []string{
