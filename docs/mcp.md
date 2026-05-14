@@ -323,9 +323,11 @@ Notes:
 - `notifications_read.types` accepts normalized notification type strings emitted in `notifications_read` output:
   `mention`, `reply`, `favourite` (`favorite` alias), `reblog`, `follow`, `follow_request`, `poll`, `status`,
   `update`, `admin.sign_up`, `admin.report`, and `communication:inbound`. Body forwards supported type filters to
-  Lesser and defensively filters normalized output so returned rows match the requested normalized type set. The
-  `communication:inbound` type is available only in the `souled` runtime profile; drone-profile callers receive a
-  runtime-boundary tool error for explicit communication filters, and untyped drone reads omit communication rows.
+  Lesser and defensively filters normalized output so returned rows match the requested normalized type set. The request
+  is capped at 8 supplied type entries and `limit` is capped at 80 before any Lesser fanout so duplicate or oversized
+  read requests cannot amplify one MCP call into an unbounded backend query set. The `communication:inbound` type is
+  available only in the `souled` runtime profile; drone-profile callers receive a runtime-boundary tool error for
+  explicit communication filters, and untyped drone reads omit communication rows.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
@@ -342,8 +344,9 @@ Notes:
   `digests` (`bundle_digest`, `publication_digest`, `manifest_digest`, `content_digest`, `approval_digest`),
   `files[].path`, `files[].digest`, `files[].install_path`, `files[].content` / `encoding` / `content_included`,
   `install_hints`, `provenance`, approval fields, principal fields, and exposure context. lesser-body is not a
-  catalog authority and does not mutate the client's workspace. See `docs/skills-mcp.md` for the client install flow,
-  trust model, and Codex/generic runtime examples.
+  catalog authority and does not mutate the client's workspace. `skills_catalog.limit` is enforced server-side and
+  capped at 100 before delegation to Lesser; clients must not treat the discovery schema maximum as the only boundary.
+  See `docs/skills-mcp.md` for the client install flow, trust model, and Codex/generic runtime examples.
 - `skill_bundle_get.content.mode` is one of `inline`, `metadata_only`, `mixed`, or `no_files`, depending on whether
   Lesser returned inline bytes for all, none, some, or zero bundle files. `include_content=true` asks Lesser for inline
   bytes when available; it does not guarantee that every file is installable from the MCP response.

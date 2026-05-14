@@ -29,6 +29,16 @@ class CanaryError(RuntimeError):
     pass
 
 
+class NoAuthenticatedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so Authorization never leaves the configured endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+NO_REDIRECT_OPENER = urllib.request.build_opener(NoAuthenticatedRedirectHandler)
+
+
 def env_required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -64,17 +74,31 @@ def sanitized_error_payload(value: Any) -> dict[str, Any]:
         return {"payload": redacted_payload_summary(value)}
 
     safe: dict[str, Any] = {}
-    for key in ("code", "status", "message"):
+    for key in ("code", "status"):
         if key not in value:
             continue
         item = value.get(key)
-        if isinstance(item, str):
+        if isinstance(item, str) and key == "code" and len(item) <= 80 and all(ch.isalnum() or ch in "._:-" for ch in item):
             safe[key] = item[:160]
         elif isinstance(item, (int, float, bool)) or item is None:
             safe[key] = item
+        else:
+            safe[key] = "<redacted>"
+            safe[f"{key}_summary"] = redacted_payload_summary(item)
+    if isinstance(value.get("message"), str):
+        safe["message"] = "<redacted>"
+        safe["message_summary"] = redacted_payload_summary(value["message"])
     if not safe:
         safe["payload"] = redacted_payload_summary(value)
     return safe
+
+
+def authenticated_open(req: urllib.request.Request, *, timeout: int):  # type: ignore[no-untyped-def]
+    return NO_REDIRECT_OPENER.open(req, timeout=timeout)
+
+
+def is_redirect_status(status: int) -> bool:
+    return 300 <= int(status) <= 399
 
 
 def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -99,11 +123,13 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with authenticated_open(req, timeout=30) as resp:
             body = resp.read().decode("utf-8")
             if not session_id:
                 session_id = resp.headers.get("mcp-session-id", "").strip()
     except urllib.error.HTTPError as exc:
+        if is_redirect_status(exc.code):
+            raise CanaryError(f"{method} HTTP redirect {exc.code}: refusing to follow authenticated redirect") from exc
         body = exc.read()
         digest = hashlib.sha256(body).hexdigest()[:12]
         raise CanaryError(f"{method} HTTP {exc.code}: body_len={len(body)} body_sha256_12={digest}") from exc
@@ -128,7 +154,8 @@ def tool_call(name: str, arguments: dict[str, Any], *, expect_error: bool = Fals
         if not is_error:
             raise CanaryError(f"{name} expected tool error, got success")
         error_payload = structured.get("error") or {}
-        log(f"ok {name} error_path code={error_payload.get('code', 'unknown')} status={error_payload.get('status', 'n/a')}")
+        safe_error = sanitized_error_payload(error_payload)
+        log(f"ok {name} error_path code={safe_error.get('code', 'unknown')} status={safe_error.get('status', 'n/a')}")
         return error_payload
     if is_error:
         error_payload = structured.get("error") or result

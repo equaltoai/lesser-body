@@ -119,6 +119,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if !hasCommunicationInbound {
 		t.Fatalf("notifications_read types enum should include communication:inbound, got %+v", typesProp)
 	}
+	if maxItems, _ := typesProp["maxItems"].(float64); maxItems != 8 {
+		t.Fatalf("notifications_read types should advertise maxItems=8, got %+v", typesProp)
+	}
 	var conversationSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
 	}
@@ -1473,6 +1476,18 @@ func TestM5_NotificationsReadBoundsLimitAndRejectsUnknownTypes(t *testing.T) {
 	}
 	if len(gotQueries) != 1 {
 		t.Fatalf("invalid type should not fan out upstream, got %v", gotQueries)
+	}
+
+	tooManyTypes := []string{"mention", "mention", "mention", "mention", "mention", "mention", "mention", "mention", "mention"}
+	rpc = call(4, map[string]any{"limit": 5, "types": tooManyTypes})
+	if rpc.Error == nil {
+		t.Fatalf("expected excess notification type entries to fail before upstream fanout")
+	}
+	if !strings.Contains(rpc.Error.Message, "maximum 8") {
+		t.Fatalf("excess type error should include maximum budget, got %+v", rpc.Error)
+	}
+	if len(gotQueries) != 1 {
+		t.Fatalf("excess type entries should not fan out upstream, got %v", gotQueries)
 	}
 }
 

@@ -117,3 +117,6 @@ At a minimum, the MCP Lambda needs:
 - Treat hardcoded bearer tokens and runtime credentials as temporary migration aids, not the canonical integration path.
 - Treat operator automation as a separate OAuth client design problem; the replacement direction is documented in
   `docs/operator-auth-replacement.md`.
+- Operator probes and canaries must not follow authenticated HTTP redirects. Redirects are treated as failures so bearer
+  tokens are never replayed to a different endpoint. Diagnostic output must redact bearer tokens and summarize upstream
+  mailbox/RPC error payloads without logging raw message bodies, addresses, phone numbers, or provider details.

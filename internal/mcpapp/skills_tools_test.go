@@ -121,7 +121,12 @@ func TestProject21M4SkillsCatalogAndBundleTools(t *testing.T) {
 		t.Fatalf("catalog did not preserve trust metadata: %+v", bundle)
 	}
 
-	bundleResult := callTool(3, "skill_bundle_get", map[string]any{
+	_ = callTool(3, "skills_catalog", map[string]any{"limit": 1000})
+	if got[1].Path != "/api/v1/skills/catalog" || got[1].Query != "limit=100" || got[1].Auth != authHeader {
+		t.Fatalf("skills_catalog should cap oversized limits before Lesser, got %+v", got[1])
+	}
+
+	bundleResult := callTool(4, "skill_bundle_get", map[string]any{
 		"skill_id":        "skill-a",
 		"revision_number": 1,
 		"include_content": true,
@@ -135,8 +140,8 @@ func TestProject21M4SkillsCatalogAndBundleTools(t *testing.T) {
 	if bundleData == nil {
 		t.Fatalf("expected bundle structured data, got %+v", bundleResult.StructuredContent)
 	}
-	if got[1].Path != "/api/v1/skills/skill-a/revisions/1/bundle" || got[1].Query != "include_content=true" || got[1].Auth != authHeader {
-		t.Fatalf("unexpected bundle request: %+v", got[1])
+	if got[2].Path != "/api/v1/skills/skill-a/revisions/1/bundle" || got[2].Query != "include_content=true" || got[2].Auth != authHeader {
+		t.Fatalf("unexpected bundle request: %+v", got[2])
 	}
 	content, _ := bundleData["content"].(map[string]any)
 	if content["mode"] != "inline" {
@@ -155,7 +160,7 @@ func TestProject21M4SkillsCatalogAndBundleTools(t *testing.T) {
 		t.Fatalf("bundle did not preserve approval/principal metadata: %+v", bundleObj)
 	}
 
-	metadataOnly := callTool(4, "skill_bundle_get", map[string]any{"bundle_id": "skill:skill-a:revision:00000001"})
+	metadataOnly := callTool(5, "skill_bundle_get", map[string]any{"bundle_id": "skill:skill-a:revision:00000001"})
 	metadataData, _ := metadataOnly.StructuredContent["data"].(map[string]any)
 	metadataContent, _ := metadataData["content"].(map[string]any)
 	metadataVerification, _ := metadataData["verification"].(map[string]any)
