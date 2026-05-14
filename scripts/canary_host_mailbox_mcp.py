@@ -29,6 +29,16 @@ class CanaryError(RuntimeError):
     pass
 
 
+class NoAuthenticatedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so Authorization never leaves the configured endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+NO_REDIRECT_OPENER = urllib.request.build_opener(NoAuthenticatedRedirectHandler)
+
+
 def env_required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -83,6 +93,14 @@ def sanitized_error_payload(value: Any) -> dict[str, Any]:
     return safe
 
 
+def authenticated_open(req: urllib.request.Request, *, timeout: int):  # type: ignore[no-untyped-def]
+    return NO_REDIRECT_OPENER.open(req, timeout=timeout)
+
+
+def is_redirect_status(status: int) -> bool:
+    return 300 <= int(status) <= 399
+
+
 def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     global next_id, session_id
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": next_id, "method": method}
@@ -105,11 +123,13 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with authenticated_open(req, timeout=30) as resp:
             body = resp.read().decode("utf-8")
             if not session_id:
                 session_id = resp.headers.get("mcp-session-id", "").strip()
     except urllib.error.HTTPError as exc:
+        if is_redirect_status(exc.code):
+            raise CanaryError(f"{method} HTTP redirect {exc.code}: refusing to follow authenticated redirect") from exc
         body = exc.read()
         digest = hashlib.sha256(body).hexdigest()[:12]
         raise CanaryError(f"{method} HTTP {exc.code}: body_len={len(body)} body_sha256_12={digest}") from exc
