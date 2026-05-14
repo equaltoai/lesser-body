@@ -764,6 +764,7 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
 	auth.ResetForTests()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +885,7 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T
 func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	installSoulBindingLookup(t, "agent1", "0x2222222222222222222222222222222222222222222222222222222222222222")
 	auth.ResetForTests()
 
 	var gotQueries []string
@@ -987,6 +989,121 @@ func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {
 	comm, _ := notification["communication"].(map[string]any)
 	if comm["messageId"] != "comm-delivery-email" || comm["channel"] != "email" {
 		t.Fatalf("expected compact communication summary, got %+v", comm)
+	}
+}
+
+func TestM2_DroneNotificationsReadBlocksCommunicationNotifications(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installMissingSoulBindingLookup(t)
+	auth.ResetForTests()
+
+	const privateSentinel = "private-drone-comm-sentinel@example.test"
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"n-mail",
+				"type":"communication:inbound",
+				"created_at":"2026-05-10T12:00:00Z",
+				"channel":"email",
+				"messageId":"comm-delivery-email",
+				"from":{"address":"` + privateSentinel + `"},
+				"subject":"Private",
+				"preview":"private preview"
+			},
+			{
+				"id":"n-mention",
+				"type":"mention",
+				"created_at":"2026-05-10T11:00:00Z",
+				"account":{"id":"acct-1","acct":"alice@example.com"},
+				"status":{"id":"post-1","content":"hello","visibility":"public"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, args map[string]any) mcpruntime.ToolResult {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": "notifications_read", "arguments": args})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal notifications_read: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatalf("unmarshal tool result: %v", err)
+		}
+		return out
+	}
+
+	blocked := call(2, map[string]any{"limit": 5, "types": []string{"communication:inbound"}})
+	if !blocked.IsError {
+		t.Fatalf("expected communication notification filter to be rejected for drone runtime")
+	}
+	errPayload, _ := blocked.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "runtime_boundary" || errPayload["status"] != float64(403) {
+		t.Fatalf("unexpected runtime-boundary error: %+v", errPayload)
+	}
+	if len(gotQueries) != 0 {
+		t.Fatalf("explicit communication filter should be rejected before Lesser call, got queries %v", gotQueries)
+	}
+
+	filtered := call(3, map[string]any{"limit": 5, "include_raw": true})
+	if filtered.IsError {
+		t.Fatalf("unexpected tool error filtering untyped notifications: %+v", filtered.StructuredContent)
+	}
+	data, _ := filtered.StructuredContent["data"].(map[string]any)
+	notifications, _ := data["notifications"].([]any)
+	if len(notifications) != 1 {
+		t.Fatalf("expected only social notification for drone runtime, got %+v", data)
+	}
+	notification, _ := notifications[0].(map[string]any)
+	if notification["type"] != "mention" {
+		t.Fatalf("expected communication notification to be filtered, got %+v", notification)
+	}
+	b, _ := json.Marshal(filtered)
+	if strings.Contains(string(b), privateSentinel) || strings.Contains(string(b), "private preview") {
+		t.Fatalf("drone notification response leaked communication metadata: %s", string(b))
 	}
 }
 

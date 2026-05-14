@@ -1345,6 +1345,135 @@ func TestLBM1_SoulReadPublicMVPUsesPublicEndpoints(t *testing.T) {
 	}
 }
 
+func TestM2_SoulReadIncludeRawRedactsPrivateReachability(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installMissingSoulBindingLookup(t)
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0xcacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca"
+	const privateEmail = "private-reachability@example.test"
+	const privatePhone = "+15550197000"
+	const privatePreference = "prefer-private-email"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{
+				"agent":{
+					"agent_id":"` + agentID + `",
+					"domain":"test.example.com",
+					"local_id":"agent-raw",
+					"ens_name":"agent-raw.lessersoul.eth",
+					"email":"` + privateEmail + `",
+					"phone":"` + privatePhone + `",
+					"status":"active"
+				}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			_, _ = w.Write([]byte(`{
+				"version":"3",
+				"channels":{
+					"ens":{"name":"agent-raw.lessersoul.eth"},
+					"email":{"address":"` + privateEmail + `"},
+					"phone":{"number":"` + privatePhone + `"}
+				},
+				"contactPreferences":{"preferred":"` + privatePreference + `"},
+				"nested":{"emailAddress":"` + privateEmail + `","phoneNumber":"` + privatePhone + `"}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/capabilities",
+			"/api/v1/soul/agents/" + agentID + "/boundaries",
+			"/api/v1/soul/agents/" + agentID + "/transparency":
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "soul_read",
+		"arguments": map[string]any{
+			"agentId":     agentID,
+			"include_raw": true,
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("soul_read raw: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal soul_read raw response: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("soul_read raw rpc error: %+v", rpc.Error)
+	}
+	var toolOut mcpruntime.ToolResult
+	{
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &toolOut)
+	}
+	data, _ := toolOut.StructuredContent["data"].(map[string]any)
+	souls, _ := data["souls"].([]any)
+	if len(souls) != 1 {
+		t.Fatalf("expected one soul, got %+v", data)
+	}
+	soul, _ := souls[0].(map[string]any)
+	channels, _ := soul["channels"].(map[string]any)
+	ens, _ := channels["ens"].(map[string]any)
+	if ens["name"] != "agent-raw.lessersoul.eth" {
+		t.Fatalf("normalized public ENS channel should remain available, got %+v", channels)
+	}
+	raw, _ := soul["_raw"].(map[string]any)
+	if raw == nil {
+		t.Fatalf("expected sanitized _raw payload")
+	}
+	rawJSON, _ := json.Marshal(raw)
+	for _, forbidden := range []string{privateEmail, privatePhone, privatePreference} {
+		if strings.Contains(string(rawJSON), forbidden) {
+			t.Fatalf("sanitized _raw leaked private reachability value %q: %s", forbidden, string(rawJSON))
+		}
+	}
+	registrationRaw, _ := raw["registration"].(map[string]any)
+	channelsRedaction, _ := registrationRaw["channels"].(map[string]any)
+	if channelsRedaction["redacted"] != true || channelsRedaction["reason"] != "private_reachability" {
+		t.Fatalf("expected raw registration channels redaction, got %+v", registrationRaw["channels"])
+	}
+	prefsRedaction, _ := registrationRaw["contactPreferences"].(map[string]any)
+	if prefsRedaction["redacted"] != true || prefsRedaction["reason"] != "private_reachability" {
+		t.Fatalf("expected raw registration preferences redaction, got %+v", registrationRaw["contactPreferences"])
+	}
+}
+
 func TestLBM1_SoulReadSelfModeVerifiesBoundCaller(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")

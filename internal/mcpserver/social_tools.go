@@ -17,20 +17,22 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
+	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/oklog/ulid/v2"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
 const (
-	notificationCursorMemoryPrefix  = "notification_cursor:"
-	notificationCursorMemoryTag     = "notification_cursor"
-	notificationReadDefaultLimit    = 30
-	notificationReadMaxLimit        = 80
-	notificationReadMaxTypes        = 8
-	notificationContentPreviewRunes = 500
-	notificationCommPreviewRunes    = 240
-	conversationReadDefaultLimit    = 20
-	conversationReadMaxLimit        = 80
+	notificationCursorMemoryPrefix   = "notification_cursor:"
+	notificationCursorMemoryTag      = "notification_cursor"
+	notificationCommunicationInbound = "communication:inbound"
+	notificationReadDefaultLimit     = 30
+	notificationReadMaxLimit         = 80
+	notificationReadMaxTypes         = 8
+	notificationContentPreviewRunes  = 500
+	notificationCommPreviewRunes     = 240
+	conversationReadDefaultLimit     = 20
+	conversationReadMaxLimit         = 80
 )
 
 var notificationCursorEventIDs = struct {
@@ -53,22 +55,22 @@ var notificationSupportedTypes = []string{
 	"update",
 	"admin.sign_up",
 	"admin.report",
-	"communication:inbound",
+	notificationCommunicationInbound,
 }
 
 var notificationUpstreamFilterTypes = map[string]struct{}{
-	"mention":               {},
-	"reply":                 {},
-	"favourite":             {},
-	"reblog":                {},
-	"follow":                {},
-	"follow_request":        {},
-	"poll":                  {},
-	"status":                {},
-	"update":                {},
-	"admin.sign_up":         {},
-	"admin.report":          {},
-	"communication:inbound": {},
+	"mention":                        {},
+	"reply":                          {},
+	"favourite":                      {},
+	"reblog":                         {},
+	"follow":                         {},
+	"follow_request":                 {},
+	"poll":                           {},
+	"status":                         {},
+	"update":                         {},
+	"admin.sign_up":                  {},
+	"admin.report":                   {},
+	notificationCommunicationInbound: {},
 }
 
 func registerSocialTools(r *mcpruntime.ToolRegistry) error {
@@ -425,6 +427,14 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if err != nil {
 		return nil, err
 	}
+	if !runtimeAllowsCommunicationNotifications(ctx) && notificationTypesIncludeCommunication(requestedTypes) {
+		return toolErrorResult("runtime_boundary", "communication notification types are unavailable to this runtime profile", 403, map[string]any{
+			"surface":               "notifications_read.types",
+			"type":                  notificationCommunicationInbound,
+			"profile":               runtimeProfileName(ctx),
+			"communicationsEnabled": false,
+		})
+	}
 	limit := boundedNotificationReadLimit(in.Limit)
 	explicitSince := in.Since != nil
 	requestedSince := trimDeref(in.Since)
@@ -453,6 +463,9 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	}
 
 	normalizeStartedAt := time.Now()
+	if !runtimeAllowsCommunicationNotifications(ctx) {
+		list = filterRawCommunicationNotifications(list)
+	}
 	notifications := socialNotificationsFromAPI(list, in.IncludeRaw)
 	if hasTemporalSince {
 		notifications = filterSocialNotificationsAfter(notifications, sinceTime)
@@ -1029,6 +1042,66 @@ func allowedNotificationType(typ string) bool {
 func upstreamNotificationType(typ string) bool {
 	_, ok := notificationUpstreamFilterTypes[strings.TrimSpace(typ)]
 	return ok
+}
+
+func notificationTypesIncludeCommunication(types []string) bool {
+	for _, typ := range types {
+		if isCommunicationNotificationType(typ) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCommunicationNotificationType(typ string) bool {
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	return typ == notificationCommunicationInbound || strings.HasPrefix(typ, "communication:")
+}
+
+func runtimeAllowsCommunicationNotifications(ctx context.Context) bool {
+	resolved, ok := runtimepolicy.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	return resolved.CommunicationsEnabled
+}
+
+func runtimeProfileName(ctx context.Context) string {
+	resolved, ok := runtimepolicy.FromContext(ctx)
+	if !ok || strings.TrimSpace(string(resolved.Profile)) == "" {
+		return "unknown"
+	}
+	return string(resolved.Profile)
+}
+
+func filterRawCommunicationNotifications(items []any) []any {
+	if len(items) == 0 {
+		return items
+	}
+
+	filtered := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			filtered = append(filtered, item)
+			continue
+		}
+		if isRawCommunicationNotification(raw) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func isRawCommunicationNotification(raw map[string]any) bool {
+	if raw == nil {
+		return false
+	}
+	if isCommunicationNotificationType(normalizeSocialNotificationType(raw)) {
+		return true
+	}
+	return notificationChannel(raw) != ""
 }
 
 func supportedNotificationTypesText() string {
