@@ -77,6 +77,8 @@ Lesser -> lesser-host with managed instance trust
 `include_private:["mintConversations"]`. `self=true` alone remains public-only. For this path, lesser-body forwards the
 MCP caller bearer only to Lesser's self-scope routes. It does **not** call lesser-host directly, does **not** use
 `LESSER_HOST_INSTANCE_KEY`, and does **not** pass MCP caller bearer tokens to lesser-host control-plane auth.
+When callers request `include_raw=true`, raw public Host/Soul endpoint payloads are sanitized before they are returned;
+private reachability fields such as email/phone channels and contact preferences remain redacted.
 
 The rejected unsafe pattern is direct MCP bearer forwarding to lesser-host. MCP bearers are issued by Lesser for an
 actor-scoped MCP resource; lesser-host control-plane auth cannot derive the local account, current instance domain, or

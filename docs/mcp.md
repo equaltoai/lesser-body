@@ -175,6 +175,8 @@ Runtime resolution is based on soul binding:
 
 When the active profile is `drone`, lesser-body filters `tools/list`, `resources/list`, and `prompts/list`, and rejects
 direct calls to communication-only surfaces such as `sms_send`, `agent://channels`, and `compose_email`.
+The drone boundary also applies inside mixed read tools: `notifications_read` rejects explicit
+`communication:inbound` filters for drone actors and filters communication-shaped rows from untyped notification reads.
 
 ## Examples (curl)
 
@@ -323,7 +325,9 @@ Notes:
   `update`, `admin.sign_up`, `admin.report`, and `communication:inbound`. Body forwards supported type filters to
   Lesser and defensively filters normalized output so returned rows match the requested normalized type set. The request
   is capped at 8 supplied type entries and `limit` is capped at 80 before any Lesser fanout so duplicate or oversized
-  read requests cannot amplify one MCP call into an unbounded backend query set.
+  read requests cannot amplify one MCP call into an unbounded backend query set. The `communication:inbound` type is
+  available only in the `souled` runtime profile; drone-profile callers receive a runtime-boundary tool error for
+  explicit communication filters, and untyped drone reads omit communication rows.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
@@ -390,7 +394,9 @@ Notes:
 - `soul_read` is the Project 21 public soul read-model tool. It accepts either `self=true` (the caller's
   OAuth-bound soul), or one of `agentId`, `ensName`, or `query` (full soul agent ID, ENS name, current-instance local
   ID, explicit `@user@domain` ActivityPub handle, or canonical actor URL), plus optional `limit` for search-backed
-  matches and `include_raw=true` for audit/debug. `self=true` conflicts with `agentId`, `ensName`, and `query`.
+  matches and `include_raw=true` for audit/debug. Raw audit payloads are sanitized before being returned; private
+  reachability fields such as email/phone channels and contact preferences are redacted even when `include_raw=true`.
+  `self=true` conflicts with `agentId`, `ensName`, and `query`.
   Bare current-instance local IDs require trustworthy current-instance domain context; use a full soul `agentId`,
   ENS name, explicit handle, canonical actor URL, or `self=true` when that context is unavailable. The default response
   is compact and returns `access` metadata plus `souls[]`, each with stable MCP blocks: `identity`, `registration`,
