@@ -1,6 +1,41 @@
 package mcpserver
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestSkillBundleGetSchemaAvoidsTopLevelComposition(t *testing.T) {
+	def := skillBundleGetDef()
+	var schema map[string]any
+	if err := json.Unmarshal(def.InputSchema, &schema); err != nil {
+		t.Fatalf("unmarshal skill_bundle_get schema: %v", err)
+	}
+	if schema["type"] != "object" {
+		t.Fatalf("skill_bundle_get schema type: want object got %#v", schema["type"])
+	}
+	for _, keyword := range []string{"oneOf", "anyOf", "allOf", "enum", "not"} {
+		if _, ok := schema[keyword]; ok {
+			t.Fatalf("skill_bundle_get schema must not use top-level %s for MCP client compatibility: %+v", keyword, schema)
+		}
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	if properties["skill_id"] == nil || properties["revision_number"] == nil || properties["bundle_id"] == nil {
+		t.Fatalf("skill_bundle_get schema should advertise both selector forms in properties, got %+v", properties)
+	}
+}
+
+func TestSkillBundleGetStillRequiresSelectorAtRuntime(t *testing.T) {
+	_, err := handleSkillBundleGet(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatalf("expected missing selector to fail at runtime")
+	}
+	if !strings.Contains(err.Error(), "skill_id is required unless bundle_id is provided") {
+		t.Fatalf("unexpected missing selector error: %v", err)
+	}
+}
 
 func TestSkillBundleVerificationStates(t *testing.T) {
 	entryDigest := skillSHA256Digest([]byte("# Skill\n"))

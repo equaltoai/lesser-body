@@ -123,7 +123,7 @@ func skillBundleGetDef() mcpruntime.ToolDef {
 			"properties":{
 				"skill_id":{"type":"string","description":"Lesser skill id from skills_catalog."},
 				"revision_number":{"type":"integer","minimum":1,"description":"Approved revision number to fetch."},
-				"bundle_id":{"type":"string","description":"Optional catalog bundle.bundle_id selection such as skill:<skillId>:revision:00000001. Used when skill_id/revision_number are not provided."},
+				"bundle_id":{"type":"string","description":"Optional catalog bundle.bundle_id selection such as skill:<skillId>:revision:00000001. Provide either bundle_id or both skill_id and revision_number; Body validates that requirement at runtime."},
 				"include_content":{"type":"boolean","description":"Ask Lesser to include inline bundle file content when available. Defaults to false."},
 				"local_files":{
 					"type":"array",
@@ -138,11 +138,7 @@ func skillBundleGetDef() mcpruntime.ToolDef {
 						}
 					}
 				}
-			},
-			"anyOf":[
-				{"required":["skill_id","revision_number"]},
-				{"required":["bundle_id"]}
-			]
+			}
 		}`),
 	}
 }
