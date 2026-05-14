@@ -334,7 +334,11 @@ Notes:
   `digests` (`bundle_digest`, `publication_digest`, `manifest_digest`, `content_digest`, `approval_digest`),
   `files[].path`, `files[].digest`, `files[].install_path`, `files[].content` / `encoding` / `content_included`,
   `install_hints`, `provenance`, approval fields, principal fields, and exposure context. lesser-body is not a
-  catalog authority and does not mutate the client's workspace.
+  catalog authority and does not mutate the client's workspace. See `docs/skills-mcp.md` for the client install flow,
+  trust model, and Codex/generic runtime examples.
+- `skill_bundle_get.content.mode` is one of `inline`, `metadata_only`, `mixed`, or `no_files`, depending on whether
+  Lesser returned inline bytes for all, none, some, or zero bundle files. `include_content=true` asks Lesser for inline
+  bytes when available; it does not guarantee that every file is installable from the MCP response.
 - `skill_bundle_get.verification` is an honest local install-state report. When `local_files` is omitted, body returns
   `unknown_local_state` because the remote Lambda cannot inspect the MCP client's workspace. When `local_files: []` is
   supplied, body reports `not_installed`. When caller-supplied local file bytes are present, body hashes those bytes and
@@ -436,6 +440,23 @@ Notes:
 - Remote actor URL support is intentionally narrow and deterministic. Unsupported remote URL shapes return a tool-level `invalid_request` error instead of passing the URL through unchanged to lesser-host.
 - Memory tools require an authenticated identity; the identity is derived from the JWT username claim, or set to
   `instance` for the deprecated managed-instance-key compatibility path.
+
+## Skills client install flow
+
+For full Project 21 M4 client guidance, see `docs/skills-mcp.md`. In short:
+
+1. Call `skills_catalog` to list Lesser-approved bundles.
+2. Select a bundle by `bundle.bundle_id` or `skill_id` + `revision_number`.
+3. Call `skill_bundle_get`, optionally with `include_content=true`, to fetch Lesser's bundle contract.
+4. Display and evaluate provenance, approval/principal metadata, `bundle_digest`, `publication_digest`, per-file digests,
+   and advisory `install_hints`.
+5. If the client/runtime chooses to install, write files outside the MCP tool call under the client's own filesystem
+   policy. Body reports `authority.workspace_mutated=false` and never writes the workspace.
+6. Verify installed files by hashing local bytes locally or by calling `skill_bundle_get` with `local_files` so Body can
+   report `not_installed`, `verified_match`, `modified_local_copy`, or `unknown_local_state`.
+
+`verified_match` must not be inferred from metadata alone; it only applies when local file bytes were actually compared
+against Lesser's `bundle.files[].digest` values.
 
 ## Resources
 
