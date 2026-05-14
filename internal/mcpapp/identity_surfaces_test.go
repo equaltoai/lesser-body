@@ -711,11 +711,11 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	{
 		emailResolveQueries = nil
 		data := callIdentityVerify(60, "email", "agent-alice@lessersoul.ai", "comm-delivery-email")
-		if data["verified"] != true {
-			t.Fatalf("expected host email message verification to succeed, got %+v", data)
+		if data["verified"] != false || data["reason"] != "sender_identifier_not_authoritatively_bound" {
+			t.Fatalf("expected host email message verification to fail closed without authoritative identifier binding, got %+v", data)
 		}
-		if data["matchedBy"] != "message.from.email+sender.soulAgentId" {
-			t.Fatalf("expected email sender provenance match, got %+v", data)
+		if data["identityResolved"] != false {
+			t.Fatalf("email message-scoped verify must not treat sender agent provenance as identifier resolution, got %+v", data)
 		}
 		message, _ := data["message"].(map[string]any)
 		if message["source"] != "lesser-host-mailbox" || message["messageRef"] != "comm-delivery-email" {
@@ -726,8 +726,8 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 
 		data = callIdentityVerify(61, "phone", "+1 (555) 0142", "comm-delivery-phone")
-		if data["verified"] != true || data["matchedBy"] != "message.from.phone+sender.soulAgentId" {
-			t.Fatalf("expected host phone message verification to succeed, got %+v", data)
+		if data["verified"] != false || data["reason"] != "sender_identifier_not_authoritatively_bound" {
+			t.Fatalf("expected host phone message verification to fail closed without authoritative identifier binding, got %+v", data)
 		}
 
 		data = callIdentityVerify(62, "ens", "agent-alice.lessersoul.eth", "comm-delivery-ens")

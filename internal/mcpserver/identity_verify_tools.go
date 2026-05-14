@@ -118,16 +118,13 @@ func handleMessageScopedIdentityVerify(ctx context.Context, client *soulapi.Clie
 			result["reason"] = "message_lacks_authoritative_sender_provenance"
 			return toolJSONResult(result, nil)
 		}
+		result["agent"] = map[string]any{"agentId": agentID}
 		if !senderIdentifierMatches(channel, identifier, from) {
-			result["reason"] = "sender_does_not_match_resolved_identity"
-			result["agent"] = map[string]any{"agentId": agentID}
-			result["identityResolved"] = true
+			result["reason"] = "sender_does_not_match_requested_identifier"
 			return toolJSONResult(result, nil)
 		}
-		result["verified"] = true
-		result["identityResolved"] = true
-		result["agent"] = map[string]any{"agentId": agentID}
-		result["matchedBy"] = "message.from." + channel + "+sender.soulAgentId"
+		result["reason"] = "sender_identifier_not_authoritatively_bound"
+		result["provenanceRequired"] = "host_authoritative_sender_identifier_binding"
 		return toolJSONResult(result, nil)
 	}
 
