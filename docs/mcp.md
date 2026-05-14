@@ -305,7 +305,7 @@ Scope key:
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
 | `soul_read` | Read | Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
-| `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone reachability verification fails closed until lesser-host exposes a body-facing resolver. |
+| `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
 
 Notes:
 
@@ -438,12 +438,15 @@ Notes:
   - remote ActivityPub handles in `@user@domain` form
   - canonical remote actor URLs in `https://domain/users/user` form
 - Managed email and phone reverse lookup are private reachability surfaces in lesser-host. Until lesser-host exposes a
-  body-facing, instance-authenticated resolver, `identity_lookup` and `identity_verify` fail closed for private
-  email/phone identifiers with `private_reachability_unavailable` instead of probing those routes anonymously.
+  body-facing, instance-authenticated resolver, `identity_lookup` and identifier-scoped `identity_verify` fail closed
+  for private email/phone identifiers with `private_reachability_unavailable` instead of probing those routes
+  anonymously.
 - `identity_verify(..., messageId=<host messageRef>)` uses lesser-host mailbox metadata as the canonical provenance
   source for `comm-delivery-*` message refs. ENS verification resolves ENS publicly and compares the resolved agent ID
-  to `message.from.soulAgentId`; email/phone message-scoped verification requires both a sender address/number match
-  and authoritative `message.from.soulAgentId`. Sender display/address fields alone are not trusted.
+  to `message.from.soulAgentId`. Email/phone message-scoped verification does **not** trust `from.address` or
+  `from.number` as proof that the requested identifier belongs to `from.soulAgentId`; it returns `verified:false` with
+  `reason:"sender_identifier_not_authoritatively_bound"` unless Host supplies explicit authoritative sender-identifier
+  binding provenance. Sender display/address fields alone are never trusted for a positive verification.
 - `identity_lookup` intentionally returns only public identity summary fields (`agentId`, `domain`, `localId`,
   `status`). It does not expose arbitrary agents' private `channels` or `contactPreferences`; use
   `identity_whoami` or `agent://channels` only for the authenticated agent's own channel data.

@@ -355,7 +355,7 @@ func identityLookupDef() mcpruntime.ToolDef {
 func identityVerifyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "identity_verify",
-		Description: "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed until lesser-host exposes a body-facing resolver.",
+		Description: "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
