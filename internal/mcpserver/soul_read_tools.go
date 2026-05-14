@@ -393,11 +393,11 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 	}
 	if includeRaw {
 		payload["_raw"] = map[string]any{
-			"identity":     agentRaw,
-			"registration": registrationRaw,
-			"capabilities": capabilitiesRaw,
-			"boundaries":   boundariesRaw,
-			"transparency": transparencyRaw,
+			"identity":     sanitizeSoulReadRawPayload(agentRaw),
+			"registration": sanitizeSoulReadRawPayload(registrationRaw),
+			"capabilities": sanitizeSoulReadRawPayload(capabilitiesRaw),
+			"boundaries":   sanitizeSoulReadRawPayload(boundariesRaw),
+			"transparency": sanitizeSoulReadRawPayload(transparencyRaw),
 		}
 	}
 	if privateReq.IncludeMintConversations {
@@ -410,6 +410,54 @@ func soulReadPayload(ctx context.Context, client *soulapi.Client, agentID string
 		}
 	}
 	return payload, nil
+}
+
+func sanitizeSoulReadRawPayload(raw any) any {
+	switch typed := raw.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			if soulReadRawFieldIsPrivateReachability(key) {
+				out[key] = soulReadPrivateReachabilityRedaction(key)
+				continue
+			}
+			out[key] = sanitizeSoulReadRawPayload(value)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, sanitizeSoulReadRawPayload(item))
+		}
+		return out
+	default:
+		return raw
+	}
+}
+
+func soulReadRawFieldIsPrivateReachability(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.NewReplacer("_", "", "-", "").Replace(key)
+	switch {
+	case key == "channels":
+		return true
+	case strings.Contains(key, "contactpreference"):
+		return true
+	case strings.Contains(key, "email"):
+		return true
+	case strings.Contains(key, "phone"):
+		return true
+	default:
+		return false
+	}
+}
+
+func soulReadPrivateReachabilityRedaction(key string) map[string]any {
+	return map[string]any{
+		"redacted": true,
+		"reason":   "private_reachability",
+		"field":    strings.TrimSpace(key),
+	}
 }
 
 func soulReadPrivateMintConversations(ctx context.Context, privateReq soulReadPrivateRequest) (map[string]any, error) {
