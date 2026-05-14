@@ -822,7 +822,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"types":{"type":"array","description":"Optional normalized notification types to return. Supported values include communication:inbound for host-backed inbound email/SMS/voice notifications; favorite is accepted as an alias for favourite.","items":{"type":"string","enum":["mention","reply","favourite","favorite","reblog","follow","follow_request","poll","status","update","admin.sign_up","admin.report","communication:inbound"]}},
+				"types":{"type":"array","maxItems":8,"description":"Optional normalized notification types to return. Supported values include communication:inbound for host-backed inbound email/SMS/voice notifications; favorite is accepted as an alias for favourite. At most 8 values may be supplied; duplicates still count against the request budget.","items":{"type":"string","enum":["mention","reply","favourite","favorite","reblog","follow","follow_request","poll","status","update","admin.sign_up","admin.report","communication:inbound"]}},
 				"since":{"type":"string"},
 				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80},
@@ -971,6 +971,9 @@ func ternaryString(cond bool, yes string, no string) string {
 func normalizeRequestedNotificationTypes(in []string) ([]string, []string, error) {
 	if len(in) == 0 {
 		return nil, nil, nil
+	}
+	if len(in) > notificationReadMaxTypes {
+		return nil, nil, invalidParams(fmt.Sprintf("too many notification types requested; maximum %d", notificationReadMaxTypes))
 	}
 
 	requested := make([]string, 0, len(in))

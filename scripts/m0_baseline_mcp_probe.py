@@ -45,6 +45,16 @@ class ProbeError(RuntimeError):
     pass
 
 
+class NoAuthenticatedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so Authorization never leaves the configured endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+NO_REDIRECT_OPENER = urllib.request.build_opener(NoAuthenticatedRedirectHandler)
+
+
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
@@ -96,6 +106,18 @@ def redact(value: str) -> str:
     return value
 
 
+def authenticated_open(req: urllib.request.Request, *, timeout: int):  # type: ignore[no-untyped-def]
+    return NO_REDIRECT_OPENER.open(req, timeout=timeout)
+
+
+def is_redirect_status(status: int) -> bool:
+    return 300 <= int(status) <= 399
+
+
+def redirect_error(context: str, status: int) -> ProbeError:
+    return ProbeError(f"{context} returned HTTP redirect {status}; refusing to follow authenticated redirect")
+
+
 def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], int, int]:
     global _next_id, _session_id
     request_id = _next_id
@@ -114,12 +136,14 @@ def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, An
     req = urllib.request.Request(ENDPOINT, data=body, headers=headers, method="POST")
     started = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=130) as resp:
+        with authenticated_open(req, timeout=130) as resp:
             raw = resp.read()
             if resp.headers.get("Mcp-Session-Id"):
                 _session_id = resp.headers["Mcp-Session-Id"].strip()
             status = resp.status
     except urllib.error.HTTPError as exc:
+        if is_redirect_status(exc.code):
+            raise redirect_error(method, exc.code) from exc
         raw = exc.read()
         status = exc.code
     elapsed_ms = round((time.perf_counter() - started) * 1000)
@@ -155,10 +179,13 @@ def api_json(
     req = urllib.request.Request(base + path, data=body, headers=headers, method=method)
     started = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=130) as resp:
+        with authenticated_open(req, timeout=130) as resp:
             raw = resp.read()
             status = resp.status
     except urllib.error.HTTPError as exc:
+        if is_redirect_status(exc.code):
+            elapsed_ms = round((time.perf_counter() - started) * 1000)
+            return {}, exc.code, elapsed_ms, 0
         raw = exc.read()
         status = exc.code
     elapsed_ms = round((time.perf_counter() - started) * 1000)

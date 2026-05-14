@@ -64,14 +64,20 @@ def sanitized_error_payload(value: Any) -> dict[str, Any]:
         return {"payload": redacted_payload_summary(value)}
 
     safe: dict[str, Any] = {}
-    for key in ("code", "status", "message"):
+    for key in ("code", "status"):
         if key not in value:
             continue
         item = value.get(key)
-        if isinstance(item, str):
+        if isinstance(item, str) and key == "code" and len(item) <= 80 and all(ch.isalnum() or ch in "._:-" for ch in item):
             safe[key] = item[:160]
         elif isinstance(item, (int, float, bool)) or item is None:
             safe[key] = item
+        else:
+            safe[key] = "<redacted>"
+            safe[f"{key}_summary"] = redacted_payload_summary(item)
+    if isinstance(value.get("message"), str):
+        safe["message"] = "<redacted>"
+        safe["message_summary"] = redacted_payload_summary(value["message"])
     if not safe:
         safe["payload"] = redacted_payload_summary(value)
     return safe
@@ -128,7 +134,8 @@ def tool_call(name: str, arguments: dict[str, Any], *, expect_error: bool = Fals
         if not is_error:
             raise CanaryError(f"{name} expected tool error, got success")
         error_payload = structured.get("error") or {}
-        log(f"ok {name} error_path code={error_payload.get('code', 'unknown')} status={error_payload.get('status', 'n/a')}")
+        safe_error = sanitized_error_payload(error_payload)
+        log(f"ok {name} error_path code={safe_error.get('code', 'unknown')} status={safe_error.get('status', 'n/a')}")
         return error_payload
     if is_error:
         error_payload = structured.get("error") or result

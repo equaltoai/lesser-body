@@ -66,7 +66,8 @@ Arguments:
 ```
 
 - `exposure` is an optional Lesser exposure filter.
-- `limit` asks Lesser for a bounded page, up to the tool schema maximum of `100`.
+- `limit` asks Lesser for a bounded page. Body enforces the maximum server-side and caps oversized values to `100`
+  before calling Lesser.
 - `cursor` is the opaque `next_cursor` from a previous Lesser catalog response.
 
 Body preserves Lesser's catalog response shape and adds:

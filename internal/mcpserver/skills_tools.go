@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	skillCatalogMaxLimit          = 100
 	skillLocalFileMaxDecodedBytes = 1 << 20
 	skillLocalFilesMaxCount       = 200
 
@@ -162,8 +163,8 @@ func handleSkillsCatalog(ctx context.Context, args json.RawMessage) (*mcpruntime
 	if exposure := strings.TrimSpace(in.Exposure); exposure != "" {
 		query.Set("exposure", exposure)
 	}
-	if in.Limit > 0 {
-		query.Set("limit", fmt.Sprintf("%d", in.Limit))
+	if limit := boundedSkillCatalogLimit(in.Limit); limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", limit))
 	}
 	if cursor := strings.TrimSpace(in.Cursor); cursor != "" {
 		query.Set("cursor", cursor)
@@ -183,6 +184,17 @@ func handleSkillsCatalog(ctx context.Context, args json.RawMessage) (*mcpruntime
 	}
 
 	return toolJSONResult(payload, nil)
+}
+
+func boundedSkillCatalogLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return 0
+	case limit > skillCatalogMaxLimit:
+		return skillCatalogMaxLimit
+	default:
+		return limit
+	}
 }
 
 func handleSkillBundleGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
