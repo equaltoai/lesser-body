@@ -106,6 +106,19 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if propType, _ := notificationSchema.Properties["include_raw"]["type"].(string); propType != "boolean" {
 		t.Fatalf("notifications_read include_raw should be boolean, got %+v", notificationSchema.Properties["include_raw"])
 	}
+	typesProp := notificationSchema.Properties["types"]
+	items, _ := typesProp["items"].(map[string]any)
+	enum, _ := items["enum"].([]any)
+	hasCommunicationInbound := false
+	for _, value := range enum {
+		if value == "communication:inbound" {
+			hasCommunicationInbound = true
+			break
+		}
+	}
+	if !hasCommunicationInbound {
+		t.Fatalf("notifications_read types enum should include communication:inbound, got %+v", typesProp)
+	}
 	var conversationSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
 	}
@@ -868,6 +881,115 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T
 	}
 }
 
+func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.RawQuery != "limit=5&types%5B%5D=communication%3Ainbound" {
+			t.Fatalf("expected communication:inbound to be accepted as a notification type filter, got %q", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"n-mail",
+				"type":"communication:inbound",
+				"created_at":"2026-05-10T12:00:00Z",
+				"channel":"email",
+				"messageId":"comm-delivery-email",
+				"from":{"name":"Sender","address":"sender@example.com"},
+				"subject":"Hello",
+				"preview":"email preview"
+			},
+			{
+				"id":"n-mention",
+				"type":"mention",
+				"created_at":"2026-05-10T11:00:00Z",
+				"account":{"id":"acct-1","acct":"alice@example.com"},
+				"status":{"id":"post-1","content":"hello","visibility":"public"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "notifications_read",
+		"arguments": map[string]any{
+			"limit": 5,
+			"types": []string{"communication:inbound"},
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if len(gotQueries) != 1 {
+		t.Fatalf("expected one upstream request, got %v", gotQueries)
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal notifications_read: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	b, _ := json.Marshal(rpc.Result)
+	_ = json.Unmarshal(b, &out)
+	data, _ := out.StructuredContent["data"].(map[string]any)
+	if data["count"] != float64(1) {
+		t.Fatalf("expected one communication notification, got %+v", data)
+	}
+	types, _ := data["types"].([]any)
+	if len(types) != 1 || types[0] != "communication:inbound" {
+		t.Fatalf("expected requested type to echo communication:inbound, got %+v", data["types"])
+	}
+	notifications, _ := data["notifications"].([]any)
+	if len(notifications) != 1 {
+		t.Fatalf("expected one filtered notification, got %+v", notifications)
+	}
+	notification, _ := notifications[0].(map[string]any)
+	if notification["type"] != "communication:inbound" {
+		t.Fatalf("expected communication:inbound notification, got %+v", notification)
+	}
+	comm, _ := notification["communication"].(map[string]any)
+	if comm["messageId"] != "comm-delivery-email" || comm["channel"] != "email" {
+		t.Fatalf("expected compact communication summary, got %+v", comm)
+	}
+}
+
 func TestM5_NotificationsReadPreservesReadState(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -1228,6 +1350,9 @@ func TestM5_NotificationsReadBoundsLimitAndRejectsUnknownTypes(t *testing.T) {
 	rpc := call(3, map[string]any{"limit": 5, "types": []string{"mention", "not-a-real-type"}})
 	if rpc.Error == nil {
 		t.Fatalf("expected unknown notification type to fail before upstream fanout")
+	}
+	if !strings.Contains(rpc.Error.Message, "supported values") || !strings.Contains(rpc.Error.Message, "communication:inbound") {
+		t.Fatalf("unsupported type error should enumerate supported values, got %+v", rpc.Error)
 	}
 	if len(gotQueries) != 1 {
 		t.Fatalf("invalid type should not fan out upstream, got %v", gotQueries)

@@ -98,3 +98,15 @@ M0 is not closed until Ops reports repeatable baseline usability in the deployed
 Smoke/read-surface runs without `PROBE_M0_CLOSURE=true` are useful deploy evidence, but they are not M0 closure. They
 should be attached as smoke evidence and followed by a closure-mode run once Lesser's user-scoped canonical notification
 identity fix is available.
+
+## Post-M0 cleanup checks
+
+For the Project 21 post-M0 cleanup issues, Ops can verify these narrow contract points without reopening M0:
+
+- `notifications_read({"types":["communication:inbound"],"limit":5})` must be accepted. Returned rows, if any, must have
+  `type:"communication:inbound"` and preserve the compact `communication` summary; the call must not expose `raw` /
+  `_raw` unless `include_raw=true`.
+- A normal `email_send` without reply fields must still queue through lesser-host.
+- `email_send` with legacy `messageId` or `inReplyTo` arguments must fail locally as a structured `invalid_request`
+  tool error that directs callers to `email_reply`; the failure must occur before lesser-host returns a conversation
+  boundary `403`.

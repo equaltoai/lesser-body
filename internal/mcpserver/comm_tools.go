@@ -56,7 +56,7 @@ func handleNotImplemented(_ context.Context, _ json.RawMessage) (*mcpruntime.Too
 func emailSendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "email_send",
-		Description: "Send an email from the agent's address via lesser-host (no provider credentials).",
+		Description: "Send a new email from the agent's address via lesser-host (no provider credentials). Use email_reply for replies to existing mailbox messages.",
 		Annotations: destructiveToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -67,8 +67,7 @@ func emailSendDef() mcpruntime.ToolDef {
 				"cc":{"type":"array","items":{"type":"string"}},
 				"bcc":{"type":"array","items":{"type":"string"}},
 				"replyTo":{"type":"string"},
-				"messageId":{"type":"string"},
-				"inReplyTo":{"type":"string"}
+				"idempotencyKey":{"type":"string","description":"Optional caller-supplied idempotency key for retrying this new outbound email without creating duplicates. For replies, call email_reply with a mailbox messageId instead."}
 			},
 			"required":["to","subject","body"]
 		}`),

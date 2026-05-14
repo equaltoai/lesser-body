@@ -155,8 +155,13 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 			t.Fatalf("email_send bcc.items.type: want string got %q", bccItemsType)
 		}
 		expectPropType(t, s, "replyTo", "string")
-		expectPropType(t, s, "messageId", "string")
-		expectPropType(t, s, "inReplyTo", "string")
+		expectPropType(t, s, "idempotencyKey", "string")
+		if _, ok := s.Properties["messageId"]; ok {
+			t.Fatalf("email_send schema must not expose messageId; use email_reply for reply flows")
+		}
+		if _, ok := s.Properties["inReplyTo"]; ok {
+			t.Fatalf("email_send schema must not expose inReplyTo; use email_reply for reply flows")
+		}
 	}
 
 	{

@@ -180,6 +180,9 @@ Common causes:
 - The deployment is pointed at a lesser-host build before Soul Comm Mailbox v1.
 - The caller is passing a legacy host `messageId` that is ambiguous; mailbox APIs prefer the opaque `messageRef` returned
   as `messageId` by lesser-body.
+- The caller is trying to pass `messageId` or `inReplyTo` to `email_send`. `email_send` starts a new outbound email and
+  rejects those legacy reply fields locally; use `email_reply` with a mailbox `messageId` for replies, or
+  `idempotencyKey` for retry-safe new sends.
 - The mailbox item is archived/deleted and the read tool was called without `includeArchived` / `includeDeleted` or an
   exact `archived` / `deleted` filter.
 
@@ -188,6 +191,7 @@ Fix:
 - Confirm lesser-host exposes `/api/v1/soul/comm/mailbox/{agentId}/messages`.
 - Use the `messageId` returned from `email_read` / `email_search` / `email_get` for follow-up get/content/state/reply
   calls.
+- For new outbound email, call `email_send` without `messageId` / `inReplyTo`; for reply flows, call `email_reply`.
 - Use `cursor`/`nextCursor` for mailbox pagination. `since` remains a legacy alias only.
 
 ## Memory tools fail (`LESSER_TABLE_NAME is required`)

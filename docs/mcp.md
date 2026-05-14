@@ -288,7 +288,7 @@ Scope key:
 | `memory_query` | Read | Query memory events for the authenticated agent. |
 | `skills_catalog` | Read | List approved skill bundles from Lesser's authoritative skills catalog, preserving bundle digests, provenance, install hints, and exposure metadata. |
 | `skill_bundle_get` | Read | Fetch a selected approved Lesser skill bundle and optionally report local install-state verification from caller-supplied local file bytes. |
-| `email_send` | Write | Send an email through lesser-host on behalf of the authenticated soul agent. |
+| `email_send` | Write | Send a new email through lesser-host on behalf of the authenticated soul agent; use `email_reply` for mailbox replies. |
 | `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox. |
 | `email_get` | Read | Get email metadata/state by opaque host `messageId`/`messageRef`. |
 | `email_get_content` | Read | Explicitly fetch full email content for a specific mailbox message. |
@@ -318,6 +318,10 @@ Notes:
   Cursor pagination is strongest for untyped reads or reads with a single `types` value; multi-type reads fan out to
   separate Lesser notification queries, so their per-type cursors are not collapsed into one `nextCursor`. Non-timestamp
   `since` values remain a legacy cursor alias for compatibility, but new callers should not rely on that path.
+- `notifications_read.types` accepts normalized notification type strings emitted in `notifications_read` output:
+  `mention`, `reply`, `favourite` (`favorite` alias), `reblog`, `follow`, `follow_request`, `poll`, `status`,
+  `update`, `admin.sign_up`, `admin.report`, and `communication:inbound`. Body forwards supported type filters to
+  Lesser and defensively filters normalized output so returned rows match the requested normalized type set.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
@@ -360,6 +364,11 @@ Notes:
   Verbose upstream mailbox payloads are omitted by default. `email_read`, `email_get`, `email_search`, `sms_read`,
   and `voicemail_read` accept optional `include_raw=true` for audit/debug use cases, which adds the upstream payload
   under `_raw` on each returned message.
+- `email_send` starts a new outbound email. It accepts optional `idempotencyKey` for retry-safe new sends, but it does
+  not accept `messageId` or `inReplyTo`; those legacy reply/message-reference fields are rejected locally with a
+  structured `invalid_request` tool error before lesser-host is called. To reply to an inbound mailbox message, use
+  `email_reply` with the opaque mailbox `messageId` returned by `email_read`, `email_search`, `email_get`, or
+  notification `communication.messageId`.
 - Mailbox and memory tools use dual MCP result surfaces: `content[0].text` contains the JSON payload for text-reading
   clients, and `structuredContent` contains the same typed fields directly (for example `messages` or `events` at the
   top level) rather than nesting them under a `data` wrapper.
