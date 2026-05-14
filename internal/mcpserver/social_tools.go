@@ -40,6 +40,37 @@ var notificationCursorEventIDs = struct {
 	entropy: ulid.Monotonic(rand.Reader, 0),
 }
 
+var notificationSupportedTypes = []string{
+	"mention",
+	"reply",
+	"favourite",
+	"favorite",
+	"reblog",
+	"follow",
+	"follow_request",
+	"poll",
+	"status",
+	"update",
+	"admin.sign_up",
+	"admin.report",
+	"communication:inbound",
+}
+
+var notificationUpstreamFilterTypes = map[string]struct{}{
+	"mention":               {},
+	"reply":                 {},
+	"favourite":             {},
+	"reblog":                {},
+	"follow":                {},
+	"follow_request":        {},
+	"poll":                  {},
+	"status":                {},
+	"update":                {},
+	"admin.sign_up":         {},
+	"admin.report":          {},
+	"communication:inbound": {},
+}
+
 func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 	if r == nil {
 		return fmt.Errorf("tool registry is nil")
@@ -791,7 +822,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"types":{"type":"array","items":{"type":"string"}},
+				"types":{"type":"array","description":"Optional normalized notification types to return. Supported values include communication:inbound for host-backed inbound email/SMS/voice notifications; favorite is accepted as an alias for favourite.","items":{"type":"string","enum":["mention","reply","favourite","favorite","reblog","follow","follow_request","poll","status","update","admin.sign_up","admin.report","communication:inbound"]}},
 				"since":{"type":"string"},
 				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80},
@@ -946,6 +977,7 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string, error
 	upstream := make([]string, 0, len(in))
 	seenRequested := make(map[string]struct{}, len(in))
 	seenUpstream := make(map[string]struct{}, len(in))
+	requiresUntypedRead := false
 
 	for _, typ := range in {
 		typ = strings.ToLower(strings.TrimSpace(typ))
@@ -956,7 +988,7 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string, error
 			typ = "favourite"
 		}
 		if !allowedNotificationType(typ) {
-			return nil, nil, invalidParams("unsupported notification type: " + typ)
+			return nil, nil, invalidParams("unsupported notification type: " + typ + "; supported values: " + supportedNotificationTypesText())
 		}
 		if _, ok := seenRequested[typ]; !ok {
 			if len(requested) >= notificationReadMaxTypes {
@@ -965,22 +997,42 @@ func normalizeRequestedNotificationTypes(in []string) ([]string, []string, error
 			seenRequested[typ] = struct{}{}
 			requested = append(requested, typ)
 		}
+		if !upstreamNotificationType(typ) {
+			requiresUntypedRead = true
+			continue
+		}
 		if _, ok := seenUpstream[typ]; !ok {
 			seenUpstream[typ] = struct{}{}
 			upstream = append(upstream, typ)
 		}
 	}
 
+	if requiresUntypedRead {
+		upstream = nil
+	}
 	return requested, upstream, nil
 }
 
 func allowedNotificationType(typ string) bool {
-	switch strings.TrimSpace(typ) {
-	case "mention", "reply", "favourite", "reblog", "follow", "follow_request", "poll", "status", "update", "admin.sign_up", "admin.report":
-		return true
-	default:
+	typ = strings.TrimSpace(typ)
+	if typ == "" {
 		return false
 	}
+	for _, allowed := range notificationSupportedTypes {
+		if typ == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func upstreamNotificationType(typ string) bool {
+	_, ok := notificationUpstreamFilterTypes[strings.TrimSpace(typ)]
+	return ok
+}
+
+func supportedNotificationTypesText() string {
+	return strings.Join(notificationSupportedTypes, ", ")
 }
 
 func boundedNotificationReadLimit(limit int) int {

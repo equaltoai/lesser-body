@@ -22,14 +22,17 @@ func handleEmailSendStreaming(ctx context.Context, args json.RawMessage, emit fu
 
 func handleEmailSendWithProgress(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		To        string   `json:"to"`
-		Subject   string   `json:"subject"`
-		Body      string   `json:"body"`
-		CC        []string `json:"cc,omitempty"`
-		BCC       []string `json:"bcc,omitempty"`
-		ReplyTo   string   `json:"replyTo,omitempty"`
-		MessageID string   `json:"messageId,omitempty"`
-		InReplyTo string   `json:"inReplyTo,omitempty"`
+		To             string   `json:"to"`
+		Subject        string   `json:"subject"`
+		Body           string   `json:"body"`
+		CC             []string `json:"cc,omitempty"`
+		BCC            []string `json:"bcc,omitempty"`
+		ReplyTo        string   `json:"replyTo,omitempty"`
+		MessageID      string   `json:"messageId,omitempty"`
+		MessageIDSnake string   `json:"message_id,omitempty"`
+		InReplyTo      string   `json:"inReplyTo,omitempty"`
+		InReplyToSnake string   `json:"in_reply_to,omitempty"`
+		IdempotencyKey string   `json:"idempotencyKey,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
@@ -38,16 +41,29 @@ func handleEmailSendWithProgress(ctx context.Context, args json.RawMessage, emit
 	in.Subject = strings.TrimSpace(in.Subject)
 	in.Body = strings.TrimSpace(in.Body)
 	in.ReplyTo = strings.TrimSpace(in.ReplyTo)
-	replyRef, err := resolveCommReplyReference(in.MessageID, in.InReplyTo)
-	if err != nil {
-		return toolErrorResult("invalid_request", err.Error(), 400, nil)
+	in.MessageID = strings.TrimSpace(in.MessageID)
+	in.MessageIDSnake = strings.TrimSpace(in.MessageIDSnake)
+	in.InReplyTo = strings.TrimSpace(in.InReplyTo)
+	in.InReplyToSnake = strings.TrimSpace(in.InReplyToSnake)
+	in.IdempotencyKey = strings.TrimSpace(in.IdempotencyKey)
+	if rejected := rejectedEmailSendReplyFields(in.MessageID, in.MessageIDSnake, in.InReplyTo, in.InReplyToSnake); len(rejected) > 0 {
+		return toolErrorResult(
+			"invalid_request",
+			"email_send starts a new outbound email and does not accept messageId or inReplyTo; use email_reply with a mailbox messageId for reply flows",
+			400,
+			map[string]any{
+				"rejectedFields":  rejected,
+				"replyTool":       "email_reply",
+				"idempotencyHint": "Use idempotencyKey on email_send only for retry-safe new outbound emails.",
+			},
+		)
 	}
 	if in.To == "" || in.Subject == "" {
 		return toolErrorResult("invalid_request", "to and subject are required", 400, nil)
 	}
 	in.Subject = ensureBotDisclosurePrefix(in.Subject)
 	in.Body = ensureEmailDisclosureFooter(in.Body)
-	idempotencyKey := resolveOutboundCommIdempotencyKey(ctx, in.MessageID)
+	idempotencyKey := outboundIdempotencyKey(ctx, in.IdempotencyKey)
 
 	deps, res, err := loadCommSendDependencies(ctx, "email")
 	if res != nil || err != nil {
@@ -73,19 +89,29 @@ func handleEmailSendWithProgress(ctx context.Context, args json.RawMessage, emit
 	if strings.TrimSpace(in.ReplyTo) == "" {
 		delete(body, "replyTo")
 	}
-	if replyRef != "" {
-		body["inReplyTo"] = replyRef
-	}
-
 	normalized, err := sendOutboundComm(ctx, deps, "email", body, idempotencyKey)
 	if err != nil {
 		return commToolResultFromError(err)
 	}
 	emitCommProgress(emit, 2, 2, "email queued")
-	if replyRef != "" {
-		normalized["inReplyTo"] = replyRef
-	}
 	return toolJSONResult(normalized, nil)
+}
+
+func rejectedEmailSendReplyFields(messageID string, messageIDSnake string, inReplyTo string, inReplyToSnake string) []string {
+	rejected := make([]string, 0, 4)
+	if strings.TrimSpace(messageID) != "" {
+		rejected = append(rejected, "messageId")
+	}
+	if strings.TrimSpace(messageIDSnake) != "" {
+		rejected = append(rejected, "message_id")
+	}
+	if strings.TrimSpace(inReplyTo) != "" {
+		rejected = append(rejected, "inReplyTo")
+	}
+	if strings.TrimSpace(inReplyToSnake) != "" {
+		rejected = append(rejected, "in_reply_to")
+	}
+	return rejected
 }
 
 func handleEmailReply(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {

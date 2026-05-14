@@ -107,10 +107,10 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		callParams, _ := json.Marshal(map[string]any{
 			"name": "email_send",
 			"arguments": map[string]any{
-				"to":        "alice@example.com",
-				"subject":   "Hello",
-				"body":      "Hi there",
-				"inReplyTo": "comm-msg-prev",
+				"to":             "alice@example.com",
+				"subject":        "Hello",
+				"body":           "Hi there",
+				"idempotencyKey": "email-key-123",
 			},
 		})
 		resp := invokeJSON(t, env, app, map[string][]string{
@@ -131,11 +131,11 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 			t.Fatalf("unexpected comm api payload fields: %+v", gotBody)
 		}
 		idempotencyKey, _ := gotBody["idempotencyKey"].(string)
-		if idempotencyKey == "" || idempotencyKey == "req-email-send-123" {
-			t.Fatalf("expected generated idempotencyKey distinct from request id, got %+v", gotBody)
+		if idempotencyKey != "email-key-123" {
+			t.Fatalf("expected caller idempotencyKey, got %+v", gotBody)
 		}
-		if gotBody["inReplyTo"] != "comm-msg-prev" {
-			t.Fatalf("expected inReplyTo=comm-msg-prev, got %+v", gotBody)
+		if _, ok := gotBody["inReplyTo"]; ok {
+			t.Fatalf("email_send must not forward inReplyTo; use email_reply for replies, got %+v", gotBody)
 		}
 
 		var rpc mcpruntime.Response
@@ -155,8 +155,58 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if data["idempotencyKey"] != idempotencyKey {
 			t.Fatalf("expected tool data to include generated idempotencyKey, got %+v", data)
 		}
-		if data["inReplyTo"] != "comm-msg-prev" {
-			t.Fatalf("expected tool data to include inReplyTo, got %+v", data)
+		if _, ok := data["inReplyTo"]; ok {
+			t.Fatalf("email_send response must not expose inReplyTo for new sends, got %+v", data)
+		}
+	}
+
+	// email_send should reject legacy reply/message identity fields locally before Host sees them.
+	{
+		gotAuth = ""
+		gotBody = nil
+		statusCode = 200
+
+		callParams, _ := json.Marshal(map[string]any{
+			"name": "email_send",
+			"arguments": map[string]any{
+				"to":        "alice@example.com",
+				"subject":   "Legacy messageId footgun",
+				"body":      "Hi there",
+				"messageId": "comm-delivery-000",
+			},
+		})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: 23, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("email_send legacy messageId: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		if gotAuth != "" || gotBody != nil {
+			t.Fatalf("legacy email_send messageId should fail before Host, auth=%q body=%+v", gotAuth, gotBody)
+		}
+
+		var rpc mcpruntime.Response
+		_ = json.Unmarshal(resp.Body, &rpc)
+		if rpc.Error != nil {
+			t.Fatalf("email_send legacy messageId rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		if !out.IsError {
+			t.Fatalf("expected tool error for legacy email_send messageId, got %+v", out)
+		}
+		errPayload, _ := out.StructuredContent["error"].(map[string]any)
+		if errPayload["code"] != "invalid_request" {
+			t.Fatalf("expected invalid_request, got %+v", errPayload)
+		}
+		if !strings.Contains(strings.ToLower(errPayload["message"].(string)), "email_reply") {
+			t.Fatalf("expected error to direct callers to email_reply, got %+v", errPayload)
+		}
+		details, _ := errPayload["details"].(map[string]any)
+		if details["replyTool"] != "email_reply" {
+			t.Fatalf("expected replyTool detail, got %+v", errPayload)
 		}
 	}
 
