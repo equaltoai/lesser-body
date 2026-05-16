@@ -13,7 +13,7 @@ These legacy inbound patterns are deprecated:
 - managed instance key as a direct `/mcp/{actor}` bearer token
 
 This guide shows how to migrate without removing the `LESSER_HOST_INSTANCE_KEY` that host-backed communication tools
-still need for server-to-server calls into lesser-host.
+and scoped x402 grant validation still need for server-to-server calls into lesser-host.
 
 ## Before you start
 
@@ -148,6 +148,7 @@ That secret is still used when lesser-body calls lesser-host for:
 - `sms_send`
 - `sms_read`
 - `voicemail_read`
+- scoped public x402 invocation grant validation
 
 Inbound client auth and outbound service auth are separate concerns.
 

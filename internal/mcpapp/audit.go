@@ -88,6 +88,12 @@ func authorizeMCPRequest(ctx *apptheory.Context, req *mcpruntime.Request) error 
 	if p == nil {
 		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
 	}
+	if p.Type == auth.PrincipalTypeX402Grant {
+		if x402GrantAllowsMCPRequest(req, p.X402Grant) {
+			return nil
+		}
+		return &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
+	}
 	if p.Type == auth.PrincipalTypeInstanceKey {
 		if auth.LegacyInstanceKeyInboundAuthEnabled() {
 			return nil
@@ -202,7 +208,7 @@ func auditMcp(ctx *apptheory.Context, logger *slog.Logger) {
 			return
 		}
 		for _, req := range reqs {
-			auditMcpRequest(logger, requestID, identity, req)
+			auditMcpRequest(logger, requestID, identity, auth.PrincipalFromContext(ctx), req)
 		}
 		return
 	}
@@ -211,10 +217,10 @@ func auditMcp(ctx *apptheory.Context, logger *slog.Logger) {
 	if err != nil {
 		return
 	}
-	auditMcpRequest(logger, requestID, identity, req)
+	auditMcpRequest(logger, requestID, identity, auth.PrincipalFromContext(ctx), req)
 }
 
-func auditMcpRequest(logger *slog.Logger, requestID string, identity string, req *mcpruntime.Request) {
+func auditMcpRequest(logger *slog.Logger, requestID string, identity string, principal *auth.Principal, req *mcpruntime.Request) {
 	if logger == nil || req == nil {
 		return
 	}
@@ -227,12 +233,14 @@ func auditMcpRequest(logger *slog.Logger, requestID string, identity string, req
 		}
 		_ = json.Unmarshal(req.Params, &params)
 
-		logger.Info("mcp tool call",
+		attrs := []any{
 			"request_id", requestID,
 			"identity", identity,
 			"tool", strings.TrimSpace(params.Name),
 			"task_requested", taskMetadataPresent(params.Task),
-		)
+		}
+		attrs = appendAuditPrincipalAttrs(attrs, principal)
+		logger.Info("mcp tool call", attrs...)
 	case "tasks/list", "tasks/get", "tasks/result", "tasks/cancel":
 		logger.Info("mcp task method",
 			"request_id", requestID,
@@ -241,6 +249,24 @@ func auditMcpRequest(logger *slog.Logger, requestID string, identity string, req
 			"task_id", taskIDFromParams(req.Params),
 		)
 	}
+}
+
+func appendAuditPrincipalAttrs(attrs []any, principal *auth.Principal) []any {
+	if principal == nil {
+		return attrs
+	}
+	attrs = append(attrs, "principal_type", string(principal.Type))
+	if principal.Type != auth.PrincipalTypeX402Grant || principal.X402Grant == nil {
+		return attrs
+	}
+	grant := principal.X402Grant
+	attrs = append(attrs,
+		"caller_class", "public_paid",
+		"x402_grant_id_hash", strings.TrimSpace(grant.GrantIDHash),
+		"x402_policy_version", strings.TrimSpace(grant.PolicyVersion),
+		"x402_payment_evidence_hash", strings.TrimSpace(grant.PaymentEvidenceHash),
+	)
+	return attrs
 }
 
 func taskMetadataPresent(raw *json.RawMessage) bool {

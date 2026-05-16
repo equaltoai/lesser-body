@@ -177,8 +177,8 @@ func TestBoundOperationPolicyDeniesPublicPaidAndRequiresPhoneEntitlement(t *test
 		Identity: "agent1",
 		Claims:   &auth.Claims{Username: "agent1", ClientClass: "public_paid"},
 	}, "token")
-	if decision := decideBoundOperation(publicPaid, registration, boundOperationEmailSend); decision.Allowed || decision.Reason != "public_paid_callers_denied_in_m1" {
-		t.Fatalf("expected public paid caller to be modeled but denied in M1, got %+v", decision)
+	if decision := decideBoundOperation(publicPaid, registration, boundOperationEmailSend); decision.Allowed || decision.Reason != "x402_grant_required" {
+		t.Fatalf("expected public paid caller to require a scoped x402 grant, got %+v", decision)
 	}
 
 	boundBody := auth.InjectToolContext(context.Background(), &auth.Principal{
@@ -193,5 +193,49 @@ func TestBoundOperationPolicyDeniesPublicPaidAndRequiresPhoneEntitlement(t *test
 	registration["capabilityPolicy"].(map[string]any)["operations"].(map[string]any)["communication.sms.send"].(map[string]any)["entitlement"] = map[string]any{"state": "provisioned"}
 	if decision := decideBoundOperation(boundBody, registration, boundOperationSMSSend); !decision.Allowed {
 		t.Fatalf("expected provisioned sms entitlement to allow operation, got %+v", decision)
+	}
+}
+
+func TestBoundOperationPolicyAllowsPublicPaidWithScopedX402Grant(t *testing.T) {
+	registration := map[string]any{
+		"version": "3",
+		"policy": map[string]any{
+			"version":                          "hosted-bound-soul/v1",
+			"operationalBinding":               "hosted_bound_soul",
+			"capabilityPolicyVersion":          "capability-policy/v1",
+			"callerAccessPaymentPolicyVersion": "caller-access-payment/v1",
+			"capabilities": map[string]any{
+				"email": map[string]any{"defaultAllowed": true},
+			},
+			"callerAccessPayment": map[string]any{
+				"publicPaidCaller": map[string]any{"access": "paid"},
+			},
+		},
+	}
+
+	ctx := auth.InjectToolContext(context.Background(), &auth.Principal{
+		Type:     auth.PrincipalTypeX402Grant,
+		Identity: "public_x402:grant_hash",
+		X402Grant: &auth.X402InvocationGrant{
+			Tool:          "email_send",
+			Capability:    "communication.email.send",
+			PolicyVersion: "caller-access-payment/v1",
+		},
+	}, "")
+	if decision := decideBoundOperation(ctx, registration, boundOperationEmailSend); !decision.Allowed {
+		t.Fatalf("expected scoped public x402 grant to allow public_paid email_send under policy, got %+v", decision)
+	}
+
+	wrongTool := auth.InjectToolContext(context.Background(), &auth.Principal{
+		Type:     auth.PrincipalTypeX402Grant,
+		Identity: "public_x402:grant_hash",
+		X402Grant: &auth.X402InvocationGrant{
+			Tool:          "sms_send",
+			Capability:    "communication.sms.send",
+			PolicyVersion: "caller-access-payment/v1",
+		},
+	}, "")
+	if decision := decideBoundOperation(wrongTool, registration, boundOperationEmailSend); decision.Allowed || decision.Reason != "x402_grant_scope_denied" {
+		t.Fatalf("expected operation/tool mismatch to deny public x402 grant, got %+v", decision)
 	}
 }

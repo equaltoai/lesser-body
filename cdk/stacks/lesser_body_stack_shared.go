@@ -117,6 +117,10 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 				jsii.String("mcp-protocol-version"),
 				jsii.String("mcp-session-id"),
 				jsii.String("last-event-id"),
+				jsii.String("lesser-x402-grant"),
+				jsii.String("x-lesser-x402-grant"),
+				jsii.String("payment-signature"),
+				jsii.String("x-payment"),
 			},
 			AllowMethods: &[]*string{
 				jsii.String("GET"),

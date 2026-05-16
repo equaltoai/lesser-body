@@ -52,8 +52,14 @@ For private communication and self-channel operations, the souled runtime profil
 `lesser-body` checks the actor's binding through Lesser, then requires Host's effective `hosted-bound-soul/v1` policy
 or an equivalent explicit operation policy for the operation and caller class before calling lesser-host. Channel
 presence or channel `capabilities` alone do not grant private operation authority. The modeled caller classes are
-`principal_operator`, `bound_body`, `instance_key`, `allowlisted_peer`, and `public_paid`; `public_paid` remains denied
-in M1, and no public x402 invocation path exists in body yet.
+`principal_operator`, `bound_body`, `instance_key`, `allowlisted_peer`, and `public_paid`; `public_paid` requires a
+validated scoped x402 invocation grant plus explicit caller-access/payment policy allowance and never receives
+principal/operator authority.
+
+Scoped x402 grant validation is independent from OAuth principal sessions. Requests carrying a Host grant are rejected
+if they also carry OAuth `Authorization`, if payment evidence is missing, or if the Host validation response does not
+bind the actor/agent, tool, MCP resource URL, request hash, expiry, usage acceptance, and supported policy version.
+Logs and error payloads include only sanitized grant/payment hashes and policy-safe denial reasons.
 
 Denied operation-policy checks fail closed with a sanitized `operation_not_allowed` result. The details include only
 policy-safe fields such as `reason`, `operation`, `callerClass`, and optional `policyVersion`; they must not include

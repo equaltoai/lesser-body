@@ -74,6 +74,21 @@ Deprecated compatibility path:
 Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
 `docs/oauth-migration.md` for exact registration and config examples.
 
+Scoped public x402 invocation grants:
+
+- Public paid callers do **not** use `Authorization: Bearer <token>` and do not become an OAuth principal/operator.
+- They send Host-issued invocation evidence on `POST /mcp/{actor}`:
+  - `lesser-x402-grant: <opaque Host grant>` (legacy fallback: `x-lesser-x402-grant`)
+  - `payment-signature: <x402 payment evidence>` (legacy fallback: `x-payment`)
+- `initialize` may establish an MCP session for the public caller, but every `tools/call` is validated independently
+  against lesser-host before dispatch.
+- Body sends only sanitized hashes and request/resource binding fields to lesser-host validation, then requires the
+  accepted grant to bind actor/agent, tool, `tools/call` scope, grant version, caller/payment evidence hash,
+  request hash, MCP resource URL, expiry, usage acceptance, and caller-access/payment policy version.
+- Mixing OAuth `Authorization` and x402 grant headers on the same request is rejected. x402 grants never grant
+  principal/operator authority and do not bypass tool-internal OAuth requirements for tools that still require a
+  principal session.
+
 ## Discovery and registration chain
 
 Protected-resource discovery in `lesser-body` only publishes:
@@ -98,7 +113,7 @@ its credentials out of band.
 - Separate service credential: `LESSER_HOST_INSTANCE_KEY` for lesser-body to call lesser-host communication APIs
 
 Do not remove `LESSER_HOST_INSTANCE_KEY` from the deployment just because MCP clients move to OAuth. That key still
-backs host-backed communication tools.
+backs host-backed communication tools and scoped x402 grant validation.
 
 The Simulacrum runtime-credentials button is still part of the rollout dependency chain tracked in
 `equaltoai/simulacrum#54`. Removing legacy inbound auth in lesser-body before that UI migrates will break that flow.
@@ -217,9 +232,10 @@ embedded in the registration payload. Body treats channel presence or channel `c
 effective policy must also be present.
 
 The modeled caller classes are `principal_operator`, `bound_body`, `instance_key`, `allowlisted_peer`, and
-`public_paid`. In M1, `public_paid` is recognized but always denied; public x402 invocation waits for the later scoped
-grant milestone. SMS and voice/voicemail operations require an affirmative paid/provisioned entitlement in policy before
-body calls lesser-host.
+`public_paid`. `public_paid` requires a validated scoped x402 invocation grant and explicit caller-access/payment policy
+allowance. OAuth tokens that merely claim `client_class=public_paid` are denied unless the request also carries an
+independently validated x402 grant. SMS and voice/voicemail operations require an affirmative paid/provisioned
+entitlement in policy before body calls lesser-host.
 
 Denied policy checks return a sanitized `operation_not_allowed` tool/resource error with `source`,
 `reason`, `operation`, `callerClass`, and optional `policyVersion`. Denials intentionally omit private reachability,
@@ -313,6 +329,11 @@ JWT-based callers are authorized by scopes inside the JWT claims:
 The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
 being deprecated for inbound MCP traffic. That bypass only remains available when
 `MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
+
+Scoped x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the single
+`tools/call` request bound into the grant. Body rejects wrong actor/agent, wrong tool, wrong resource/request hash,
+expired grants, replay/usage rejection, missing payment evidence, and missing or unsupported policy versions before tool
+dispatch.
 
 ## Tools
 

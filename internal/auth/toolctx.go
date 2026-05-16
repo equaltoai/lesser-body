@@ -35,6 +35,14 @@ func PrincipalFromToolContext(ctx context.Context) *Principal {
 	return p
 }
 
+func X402GrantFromToolContext(ctx context.Context) *X402InvocationGrant {
+	principal := PrincipalFromToolContext(ctx)
+	if principal == nil || principal.Type != PrincipalTypeX402Grant {
+		return nil
+	}
+	return principal.X402Grant
+}
+
 func BearerTokenFromToolContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
