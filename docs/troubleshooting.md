@@ -225,6 +225,35 @@ Fix:
 - Always call `initialize` first and store the returned `mcp-session-id`.
 - Enable session table in infra (recommended for production).
 
+## MCP tasks are missing, inaccessible, or stuck
+
+Symptoms:
+
+- `initialize` does not include a `tasks` capability.
+- `tasks/list`, `tasks/get`, `tasks/result`, or `tasks/cancel` returns method-not-found.
+- `tools/call` with a `task` object returns an invalid params error.
+- A task created from `skill_bundle_get` cannot be read from a later request.
+
+Common causes:
+
+- `MCP_TASK_TABLE` is unset, so body intentionally omits the task runtime and task-capable tool metadata.
+- The client negotiated an MCP protocol version older than `2025-11-25`; AppTheory gates task methods to that protocol.
+- The caller token lacks `read` scope. Task methods are read-scoped and return an OAuth insufficient-scope challenge when
+  the token has only unrelated scopes such as `follow`.
+- The client is using a different `mcp-session-id` than the one that created the task. Task state is session-scoped.
+- The requested task TTL is outside body's bounds. CDK sets a 10-minute default (`MCP_TASK_TTL_MINUTES=10`), and body
+  caps requested task TTLs at one hour.
+
+Fix:
+
+- Confirm the Lambda environment includes `MCP_TASK_TABLE` and `MCP_TASK_TTL_MINUTES=10`.
+- Negotiate MCP protocol `2025-11-25`, then call `initialize` and inspect `capabilities.tasks`.
+- Preserve the returned `mcp-session-id` and send it on every `tools/call` / `tasks/*` request.
+- Request a token with `read` (or `write` / `admin`) scope.
+- Use task-backed execution only for `skill_bundle_get` during the pilot; other tools continue to reject task metadata.
+- If `tasks/result` waits longer than expected, check whether the Lesser skills-bundle endpoint is slow or unavailable and
+  use `tasks/cancel` to cancel the in-flight read.
+
 ## CDK deploy fails: missing SSM parameters
 
 Symptoms:

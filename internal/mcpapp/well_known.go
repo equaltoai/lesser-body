@@ -63,6 +63,9 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 			},
 			RuntimeProfiles: runtimepolicy.Contracts(),
 		}
+		if mcpserver.TasksPublicDiscoveryEnabled(srv) {
+			doc.Capabilities["tasks"] = true
+		}
 
 		if srv != nil && srv.Registry() != nil {
 			for _, tool := range srv.Registry().List() {

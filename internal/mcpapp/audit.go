@@ -154,6 +154,8 @@ func requiredScopesForMCPRequest(req *mcpruntime.Request) []string {
 		return []string{"read"}
 	case "completion/complete":
 		return []string{"read"}
+	case "tasks/list", "tasks/get", "tasks/result", "tasks/cancel":
+		return []string{"read"}
 	default:
 		return nil
 	}
@@ -217,18 +219,41 @@ func auditMcpRequest(logger *slog.Logger, requestID string, identity string, req
 		return
 	}
 
-	if req.Method != "tools/call" {
-		return
-	}
+	switch req.Method {
+	case "tools/call":
+		var params struct {
+			Name string           `json:"name"`
+			Task *json.RawMessage `json:"task,omitempty"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
 
+		logger.Info("mcp tool call",
+			"request_id", requestID,
+			"identity", identity,
+			"tool", strings.TrimSpace(params.Name),
+			"task_requested", taskMetadataPresent(params.Task),
+		)
+	case "tasks/list", "tasks/get", "tasks/result", "tasks/cancel":
+		logger.Info("mcp task method",
+			"request_id", requestID,
+			"identity", identity,
+			"method", req.Method,
+			"task_id", taskIDFromParams(req.Params),
+		)
+	}
+}
+
+func taskMetadataPresent(raw *json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	return strings.TrimSpace(string(*raw)) != "" && strings.TrimSpace(string(*raw)) != "null"
+}
+
+func taskIDFromParams(raw json.RawMessage) string {
 	var params struct {
-		Name string `json:"name"`
+		TaskID string `json:"taskId"`
 	}
-	_ = json.Unmarshal(req.Params, &params)
-
-	logger.Info("mcp tool call",
-		"request_id", requestID,
-		"identity", identity,
-		"tool", strings.TrimSpace(params.Name),
-	)
+	_ = json.Unmarshal(raw, &params)
+	return strings.TrimSpace(params.TaskID)
 }

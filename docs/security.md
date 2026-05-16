@@ -30,14 +30,16 @@ This doc describes the implemented security posture of `lesser-body`.
 
 ### Scope enforcement (MCP calls)
 
-JWT callers are authorized by scope on `tools/call`, `resources/read`, and `prompts/get`:
+JWT callers are authorized by scope on `tools/call`, `resources/read`, `prompts/get`, `completion/complete`, and
+MCP task methods:
 
-- `admin`: all tools
-- `write`: write tools + read tools
-- `read`: read tools only
+- `admin`: all tools and task methods
+- `write`: write tools + read tools + task methods
+- `read`: read tools and task methods only
 
-Data-bearing resources and prompts require at least `read` scope. Tool-specific write operations require `write`
-scope (or `admin`).
+Data-bearing resources, prompts, completions, and task methods require at least `read` scope. Tool-specific write
+operations require `write` scope (or `admin`). `tasks/cancel` remains read-scoped because the Phase 6 task pilot only
+cancels session-scoped execution of the read-only `skill_bundle_get` tool.
 
 Write tools include:
 
@@ -60,8 +62,11 @@ remain the long-term inbound client auth model.
 - request id
 - authenticated identity (agent username or `instance`)
 - tool name
+- whether task-backed execution was requested
 
-It does not log bearer tokens or tool arguments by default.
+It also logs MCP task method invocations (`tasks/list`, `tasks/get`, `tasks/result`, `tasks/cancel`) with request id,
+identity, method, and task id when present. It does not log bearer tokens, tool arguments, task request bodies, task
+results, or communication payloads by default.
 
 ## Private soul self-scope reads
 
@@ -108,8 +113,9 @@ At a minimum, the MCP Lambda needs:
 - DynamoDB read/write on the MCP stream table and S3 read/write on the private MCP stream-spill bucket when durable
   stream replay is enabled. The spill bucket holds transient MCP transport payloads only; AppTheory enforces stream TTL
   before reading spilled data.
-- DynamoDB read/write on the MCP task table when task storage is provisioned. This is transient runtime-readiness state;
-  the public MCP `tasks` capability remains disabled until body explicitly wires AppTheory's task runtime.
+- DynamoDB read/write on the MCP task table when task storage is provisioned. This is transient task runtime state used
+  for session-scoped MCP task records; body advertises the MCP `tasks` capability only when `MCP_TASK_TABLE` is set and
+  the read-only `skill_bundle_get` task pilot is registered.
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
 ## Client considerations

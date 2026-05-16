@@ -202,11 +202,11 @@ not part of the SSM export contract; managed consumers should treat it as intern
 runtime enforces `MCP_STREAM_TTL_MINUTES` before reading inline or spilled payload data, while DynamoDB TTL and S3
 lifecycle cleanup remain cleanup backstops.
 
-The task table is transient MCP runtime readiness state. Managed templates provision the canonical AppTheory task schema
+The task table is transient MCP task runtime state. Managed templates provision the canonical AppTheory task schema
 (`sessionId` hash key, `taskId` range key, `expiresAt` TTL), grant the MCP Lambda access through the AppTheory construct,
-and inject `MCP_TASK_TABLE` plus `MCP_TASK_TTL_MINUTES=10`. This does **not** enable the public MCP `tasks` capability:
-body does not wire `mcp.WithTaskRuntime(...)` or mark any tool task-capable in this phase. The task table is intentionally
-not exported through SSM until there is a concrete lesser/host managed-deploy consumer for that name.
+and inject `MCP_TASK_TABLE` plus `MCP_TASK_TTL_MINUTES=10`. That environment enables the public MCP `tasks` capability
+for MCP 2025-11-25 sessions and the read-only `skill_bundle_get` task pilot. The task table is intentionally not exported
+through SSM until there is a concrete lesser/host managed-deploy consumer for that name.
 
 ## Published exports
 
