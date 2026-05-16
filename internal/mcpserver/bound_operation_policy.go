@@ -72,7 +72,11 @@ func withAgentContactabilityPolicy(ctx context.Context, client *soulapi.Client, 
 	if client == nil || normalizeSoulAgentID(agentID) == "" || len(hostedBoundSoulPolicy(registration)) > 0 {
 		return registration
 	}
-	contactabilityAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/comm/contactability/"+url.PathEscape(normalizeSoulAgentID(agentID)), nil, "", nil)
+	commBearer, err := requireCommAPIBearer(ctx)
+	if err != nil {
+		return registration
+	}
+	contactabilityAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/comm/contactability/"+url.PathEscape(normalizeSoulAgentID(agentID)), nil, commBearer, nil)
 	if err != nil {
 		return registration
 	}

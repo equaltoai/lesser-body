@@ -38,6 +38,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	const tokenUser = "agent1"
 
 	var gotAuth string
+	var gotContactabilityAuth string
 	var gotBody map[string]any
 	var statusCode int
 
@@ -51,6 +52,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
 			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"capabilities":["email-send","email-read","email-manage"]}},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
 		case r.URL.Path == "/api/v1/soul/comm/contactability/"+agentID:
+			gotContactabilityAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{` + hostedBoundSoulPolicyJSON("not_entitled", false, false) + `,"channels":[{"channelType":"email","sendAllowed":true,"receiveAllowed":true}]}`))
 		case r.URL.Path == "/api/v1/soul/comm/send" && r.Method == http.MethodPost:
 			gotAuth = r.Header.Get("Authorization")
@@ -125,6 +127,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		}
 		if gotAuth != "Bearer instance-key-123" {
 			t.Fatalf("expected comm api Authorization=%q, got %q", "Bearer instance-key-123", gotAuth)
+		}
+		if gotContactabilityAuth != "Bearer instance-key-123" {
+			t.Fatalf("expected contactability Authorization=%q, got %q", "Bearer instance-key-123", gotContactabilityAuth)
 		}
 		if gotBody["channel"] != "email" || gotBody["agentId"] != agentID {
 			t.Fatalf("unexpected comm api body: %+v", gotBody)

@@ -87,7 +87,7 @@ func handleMessageScopedIdentityVerify(ctx context.Context, client *soulapi.Clie
 		return authToolResultFromError(err)
 	}
 
-	message, source, err := findCommunicationMessage(ctx, token, messageID)
+	message, source, err := findCommunicationMessage(ctx, token, messageID, boundOperationForIdentityVerifyMailboxRead(channel))
 	if err != nil {
 		return identityVerifyMessageResultFromError(err)
 	}
@@ -246,14 +246,14 @@ func findCommunicationNotification(ctx context.Context, bearerToken string, mess
 	return nil, nil
 }
 
-func findCommunicationMessage(ctx context.Context, bearerToken string, messageID string) (map[string]any, string, error) {
+func findCommunicationMessage(ctx context.Context, bearerToken string, messageID string, mailboxReadOperation boundOperation) (map[string]any, string, error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
 		return nil, "", nil
 	}
 
 	if isHostMailboxMessageRef(messageID) {
-		message, err := findHostMailboxMessage(ctx, messageID)
+		message, err := findHostMailboxMessage(ctx, messageID, mailboxReadOperation)
 		if err != nil {
 			if isHostMailboxNotFound(err) {
 				return nil, "lesser-host-mailbox", nil
@@ -270,8 +270,19 @@ func findCommunicationMessage(ctx context.Context, bearerToken string, messageID
 	return notification, "lesser-notification", nil
 }
 
-func findHostMailboxMessage(ctx context.Context, messageID string) (map[string]any, error) {
-	deps, err := loadCommMailboxDependencies(ctx, boundOperationChannelsRead)
+func boundOperationForIdentityVerifyMailboxRead(channel string) boundOperation {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "phone":
+		return boundOperationSMSRead
+	case "email", "ens":
+		return boundOperationEmailRead
+	default:
+		return ""
+	}
+}
+
+func findHostMailboxMessage(ctx context.Context, messageID string, operation boundOperation) (map[string]any, error) {
+	deps, err := loadCommMailboxDependencies(ctx, operation)
 	if err != nil {
 		return nil, err
 	}
