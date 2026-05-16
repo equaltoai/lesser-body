@@ -54,6 +54,17 @@ func TestEchoTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	for _, tool := range srv.Registry().List() {
+		if tool.Execution == nil {
+			continue
+		}
+		switch tool.Execution.TaskSupport {
+		case "", mcpruntime.TaskSupportForbidden:
+			continue
+		default:
+			t.Fatalf("tool %q must not advertise task support in storage-readiness phase: %+v", tool.Name, tool.Execution)
+		}
+	}
 
 	env := testkit.New()
 	app := env.App()
@@ -240,13 +251,15 @@ func TestTaskStorageEnvDoesNotEnableTaskCapability(t *testing.T) {
 		t.Fatalf("MCP_TASK_TABLE must not advertise tasks without explicit runtime wiring: %+v", out.Capabilities)
 	}
 
-	listResp, _ := invokeRPC(t, env, app, sessionID, &mcpruntime.Request{
-		JSONRPC: "2.0",
-		ID:      "tasks-list-with-task-env",
-		Method:  "tasks/list",
-	})
-	if listResp.Error == nil || listResp.Error.Code != mcpruntime.CodeMethodNotFound {
-		t.Fatalf("expected tasks/list to fail closed without task runtime, got %+v", listResp.Error)
+	for _, method := range []string{"tasks/list", "tasks/get", "tasks/result", "tasks/cancel"} {
+		resp, _ := invokeRPC(t, env, app, sessionID, &mcpruntime.Request{
+			JSONRPC: "2.0",
+			ID:      method + "-with-task-env",
+			Method:  method,
+		})
+		if resp.Error == nil || resp.Error.Code != mcpruntime.CodeMethodNotFound {
+			t.Fatalf("expected %s to fail closed without task runtime, got %+v", method, resp.Error)
+		}
 	}
 }
 
