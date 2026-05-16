@@ -861,8 +861,9 @@ func conversationsReadDef() mcpruntime.ToolDef {
 
 func notificationDismissDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "notification_dismiss",
-		Description: "Dismiss a notification or all notifications, marking them as read.",
+		Name:         "notification_dismiss",
+		Description:  "Dismiss a notification or all notifications, marking them as read.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -1677,8 +1678,9 @@ func firstString(values []string) string {
 
 func postCreateDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "post_create",
-		Description: "Create a new post.",
+		Name:         "post_create",
+		Description:  "Create a new post.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -1693,8 +1695,9 @@ func postCreateDef() mcpruntime.ToolDef {
 
 func postBoostDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "post_boost",
-		Description: "Boost/reblog a post.",
+		Name:         "post_boost",
+		Description:  "Boost/reblog a post.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{"post_id":{"type":"string"}},
@@ -1705,8 +1708,9 @@ func postBoostDef() mcpruntime.ToolDef {
 
 func postFavoriteDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "post_favorite",
-		Description: "Favorite a post.",
+		Name:         "post_favorite",
+		Description:  "Favorite a post.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{"post_id":{"type":"string"}},
@@ -1717,8 +1721,9 @@ func postFavoriteDef() mcpruntime.ToolDef {
 
 func followDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "follow",
-		Description: "Follow an account.",
+		Name:         "follow",
+		Description:  "Follow an account.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{"account_id":{"type":"string"}},
@@ -1729,8 +1734,9 @@ func followDef() mcpruntime.ToolDef {
 
 func unfollowDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "unfollow",
-		Description: "Unfollow an account.",
+		Name:         "unfollow",
+		Description:  "Unfollow an account.",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{"account_id":{"type":"string"}},
@@ -1741,8 +1747,9 @@ func unfollowDef() mcpruntime.ToolDef {
 
 func profileUpdateDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "profile_update",
-		Description: "Update display name, bio, and avatar (best-effort).",
+		Name:         "profile_update",
+		Description:  "Update display name, bio, and avatar (best-effort).",
+		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

@@ -100,9 +100,10 @@ func registerSkillsTools(r *mcpruntime.ToolRegistry) error {
 
 func skillsCatalogDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "skills_catalog",
-		Description: "List approved skill bundles from Lesser's authoritative skills catalog without mutating the client workspace.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "skills_catalog",
+		Description:  "List approved skill bundles from Lesser's authoritative skills catalog without mutating the client workspace.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: skillsCatalogOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -116,9 +117,10 @@ func skillsCatalogDef() mcpruntime.ToolDef {
 
 func skillBundleGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "skill_bundle_get",
-		Description: "Fetch a selected approved Lesser skill bundle and optionally compare caller-supplied local file bytes to the published digests.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "skill_bundle_get",
+		Description:  "Fetch a selected approved Lesser skill bundle and optionally compare caller-supplied local file bytes to the published digests.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: skillBundleGetOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

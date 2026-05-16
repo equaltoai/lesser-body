@@ -55,9 +55,10 @@ func handleNotImplemented(_ context.Context, _ json.RawMessage) (*mcpruntime.Too
 
 func emailSendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_send",
-		Description: "Send a new email from the agent's address via lesser-host (no provider credentials). Use email_reply for replies to existing mailbox messages.",
-		Annotations: destructiveToolAnnotations(),
+		Name:         "email_send",
+		Description:  "Send a new email from the agent's address via lesser-host (no provider credentials). Use email_reply for replies to existing mailbox messages.",
+		Annotations:  destructiveToolAnnotations(),
+		OutputSchema: commSendOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -76,9 +77,10 @@ func emailSendDef() mcpruntime.ToolDef {
 
 func emailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_read",
-		Description: "List recent email metadata/previews from lesser-host's canonical mailbox.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "email_read",
+		Description:  "List recent email metadata/previews from lesser-host's canonical mailbox.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxListOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -101,9 +103,10 @@ func emailReadDef() mcpruntime.ToolDef {
 
 func emailGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_get",
-		Description: "Get canonical email metadata/state by opaque host message reference.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "email_get",
+		Description:  "Get canonical email metadata/state by opaque host message reference.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxGetOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -117,9 +120,10 @@ func emailGetDef() mcpruntime.ToolDef {
 
 func emailGetContentDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_get_content",
-		Description: "Fetch full email content explicitly from lesser-host's canonical mailbox.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "email_get_content",
+		Description:  "Fetch full email content explicitly from lesser-host's canonical mailbox.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxContentOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -132,9 +136,10 @@ func emailGetContentDef() mcpruntime.ToolDef {
 
 func emailSearchDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_search",
-		Description: "Run a bounded lesser-host metadata/preview search over the agent's email mailbox.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "email_search",
+		Description:  "Run a bounded lesser-host metadata/preview search over the agent's email mailbox.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxListOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -158,9 +163,10 @@ func emailSearchDef() mcpruntime.ToolDef {
 
 func emailReplyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_reply",
-		Description: "Reply to a specific email message.",
-		Annotations: destructiveToolAnnotations(),
+		Name:         "email_reply",
+		Description:  "Reply to a specific email message.",
+		Annotations:  destructiveToolAnnotations(),
+		OutputSchema: commSendOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -181,9 +187,10 @@ func emailReplyDef() mcpruntime.ToolDef {
 
 func emailDeleteDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_delete",
-		Description: "Delete or archive an email message in lesser-host's canonical mailbox.",
-		Annotations: destructiveToolAnnotations(),
+		Name:         "email_delete",
+		Description:  "Delete or archive an email message in lesser-host's canonical mailbox.",
+		Annotations:  destructiveToolAnnotations(),
+		OutputSchema: mailboxMutationOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -197,9 +204,10 @@ func emailDeleteDef() mcpruntime.ToolDef {
 
 func emailMarkReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_mark_read",
-		Description: "Mark an email read in lesser-host's canonical mailbox.",
-		Annotations: idempotentMutationToolAnnotations(),
+		Name:         "email_mark_read",
+		Description:  "Mark an email read in lesser-host's canonical mailbox.",
+		Annotations:  idempotentMutationToolAnnotations(),
+		OutputSchema: mailboxMutationOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -212,9 +220,10 @@ func emailMarkReadDef() mcpruntime.ToolDef {
 
 func emailMarkUnreadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "email_mark_unread",
-		Description: "Mark an email unread in lesser-host's canonical mailbox.",
-		Annotations: idempotentMutationToolAnnotations(),
+		Name:         "email_mark_unread",
+		Description:  "Mark an email unread in lesser-host's canonical mailbox.",
+		Annotations:  idempotentMutationToolAnnotations(),
+		OutputSchema: mailboxMutationOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -227,9 +236,10 @@ func emailMarkUnreadDef() mcpruntime.ToolDef {
 
 func smsSendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "sms_send",
-		Description: "Send an SMS from the agent's number via lesser-host.",
-		Annotations: destructiveToolAnnotations(),
+		Name:         "sms_send",
+		Description:  "Send an SMS from the agent's number via lesser-host.",
+		Annotations:  destructiveToolAnnotations(),
+		OutputSchema: commSendOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -245,9 +255,10 @@ func smsSendDef() mcpruntime.ToolDef {
 
 func smsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "sms_read",
-		Description: "Read received SMS metadata/previews from lesser-host's canonical mailbox.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "sms_read",
+		Description:  "Read received SMS metadata/previews from lesser-host's canonical mailbox.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxListOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -287,9 +298,10 @@ func phoneCallDef() mcpruntime.ToolDef {
 
 func voicemailReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "voicemail_read",
-		Description: "Read voicemail metadata/previews from lesser-host's canonical mailbox.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "voicemail_read",
+		Description:  "Read voicemail metadata/previews from lesser-host's canonical mailbox.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: mailboxListOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -310,9 +322,10 @@ func voicemailReadDef() mcpruntime.ToolDef {
 
 func soulReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "soul_read",
-		Description: "Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "soul_read",
+		Description:  "Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: soulReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -332,16 +345,18 @@ func soulReadDef() mcpruntime.ToolDef {
 
 func identityWhoamiDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_whoami",
-		Description: "Return this agent's full identity including communication channels and preferences.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Name:         "identity_whoami",
+		Description:  "Return this agent's full identity including communication channels and preferences.",
+		OutputSchema: identityWhoamiOutputSchema(),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{}}`),
 	}
 }
 
 func identityLookupDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_lookup",
-		Description: "Look up a public soul identity by full agentId, ENS name, a current-instance local ID such as medic, an explicit remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward. Private email/phone reachability lookup fails closed until lesser-host exposes a body-facing resolver.",
+		Name:         "identity_lookup",
+		Description:  "Look up a public soul identity by full agentId, ENS name, a current-instance local ID such as medic, an explicit remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward. Private email/phone reachability lookup fails closed until lesser-host exposes a body-facing resolver.",
+		OutputSchema: identityLookupOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -354,8 +369,9 @@ func identityLookupDef() mcpruntime.ToolDef {
 
 func identityVerifyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_verify",
-		Description: "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance.",
+		Name:         "identity_verify",
+		Description:  "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance.",
+		OutputSchema: identityVerifyOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

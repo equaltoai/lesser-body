@@ -395,6 +395,13 @@ Notes:
 - Mailbox and memory tools use dual MCP result surfaces: `content[0].text` contains the JSON payload for text-reading
   clients, and `structuredContent` contains the same typed fields directly (for example `messages` or `events` at the
   top level) rather than nesting them under a `data` wrapper.
+- Selected tools now publish MCP `outputSchema` metadata in `tools/list` and `.well-known/mcp.json`. The schema
+  describes the tool's `structuredContent` success shape, not the full JSON-RPC envelope: memory query tools describe
+  direct top-level fields such as `events`, while selected identity, soul, and skills tools that use the generic
+  structured wrapper describe `data`. Mailbox list/state tools describe direct fields such as `messages`, `count`,
+  `nextCursor`, `notes`, and `state`; communication send/reply schemas explicitly include `messageId`, `status`, and
+  caller-visible `idempotencyKey` fields so clients can reconcile host-delegated delivery without bypassing
+  lesser-host idempotency or logging recipient PII.
 - `timeline_read` remains bounded by caller `limit`/cursor and upstream-shaped in M0 because current baseline evidence
   points to mailbox and notification bloat, not timeline unusability. If Ops probes show timeline truncation/timeout,
   timeline compacting should be scoped as a follow-up MCP-contract change rather than silently changed inside M0.
