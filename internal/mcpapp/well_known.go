@@ -51,9 +51,10 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 			Version:  strings.TrimSpace(version),
 			Endpoint: endpoint,
 			Capabilities: map[string]bool{
-				"tools":     true,
-				"resources": srv != nil && srv.Resources() != nil && srv.Resources().Len() > 0,
-				"prompts":   srv != nil && srv.Prompts() != nil && srv.Prompts().Len() > 0,
+				"tools":       true,
+				"resources":   srv != nil && srv.Resources() != nil && srv.Resources().Len() > 0,
+				"prompts":     srv != nil && srv.Prompts() != nil && srv.Prompts().Len() > 0,
+				"completions": true,
 			},
 			Auth: map[string]any{
 				"type":   "bearer",

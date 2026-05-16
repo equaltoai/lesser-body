@@ -384,6 +384,163 @@ func resourceConfig(_ context.Context) ([]mcpruntime.ResourceContent, error) {
 	})
 }
 
+const maxCompletionValues = 20
+
+var (
+	toneCompletionValues = []string{
+		"neutral",
+		"friendly",
+		"formal",
+		"concise",
+		"playful",
+		"careful",
+	}
+	periodCompletionValues = []string{
+		"last hour",
+		"today",
+		"last day",
+		"this week",
+		"last week",
+	}
+)
+
+func promptCompletion(ctx context.Context, req mcpruntime.CompletionRequest) (*mcpruntime.CompletionResult, error) {
+	profile := completionProfile(ctx)
+	promptName := strings.TrimSpace(req.Ref.Name)
+	argumentName := strings.TrimSpace(req.Argument.Name)
+	if promptName == "" || argumentName == "" || !runtimepolicy.PromptAllowed(profile, promptName) {
+		return completionValues(nil), nil
+	}
+
+	var values []string
+	switch promptName {
+	case "compose_post":
+		switch argumentName {
+		case "tone":
+			values = toneCompletionValues
+		case "max_length":
+			values = []string{"280", "500", "1000"}
+		}
+	case "summarize_timeline":
+		switch argumentName {
+		case "timeline":
+			values = []string{"home", "local", "federated"}
+		case "period":
+			values = periodCompletionValues
+		}
+	case "draft_reply":
+		if argumentName == "tone" {
+			values = toneCompletionValues
+		}
+	case "memory_reflect":
+		if argumentName == "period" {
+			values = periodCompletionValues
+		}
+	case "compose_email":
+		if argumentName == "tone" {
+			values = toneCompletionValues
+		}
+	case "handle_inbound":
+		switch argumentName {
+		case "channel":
+			values = []string{"email", "sms", "voice"}
+		case "intent":
+			values = []string{"summarize", "reply if appropriate", "archive if no action is needed"}
+		}
+	}
+
+	return completionValues(filterCompletionValues(values, req.Argument.Value)), nil
+}
+
+func resourceCompletion(ctx context.Context, req mcpruntime.CompletionRequest) (*mcpruntime.CompletionResult, error) {
+	profile := completionProfile(ctx)
+	argumentName := strings.TrimSpace(req.Argument.Name)
+	if !supportsResourceCompletionRef(req.Ref.URI, argumentName) {
+		return completionValues(nil), nil
+	}
+
+	resources := runtimepolicy.ResourcesForProfile(profile)
+	values := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		resource = strings.TrimSpace(resource)
+		if resource == "" {
+			continue
+		}
+		switch argumentName {
+		case "resource", "path":
+			values = append(values, strings.TrimPrefix(resource, "agent://"))
+		default:
+			values = append(values, resource)
+		}
+	}
+
+	return completionValues(filterCompletionValues(values, req.Argument.Value)), nil
+}
+
+func completionProfile(ctx context.Context) runtimepolicy.Profile {
+	if resolved, ok := runtimepolicy.FromContext(ctx); ok && strings.TrimSpace(string(resolved.Profile)) != "" {
+		return resolved.Profile
+	}
+	return runtimepolicy.ProfileSouled
+}
+
+func supportsResourceCompletionRef(uri string, argumentName string) bool {
+	uri = strings.TrimSpace(uri)
+	switch strings.TrimSpace(argumentName) {
+	case "uri":
+		return uri == "{uri}" || strings.Contains(uri, "{uri}")
+	case "resource":
+		return strings.Contains(uri, "{resource}")
+	case "path":
+		return strings.Contains(uri, "{path}")
+	default:
+		return false
+	}
+}
+
+func filterCompletionValues(values []string, rawPrefix string) []string {
+	prefix := strings.ToLower(strings.TrimSpace(rawPrefix))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(value), prefix) {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func completionValues(values []string) *mcpruntime.CompletionResult {
+	if values == nil {
+		values = []string{}
+	}
+	total := len(values)
+	hasMore := false
+	if total > maxCompletionValues {
+		hasMore = true
+		values = copyCompletionValues(values[:maxCompletionValues])
+	} else {
+		values = copyCompletionValues(values)
+	}
+	return &mcpruntime.CompletionResult{
+		Completion: mcpruntime.Completion{
+			Values:  values,
+			Total:   &total,
+			HasMore: &hasMore,
+		},
+	}
+}
+
+func copyCompletionValues(values []string) []string {
+	out := make([]string, len(values))
+	copy(out, values)
+	return out
+}
+
 func promptComposePost(_ context.Context, args json.RawMessage) (*mcpruntime.PromptResult, error) {
 	var in struct {
 		Topic     string `json:"topic,omitempty"`

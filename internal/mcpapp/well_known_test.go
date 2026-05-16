@@ -52,6 +52,9 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	if !out.Capabilities["tools"] {
 		t.Fatalf("expected capabilities.tools=true")
 	}
+	if !out.Capabilities["completions"] {
+		t.Fatalf("expected capabilities.completions=true")
+	}
 	if out.Auth.Type != "bearer" {
 		t.Fatalf("expected bearer auth hints, got %q", out.Auth.Type)
 	}

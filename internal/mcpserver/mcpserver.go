@@ -56,6 +56,7 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 			SafetyBuffer: initialSessionListenerSafetyBuffer,
 			MaxDuration:  initialSessionListenerMaxDuration,
 		}),
+		mcpruntime.WithCompletionHooks(promptCompletion, resourceCompletion),
 	}
 
 	if validator := originValidatorFromEnv(); validator != nil {
@@ -84,7 +85,7 @@ func bodyCapabilityConfig() mcpruntime.CapabilityConfig {
 		Tools:       true,
 		Resources:   true,
 		Prompts:     true,
-		Completions: false,
+		Completions: true,
 		Tasks:       false,
 	}
 }

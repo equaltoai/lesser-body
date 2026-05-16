@@ -148,7 +148,7 @@ func TestEchoTool(t *testing.T) {
 	}
 }
 
-func TestInitializeCapabilitiesArePinnedFailClosed(t *testing.T) {
+func TestInitializeCapabilitiesArePinnedToConfiguredSurfaces(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 
 	srv, err := mcpserver.New("test-server", "dev")
@@ -182,12 +182,12 @@ func TestInitializeCapabilitiesArePinnedFailClosed(t *testing.T) {
 		t.Fatalf("unmarshal initialize result: %v", err)
 	}
 
-	for _, name := range []string{"tools", "resources", "prompts"} {
+	for _, name := range []string{"tools", "resources", "prompts", "completions"} {
 		if _, ok := out.Capabilities[name]; !ok {
 			t.Fatalf("expected %q capability to remain advertised: %+v", name, out.Capabilities)
 		}
 	}
-	for _, name := range []string{"completions", "tasks", "logging"} {
+	for _, name := range []string{"tasks", "logging"} {
 		if _, ok := out.Capabilities[name]; ok {
 			t.Fatalf("did not expect fail-closed %q capability to be advertised: %+v", name, out.Capabilities)
 		}
