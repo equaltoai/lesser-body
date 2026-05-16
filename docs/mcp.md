@@ -536,3 +536,19 @@ Prompts are reusable templates returned via MCP (`prompts/list`, `prompts/get`).
 - `compose_email`
 - `handle_inbound`
 - `respect_preferences`
+
+## Completions
+
+lesser-body advertises the MCP `completions` capability after registering AppTheory completion hooks. The
+`completion/complete` method is read-scoped, profile-aware, and intentionally static/bounded for the first release:
+
+- prompt completions suggest non-PII enum-like values such as `summarize_timeline.timeline` (`home`, `local`,
+  `federated`), prompt `tone` values, communication `channel` values, and generic `period` values.
+- resource completions support resource URI-template arguments such as `ref/resource` with
+  `uri="agent://{resource}"` and `argument.name="resource"`, returning only resource paths allowed for the caller's
+  runtime profile. Use `{uri}` / `argument.name="uri"` for full `agent://...` URI suggestions.
+- drone-profile callers do not receive souled-only communication prompt/resource suggestions. Exact souled-only prompt
+  or resource completion refs are rejected by the same runtime-boundary discipline as `prompts/get` and
+  `resources/read`; template completions filter suggestions to the caller's allowed resource set.
+- unsupported prompt/resource refs or arguments return an empty completion set rather than querying Lesser or
+  lesser-host. Completions do not call Lesser APIs and do not inspect mailbox or channel contents.

@@ -152,6 +152,8 @@ func requiredScopesForMCPRequest(req *mcpruntime.Request) []string {
 			return nil
 		}
 		return []string{"read"}
+	case "completion/complete":
+		return []string{"read"}
 	default:
 		return nil
 	}

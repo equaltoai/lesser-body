@@ -95,6 +95,19 @@ func enforceRuntimePolicy(reqs []*mcpruntime.Request, resolved runtimepolicy.Res
 			if name != "" && !runtimepolicy.PromptAllowed(resolved.Profile, name) {
 				return runtimeBoundaryViolationResponse("prompt", name, resolved)
 			}
+		case "completion/complete":
+			if surface, name := requestedCompletionRef(req); name != "" {
+				switch surface {
+				case "prompt":
+					if !runtimepolicy.PromptAllowed(resolved.Profile, name) {
+						return runtimeBoundaryViolationResponse(surface, name, resolved)
+					}
+				case "resource":
+					if !isResourceTemplateRef(name) && !runtimepolicy.ResourceAllowed(resolved.Profile, name) {
+						return runtimeBoundaryViolationResponse(surface, name, resolved)
+					}
+				}
+			}
 		}
 	}
 
@@ -144,6 +157,29 @@ func requestedPromptName(req *mcpruntime.Request) string {
 	}
 	_ = json.Unmarshal(req.Params, &params)
 	return strings.TrimSpace(params.Name)
+}
+
+func requestedCompletionRef(req *mcpruntime.Request) (string, string) {
+	var params struct {
+		Ref struct {
+			Type string `json:"type"`
+			Name string `json:"name,omitempty"`
+			URI  string `json:"uri,omitempty"`
+		} `json:"ref"`
+	}
+	_ = json.Unmarshal(req.Params, &params)
+	switch strings.TrimSpace(params.Ref.Type) {
+	case "ref/prompt":
+		return "prompt", strings.TrimSpace(params.Ref.Name)
+	case "ref/resource":
+		return "resource", strings.TrimSpace(params.Ref.URI)
+	default:
+		return "", ""
+	}
+}
+
+func isResourceTemplateRef(uri string) bool {
+	return strings.Contains(strings.TrimSpace(uri), "{")
 }
 
 func filterRuntimeCapabilityLists(reqs []*mcpruntime.Request, batch bool, resp *apptheory.Response, profile runtimepolicy.Profile) {
