@@ -310,9 +310,10 @@ func voicemailReadDef() mcpruntime.ToolDef {
 
 func soulReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "soul_read",
-		Description: "Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "soul_read",
+		Description:  "Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. Private email/phone reachability and contact preferences are omitted or marked unavailable.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: soulReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -332,16 +333,18 @@ func soulReadDef() mcpruntime.ToolDef {
 
 func identityWhoamiDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_whoami",
-		Description: "Return this agent's full identity including communication channels and preferences.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Name:         "identity_whoami",
+		Description:  "Return this agent's full identity including communication channels and preferences.",
+		OutputSchema: identityWhoamiOutputSchema(),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{}}`),
 	}
 }
 
 func identityLookupDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_lookup",
-		Description: "Look up a public soul identity by full agentId, ENS name, a current-instance local ID such as medic, an explicit remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward. Private email/phone reachability lookup fails closed until lesser-host exposes a body-facing resolver.",
+		Name:         "identity_lookup",
+		Description:  "Look up a public soul identity by full agentId, ENS name, a current-instance local ID such as medic, an explicit remote ActivityPub handle such as @steward@remote.example, or a canonical actor URL such as https://remote.example/users/steward. Private email/phone reachability lookup fails closed until lesser-host exposes a body-facing resolver.",
+		OutputSchema: identityLookupOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -354,8 +357,9 @@ func identityLookupDef() mcpruntime.ToolDef {
 
 func identityVerifyDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "identity_verify",
-		Description: "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance.",
+		Name:         "identity_verify",
+		Description:  "Verify that a communication came from a specific soul identity. ENS verification uses public resolution plus authoritative message provenance; private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance.",
+		OutputSchema: identityVerifyOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

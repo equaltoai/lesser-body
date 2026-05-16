@@ -180,9 +180,10 @@ func memoryAppendDef() mcpruntime.ToolDef {
 
 func memoryQueryDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "memory_query",
-		Description: "Query memory events for the authenticated agent.",
-		Annotations: readOnlyToolAnnotations(),
+		Name:         "memory_query",
+		Description:  "Query memory events for the authenticated agent.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: memoryQueryOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

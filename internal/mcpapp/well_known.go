@@ -25,8 +25,9 @@ type mcpWellKnownDoc struct {
 }
 
 type mcpWellKnownToolHint struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 }
 
 type protectedResourceMetadataDocument struct {
@@ -68,8 +69,9 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 					continue
 				}
 				doc.Tools = append(doc.Tools, mcpWellKnownToolHint{
-					Name:        strings.TrimSpace(tool.Name),
-					Description: strings.TrimSpace(tool.Description),
+					Name:         strings.TrimSpace(tool.Name),
+					Description:  strings.TrimSpace(tool.Description),
+					OutputSchema: append(json.RawMessage(nil), tool.OutputSchema...),
 				})
 			}
 		}
