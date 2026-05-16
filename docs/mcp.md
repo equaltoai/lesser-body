@@ -156,10 +156,16 @@ AppTheory’s MCP server implements:
 - `prompts/list`
 - `prompts/get`
 - `completion/complete`
+- `tasks/list` (when `MCP_TASK_TABLE` enables the task runtime)
+- `tasks/get` (when `MCP_TASK_TABLE` enables the task runtime)
+- `tasks/result` (when `MCP_TASK_TABLE` enables the task runtime)
+- `tasks/cancel` (when `MCP_TASK_TABLE` enables the task runtime)
 
-AppTheory task storage is provisioned in the CDK stack for runtime readiness, but lesser-body does not yet wire an MCP
-task runtime. `initialize` must not advertise `tasks`, and `tasks/list`, `tasks/get`, `tasks/result`, and
-`tasks/cancel` continue to fail closed as unsupported methods until a later, read-only task pilot is explicitly enabled.
+Task support is an additive MCP 2025-11-25 pilot. When `MCP_TASK_TABLE` is configured, body wires AppTheory’s
+`TaskRuntime`, `initialize` advertises the `tasks` capability for 2025-11-25 sessions, and `skill_bundle_get` declares
+optional task execution. Existing synchronous `tools/call` behavior remains supported. Deployments without
+`MCP_TASK_TABLE` omit the `tasks` capability, do not mark `skill_bundle_get` task-capable, and `tasks/*` methods fail
+closed as unsupported.
 
 For streamed responses, body preserves the MCP client's logical SSE contract. AppTheory's durable stream store keeps the
 event id / replay index in DynamoDB and, when needed, spills large logical event payloads to the private stream-spill S3
@@ -310,7 +316,7 @@ Scope key:
 | `memory_append` | Write | Append a memory event to the authenticated agent's memory timeline. |
 | `memory_query` | Read | Query memory events for the authenticated agent. |
 | `skills_catalog` | Read | List approved skill bundles from Lesser's authoritative skills catalog, preserving bundle digests, provenance, install hints, and exposure metadata. |
-| `skill_bundle_get` | Read | Fetch a selected approved Lesser skill bundle and optionally report local install-state verification from caller-supplied local file bytes. |
+| `skill_bundle_get` | Read | Fetch a selected approved Lesser skill bundle and optionally report local install-state verification from caller-supplied local file bytes. When `MCP_TASK_TABLE` is configured, this read-only tool also supports optional task-backed execution. |
 | `email_send` | Write | Send a new email through lesser-host on behalf of the authenticated soul agent; use `email_reply` for mailbox replies. |
 | `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox. |
 | `email_get` | Read | Get email metadata/state by opaque host `messageId`/`messageRef`. |
@@ -541,6 +547,46 @@ Prompts are reusable templates returned via MCP (`prompts/list`, `prompts/get`).
 - `compose_email`
 - `handle_inbound`
 - `respect_preferences`
+
+
+## Tasks
+
+lesser-body uses AppTheory’s MCP task runtime for a narrow read-only pilot when task storage is configured:
+
+- Runtime gate: `MCP_TASK_TABLE` must be set. The CDK stack provisions the short-lived DynamoDB task table and injects
+  `MCP_TASK_TTL_MINUTES=10`.
+- Protocol gate: AppTheory advertises tasks only for negotiated MCP protocol `2025-11-25`; older sessions keep the
+  existing method set.
+- Tool gate: only `skill_bundle_get` is task-capable in the pilot, and its support is `optional`, so synchronous
+  `tools/call` remains valid.
+- Scope gate: `tasks/list`, `tasks/get`, `tasks/result`, and `tasks/cancel` require `read` scope. `tasks/cancel` is
+  read-scoped because it only cancels session-scoped work created for the read-only pilot tool.
+- Session gate: task state is keyed by MCP session id. A task created in one `mcp-session-id` cannot be read, listed,
+  result-fetched, or canceled from another session.
+- TTL bounds: the deployment default is 10 minutes (`MCP_TASK_TTL_MINUTES=10`) and body caps requested task TTLs at one
+  hour. DynamoDB TTL is cleanup; AppTheory enforces task lookup/session scoping before returning state.
+
+Example task-backed `skill_bundle_get` request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "bundle-task-1",
+  "method": "tools/call",
+  "params": {
+    "name": "skill_bundle_get",
+    "arguments": {
+      "skill_id": "skill-a",
+      "revision_number": 1
+    },
+    "task": { "ttl": 30000 }
+  }
+}
+```
+
+The immediate response contains a task id. Poll `tasks/get` for status, call `tasks/result` for the final tool result,
+or call `tasks/cancel` to cancel in-flight work. Task audit logs include method, task id, identity, and request id only;
+body does not log tool arguments or task results.
 
 ## Completions
 

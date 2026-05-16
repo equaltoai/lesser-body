@@ -116,7 +116,7 @@ func skillsCatalogDef() mcpruntime.ToolDef {
 }
 
 func skillBundleGetDef() mcpruntime.ToolDef {
-	return mcpruntime.ToolDef{
+	def := mcpruntime.ToolDef{
 		Name:         "skill_bundle_get",
 		Description:  "Fetch a selected approved Lesser skill bundle and optionally compare caller-supplied local file bytes to the published digests.",
 		Annotations:  readOnlyToolAnnotations(),
@@ -144,6 +144,10 @@ func skillBundleGetDef() mcpruntime.ToolDef {
 			}
 		}`),
 	}
+	if TaskRuntimeConfiguredFromEnv() {
+		def.Execution = &mcpruntime.ToolExecution{TaskSupport: mcpruntime.TaskSupportOptional}
+	}
+	return def
 }
 
 func handleSkillsCatalog(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {

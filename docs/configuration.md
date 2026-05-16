@@ -73,20 +73,19 @@ Variables:
   - Hard maximum size for one logical MCP stream event before AppTheory fails the event closed. CDK deployments use
     AppTheory's default `10485760`.
 - `MCP_TASK_TABLE` (string, optional)
-  - If set by CDK, names the DynamoDB table prepared for AppTheory's MCP task runtime state. As of the current
-    deployment shape, this is **storage readiness only**: lesser-body does not wire `mcp.WithTaskRuntime(...)`, does not
-    advertise the MCP `tasks` capability, and does not serve `tasks/*` methods.
+  - If set by CDK, names the DynamoDB table used by AppTheory's MCP task runtime. Setting it wires
+    `mcp.WithTaskRuntime(...)`, advertises the MCP `tasks` capability for MCP 2025-11-25 sessions, and enables the
+    read-only `skill_bundle_get` task pilot. Leave it unset to fail closed with no task capability.
 - `MCP_TASK_TTL_MINUTES` (string, optional)
-  - Default MCP task lifetime in minutes for the future task runtime. CDK deployments set `10` so task state remains
-    short-lived and does not outlive the session persistence window.
+  - Default MCP task lifetime in minutes. CDK deployments set `10` so task state remains short-lived and does not
+    outlive the session persistence window; body also caps caller-requested task TTLs at one hour.
 
 `MCP_STREAM_TTL_MINUTES` is the runtime replay window: AppTheory rejects expired stream event records before reading
 inline or S3-spilled payloads. DynamoDB TTL and S3 lifecycle cleanup are best-effort cleanup backstops, not access
 enforcement.
 
-`MCP_TASK_TABLE` follows the same readiness pattern: AppTheory's CDK construct provisions the canonical
-`sessionId`/`taskId`/`expiresAt` table and injects env vars, but MCP task capability advertisement still requires a
-future application-code change that wires an explicit task runtime and marks selected read-only tools as task-capable.
+`MCP_TASK_TABLE` enables AppTheory's task runtime over the canonical `sessionId`/`taskId`/`expiresAt` table. Body uses
+that runtime only for the current read-only `skill_bundle_get` pilot; task state remains transient and session-scoped.
 
 ### Endpoints
 

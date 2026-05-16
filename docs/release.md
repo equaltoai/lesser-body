@@ -47,9 +47,9 @@ That stream-table reset is a one-time lab-era infrastructure correction. The tab
 transport state, so active sessions may reset during rollout, but durable Lesser actor data remains in Lesser's own
 table.
 
-The task table is transient MCP runtime-readiness state. Managed templates inject `MCP_TASK_TABLE` and
-`MCP_TASK_TTL_MINUTES=10`, but body does not advertise or serve MCP `tasks` until a later task-runtime milestone wires
-an explicit AppTheory task runtime and task-capable read-only tool.
+The task table is transient MCP task runtime state. Managed templates inject `MCP_TASK_TABLE` and
+`MCP_TASK_TTL_MINUTES=10`; body advertises MCP `tasks` for MCP 2025-11-25 sessions and enables optional task-backed
+execution only for the read-only `skill_bundle_get` pilot.
 
 Verify the produced release directory:
 

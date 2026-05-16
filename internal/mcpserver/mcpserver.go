@@ -18,15 +18,21 @@ const (
 	envMcpAllowedOrigins = "MCP_ALLOWED_ORIGINS"
 	envMcpSessionTable   = "MCP_SESSION_TABLE"
 	envMcpStreamTable    = "MCP_STREAM_TABLE"
+	envMcpTaskTable      = "MCP_TASK_TABLE"
 
 	initialSessionListenerSafetyBuffer = 5 * time.Second
 	initialSessionListenerMaxDuration  = 25 * time.Second
+	taskRuntimeMaxTTL                  = time.Hour
 )
 
 var newMCPDB = func() (tablecore.DB, error) {
 	return tabletheory.NewBasic(session.Config{
 		Region: os.Getenv("AWS_REGION"),
 	})
+}
+
+var newMCPTaskStore = func(db tablecore.DB) mcpruntime.TaskStore {
+	return mcpruntime.NewDynamoTaskStore(db)
 }
 
 func New(name, version string) (*Server, error) {
@@ -63,7 +69,7 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 		opts = append(opts, mcpruntime.WithOriginValidator(validator))
 	}
 
-	if os.Getenv(envMcpSessionTable) != "" || os.Getenv(envMcpStreamTable) != "" {
+	if os.Getenv(envMcpSessionTable) != "" || os.Getenv(envMcpStreamTable) != "" || TaskRuntimeConfiguredFromEnv() {
 		db, err := newMCPDB()
 		if err != nil {
 			return nil, fmt.Errorf("create tabletheory client: %w", err)
@@ -74,6 +80,12 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 		}
 		if os.Getenv(envMcpStreamTable) != "" {
 			opts = append(opts, mcpruntime.WithStreamStore(mcpruntime.NewDynamoStreamStore(db)))
+		}
+		if TaskRuntimeConfiguredFromEnv() {
+			opts = append(opts, mcpruntime.WithTaskRuntime(mcpruntime.TaskRuntimeOptions{
+				Store:  newMCPTaskStore(db),
+				MaxTTL: taskRuntimeMaxTTL,
+			}))
 		}
 	}
 
@@ -86,11 +98,32 @@ func bodyCapabilityConfig() mcpruntime.CapabilityConfig {
 		Resources:   true,
 		Prompts:     true,
 		Completions: true,
-		// Phase 5 provisions MCP task storage in CDK, but body must not advertise
-		// or serve tasks until Phase 6 wires an explicit TaskRuntime and a
-		// read-only task-capable tool.
-		Tasks: false,
+		// AppTheory still requires an explicit TaskRuntime and at least one
+		// task-capable tool before initialize advertises tasks. Enabling the
+		// surface here lets deployments with MCP_TASK_TABLE opt into the Phase 6
+		// read-only task pilot while deployments without task storage fail closed.
+		Tasks: true,
 	}
+}
+
+func TaskRuntimeConfiguredFromEnv() bool {
+	return strings.TrimSpace(os.Getenv(envMcpTaskTable)) != ""
+}
+
+func TasksPublicDiscoveryEnabled(srv *Server) bool {
+	if !TaskRuntimeConfiguredFromEnv() || srv == nil || srv.Registry() == nil {
+		return false
+	}
+	for _, tool := range srv.Registry().List() {
+		if tool.Execution == nil {
+			continue
+		}
+		switch tool.Execution.TaskSupport {
+		case mcpruntime.TaskSupportOptional, mcpruntime.TaskSupportRequired:
+			return true
+		}
+	}
+	return false
 }
 
 func originValidatorFromEnv() mcpruntime.OriginValidator {

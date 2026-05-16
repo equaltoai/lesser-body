@@ -77,7 +77,7 @@ These are deterministic artifacts produced once at release time and then consume
 - auxiliary AppTheory/CDK file assets required by release-produced templates
 - stage-specific deploy templates that can provision the stack without a source checkout
 - AppTheory Remote MCP storage assets, including the session table, durable stream table/spill bucket, and the internal
-  task table prepared for a future task runtime
+  task table used by the read-only `skill_bundle_get` task pilot
 - machine-readable metadata describing the deploy asset contract
 - checksums that let consumers verify every published deploy asset automatically
 - documentation describing the managed deploy contract and exported SSM values
