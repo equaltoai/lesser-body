@@ -32,10 +32,23 @@ Protected-resource discovery depends on Lesser OAuth metadata being reachable at
 
 ## Authentication
 
-All `/mcp/{actor}` requests require:
+All `/mcp/{actor}` requests require authentication and Streamable HTTP transport headers:
 
 ```text
 Authorization: Bearer <token>
+```
+
+For `POST /mcp/{actor}`, send both:
+
+```text
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+For `GET /mcp/{actor}` session listeners, send:
+
+```text
+Accept: text/event-stream
 ```
 
 Canonical bearer token:
@@ -188,6 +201,7 @@ ACTOR="Arch"
 curl -sS -i \
   -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -H "authorization: Bearer ${TOKEN}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
 ```
@@ -214,6 +228,7 @@ Expected fields:
 curl -sS \
   -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -H "authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
@@ -225,6 +240,7 @@ curl -sS \
 curl -sS \
   -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -H "authorization: Bearer ${TOKEN}" \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
   -d '{

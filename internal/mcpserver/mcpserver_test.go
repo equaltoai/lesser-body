@@ -22,6 +22,7 @@ func invokeRPC(t testing.TB, env *testkit.Env, app *apptheory.App, sessionID str
 
 	headers := map[string][]string{
 		"content-type": {"application/json"},
+		"accept":       {"application/json, text/event-stream"},
 	}
 	if sessionID != "" {
 		headers["mcp-session-id"] = []string{sessionID}

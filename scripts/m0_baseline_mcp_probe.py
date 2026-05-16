@@ -128,7 +128,7 @@ def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, An
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Accept": "application/json, text/event-stream",
         "Authorization": AUTHORIZATION,
     }
     if _session_id:

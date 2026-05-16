@@ -109,7 +109,7 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
         payload["params"] = params
 
     headers = {
-        "Accept": "application/json",
+        "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "Authorization": AUTHORIZATION,
     }
