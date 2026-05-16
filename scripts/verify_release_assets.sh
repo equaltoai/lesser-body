@@ -262,6 +262,10 @@ expected_named_tables = {
         "type": "AWS::DynamoDB::Table",
         "table_name_contains": "mcp-streams-v2",
     },
+    "McpServerTaskTable72DDFBBB": {
+        "type": "AWS::DynamoDB::Table",
+        "table_name_contains": "mcp-tasks",
+    },
 }
 expected_export_refs = {
     "McpSessionTableParam11A03692": {
@@ -281,6 +285,10 @@ expected_spill_env = {
     "MCP_STREAM_SPILL_PREFIX",
     "MCP_STREAM_SPILL_INLINE_MAX_BYTES",
     "MCP_STREAM_MAX_EVENT_BYTES",
+}
+expected_task_env = {
+    "MCP_TASK_TABLE": {"Ref": "McpServerTaskTable72DDFBBB"},
+    "MCP_TASK_TTL_MINUTES": "10",
 }
 
 for stage in ("dev", "staging", "live"):
@@ -400,6 +408,9 @@ for stage in ("dev", "staging", "live"):
                 err(f"{stage_path.name}: MCP handler missing stream-spill env vars {missing_env}")
             elif spill_logical_id is not None and env.get("MCP_STREAM_SPILL_BUCKET") != {"Ref": spill_logical_id}:
                 err(f"{stage_path.name}: MCP_STREAM_SPILL_BUCKET must Ref {spill_logical_id}, got {env.get('MCP_STREAM_SPILL_BUCKET')!r}")
+            for key, expected_value in expected_task_env.items():
+                if env.get(key) != expected_value:
+                    err(f"{stage_path.name}: {key} must equal {expected_value!r}, got {env.get(key)!r}")
 
     declared_aux_params = set(aux_by_param)
     for logical_id, resource in resources.items():

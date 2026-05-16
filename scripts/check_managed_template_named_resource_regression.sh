@@ -94,6 +94,42 @@ if ! grep -Fq 'lesser-body-managed-dev.template.json: McpServerStreamTableC6A2DC
   exit 1
 fi
 
+TASK_LOGICAL_ID_DIR="${TMP_DIR}/release-bad-task-logical-id"
+cp -R "${SOURCE_DIR}" "${TASK_LOGICAL_ID_DIR}"
+
+python3 - "${TASK_LOGICAL_ID_DIR}/lesser-body-managed-dev.template.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+template = json.loads(path.read_text())
+resources = template["Resources"]
+resources["BrokenTaskTable12345678"] = resources.pop("McpServerTaskTable72DDFBBB")
+env = next(
+    resource["Properties"]["Environment"]["Variables"]
+    for resource in resources.values()
+    if resource.get("Type") == "AWS::Lambda::Function"
+    and resource.get("Properties", {}).get("Handler") == "bootstrap"
+)
+env["MCP_TASK_TABLE"] = {"Ref": "BrokenTaskTable12345678"}
+path.write_text(json.dumps(template, indent=2) + "\n")
+PY
+
+refresh_release_metadata "${TASK_LOGICAL_ID_DIR}"
+
+TASK_LOGICAL_ID_ERR="${TMP_DIR}/verify-task-logical-id.err"
+if bash "${ROOT_DIR}/scripts/verify_release_assets.sh" "${VERSION}" "${TASK_LOGICAL_ID_DIR}" > /dev/null 2> "${TASK_LOGICAL_ID_ERR}"; then
+  echo "verify_release_assets.sh unexpectedly accepted a managed template with a drifted task table logical ID" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'lesser-body-managed-dev.template.json: missing expected resource McpServerTaskTable72DDFBBB' "${TASK_LOGICAL_ID_ERR}"; then
+  echo "verify_release_assets.sh did not report the expected task-table logical-ID regression" >&2
+  cat "${TASK_LOGICAL_ID_ERR}" >&2
+  exit 1
+fi
+
 SPILL_BUCKET_DIR="${TMP_DIR}/release-missing-stream-spill-bucket"
 cp -R "${SOURCE_DIR}" "${SPILL_BUCKET_DIR}"
 
@@ -125,4 +161,4 @@ if ! grep -Fq 'lesser-body-managed-dev.template.json: expected exactly one strea
   exit 1
 fi
 
-echo "Regression confirmed: verifier rejects MCP named-resource, table-name, and stream-spill drift"
+echo "Regression confirmed: verifier rejects MCP named-resource, table-name, task-storage, and stream-spill drift"

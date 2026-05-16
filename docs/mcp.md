@@ -155,6 +155,11 @@ AppTheory’s MCP server implements:
 - `resources/read`
 - `prompts/list`
 - `prompts/get`
+- `completion/complete`
+
+AppTheory task storage is provisioned in the CDK stack for runtime readiness, but lesser-body does not yet wire an MCP
+task runtime. `initialize` must not advertise `tasks`, and `tasks/list`, `tasks/get`, `tasks/result`, and
+`tasks/cancel` continue to fail closed as unsupported methods until a later, read-only task pilot is explicitly enabled.
 
 For streamed responses, body preserves the MCP client's logical SSE contract. AppTheory's durable stream store keeps the
 event id / replay index in DynamoDB and, when needed, spills large logical event payloads to the private stream-spill S3

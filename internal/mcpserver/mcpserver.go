@@ -86,7 +86,10 @@ func bodyCapabilityConfig() mcpruntime.CapabilityConfig {
 		Resources:   true,
 		Prompts:     true,
 		Completions: true,
-		Tasks:       false,
+		// Phase 5 provisions MCP task storage in CDK, but body must not advertise
+		// or serve tasks until Phase 6 wires an explicit TaskRuntime and a
+		// read-only task-capable tool.
+		Tasks: false,
 	}
 }
 

@@ -25,6 +25,7 @@ This repo’s CDK stack deploys:
 - (Recommended) DynamoDB session table for MCP sessions
 - DynamoDB stream table for MCP streaming state
 - Private S3 stream-spill bucket for large logical MCP stream events
+- DynamoDB task table for future MCP task runtime state, with the `tasks` capability still disabled
 - SSM exports used by the Lesser stack to wire routes
 
 Notes:
@@ -51,6 +52,10 @@ And it publishes these (consumed by Lesser when `soulEnabled=true`):
 
 The stream-spill bucket is internal to body's AppTheory-backed MCP transport. It is not an SSM export and does not
 change the public MCP endpoint contract; clients still resume by logical `Last-Event-ID`.
+
+The MCP task table is also internal in the current release shape. It prepares storage for a future task-runtime phase,
+but lesser-body does not advertise `tasks`, does not serve `tasks/*` methods, and does not publish an
+`mcp_task_table_name` SSM export.
 
 ## Deploy order (avoid the “missing SSM param” trap)
 
@@ -147,6 +152,9 @@ Notes:
 - The corrected MCP stream-table baseline is a versioned physical table (`...-mcp-streams-v2`) while the exported SSM
   parameter name remains `mcp_stream_table_name`. Existing durable Lesser actor data is preserved; only transient MCP
   session/stream state may reset during the update.
+- The MCP task table baseline is `...-mcp-tasks` with a 10-minute TTL. It is transient readiness state for a later
+  task-runtime rollout and remains outside the managed SSM export contract until there is a concrete lesser/host
+  consumer.
 
 See `docs/managed-deploy-contract.md` for the full release contract.
 
@@ -158,6 +166,9 @@ After deploy, confirm exports exist:
 aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn"
 aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url"
 ```
+
+Do not expect an `mcp_task_table_name` export in this phase; the task table remains an internal AppTheory runtime asset
+while the public MCP `tasks` capability is disabled.
 
 ## Verify (HTTP)
 

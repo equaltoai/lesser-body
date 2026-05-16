@@ -28,6 +28,7 @@ hardcoded bearer-token client configs are deprecated compatibility paths; see `d
 - **SSM-first cross-stack wiring** (no CloudFormation exports/imports)
 - **Auth + scope enforcement** (`read|write|admin`) for tool calls
 - **Optional DynamoDB-backed MCP sessions** for production continuity
+- **Prepared MCP task storage** behind a disabled public `tasks` capability for a future read-only task pilot
 
 ## Quick Start
 

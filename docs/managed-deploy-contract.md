@@ -186,8 +186,10 @@ Managed templates treat the MCP DynamoDB tables as an explicit compatibility bou
 
 - session table logical ID: `McpServerSessionTable469EA0FB`
 - stream table logical ID: `McpServerStreamTableC6A2DC7E`
+- task table logical ID: `McpServerTaskTable72DDFBBB`
 - session table physical-name suffix: `mcp-sessions`
 - stream table physical-name suffix: `mcp-streams-v2`
+- task table physical-name suffix: `mcp-tasks`
 
 The stream table is transient MCP transport state, not durable agent identity or long-term memory. The published SSM
 export name remains stable at `mcp_stream_table_name` even though the corrected physical stream-table baseline is the
@@ -200,6 +202,12 @@ not part of the SSM export contract; managed consumers should treat it as intern
 runtime enforces `MCP_STREAM_TTL_MINUTES` before reading inline or spilled payload data, while DynamoDB TTL and S3
 lifecycle cleanup remain cleanup backstops.
 
+The task table is transient MCP runtime readiness state. Managed templates provision the canonical AppTheory task schema
+(`sessionId` hash key, `taskId` range key, `expiresAt` TTL), grant the MCP Lambda access through the AppTheory construct,
+and inject `MCP_TASK_TABLE` plus `MCP_TASK_TTL_MINUTES=10`. This does **not** enable the public MCP `tasks` capability:
+body does not wire `mcp.WithTaskRuntime(...)` or mark any tool task-capable in this phase. The task table is intentionally
+not exported through SSM until there is a concrete lesser/host managed-deploy consumer for that name.
+
 ## Published exports
 
 On deploy, `lesser-body` writes these SSM parameters:
@@ -210,6 +218,8 @@ On deploy, `lesser-body` writes these SSM parameters:
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
 
 Managed consumers can rely on those names as the stable exported surface of the `lesser-body` stack.
+
+No `mcp_task_table_name` export is published in the current managed contract.
 
 ## MCP-facing expectations
 
@@ -253,7 +263,9 @@ That verification fails if:
 - a checksum does not match
 - a managed template contains a non-string `Parameters.*.Default`
 - a managed template drifts the pinned MCP session/stream table logical IDs
+- a managed template drifts the pinned MCP task table logical ID
 - a managed template drifts the versioned MCP stream-table name baseline (`mcp-streams-v2`)
+- a managed template omits the internal MCP task table or its Lambda environment variables
 - a managed template omits the stream-spill bucket or spill-related Lambda environment variables while stream storage is
   enabled
 - a template regresses to CDK asset/bootstrap assumptions

@@ -32,6 +32,7 @@ type lesserBodyRuntimeProps struct {
 const (
 	mcpSessionTableLogicalID = "McpServerSessionTable469EA0FB"
 	mcpStreamTableLogicalID  = "McpServerStreamTableC6A2DC7E"
+	mcpTaskTableLogicalID    = "McpServerTaskTable72DDFBBB"
 )
 
 func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps) {
@@ -130,6 +131,9 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 		EnableStreamTable:  jsii.Bool(true),
 		StreamTableName:    tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("streams"), jsii.String("v2")),
 		StreamTtlMinutes:   jsii.Number(60),
+		EnableTaskTable:    jsii.Bool(true),
+		TaskTableName:      tokenJoin("-", props.AppName, props.Stage, jsii.String("mcp"), jsii.String("tasks")),
+		TaskTtlMinutes:     jsii.Number(10),
 		Stage: &apptheorycdk.AppTheoryRestApiRouterStageOptions{
 			StageName:          props.Stage,
 			AccessLogging:      true,
@@ -160,6 +164,7 @@ func configureLesserBodyStack(stack awscdk.Stack, props *lesserBodyRuntimeProps)
 	server := apptheorycdk.NewAppTheoryRemoteMcpServer(stack, jsii.String("McpServer"), mcpProps)
 	overrideRemoteMcpTableLogicalID(server.SessionTable(), mcpSessionTableLogicalID)
 	overrideRemoteMcpTableLogicalID(server.StreamTable(), mcpStreamTableLogicalID)
+	overrideRemoteMcpTableLogicalID(server.TaskTable(), mcpTaskTableLogicalID)
 
 	handler.AddEnvironment(jsii.String("MCP_ENDPOINT"), props.PublicEndpoint, nil)
 	if props.LesserAPIBaseURL != nil && *props.LesserAPIBaseURL != "" {
