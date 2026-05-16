@@ -289,6 +289,7 @@ func TestManagedDeployTemplatePinsMcpTableLogicalIDs(t *testing.T) {
 	want := []string{
 		"McpServerSessionTable469EA0FB",
 		"McpServerStreamTableC6A2DC7E",
+		"McpServerTaskTable72DDFBBB",
 	}
 	if mustJSON(t, got) != mustJSON(t, want) {
 		t.Fatalf("unexpected managed DynamoDB logical IDs: got=%s want=%s", mustJSON(t, got), mustJSON(t, want))
@@ -389,6 +390,83 @@ func TestLesserBodyUsesAppTheoryDurableStreamTableSchema(t *testing.T) {
 	}
 }
 
+func TestLesserBodyProvisionsInternalMcpTaskStorageWithoutExport(t *testing.T) {
+	assetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write bootstrap: %v", err)
+	}
+
+	template := synthTemplate(t, "TestStack", func(app awscdk.App) {
+		stack := awscdk.NewStack(app, jsii.String("TestStack"), &awscdk.StackProps{
+			Env: &awscdk.Environment{
+				Account: jsii.String("123456789012"),
+				Region:  jsii.String("us-east-1"),
+			},
+		})
+
+		configureLesserBodyStack(stack, &lesserBodyRuntimeProps{
+			AppName:               jsii.String("theory"),
+			Stage:                 jsii.String("dev"),
+			Code:                  awslambda.Code_FromAsset(jsii.String(assetDir), nil),
+			ServiceVersion:        jsii.String("test"),
+			PublicEndpoint:        jsii.String("https://api.dev.example.com/mcp/{actor}"),
+			LesserAPIBaseURL:      jsii.String("https://api.dev.example.com"),
+			AllowedOrigins:        jsii.String("https://claude.ai"),
+			JWTSecretArnParamPath: jsii.String("/theory/shared/secrets/jwt-secret-arn"),
+			JWTSecretKeyParamPath: jsii.String("/theory/shared/kms/encryption-key-arn"),
+			LesserTableParamPath:  jsii.String("/theory/dev/lesser/exports/v1/table_name"),
+		})
+	})
+
+	resources := mustResources(t, template)
+	taskTable := findDynamoTableByName(t, resources, "theory-dev-mcp-tasks")
+	props, ok := taskTable["Properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("task table missing Properties")
+	}
+
+	keySchema, ok := props["KeySchema"].([]any)
+	if !ok {
+		t.Fatalf("task table missing KeySchema")
+	}
+	if len(keySchema) != 2 {
+		t.Fatalf("expected task table hash/range keys, got %d", len(keySchema))
+	}
+	if !strings.Contains(mustJSON(t, keySchema[0]), `"AttributeName":"sessionId"`) {
+		t.Fatalf("expected task table hash key sessionId, got %s", mustJSON(t, keySchema[0]))
+	}
+	if !strings.Contains(mustJSON(t, keySchema[1]), `"AttributeName":"taskId"`) {
+		t.Fatalf("expected task table range key taskId, got %s", mustJSON(t, keySchema[1]))
+	}
+	if got := dynamoTableTTLAttribute(t, "McpServerTaskTable72DDFBBB", props); got != "expiresAt" {
+		t.Fatalf("expected task table TTL attribute expiresAt, got %q", got)
+	}
+
+	lambda := mcpHandlerLambdaFunction(t, resources)
+	lambdaProps, ok := lambda["Properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("lambda missing Properties")
+	}
+	env, ok := lambdaProps["Environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("lambda missing Environment")
+	}
+	vars, ok := env["Variables"].(map[string]any)
+	if !ok {
+		t.Fatalf("lambda missing Environment.Variables")
+	}
+	if got := mustJSON(t, vars["MCP_TASK_TABLE"]); got != `{"Ref":"McpServerTaskTable72DDFBBB"}` {
+		t.Fatalf("expected MCP_TASK_TABLE to ref task table, got %s", got)
+	}
+	if got, ok := vars["MCP_TASK_TTL_MINUTES"].(string); !ok || got != "10" {
+		t.Fatalf("expected MCP_TASK_TTL_MINUTES=10, got %#v", vars["MCP_TASK_TTL_MINUTES"])
+	}
+
+	if hasSSMParameterByName(resources, "/theory/dev/lesser-body/exports/v1/mcp_task_table_name") {
+		t.Fatalf("task table is intentionally internal in Phase 5; did not expect an SSM export")
+	}
+}
+
 func TestLesserBodyRemoteMcpServerUsesActorPathWiring(t *testing.T) {
 	assetDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(assetDir, "bootstrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -486,6 +564,13 @@ func TestLesserBodyNamedMcpTableFingerprints(t *testing.T) {
 			TableName:    "theory-dev-mcp-streams-v2",
 			PartitionKey: "sessionId",
 			SortKey:      "eventId",
+			TTLAttribute: "expiresAt",
+		},
+		{
+			LogicalID:    "McpServerTaskTable72DDFBBB",
+			TableName:    "theory-dev-mcp-tasks",
+			PartitionKey: "sessionId",
+			SortKey:      "taskId",
 			TTLAttribute: "expiresAt",
 		},
 	}
@@ -693,6 +778,20 @@ func findDynamoTableByName(t *testing.T, resources map[string]any, tableName str
 func findSSMParameterByName(t *testing.T, resources map[string]any, paramName string) map[string]any {
 	t.Helper()
 
+	if resource, ok := ssmParameterByName(resources, paramName); ok {
+		return resource
+	}
+
+	t.Fatalf("template missing AWS::SSM::Parameter %q", paramName)
+	return nil
+}
+
+func hasSSMParameterByName(resources map[string]any, paramName string) bool {
+	_, ok := ssmParameterByName(resources, paramName)
+	return ok
+}
+
+func ssmParameterByName(resources map[string]any, paramName string) (map[string]any, bool) {
 	for _, raw := range resources {
 		resource, ok := raw.(map[string]any)
 		if !ok {
@@ -706,12 +805,11 @@ func findSSMParameterByName(t *testing.T, resources map[string]any, paramName st
 			continue
 		}
 		if got, _ := props["Name"].(string); got == paramName {
-			return resource
+			return resource, true
 		}
 	}
 
-	t.Fatalf("template missing AWS::SSM::Parameter %q", paramName)
-	return nil
+	return nil, false
 }
 
 func findStreamSpillBucket(t *testing.T, resources map[string]any) map[string]any {

@@ -72,10 +72,21 @@ Variables:
 - `MCP_STREAM_MAX_EVENT_BYTES` (string, optional)
   - Hard maximum size for one logical MCP stream event before AppTheory fails the event closed. CDK deployments use
     AppTheory's default `10485760`.
+- `MCP_TASK_TABLE` (string, optional)
+  - If set by CDK, names the DynamoDB table prepared for AppTheory's MCP task runtime state. As of the current
+    deployment shape, this is **storage readiness only**: lesser-body does not wire `mcp.WithTaskRuntime(...)`, does not
+    advertise the MCP `tasks` capability, and does not serve `tasks/*` methods.
+- `MCP_TASK_TTL_MINUTES` (string, optional)
+  - Default MCP task lifetime in minutes for the future task runtime. CDK deployments set `10` so task state remains
+    short-lived and does not outlive the session persistence window.
 
 `MCP_STREAM_TTL_MINUTES` is the runtime replay window: AppTheory rejects expired stream event records before reading
 inline or S3-spilled payloads. DynamoDB TTL and S3 lifecycle cleanup are best-effort cleanup backstops, not access
 enforcement.
+
+`MCP_TASK_TABLE` follows the same readiness pattern: AppTheory's CDK construct provisions the canonical
+`sessionId`/`taskId`/`expiresAt` table and injects env vars, but MCP task capability advertisement still requires a
+future application-code change that wires an explicit task runtime and marks selected read-only tools as task-capable.
 
 ### Endpoints
 
@@ -161,3 +172,7 @@ Published by this repo’s CDK stack:
   - Session table name (if provisioned).
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
   - Stream table used for MCP streaming state.
+
+The MCP task table is intentionally internal while the `tasks` capability is disabled. The current CDK stack does not
+publish `/<app>/<stage>/lesser-body/exports/v1/mcp_task_table_name`; adding that SSM export would be a separate
+lesser/host coordination point.

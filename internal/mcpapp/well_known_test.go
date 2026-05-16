@@ -15,6 +15,7 @@ import (
 
 func TestM7_WellKnownMcpJSON(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_TASK_TABLE", "theory-dev-mcp-tasks")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp")
 
 	app, err := mcpapp.New("test", "dev")
@@ -54,6 +55,9 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	}
 	if !out.Capabilities["completions"] {
 		t.Fatalf("expected capabilities.completions=true")
+	}
+	if out.Capabilities["tasks"] {
+		t.Fatalf("task storage readiness must not advertise capabilities.tasks")
 	}
 	if out.Auth.Type != "bearer" {
 		t.Fatalf("expected bearer auth hints, got %q", out.Auth.Type)

@@ -108,6 +108,8 @@ At a minimum, the MCP Lambda needs:
 - DynamoDB read/write on the MCP stream table and S3 read/write on the private MCP stream-spill bucket when durable
   stream replay is enabled. The spill bucket holds transient MCP transport payloads only; AppTheory enforces stream TTL
   before reading spilled data.
+- DynamoDB read/write on the MCP task table when task storage is provisioned. This is transient runtime-readiness state;
+  the public MCP `tasks` capability remains disabled until body explicitly wires AppTheory's task runtime.
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
 ## Client considerations

@@ -76,6 +76,8 @@ These are deterministic artifacts produced once at release time and then consume
 - the Lambda zip for `cmd/lesser-body`
 - auxiliary AppTheory/CDK file assets required by release-produced templates
 - stage-specific deploy templates that can provision the stack without a source checkout
+- AppTheory Remote MCP storage assets, including the session table, durable stream table/spill bucket, and the internal
+  task table prepared for a future task runtime
 - machine-readable metadata describing the deploy asset contract
 - checksums that let consumers verify every published deploy asset automatically
 - documentation describing the managed deploy contract and exported SSM values
@@ -90,6 +92,10 @@ still needed:
 - a stable description of the SSM exports that the stack writes
 - a no-source deployment entrypoint
 - checksums and schema details for the deploy-specific artifacts
+
+The managed template now also pins the internal MCP task-table baseline (`McpServerTaskTable72DDFBBB`,
+`...-mcp-tasks`, `MCP_TASK_TTL_MINUTES=10`). That table is a release-time infrastructure artifact but not a new
+managed-consumer input or SSM export while the MCP `tasks` capability remains disabled.
 
 That gap was closed by `#91`, and `#98` tightened the remaining producer-side blind spots by requiring checksum coverage
 for `lesser-body-release.json` and verifying the checksum-root descriptor embedded in the canonical manifest.

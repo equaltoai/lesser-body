@@ -39,11 +39,17 @@ The current managed-template baseline also pins the named MCP DynamoDB resources
 
 - session table logical ID: `McpServerSessionTable469EA0FB`
 - stream table logical ID: `McpServerStreamTableC6A2DC7E`
+- task table logical ID: `McpServerTaskTable72DDFBBB`
 - stream table physical-name suffix: `mcp-streams-v2`
+- task table physical-name suffix: `mcp-tasks`
 
 That stream-table reset is a one-time lab-era infrastructure correction. The table stores transient MCP stream/session
 transport state, so active sessions may reset during rollout, but durable Lesser actor data remains in Lesser's own
 table.
+
+The task table is transient MCP runtime-readiness state. Managed templates inject `MCP_TASK_TABLE` and
+`MCP_TASK_TTL_MINUTES=10`, but body does not advertise or serve MCP `tasks` until a later task-runtime milestone wires
+an explicit AppTheory task runtime and task-capable read-only tool.
 
 Verify the produced release directory:
 

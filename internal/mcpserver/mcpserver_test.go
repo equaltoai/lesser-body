@@ -197,6 +197,59 @@ func TestInitializeCapabilitiesArePinnedToConfiguredSurfaces(t *testing.T) {
 	assertNoUnsupportedSubCapabilities(t, "prompts", out.Capabilities["prompts"])
 }
 
+func TestTaskStorageEnvDoesNotEnableTaskCapability(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_STREAM_TABLE", "")
+	t.Setenv("MCP_TASK_TABLE", "theory-dev-mcp-tasks")
+	t.Setenv("MCP_TASK_TTL_MINUTES", "10")
+
+	srv, err := mcpserver.New("test-server", "dev")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	env := testkit.New()
+	app := env.App()
+	app.Post("/mcp", srv.Handler())
+
+	params, _ := json.Marshal(map[string]any{"protocolVersion": "2025-11-25"})
+	initResp, sessionID := invokeRPC(t, env, app, "", &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      "init-with-task-env",
+		Method:  "initialize",
+		Params:  params,
+	})
+	if initResp.Error != nil {
+		t.Fatalf("initialize error: %+v", initResp.Error)
+	}
+	if sessionID == "" {
+		t.Fatalf("expected initialize to issue a session id")
+	}
+
+	b, err := json.Marshal(initResp.Result)
+	if err != nil {
+		t.Fatalf("marshal initialize result: %v", err)
+	}
+	var out struct {
+		Capabilities map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal initialize result: %v", err)
+	}
+	if _, ok := out.Capabilities["tasks"]; ok {
+		t.Fatalf("MCP_TASK_TABLE must not advertise tasks without explicit runtime wiring: %+v", out.Capabilities)
+	}
+
+	listResp, _ := invokeRPC(t, env, app, sessionID, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      "tasks-list-with-task-env",
+		Method:  "tasks/list",
+	})
+	if listResp.Error == nil || listResp.Error.Code != mcpruntime.CodeMethodNotFound {
+		t.Fatalf("expected tasks/list to fail closed without task runtime, got %+v", listResp.Error)
+	}
+}
+
 func assertNoUnsupportedSubCapabilities(t testing.TB, name string, raw any) {
 	t.Helper()
 	capability, ok := raw.(map[string]any)
