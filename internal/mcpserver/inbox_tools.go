@@ -42,7 +42,7 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	archived := optionalBoolArg(args, "archived")
 	deleted := optionalBoolArg(args, "deleted")
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -95,7 +95,7 @@ func handleEmailGet(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -114,7 +114,7 @@ func handleEmailGetContent(ctx context.Context, args json.RawMessage) (*mcprunti
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -158,7 +158,7 @@ func handleEmailSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	archived := optionalBoolArg(args, "archived")
 	deleted := optionalBoolArg(args, "deleted")
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -220,7 +220,7 @@ func handleEmailDelete(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, invalidParams("invalid action (expected delete or archive)")
 	}
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailManage)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -247,7 +247,7 @@ func handleEmailReadState(ctx context.Context, args json.RawMessage, action stri
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailManage)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -280,7 +280,7 @@ func handleSmsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 	archived := optionalBoolArg(args, "archived")
 	deleted := optionalBoolArg(args, "deleted")
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationSMSRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}
@@ -338,7 +338,7 @@ func handleVoicemailRead(ctx context.Context, args json.RawMessage) (*mcpruntime
 	archived := optionalBoolArg(args, "archived")
 	deleted := optionalBoolArg(args, "deleted")
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationVoiceRead)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}

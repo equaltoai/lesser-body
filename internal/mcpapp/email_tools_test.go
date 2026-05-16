@@ -38,6 +38,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 	const tokenUser = "agent1"
 
 	var gotAuth string
+	var gotContactabilityAuth string
 	var gotBody map[string]any
 	var statusCode int
 
@@ -49,7 +50,10 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"capabilities":["email-send","email-read","email-manage"]}},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
+		case r.URL.Path == "/api/v1/soul/comm/contactability/"+agentID:
+			gotContactabilityAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{` + hostedBoundSoulPolicyJSON("not_entitled", false, false) + `,"channels":[{"channelType":"email","sendAllowed":true,"receiveAllowed":true}]}`))
 		case r.URL.Path == "/api/v1/soul/comm/send" && r.Method == http.MethodPost:
 			gotAuth = r.Header.Get("Authorization")
 			body, _ := io.ReadAll(r.Body)
@@ -123,6 +127,9 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		}
 		if gotAuth != "Bearer instance-key-123" {
 			t.Fatalf("expected comm api Authorization=%q, got %q", "Bearer instance-key-123", gotAuth)
+		}
+		if gotContactabilityAuth != "Bearer instance-key-123" {
+			t.Fatalf("expected contactability Authorization=%q, got %q", "Bearer instance-key-123", gotContactabilityAuth)
 		}
 		if gotBody["channel"] != "email" || gotBody["agentId"] != agentID {
 			t.Fatalf("unexpected comm api body: %+v", gotBody)
@@ -301,5 +308,134 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		if !strings.Contains(strings.ToLower(errPayload["message"].(string)), "blocked") {
 			t.Fatalf("expected error message to mention blocked, got %+v", errPayload)
 		}
+	}
+}
+
+func TestBoundBodyOperationPolicyDeniesImplicitAndPublicPaidEmail(t *testing.T) {
+	scenarios := []struct {
+		name          string
+		registration  string
+		token         func(testing.TB) string
+		wantReason    string
+		wantPolicyVer string
+	}{
+		{
+			name:         "bound soul without explicit policy cannot send email",
+			registration: `{"version":"3","channels":{"email":{"address":"agent@example.com"}},"contactPreferences":{}}`,
+			token: func(tb testing.TB) string {
+				return newTestToken(tb, "test", "agent1", []string{"write"})
+			},
+			wantReason: "capability_policy_denied",
+		},
+		{
+			name:         "public paid caller remains modeled but denied in M1",
+			registration: `{"version":"3","channels":{"email":{"capabilities":["email-send"]}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.email.send") + `}`,
+			token: func(tb testing.TB) string {
+				return newTestTokenWithClientClass(tb, "test", "agent1", []string{"write"}, "public_paid")
+			},
+			wantReason:    "public_paid_callers_denied_in_m1",
+			wantPolicyVer: "2026-05-16",
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Setenv("MCP_SESSION_TABLE", "")
+			t.Setenv("JWT_SECRET", "test")
+			t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+			installSoulBindingLookup(t, "agent1", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+			auth.ResetForTests()
+			lesserapi.ResetForTests()
+			soulapi.ResetForTests()
+			restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+				return &trustconfig.Effective{}, nil
+			})
+			t.Cleanup(restoreTrustConfig)
+
+			const agentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+			var commSendCalled bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/souls/bound/me":
+					_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-bob")))
+				case "/api/v1/soul/agents/" + agentID:
+					_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
+				case "/api/v1/soul/agents/" + agentID + "/registration":
+					_, _ = w.Write([]byte(scenario.registration))
+				case "/api/v1/soul/comm/send":
+					commSendCalled = true
+					_, _ = w.Write([]byte(`{"messageId":"comm-msg-001","status":"sent"}`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+				}
+			}))
+			defer server.Close()
+
+			t.Setenv("LESSER_API_BASE_URL", server.URL)
+			t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+			lesserapi.ResetForTests()
+			soulapi.ResetForTests()
+
+			app, err := mcpapp.New("test", "dev")
+			if err != nil {
+				t.Fatalf("new app: %v", err)
+			}
+			env := testkit.New()
+			authHeader := "Bearer " + scenario.token(t)
+			initResp := invokeJSON(t, env, app, map[string][]string{
+				"authorization": {authHeader},
+			}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+			if initResp.Status != 200 {
+				t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+			}
+			sessionID := initResp.Headers["mcp-session-id"][0]
+
+			callParams, _ := json.Marshal(map[string]any{
+				"name": "email_send",
+				"arguments": map[string]any{
+					"to":      "alice@example.com",
+					"subject": "Hello",
+					"body":    "Hi",
+				},
+			})
+			resp := invokeJSON(t, env, app, map[string][]string{
+				"authorization":  {authHeader},
+				"mcp-session-id": {sessionID},
+			}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+			if resp.Status != 200 {
+				t.Fatalf("email_send: status=%d body=%s", resp.Status, string(resp.Body))
+			}
+			if commSendCalled {
+				t.Fatalf("denied operation must fail before lesser-host comm/send")
+			}
+
+			var rpc mcpruntime.Response
+			_ = json.Unmarshal(resp.Body, &rpc)
+			if rpc.Error != nil {
+				t.Fatalf("email_send rpc error: %+v", rpc.Error)
+			}
+			var out mcpruntime.ToolResult
+			b, _ := json.Marshal(rpc.Result)
+			_ = json.Unmarshal(b, &out)
+			if !out.IsError {
+				t.Fatalf("expected operation_not_allowed tool error, got %+v", out)
+			}
+			errPayload, _ := out.StructuredContent["error"].(map[string]any)
+			if errPayload["code"] != "operation_not_allowed" {
+				t.Fatalf("expected operation_not_allowed, got %+v", errPayload)
+			}
+			details, _ := errPayload["details"].(map[string]any)
+			if details["reason"] != scenario.wantReason || details["operation"] != "communication.email.send" {
+				t.Fatalf("unexpected sanitized denial details: %+v", details)
+			}
+			if details["provider"] != nil || details["paymentEvidence"] != nil || details["tenant"] != nil || details["wallet"] != nil {
+				t.Fatalf("denial details must not expose provider/payment/tenant/wallet data: %+v", details)
+			}
+			if scenario.wantPolicyVer != "" && details["policyVersion"] != scenario.wantPolicyVer {
+				t.Fatalf("expected policyVersion=%q, got %+v", scenario.wantPolicyVer, details)
+			}
+		})
 	}
 }

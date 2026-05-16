@@ -89,7 +89,8 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"availability":{"schedule":"always"},
 					"responseExpectation":{"target":"1h","guarantee":"best-effort"},
 					"languages":["en"]
-				}
+				},
+				` + boundBodyPolicyJSON("identity.self.read", "communication.channels.read", "communication.email.read", "communication.sms.read") + `
 			}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/channels":
 			channelResolveQueries = append(channelResolveQueries, agentID)
@@ -832,6 +833,208 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		if len(channelResolveQueries) != 0 {
 			t.Fatalf("identity_verify ENS should not fetch private /channels, got %+v", channelResolveQueries)
 		}
+	}
+}
+
+func TestIdentityVerifyHostMessageRequiresMailboxReadPolicy(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+	installSoulBindingLookup(t, "agent1", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var hostMailboxCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-alice")))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice@lessersoul.ai"}},"contactPreferences":{},` + boundBodyPolicyJSON("identity.self.read", "communication.channels.read") + `}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email":
+			hostMailboxCalled = true
+			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","channelType":"email"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	authHeader := "Bearer " + newTestToken(t, "test", "agent1", []string{"read"})
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "identity_verify",
+		"arguments": map[string]any{
+			"channel":    "email",
+			"identifier": "agent-alice@lessersoul.ai",
+			"messageId":  "comm-delivery-email",
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("identity_verify: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if hostMailboxCalled {
+		t.Fatalf("identity_verify must not call Host mailbox when only channels.read policy is allowed")
+	}
+
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("identity_verify rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	b, _ := json.Marshal(rpc.Result)
+	_ = json.Unmarshal(b, &out)
+	if !out.IsError {
+		t.Fatalf("expected operation_not_allowed tool error, got %+v", out)
+	}
+	errPayload, _ := out.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "operation_not_allowed" {
+		t.Fatalf("expected operation_not_allowed, got %+v", errPayload)
+	}
+	details, _ := errPayload["details"].(map[string]any)
+	if details["operation"] != "communication.email.read" {
+		t.Fatalf("expected mailbox read operation denial, got %+v", details)
+	}
+}
+
+func TestIdentityVerifyHostMessageRejectsCrossChannelSummary(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+	installSoulBindingLookup(t, "agent1", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	restoreTrustConfig := mcpapp.SetLoadEffectiveTrustConfigForTests(func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{}, nil
+	})
+	t.Cleanup(restoreTrustConfig)
+
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var hostMailboxCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-alice")))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
+		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice@lessersoul.ai"},"phone":{"number":"+15550142"}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.email.read") + `}`))
+		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-sms":
+			hostMailboxCalled = true
+			if got := r.Header.Get("Authorization"); got != "Bearer instance-key-123" {
+				t.Fatalf("expected host instance bearer for mailbox lookup, got %q", got)
+			}
+			_, _ = w.Write([]byte(`{
+				"message":{
+					"messageRef":"comm-delivery-sms",
+					"channelType":"sms",
+					"direction":"inbound",
+					"from":{"number":"+15550142","soulAgentId":"` + agentID + `"},
+					"to":{"number":"+15550199"},
+					"preview":"private sms preview",
+					"createdAt":"2026-05-10T12:01:00Z"
+				}
+			}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	authHeader := "Bearer " + newTestToken(t, "test", "agent1", []string{"read"})
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	callParams, _ := json.Marshal(map[string]any{
+		"name": "identity_verify",
+		"arguments": map[string]any{
+			"channel":    "email",
+			"identifier": "agent-alice@lessersoul.ai",
+			"messageId":  "comm-delivery-sms",
+		},
+	})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("identity_verify: status=%d body=%s", resp.Status, string(resp.Body))
+	}
+	if !hostMailboxCalled {
+		t.Fatalf("expected initial email-read policy to allow Host fetch before actual channel re-check")
+	}
+
+	var rpc mcpruntime.Response
+	_ = json.Unmarshal(resp.Body, &rpc)
+	if rpc.Error != nil {
+		t.Fatalf("identity_verify rpc error: %+v", rpc.Error)
+	}
+	var out mcpruntime.ToolResult
+	b, _ := json.Marshal(rpc.Result)
+	_ = json.Unmarshal(b, &out)
+	if !out.IsError {
+		t.Fatalf("expected cross-channel operation_not_allowed tool error, got %+v", out)
+	}
+	if _, ok := out.StructuredContent["data"]; ok {
+		t.Fatalf("cross-channel denial must not return message-bearing data: %+v", out.StructuredContent)
+	}
+	errPayload, _ := out.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "operation_not_allowed" {
+		t.Fatalf("expected operation_not_allowed, got %+v", errPayload)
+	}
+	details, _ := errPayload["details"].(map[string]any)
+	if details["operation"] != "communication.sms.read" {
+		t.Fatalf("expected actual sms mailbox read denial, got %+v", details)
 	}
 }
 

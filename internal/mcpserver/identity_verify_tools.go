@@ -87,7 +87,7 @@ func handleMessageScopedIdentityVerify(ctx context.Context, client *soulapi.Clie
 		return authToolResultFromError(err)
 	}
 
-	message, source, err := findCommunicationMessage(ctx, token, messageID)
+	message, source, err := findCommunicationMessage(ctx, token, messageID, boundOperationForIdentityVerifyMailboxRead(channel))
 	if err != nil {
 		return identityVerifyMessageResultFromError(err)
 	}
@@ -246,14 +246,14 @@ func findCommunicationNotification(ctx context.Context, bearerToken string, mess
 	return nil, nil
 }
 
-func findCommunicationMessage(ctx context.Context, bearerToken string, messageID string) (map[string]any, string, error) {
+func findCommunicationMessage(ctx context.Context, bearerToken string, messageID string, mailboxReadOperation boundOperation) (map[string]any, string, error) {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
 		return nil, "", nil
 	}
 
 	if isHostMailboxMessageRef(messageID) {
-		message, err := findHostMailboxMessage(ctx, messageID)
+		message, err := findHostMailboxMessage(ctx, messageID, mailboxReadOperation)
 		if err != nil {
 			if isHostMailboxNotFound(err) {
 				return nil, "lesser-host-mailbox", nil
@@ -270,8 +270,19 @@ func findCommunicationMessage(ctx context.Context, bearerToken string, messageID
 	return notification, "lesser-notification", nil
 }
 
-func findHostMailboxMessage(ctx context.Context, messageID string) (map[string]any, error) {
-	deps, err := loadCommMailboxDependencies(ctx)
+func boundOperationForIdentityVerifyMailboxRead(channel string) boundOperation {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "phone":
+		return boundOperationSMSRead
+	case "email", "ens":
+		return boundOperationEmailRead
+	default:
+		return ""
+	}
+}
+
+func findHostMailboxMessage(ctx context.Context, messageID string, operation boundOperation) (map[string]any, error) {
+	deps, err := loadCommMailboxDependencies(ctx, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +294,69 @@ func findHostMailboxMessage(ctx context.Context, messageID string) (map[string]a
 	if message == nil {
 		return nil, errors.New("unexpected mailbox message response")
 	}
+	if err := authorizeFetchedHostMailboxMessage(ctx, message, operation); err != nil {
+		return nil, err
+	}
 	return message, nil
+}
+
+func authorizeFetchedHostMailboxMessage(ctx context.Context, message map[string]any, initiallyAuthorizedOperation boundOperation) error {
+	actualOperation := boundOperationForHostMailboxMessage(message)
+	if actualOperation == "" {
+		return &toolUserError{
+			Code:    "operation_not_allowed",
+			Message: "operation is not allowed by current bound-body policy",
+			Status:  403,
+			Details: map[string]any{
+				"source": "bound_body_operation_policy",
+				"reason": "mailbox_channel_policy_required",
+			},
+		}
+	}
+	if actualOperation == initiallyAuthorizedOperation {
+		return nil
+	}
+	_, err := authorizedAgentChannelsPayload(ctx, actualOperation)
+	return err
+}
+
+func boundOperationForHostMailboxMessage(message map[string]any) boundOperation {
+	switch hostMailboxMessageChannel(message) {
+	case "email":
+		return boundOperationEmailRead
+	case "sms":
+		return boundOperationSMSRead
+	case "voice", "voicemail":
+		return boundOperationVoiceRead
+	default:
+		return ""
+	}
+}
+
+func hostMailboxMessageChannel(message map[string]any) string {
+	if message == nil {
+		return ""
+	}
+	if channel := notificationChannel(message); channel != "" {
+		return channel
+	}
+	for _, key := range []string{"channelType", "channel_type", "type"} {
+		if value := strings.ToLower(strings.TrimSpace(stringFromMap(message, key))); value != "" {
+			return value
+		}
+	}
+	for _, container := range []string{"communication", "data", "payload"} {
+		child, _ := message[container].(map[string]any)
+		if child == nil {
+			continue
+		}
+		for _, key := range []string{"channelType", "channel_type", "type"} {
+			if value := strings.ToLower(strings.TrimSpace(stringFromMap(child, key))); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func isHostMailboxMessageRef(messageID string) bool {

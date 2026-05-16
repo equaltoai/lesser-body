@@ -149,7 +149,7 @@ func handleEmailReplyWithProgress(ctx context.Context, args json.RawMessage, emi
 		return toolErrorResult("invalid_request", "body is required", 400, nil)
 	}
 
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationEmailSend)
 	if err != nil {
 		return commMailboxToolResultFromError(err)
 	}

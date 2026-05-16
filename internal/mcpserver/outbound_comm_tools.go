@@ -138,7 +138,7 @@ func loadCommSendDependencies(ctx context.Context, channel string) (*commSendDep
 		return nil, res, resErr
 	}
 
-	identity, err := whoamiChannelsPayload(ctx)
+	identity, err := authorizedAgentChannelsPayload(ctx, boundOperationForOutboundChannel(channel))
 	if err != nil {
 		res, resErr := identityToolResultFromError(err)
 		return nil, res, resErr
@@ -171,6 +171,19 @@ func loadCommSendDependencies(ctx context.Context, channel string) (*commSendDep
 		commBearer: commBearer,
 		advisory:   commBoundaryAdvisoryForChannel(ctx, client, agentID, channel),
 	}, nil, nil
+}
+
+func boundOperationForOutboundChannel(channel string) boundOperation {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "email":
+		return boundOperationEmailSend
+	case "sms":
+		return boundOperationSMSSend
+	case "voice":
+		return boundOperationVoiceRead
+	default:
+		return boundOperation(strings.TrimSpace(channel))
+	}
 }
 
 func requireCommAPIBearer(ctx context.Context) (string, error) {

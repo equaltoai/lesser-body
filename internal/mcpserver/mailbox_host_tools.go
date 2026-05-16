@@ -41,12 +41,12 @@ type commMailboxListOptions struct {
 	Deleted         *bool
 }
 
-func loadCommMailboxDependencies(ctx context.Context) (*commMailboxDependencies, error) {
+func loadCommMailboxDependencies(ctx context.Context, operation boundOperation) (*commMailboxDependencies, error) {
 	if _, err := requireOAuthBearer(ctx); err != nil {
 		return nil, err
 	}
 
-	identity, err := whoamiChannelsPayload(ctx)
+	identity, err := authorizedAgentChannelsPayload(ctx, operation)
 	if err != nil {
 		return nil, err
 	}
