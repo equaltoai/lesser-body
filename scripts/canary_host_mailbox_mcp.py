@@ -101,9 +101,61 @@ def is_redirect_status(status: int) -> bool:
     return 300 <= int(status) <= 399
 
 
+def sse_data_events(raw: bytes) -> list[str]:
+    text = raw.decode("utf-8", errors="replace")
+    events: list[str] = []
+    data_lines: list[str] = []
+    for line in text.splitlines():
+        if line == "":
+            events.append("\n".join(data_lines))
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            data_lines.append(value)
+    if data_lines:
+        events.append("\n".join(data_lines))
+    return events
+
+
+def decode_rpc_response(method: str, request_id: int, raw: bytes, content_type: str) -> dict[str, Any]:
+    text = raw.decode("utf-8", errors="replace") if raw else ""
+    is_sse = "text/event-stream" in content_type.lower() or text.lstrip().startswith(("event:", "data:", "id:"))
+    if not is_sse:
+        try:
+            return json.loads(text) if raw else {}
+        except json.JSONDecodeError as exc:
+            digest = hashlib.sha256(raw).hexdigest()[:12]
+            raise CanaryError(f"{method} returned non-JSON body: len={len(raw)} sha256_12={digest}") from exc
+
+    parsed_events = 0
+    for data in sse_data_events(raw):
+        data = data.strip()
+        if not data:
+            continue
+        parsed_events += 1
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("jsonrpc") == "2.0" and parsed.get("id") == request_id and not parsed.get("method"):
+            return parsed
+    raise CanaryError(
+        f"{method} returned SSE without a final JSON-RPC response for id {request_id}; "
+        f"parsed_events={parsed_events}"
+    )
+
+
 def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     global next_id, session_id
-    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": next_id, "method": method}
+    request_id = next_id
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
     next_id += 1
     if params is not None:
         payload["params"] = params
@@ -124,7 +176,8 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
     )
     try:
         with authenticated_open(req, timeout=30) as resp:
-            body = resp.read().decode("utf-8")
+            raw = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
             if not session_id:
                 session_id = resp.headers.get("mcp-session-id", "").strip()
     except urllib.error.HTTPError as exc:
@@ -136,11 +189,7 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
     except urllib.error.URLError as exc:
         raise CanaryError(f"{method} request failed: {exc}") from exc
 
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
-        digest = hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()[:12]
-        raise CanaryError(f"{method} returned non-JSON body: len={len(body)} sha256_12={digest}") from exc
+    data = decode_rpc_response(method, request_id, raw, content_type)
     if data.get("error"):
         raise CanaryError(f"{method} RPC error: {json.dumps(sanitized_error_payload(data['error']), sort_keys=True)}")
     return data.get("result", {})
