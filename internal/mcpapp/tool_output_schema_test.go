@@ -84,6 +84,11 @@ func TestCommunicationAndWriteToolOutputSchemasAdvertised(t *testing.T) {
 		assertSchemaPropertyType(t, schema, "messages", "array")
 		assertSchemaPropertyType(t, schema, "count", "integer")
 		assertSchemaPropertyType(t, schema, "nextCursor", "string")
+		notesSchema := schemaPropertyObject(t, schema, "notes")
+		assertSchemaPropertyType(t, notesSchema, "authority", "string")
+		assertSchemaPropertyType(t, notesSchema, "bodyField", "string")
+		assertSchemaPropertyType(t, notesSchema, "messageIdRef", "string")
+		assertSchemaPropertyType(t, notesSchema, "legacySinceName", "string")
 	}
 	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["email_get"]), "message", "object")
 	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["email_get_content"]), "body", "string")
@@ -184,6 +189,15 @@ func nestedOutputSchemaObject(t testing.TB, def mcpruntime.ToolDef, prop string)
 
 func assertSchemaPropertyType(t testing.TB, schema map[string]any, prop string, want string) {
 	t.Helper()
+	m := schemaPropertyObject(t, schema, prop)
+	got, _ := m["type"].(string)
+	if got != want {
+		t.Fatalf("schema property %q type: got %q want %q", prop, got, want)
+	}
+}
+
+func schemaPropertyObject(t testing.TB, schema map[string]any, prop string) map[string]any {
+	t.Helper()
 	props, _ := schema["properties"].(map[string]any)
 	raw, ok := props[prop]
 	if !ok {
@@ -193,8 +207,5 @@ func assertSchemaPropertyType(t testing.TB, schema map[string]any, prop string, 
 	if !ok {
 		t.Fatalf("schema property %q is %T, want object", prop, raw)
 	}
-	got, _ := m["type"].(string)
-	if got != want {
-		t.Fatalf("schema property %q type: got %q want %q", prop, got, want)
-	}
+	return m
 }

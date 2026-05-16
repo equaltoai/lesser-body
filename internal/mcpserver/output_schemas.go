@@ -260,7 +260,17 @@ func mailboxListOutputSchema() json.RawMessage {
 			"hasMore":{"type":"boolean"},
 			"nextCursor":{"type":"string"},
 			"nextSince":{"type":"string"},
-			"notes":{"type":"array","items":{"type":"string"}},
+			"notes":{
+				"type":"object",
+				"properties":{
+					"authority":{"type":"string"},
+					"bodyField":{"type":"string"},
+					"messageIdRef":{"type":"string"},
+					"legacySinceName":{"type":"string"}
+				},
+				"required":["authority","bodyField","messageIdRef","legacySinceName"],
+				"additionalProperties":true
+			},
 			"folder":{"type":"string"},
 			"query":{"type":"string"},
 			"strategy":{"type":"string"},
