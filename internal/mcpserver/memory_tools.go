@@ -161,9 +161,10 @@ func parseRFC3339Optional(raw string) (time.Time, error) {
 
 func memoryAppendDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
-		Name:        "memory_append",
-		Description: "Append a memory event to the authenticated agent's memory timeline.",
-		Annotations: additiveMutationToolAnnotations(),
+		Name:         "memory_append",
+		Description:  "Append a memory event to the authenticated agent's memory timeline.",
+		Annotations:  additiveMutationToolAnnotations(),
+		OutputSchema: memoryAppendOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{

@@ -60,6 +60,46 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	t.Fatalf("memory_query missing from well-known discovery tools: %+v", out.Tools)
 }
 
+func TestCommunicationAndWriteToolOutputSchemasAdvertised(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
+	auth.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	toolsByName := toolsListByNameForOutputSchemaTest(t, env, app)
+
+	for _, name := range []string{"email_send", "email_reply", "sms_send"} {
+		dataSchema := nestedOutputSchemaObject(t, toolsByName[name], "data")
+		assertSchemaPropertyType(t, dataSchema, "messageId", "string")
+		assertSchemaPropertyType(t, dataSchema, "status", "string")
+		assertSchemaPropertyType(t, dataSchema, "idempotencyKey", "string")
+	}
+	for _, name := range []string{"email_read", "email_search", "sms_read", "voicemail_read"} {
+		schema := outputSchemaObject(t, toolsByName[name])
+		assertSchemaPropertyType(t, schema, "messages", "array")
+		assertSchemaPropertyType(t, schema, "count", "integer")
+		assertSchemaPropertyType(t, schema, "nextCursor", "string")
+	}
+	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["email_get"]), "message", "object")
+	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["email_get_content"]), "body", "string")
+	for _, name := range []string{"email_delete", "email_mark_read", "email_mark_unread"} {
+		schema := outputSchemaObject(t, toolsByName[name])
+		assertSchemaPropertyType(t, schema, "messageId", "string")
+		assertSchemaPropertyType(t, schema, "action", "string")
+		assertSchemaPropertyType(t, schema, "state", "object")
+	}
+	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["memory_append"]), "event", "object")
+
+	for _, name := range []string{"post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "notification_dismiss"} {
+		assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName[name]), "data", "object")
+	}
+}
+
 func toolsListByNameForOutputSchemaTest(t testing.TB, env *testkit.Env, app *apptheory.App) map[string]mcpruntime.ToolDef {
 	t.Helper()
 
