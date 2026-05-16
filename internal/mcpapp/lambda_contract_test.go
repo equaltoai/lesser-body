@@ -107,6 +107,7 @@ func TestHandleLambda_McpRouteReturnsStreamingResponseType(t *testing.T) {
 		Path:       "/mcp/agent1",
 		Headers: map[string]string{
 			"content-type": "application/json",
+			"accept":       "application/json, text/event-stream",
 		},
 		Body:           string(body),
 		StageVariables: streamingStageVariables("POST", "/mcp/{actor}"),
@@ -153,6 +154,7 @@ func TestHandleLambda_McpTrailingSlashCanonicalizes(t *testing.T) {
 		Path:       "/mcp/agent1/",
 		Headers: map[string]string{
 			"content-type": "application/json",
+			"accept":       "application/json, text/event-stream",
 		},
 		Body:           string(body),
 		StageVariables: streamingStageVariables("POST", "/mcp/{actor}"),
@@ -190,6 +192,7 @@ func TestHandleLambda_McpRouteRejectsWrongPublicHost(t *testing.T) {
 		Path:       "/mcp/agent1",
 		Headers: map[string]string{
 			"content-type":      "application/json",
+			"accept":            "application/json, text/event-stream",
 			"x-forwarded-proto": "https",
 			"x-forwarded-host":  "api.example.com",
 		},

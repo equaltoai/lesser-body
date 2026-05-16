@@ -1,9 +1,12 @@
 package mcpapp_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
+	mcptestkit "github.com/theory-cloud/apptheory/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
@@ -77,17 +81,61 @@ func invokeJSONAtPath(t testing.TB, env *testkit.Env, app *apptheory.App, path s
 
 	reqHeaders := map[string][]string{
 		"content-type": {"application/json"},
+		"accept":       {"application/json, text/event-stream"},
 	}
 	for k, v := range headers {
 		reqHeaders[k] = v
 	}
 
-	return env.Invoke(context.Background(), app, apptheory.Request{
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method:  "POST",
 		Path:    path,
 		Headers: reqHeaders,
 		Body:    body,
 	})
+	drainMCPStreamingResponseForJSON(t, &resp)
+	return resp
+}
+
+func drainMCPStreamingResponseForJSON(t testing.TB, resp *apptheory.Response) {
+	t.Helper()
+	if resp == nil || resp.BodyReader == nil {
+		return
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+	var final json.RawMessage
+	for {
+		msg, err := mcptestkit.ReadSSEMessage(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatalf("read MCP SSE response: %v", err)
+		}
+		data := strings.TrimSpace(string(msg.Data))
+		if data == "" {
+			continue
+		}
+
+		var envelope struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+		}
+		if err := json.Unmarshal(msg.Data, &envelope); err != nil {
+			continue
+		}
+		if envelope.JSONRPC == "2.0" && len(envelope.ID) > 0 && strings.TrimSpace(string(envelope.ID)) != "" && envelope.Method == "" {
+			final = append(final[:0], msg.Data...)
+		}
+	}
+
+	if len(final) == 0 {
+		t.Fatalf("streaming MCP response did not include a final JSON-RPC response")
+	}
+	resp.Body = append(resp.Body[:0], final...)
+	resp.BodyReader = nil
 }
 
 func defaultMcpPath(headers map[string][]string) string {
@@ -456,7 +504,7 @@ func TestMcpAuth_AuthorizedJwt(t *testing.T) {
 	listResp := invokeJSON(t, env, app, map[string][]string{
 		"authorization":   {"Bearer " + token},
 		"mcp-session-id":  {sessionID},
-		"accept":          {"application/json"},
+		"accept":          {"application/json, text/event-stream"},
 		"content-type":    {"application/json"},
 		"x-forwarded-for": {"127.0.0.1"},
 	}, &mcpruntime.Request{

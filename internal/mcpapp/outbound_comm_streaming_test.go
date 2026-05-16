@@ -91,7 +91,7 @@ func TestSmsSendStreamingEmitsProgressAndFinalResult(t *testing.T) {
 		Headers: map[string][]string{
 			"authorization":  {authHeader},
 			"content-type":   {"application/json"},
-			"accept":         {"text/event-stream"},
+			"accept":         {"application/json, text/event-stream"},
 			"mcp-session-id": {sessionID},
 		},
 		Body: mustMarshalJSONForTest(t, &mcpruntime.Request{
@@ -114,6 +114,13 @@ func TestSmsSendStreamingEmitsProgressAndFinalResult(t *testing.T) {
 		t.Fatalf("read first SSE frame: %v", err)
 	}
 	firstFrame := string(firstMsg.Data)
+	if strings.TrimSpace(firstFrame) == "" {
+		firstMsg, err = mcptestkit.ReadSSEMessage(reader)
+		if err != nil {
+			t.Fatalf("read first progress SSE frame: %v", err)
+		}
+		firstFrame = string(firstMsg.Data)
+	}
 	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
 		t.Fatalf("expected first frame progress notification, got:\n%s", firstFrame)
 	}

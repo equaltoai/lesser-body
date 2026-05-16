@@ -118,6 +118,56 @@ def redirect_error(context: str, status: int) -> ProbeError:
     return ProbeError(f"{context} returned HTTP redirect {status}; refusing to follow authenticated redirect")
 
 
+def sse_data_events(raw: bytes) -> list[str]:
+    text = raw.decode("utf-8", errors="replace")
+    events: list[str] = []
+    data_lines: list[str] = []
+    for line in text.splitlines():
+        if line == "":
+            events.append("\n".join(data_lines))
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            data_lines.append(value)
+    if data_lines:
+        events.append("\n".join(data_lines))
+    return events
+
+
+def decode_rpc_response(method: str, request_id: int, raw: bytes, status: int, content_type: str) -> dict[str, Any]:
+    text = raw.decode("utf-8", errors="replace") if raw else ""
+    is_sse = "text/event-stream" in content_type.lower() or text.lstrip().startswith(("event:", "data:", "id:"))
+    if not is_sse:
+        try:
+            return json.loads(text) if raw else {}
+        except json.JSONDecodeError as exc:
+            raise ProbeError(f"{method} returned non-JSON HTTP {status}: {exc}") from exc
+
+    parsed_events = 0
+    for data in sse_data_events(raw):
+        data = data.strip()
+        if not data:
+            continue
+        parsed_events += 1
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("jsonrpc") == "2.0" and parsed.get("id") == request_id and not parsed.get("method"):
+            return parsed
+    raise ProbeError(
+        f"{method} returned SSE HTTP {status} without a final JSON-RPC response "
+        f"for id {request_id}; parsed_events={parsed_events}"
+    )
+
+
 def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], int, int]:
     global _next_id, _session_id
     request_id = _next_id
@@ -128,16 +178,18 @@ def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, An
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Accept": "application/json, text/event-stream",
         "Authorization": AUTHORIZATION,
     }
     if _session_id:
         headers["Mcp-Session-Id"] = _session_id
     req = urllib.request.Request(ENDPOINT, data=body, headers=headers, method="POST")
     started = time.perf_counter()
+    content_type = ""
     try:
         with authenticated_open(req, timeout=130) as resp:
             raw = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
             if resp.headers.get("Mcp-Session-Id"):
                 _session_id = resp.headers["Mcp-Session-Id"].strip()
             status = resp.status
@@ -145,12 +197,10 @@ def rpc(method: str, params: dict[str, Any] | None = None) -> tuple[dict[str, An
         if is_redirect_status(exc.code):
             raise redirect_error(method, exc.code) from exc
         raw = exc.read()
+        content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
         status = exc.code
     elapsed_ms = round((time.perf_counter() - started) * 1000)
-    try:
-        parsed = json.loads(raw.decode("utf-8")) if raw else {}
-    except json.JSONDecodeError as exc:
-        raise ProbeError(f"{method} returned non-JSON HTTP {status}: {exc}") from exc
+    parsed = decode_rpc_response(method, request_id, raw, status, content_type)
     return parsed, elapsed_ms, len(raw)
 
 
