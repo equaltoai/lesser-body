@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -42,7 +43,7 @@ func resourceVoicemail(ctx context.Context) ([]mcpruntime.ResourceContent, error
 }
 
 func resourceMailboxList(ctx context.Context, uri string, opts commMailboxListOptions) (map[string]any, error) {
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationForMailboxResource(opts))
 	if err != nil {
 		contents, resErr := commMailboxResourceContentsFromError(uri, err)
 		if resErr != nil {
@@ -59,6 +60,19 @@ func resourceMailboxList(ctx context.Context, uri string, opts commMailboxListOp
 		return resourceContentsPayload(contents), nil
 	}
 	return out, nil
+}
+
+func boundOperationForMailboxResource(opts commMailboxListOptions) boundOperation {
+	switch strings.ToLower(strings.TrimSpace(opts.ChannelType)) {
+	case "email":
+		return boundOperationEmailRead
+	case "sms":
+		return boundOperationSMSRead
+	case "voice", "voicemail":
+		return boundOperationVoiceRead
+	default:
+		return boundOperationChannelsRead
+	}
 }
 
 func resourceContentsPayload(contents []mcpruntime.ResourceContent) map[string]any {

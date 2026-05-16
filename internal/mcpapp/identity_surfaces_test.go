@@ -89,7 +89,8 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"availability":{"schedule":"always"},
 					"responseExpectation":{"target":"1h","guarantee":"best-effort"},
 					"languages":["en"]
-				}
+				},
+				` + boundBodyPolicyJSON("identity.self.read", "communication.channels.read", "communication.email.read") + `
 			}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/channels":
 			channelResolveQueries = append(channelResolveQueries, agentID)

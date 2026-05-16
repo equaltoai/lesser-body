@@ -46,6 +46,20 @@ Write tools include:
 - `post_create`, `post_boost`, `post_favorite`, `follow`, `unfollow`, `profile_update`, `memory_append`
 - `email_send`, `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`
 
+## Bound-body operation authorization
+
+For private communication and self-channel operations, the souled runtime profile is necessary but not sufficient.
+`lesser-body` checks the actor's binding through Lesser, then requires Host's effective `hosted-bound-soul/v1` policy
+or an equivalent explicit operation policy for the operation and caller class before calling lesser-host. Channel
+presence or channel `capabilities` alone do not grant private operation authority. The modeled caller classes are
+`principal_operator`, `bound_body`, `instance_key`, `allowlisted_peer`, and `public_paid`; `public_paid` remains denied
+in M1, and no public x402 invocation path exists in body yet.
+
+Denied operation-policy checks fail closed with a sanitized `operation_not_allowed` result. The details include only
+policy-safe fields such as `reason`, `operation`, `callerClass`, and optional `policyVersion`; they must not include
+private reachability, provider details, payment evidence, tenant data, wallet material, message bodies, or unresolved
+security details. Policy denial happens before lesser-host communication endpoints are invoked.
+
 The managed instance key compatibility path bypasses scope checks (treat as `admin`), which is why it should not
 remain the long-term inbound client auth model.
 

@@ -13,7 +13,7 @@ func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error)
 		return authResourceContentsFromError("agent://channels", err)
 	}
 
-	payload, err := whoamiChannelsPayload(ctx)
+	payload, err := authorizedAgentChannelsPayload(ctx, boundOperationChannelsRead)
 	if err != nil {
 		return resourceJSON("agent://channels", map[string]any{
 			"error": identityErrorPayload(err),
@@ -28,7 +28,7 @@ func resourceChannelPreferences(ctx context.Context) ([]mcpruntime.ResourceConte
 		return authResourceContentsFromError("agent://channels/preferences", err)
 	}
 
-	payload, err := whoamiChannelsPayload(ctx)
+	payload, err := authorizedAgentChannelsPayload(ctx, boundOperationChannelsRead)
 	if err != nil {
 		return resourceJSON("agent://channels/preferences", map[string]any{
 			"error": identityErrorPayload(err),

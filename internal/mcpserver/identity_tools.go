@@ -42,7 +42,7 @@ func handleIdentityWhoami(ctx context.Context, args json.RawMessage) (*mcpruntim
 		return authToolResultFromError(err)
 	}
 
-	payload, err := whoamiChannelsPayload(ctx)
+	payload, err := authorizedAgentChannelsPayload(ctx, boundOperationIdentitySelfRead)
 	if err != nil {
 		return identityToolResultFromError(err)
 	}
@@ -111,7 +111,7 @@ func whoamiChannelsPayload(ctx context.Context) (map[string]any, error) {
 		return nil, &toolUserError{Code: "not_found", Message: "no bound soul found for this agent", Status: 404}
 	}
 
-	payload, err := agentChannelsPayload(ctx, client, agentID)
+	payload, _, err := agentChannelsPayloadWithRegistration(ctx, client, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -286,26 +286,32 @@ func agentPublicIdentityPayload(ctx context.Context, client *soulapi.Client, age
 }
 
 func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {
+	payload, _, err := agentChannelsPayloadWithRegistration(ctx, client, agentID)
+	return payload, err
+}
+
+func agentChannelsPayloadWithRegistration(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, map[string]any, error) {
 	if client == nil {
-		return nil, errors.New("soul api client is nil")
+		return nil, nil, errors.New("soul api client is nil")
 	}
 	agentID = normalizeSoulAgentID(agentID)
 	if agentID == "" {
-		return nil, &toolUserError{Code: "invalid_request", Message: "missing agentId", Status: 400}
+		return nil, nil, &toolUserError{Code: "invalid_request", Message: "missing agentId", Status: 400}
 	}
 
 	agentAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID), nil, "", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	agentEnvelope, _ := agentAny.(map[string]any)
 	agent, _ := agentEnvelope["agent"].(map[string]any)
 
 	regAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID)+"/registration", nil, "", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reg, _ := regAny.(map[string]any)
+	reg = normalizeSoulReadRegistrationEnvelope(reg)
 
 	channels, _ := reg["channels"].(map[string]any)
 	contactPreferences, _ := reg["contactPreferences"].(map[string]any)
@@ -328,7 +334,7 @@ func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID s
 			return contactPreferences
 		}(),
 	}
-	return out, nil
+	return out, reg, nil
 }
 
 func identityToolResultFromError(err error) (*mcpruntime.ToolResult, error) {

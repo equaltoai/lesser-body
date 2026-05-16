@@ -181,7 +181,8 @@ client-visible S3 links.
   - Social, memory, and public soul-read MCP surfaces remain available.
   - Communication surfaces and wallet-backed product semantics stay disabled.
 - `souled`
-  - Full lesser-body MCP surface, including communication tooling and soul-linked runtime behavior.
+  - Soul-linked MCP runtime. Communication tooling is visible to souled callers, but invoking private communication
+    operations additionally requires explicit bound-body operation policy from Host's effective policy contract.
 
 The profile contract is exposed in two places:
 
@@ -201,6 +202,28 @@ When the active profile is `drone`, lesser-body filters `tools/list`, `resources
 direct calls to communication-only surfaces such as `sms_send`, `agent://channels`, and `compose_email`.
 The drone boundary also applies inside mixed read tools: `notifications_read` rejects explicit
 `communication:inbound` filters for drone actors and filters communication-shaped rows from untyped notification reads.
+
+### Bound-body operation policy
+
+Soul binding proves that an MCP actor is associated with a Host/Soul agent; it does **not** grant the full private
+communication surface by itself. Before private communication or self-channel operations run, lesser-body now checks:
+
+1. the authenticated OAuth caller is still authorized for the bound soul via Lesser's `/api/v1/souls/bound/me`;
+2. Host's effective policy exposes explicit capability policy for the requested operation; and
+3. the caller class is allowed by caller access/payment policy.
+
+The v1 Host contract is `hosted-bound-soul/v1`, surfaced through Soul Comm contactability when it is not already
+embedded in the registration payload. Body treats channel presence or channel `capabilities` alone as insufficient:
+effective policy must also be present.
+
+The modeled caller classes are `principal_operator`, `bound_body`, `instance_key`, `allowlisted_peer`, and
+`public_paid`. In M1, `public_paid` is recognized but always denied; public x402 invocation waits for the later scoped
+grant milestone. SMS and voice/voicemail operations require an affirmative paid/provisioned entitlement in policy before
+body calls lesser-host.
+
+Denied policy checks return a sanitized `operation_not_allowed` tool/resource error with `source`,
+`reason`, `operation`, `callerClass`, and optional `policyVersion`. Denials intentionally omit private reachability,
+provider, payment evidence, tenant, wallet, and message-body details.
 
 ## Examples (curl)
 
@@ -386,12 +409,13 @@ Notes:
 - Communication and identity tools also require an **OAuth JWT** bearer token for agent-context reads such as `identity_whoami`
   and inbox-backed verification. For self-identity checks, lesser-body passes that bearer to Lesser's
   `GET /api/v1/souls/bound/me` endpoint and fails closed if Lesser does not confirm an active bound soul for the
-  authenticated local username.
+  authenticated local username. Soul binding alone is not enough to use private communication/channel operations; Host
+  must also expose explicit bound-body capability and caller access/payment policy for the operation.
 - Host-backed communication tools (`email_send`, `email_read`, `email_get`, `email_get_content`, `email_search`,
   `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`, `sms_read`, `voicemail_read`)
   additionally require the managed
   `LESSER_HOST_INSTANCE_KEY` (or `LESSER_HOST_INSTANCE_KEY_ARN`) so lesser-body can authenticate to lesser-host's
-  `/api/v1/soul/comm/*` endpoints.
+  `/api/v1/soul/comm/*` endpoints. Policy denials fail before any lesser-host communication endpoint is called.
 - Mailbox list/get/search results return redacted previews in `body`/`preview`; use `email_get_content` for full
   content when `content.available=true`. The `messageId` field in mailbox outputs is the opaque host `messageRef`
   accepted by get/content/state/reply calls; legacy host `messageId` appears as `hostMessageId` when present.

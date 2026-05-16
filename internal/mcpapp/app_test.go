@@ -41,6 +41,32 @@ func newTestTokenWithAudience(t testing.TB, secret string, username string, scop
 	return newTestTokenWithTimesAndAudience(t, secret, username, scopes, now, now.Add(time.Hour), audience)
 }
 
+func newTestTokenWithClientClass(t testing.TB, secret string, username string, scopes []string, clientClass string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	claims := &auth.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   username,
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			ID:        "jti_test",
+		},
+		Username:    username,
+		Scopes:      scopes,
+		ClientID:    "test-client",
+		ClientClass: clientClass,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return signed
+}
+
 func newTestTokenWithTimesAndAudience(t testing.TB, secret string, username string, scopes []string, issuedAt, expiresAt time.Time, audience []string) string {
 	t.Helper()
 

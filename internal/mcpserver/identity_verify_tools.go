@@ -271,7 +271,7 @@ func findCommunicationMessage(ctx context.Context, bearerToken string, messageID
 }
 
 func findHostMailboxMessage(ctx context.Context, messageID string) (map[string]any, error) {
-	deps, err := loadCommMailboxDependencies(ctx)
+	deps, err := loadCommMailboxDependencies(ctx, boundOperationChannelsRead)
 	if err != nil {
 		return nil, err
 	}

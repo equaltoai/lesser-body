@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,29 @@ func installSoulBindingLookup(t testing.TB, username string, agentID string) {
 
 func boundSelfResponse(agentID string, username string, domain string, localID string) string {
 	return fmt.Sprintf(`{"agent":{"agent_id":%q,"domain":%q,"local_id":%q,"status":"active","lifecycle_status":"active"},"binding_state":"bound","binding":{"agent_username":%q}}`, agentID, domain, localID, username)
+}
+
+func boundBodyPolicyJSON(operations ...string) string {
+	entries := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		operation = strings.TrimSpace(operation)
+		if operation == "" {
+			continue
+		}
+		entitlement := ""
+		if strings.Contains(operation, ".sms.") || strings.Contains(operation, ".voice.") {
+			entitlement = `,"entitlement":{"state":"provisioned"}`
+		}
+		entries = append(entries, fmt.Sprintf(`%q:{"enabled":true,"callerClasses":["bound_body"]%s}`, operation, entitlement))
+	}
+	return `"capabilityPolicy":{"version":"2026-05-16","operations":{` + strings.Join(entries, ",") + `}},"callerAccessPolicy":{"classes":{"bound_body":{"enabled":true}}}`
+}
+
+func hostedBoundSoulPolicyJSON(phoneEntitlement string, smsAllowed bool, voiceAllowed bool) string {
+	if phoneEntitlement == "" {
+		phoneEntitlement = "not_entitled"
+	}
+	return fmt.Sprintf(`"policy":{"version":"hosted-bound-soul/v1","anchorState":"hosted_offchain","operationalBinding":"hosted_bound_soul","capabilityPolicyVersion":"capability-policy/v1","callerAccessPaymentPolicyVersion":"caller-access-payment/v1","capabilities":{"email":{"defaultAllowed":true},"phone":{"entitlementStatus":%q,"smsAllowed":%t,"voiceAllowed":%t}},"callerAccessPayment":{"publicPaidCaller":{"access":"denied"}},"migration":{"state":"implicit_default_v1"}}`, phoneEntitlement, smsAllowed, voiceAllowed)
 }
 
 func installMissingSoulBindingLookup(t testing.TB) {

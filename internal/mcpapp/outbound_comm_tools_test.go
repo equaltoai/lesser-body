@@ -51,10 +51,11 @@ func TestLBM6_SMSAndVoiceOutboundTools(t *testing.T) {
 			_, _ = w.Write([]byte(`{
 				"version":"3",
 				"channels":{
-					"phone":{"number":"+15550142","capabilities":["sms-send","voice-receive"],"verified":true}
+					"phone":{"number":"+15550142","capabilities":["sms-send","voice-receive"],"verified":true,"entitlement":{"state":"provisioned"}}
 				},
 				"contactPreferences":{},
-				"boundaries":[{"id":"b1","category":"communication_policy","channel":"sms","statement":"reply in thread"}]
+				"boundaries":[{"id":"b1","category":"communication_policy","channel":"sms","statement":"reply in thread"}],
+				` + boundBodyPolicyJSON("communication.sms.send", "communication.voice.read") + `
 			}`))
 		case "/api/v1/soul/comm/send":
 			gotAuth = r.Header.Get("Authorization")

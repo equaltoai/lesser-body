@@ -41,7 +41,7 @@ func TestSmsSendStreamingEmitsProgressAndFinalResult(t *testing.T) {
 		case "/api/v1/soul/agents/" + agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-dana","status":"active"}}`))
 		case "/api/v1/soul/agents/" + agentID + "/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{"phone":{"number":"+15550142","capabilities":["sms-send"],"verified":true}},"contactPreferences":{}}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"phone":{"number":"+15550142","capabilities":["sms-send"],"verified":true,"entitlement":{"state":"provisioned"}}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.sms.send") + `}`))
 		case "/api/v1/soul/comm/send":
 			time.Sleep(10 * time.Millisecond)
 			_, _ = w.Write([]byte(`{"messageId":"comm-msg-sms-002","status":"queued"}`))
