@@ -147,3 +147,65 @@ func TestEchoTool(t *testing.T) {
 		t.Fatalf("unexpected tool result: %+v", toolResult)
 	}
 }
+
+func TestInitializeCapabilitiesArePinnedFailClosed(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+
+	srv, err := mcpserver.New("test-server", "dev")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	env := testkit.New()
+	app := env.App()
+	app.Post("/mcp", srv.Handler())
+
+	params, _ := json.Marshal(map[string]any{"protocolVersion": "2025-11-25"})
+	initResp, _ := invokeRPC(t, env, app, "", &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      "init-capabilities",
+		Method:  "initialize",
+		Params:  params,
+	})
+	if initResp.Error != nil {
+		t.Fatalf("initialize error: %+v", initResp.Error)
+	}
+
+	b, err := json.Marshal(initResp.Result)
+	if err != nil {
+		t.Fatalf("marshal initialize result: %v", err)
+	}
+	var out struct {
+		Capabilities map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal initialize result: %v", err)
+	}
+
+	for _, name := range []string{"tools", "resources", "prompts"} {
+		if _, ok := out.Capabilities[name]; !ok {
+			t.Fatalf("expected %q capability to remain advertised: %+v", name, out.Capabilities)
+		}
+	}
+	for _, name := range []string{"completions", "tasks", "logging"} {
+		if _, ok := out.Capabilities[name]; ok {
+			t.Fatalf("did not expect fail-closed %q capability to be advertised: %+v", name, out.Capabilities)
+		}
+	}
+	assertNoUnsupportedSubCapabilities(t, "tools", out.Capabilities["tools"])
+	assertNoUnsupportedSubCapabilities(t, "resources", out.Capabilities["resources"])
+	assertNoUnsupportedSubCapabilities(t, "prompts", out.Capabilities["prompts"])
+}
+
+func assertNoUnsupportedSubCapabilities(t testing.TB, name string, raw any) {
+	t.Helper()
+	capability, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s capability object, got %T", name, raw)
+	}
+	for _, sub := range []string{"listChanged", "subscribe"} {
+		if _, ok := capability[sub]; ok {
+			t.Fatalf("did not expect %s.%s overclaim: %+v", name, sub, capability)
+		}
+	}
+}

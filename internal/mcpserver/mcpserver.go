@@ -51,6 +51,7 @@ func New(name, version string) (*Server, error) {
 
 func buildServerOptionsFromEnv() ([]ServerOption, error) {
 	opts := []ServerOption{
+		mcpruntime.WithCapabilityConfig(bodyCapabilityConfig()),
 		mcpruntime.WithInitialSessionListenerBudget(mcpruntime.InitialSessionListenerBudgetOptions{
 			SafetyBuffer: initialSessionListenerSafetyBuffer,
 			MaxDuration:  initialSessionListenerMaxDuration,
@@ -76,6 +77,16 @@ func buildServerOptionsFromEnv() ([]ServerOption, error) {
 	}
 
 	return opts, nil
+}
+
+func bodyCapabilityConfig() mcpruntime.CapabilityConfig {
+	return mcpruntime.CapabilityConfig{
+		Tools:       true,
+		Resources:   true,
+		Prompts:     true,
+		Completions: false,
+		Tasks:       false,
+	}
 }
 
 func originValidatorFromEnv() mcpruntime.OriginValidator {
