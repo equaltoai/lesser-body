@@ -36,6 +36,8 @@ const (
 	notificationCommPreviewRunes      = 240
 	conversationReadDefaultLimit      = 20
 	conversationReadMaxLimit          = 80
+	conversationCompactMaxOutputBytes = 6000
+	conversationCompactPreviewRunes   = 16
 	socialCompactListPreviewRunes     = 48
 	timelineCompactMaxOutputBytes     = 6000
 	postSearchCompactMaxOutputBytes   = 8000
@@ -697,6 +699,14 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 }
 
 func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if err := validateConversationReadView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
 	var in struct {
 		Limit      int  `json:"limit,omitempty"`
 		IncludeRaw bool `json:"include_raw,omitempty"`
@@ -722,7 +732,8 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if err != nil {
 		return authToolResultFromError(err)
 	}
-	conversations, err := socialConversationsFromAPI(out, in.IncludeRaw)
+	includeRaw := (in.IncludeRaw || readParams.View == readViewFull) && readParams.View != readViewCompact
+	conversations, err := socialConversationsFromAPI(out, includeRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -730,9 +741,218 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"conversations": conversations,
 		"count":         len(conversations),
 		"limit":         limit,
-		"includeRaw":    in.IncludeRaw,
+		"includeRaw":    includeRaw,
+	}
+	if readParams.View == readViewCompact {
+		return socialCompactConversationsResult(payload, conversations, readParams)
 	}
 	return toolJSONResult(payload, nil)
+}
+
+func validateConversationReadView(view string) error {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "", readViewStandard, readViewFull, readViewCompact:
+		return nil
+	default:
+		return fmt.Errorf("invalid view (expected compact, standard, or full)")
+	}
+}
+
+func socialCompactConversationsResult(standardPayload map[string]any, conversations []any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	previewRunes := conversationCompactPreviewRunes
+	if params.PreviewChars > 0 {
+		previewRunes = params.PreviewChars
+	}
+
+	refs := make([]any, 0, len(conversations))
+	for _, item := range conversations {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			return nil, fmt.Errorf("unexpected conversation item")
+		}
+		ref := compactSocialConversationRef(raw, previewRunes)
+		if ref == nil {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+
+	budget := socialCompactOutputBudget(params, conversationCompactMaxOutputBytes)
+	payload := map[string]any{
+		"view":          readViewCompact,
+		"count":         len(refs),
+		"limit":         standardPayload["limit"],
+		"conversations": refs,
+		"includeRaw":    false,
+		"omitted":       compactConversationListOmissions(),
+		"budget":        socialCompactBudgetMetadata(budget, previewRunes),
+	}
+	text := map[string]any{
+		"tool":  "conversations_read",
+		"view":  readViewCompact,
+		"count": len(refs),
+	}
+	return toolStructuredFirstResultWithBudget("conversations_read", fmt.Sprintf("%d compact conversations", len(refs)), payload, text, nil, false, budget)
+}
+
+func compactSocialConversationRef(raw map[string]any, previewRunes int) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if previewRunes <= 0 {
+		previewRunes = conversationCompactPreviewRunes
+	}
+
+	id := strings.TrimSpace(firstNonEmptyStringMap(raw, "id"))
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", id)
+	if unread, ok := firstBoolMap(raw, "unread", "is_unread", "isUnread"); ok {
+		ref["unread"] = unread
+		ref["read"] = !unread
+	}
+	if read, ok := firstBoolMap(raw, "read", "is_read", "isRead"); ok {
+		ref["read"] = read
+		if _, hasUnread := ref["unread"]; !hasUnread {
+			ref["unread"] = !read
+		}
+	}
+	putIfNotEmpty(ref, "updatedAt", firstNonEmptyStringMap(raw, "updatedAt", "updated_at"))
+	if participants := compactConversationParticipantRefs(raw["participants"]); len(participants) > 0 {
+		ref["participantRefs"] = participants
+	}
+	if post := firstMap(raw, "lastPost", "last_status", "lastStatus"); post != nil {
+		if postRef := compactConversationLastPostRef(post, previewRunes); postRef != nil {
+			ref["lastPostRef"] = postRef
+		}
+	}
+	missing := missingSocialRefFields(map[string]string{
+		"id":              id,
+		"updatedAt":       firstNonEmptyStringMap(raw, "updatedAt", "updated_at"),
+		"participantRefs": stableConversationRefValue(ref["participantRefs"]),
+		"lastPostRef":     stableConversationRefValue(ref["lastPostRef"]),
+	})
+	if _, hasRead := ref["read"]; !hasRead {
+		missing = append(missing, "read")
+	}
+	if len(missing) > 0 {
+		ref["missingFields"] = missing
+	}
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
+}
+
+func compactConversationParticipantRefs(raw any) []any {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	refs := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			continue
+		}
+		if ref := compactConversationParticipantRef(raw); ref != nil {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func compactConversationParticipantRef(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	id := firstNonEmptyStringMap(raw, "id")
+	acct := firstNonEmptyStringMap(raw, "acct")
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", id)
+	putIfNotEmpty(ref, "acct", acct)
+	missing := missingSocialRefFields(map[string]string{
+		"id":   id,
+		"acct": acct,
+	})
+	if len(missing) > 0 {
+		ref["missingFields"] = missing
+	}
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
+}
+
+func compactConversationLastPostRef(raw map[string]any, previewRunes int) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if previewRunes <= 0 {
+		previewRunes = conversationCompactPreviewRunes
+	}
+	id := firstNonEmptyStringMap(raw, "id")
+	content := rawSocialStatusContent(raw)
+	preview, truncated := compactStringWithTruncation(content, previewRunes)
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", id)
+	putIfNotEmpty(ref, "createdAt", firstNonEmptyStringMap(raw, "createdAt", "created_at"))
+	putIfNotEmpty(ref, "visibility", firstNonEmptyStringMap(raw, "visibility"))
+	putIfNotEmpty(ref, "contentPreview", preview)
+	ref["contentTruncated"] = truncated
+	if id != "" {
+		ref["expand"] = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+	} else if content != "" {
+		ref["missingFields"] = []string{"id"}
+		ref["omitted"] = []map[string]any{{
+			"path":   "content",
+			"reason": "missing_post_id_for_expansion",
+		}}
+	}
+	if len(ref) == 1 {
+		return nil
+	}
+	return ref
+}
+
+func stableConversationRefValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		if len(typed) == 0 {
+			return ""
+		}
+		return "present"
+	case map[string]any:
+		if len(typed) == 0 {
+			return ""
+		}
+		return "present"
+	default:
+		return "present"
+	}
+}
+
+func compactConversationListOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":   "conversations[].participants",
+			"reason": "participant_ref_only",
+		},
+		map[string]any{
+			"path":      "conversations[].lastPost.content",
+			"reason":    "last_post_preview",
+			"expansion": "structuredContent.data.conversations[].lastPostRef.expand when lastPostRef.id is present",
+		},
+		map[string]any{
+			"path":      "conversations[]._raw",
+			"reason":    "debug_payload",
+			"expansion": "call conversations_read with view=full or include_raw=true",
+		},
+	}
 }
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1524,12 +1744,15 @@ func notificationGetDef() mcpruntime.ToolDef {
 func conversationsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "conversations_read",
-		Description: "Read compact, bounded direct message conversation summaries. Use include_raw only for audit/debug.",
+		Description: "Read direct message conversation summaries. Use compact for bounded refs and include_raw/full only for audit/debug.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"limit":{"type":"integer","minimum":1,"maximum":80},
-				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."}
+				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded conversation refs without a single-conversation expansion tool."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact last-post preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			}
 		}`),
 	}

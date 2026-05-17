@@ -63,6 +63,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if rpc.Error != nil {
 		t.Fatalf("tools/list error: %+v", rpc.Error)
 	}
+	if strings.Contains(string(listResp.Body), "conversation_get") {
+		t.Fatalf("tools/list must not advertise conversation_get without a real expansion route: %s", string(listResp.Body))
+	}
 
 	var result struct {
 		Tools []mcpruntime.ToolDef `json:"tools"`
@@ -77,6 +80,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		have[tool.Name] = true
 		toolsByName[tool.Name] = tool
+	}
+	if have["conversation_get"] {
+		t.Fatalf("conversation_get must not be advertised without a real expansion route")
 	}
 
 	for _, name := range []string{
@@ -204,6 +210,17 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	}
 	if propType, _ := conversationSchema.Properties["include_raw"]["type"].(string); propType != "boolean" {
 		t.Fatalf("conversations_read include_raw should be boolean, got %+v", conversationSchema.Properties["include_raw"])
+	}
+	viewProp = conversationSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+		t.Fatalf("conversations_read view enum = %+v", viewProp)
+	}
+	if propType, _ := conversationSchema.Properties["max_output_bytes"]["type"].(string); propType != "integer" {
+		t.Fatalf("conversations_read max_output_bytes should be integer, got %+v", conversationSchema.Properties["max_output_bytes"])
+	}
+	if propType, _ := conversationSchema.Properties["preview_chars"]["type"].(string); propType != "integer" {
+		t.Fatalf("conversations_read preview_chars should be integer, got %+v", conversationSchema.Properties["preview_chars"])
 	}
 }
 
@@ -1136,6 +1153,163 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 		"conversations_read include_raw expanded fixture",
 		responseBytes[3],
 	)
+}
+
+func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "CONVERSATION_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR"
+	const accountNote = "CONVERSATION_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "CONVERSATION_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/conversations" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(socialConversationsFixtureJSON(10, "conv", contentTail, accountNote, debugPayload)))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "conversations_read", map[string]any{
+		"limit": 10,
+		"view":  "compact",
+	})
+	if compact.Result.IsError {
+		t.Fatalf("conversations_read compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
+	}
+	assertMCPPayloadBudget(t, "conversations_read compact limit=10 large fixture", len(compact.ResponseBody), 6000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload ", "conversation_get"} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact conversations response leaked or advertised %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+	if gotQueries[0] != "limit=10" {
+		t.Fatalf("expected compact limit query, got %q", gotQueries[0])
+	}
+	compactData, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if compactData["view"] != "compact" || compactData["count"] != float64(10) || compactData["includeRaw"] != false {
+		t.Fatalf("unexpected compact conversations metadata: %+v", compactData)
+	}
+	conversations, _ := compactData["conversations"].([]any)
+	if len(conversations) != 10 {
+		t.Fatalf("expected 10 compact conversations, got %+v", compactData["conversations"])
+	}
+	first, _ := conversations[0].(map[string]any)
+	if first["id"] != "conv-1" || first["unread"] != true || first["read"] != false || first["updatedAt"] == "" {
+		t.Fatalf("unexpected compact conversation metadata: %+v", first)
+	}
+	if _, ok := first["expand"]; ok {
+		t.Fatalf("conversation refs must not advertise conversation_get-style expansion: %+v", first)
+	}
+	participantRefs, _ := first["participantRefs"].([]any)
+	if len(participantRefs) != 2 {
+		t.Fatalf("expected participant refs, got %+v", first)
+	}
+	participant, _ := participantRefs[0].(map[string]any)
+	if participant["id"] != "acct-conv-1-a" || participant["acct"] != "conv1a@example.com" {
+		t.Fatalf("unexpected participant ref: %+v", participant)
+	}
+	if _, ok := participant["note"]; ok {
+		t.Fatalf("participant refs must not inline profile notes: %+v", participant)
+	}
+	lastPostRef, _ := first["lastPostRef"].(map[string]any)
+	if lastPostRef["id"] != "post-conv-1" || lastPostRef["contentTruncated"] != true {
+		t.Fatalf("unexpected lastPostRef: %+v", lastPostRef)
+	}
+	if preview, _ := lastPostRef["contentPreview"].(string); preview == "" || len([]rune(preview)) > 16 || strings.Contains(preview, contentTail) {
+		t.Fatalf("expected bounded last-post preview, got %q (%d runes)", preview, len([]rune(preview)))
+	}
+	postExpand, _ := lastPostRef["expand"].(map[string]any)
+	postArgs, _ := postExpand["arguments"].(map[string]any)
+	if postExpand["tool"] != "post_get" || postArgs["id"] != "post-conv-1" {
+		t.Fatalf("expected lastPostRef to expand through post_get, got %+v", postExpand)
+	}
+	topOmitted, _ := compactData["omitted"].([]any)
+	if len(topOmitted) < 3 {
+		t.Fatalf("expected list-level conversation omitted metadata, got %+v", compactData["omitted"])
+	}
+	if b, _ := json.Marshal(topOmitted); strings.Contains(string(b), "conversation_get") {
+		t.Fatalf("omitted metadata must not advertise conversation_get: %s", string(b))
+	}
+	var text map[string]any
+	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
+		t.Fatalf("unmarshal compact text: %v", err)
+	}
+	if _, ok := text["conversations"]; ok {
+		t.Fatalf("compact text should use structured-first locator instead of duplicating conversations: %+v", text)
+	}
+	if locator, _ := text["data"].(map[string]any); locator["location"] != "structuredContent.data" {
+		t.Fatalf("expected structured data locator in compact text, got %+v", text)
+	}
+
+	previewCompact := callSocialTool(t, env, app, authHeader, sessionID, 3, "conversations_read", map[string]any{
+		"limit":            10,
+		"view":             "compact",
+		"preview_chars":    8,
+		"max_output_bytes": 6000,
+	})
+	previewData, _ := previewCompact.Result.StructuredContent["data"].(map[string]any)
+	previewBudget, _ := previewData["budget"].(map[string]any)
+	if previewBudget["contentPreviewRunes"] != float64(8) || previewBudget["maxOutputBytes"] != float64(6000) {
+		t.Fatalf("expected preview/max budget metadata to honor args, got %+v", previewBudget)
+	}
+	previewConversations, _ := previewData["conversations"].([]any)
+	previewFirst, _ := previewConversations[0].(map[string]any)
+	previewLast, _ := previewFirst["lastPostRef"].(map[string]any)
+	if preview, _ := previewLast["contentPreview"].(string); len([]rune(preview)) > 8 {
+		t.Fatalf("expected preview_chars=8 to be honored, got %q", preview)
+	}
+
+	defaultResult := callSocialTool(t, env, app, authHeader, sessionID, 4, "conversations_read", map[string]any{"limit": 10})
+	fullResult := callSocialTool(t, env, app, authHeader, sessionID, 5, "conversations_read", map[string]any{
+		"limit": 10,
+		"view":  "full",
+	})
+	fullData, _ := fullResult.Result.StructuredContent["data"].(map[string]any)
+	fullConversations, _ := fullData["conversations"].([]any)
+	fullConversation, _ := fullConversations[0].(map[string]any)
+	if _, ok := fullConversation["_raw"].(map[string]any); !ok || fullData["includeRaw"] != true {
+		t.Fatalf("view=full should preserve explicit raw/debug path, got %+v", fullData)
+	}
+	if !strings.Contains(string(fullResult.ResponseBody), debugPayload) || !strings.Contains(string(fullResult.ResponseBody), accountNote) {
+		t.Fatalf("view=full should expose upstream debug/account payloads")
+	}
+	assertMCPPayloadIncrease(t,
+		"conversations_read compact limit=10 large fixture",
+		len(compact.ResponseBody),
+		"conversations_read default normalized fixture",
+		len(defaultResult.ResponseBody),
+	)
+
+	tooLarge := callSocialTool(t, env, app, authHeader, sessionID, 6, "conversations_read", map[string]any{
+		"limit":            10,
+		"view":             "compact",
+		"max_output_bytes": 1000,
+	})
+	if !tooLarge.Result.IsError {
+		t.Fatalf("expected response_too_large conversation tool error, got %+v", tooLarge.Result)
+	}
+	errorPayload, _ := tooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["tool"] != "conversations_read" || details["maxOutputBytes"] != float64(1000) || details["measuredBytes"] == float64(0) {
+		t.Fatalf("unexpected too-large details: %+v", details)
+	}
+	if strings.Contains(string(tooLarge.ResponseBody), "conversation_get") {
+		t.Fatalf("too-large error must not advertise conversation_get: %s", string(tooLarge.ResponseBody))
+	}
 }
 
 func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
@@ -2759,6 +2933,72 @@ func socialNotificationsFixtureJSON(count int, prefix string, contentTail string
 		}`,
 			prefix, i,
 			i,
+			prefix, i,
+			prefix, i,
+			prefix, i,
+			titlePrefix, i,
+			prefix, i,
+			accountNote, strings.Repeat("account note ", 80),
+			prefix, i,
+			prefix, i, prefix, i,
+			i,
+			content,
+			debugPayload, strings.Repeat("debug payload ", 80),
+		))
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func socialConversationsFixtureJSON(count int, prefix string, contentTail string, accountNote string, debugPayload string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	titlePrefix := strings.ToUpper(prefix[:1]) + prefix[1:]
+	for i := 1; i <= count; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		content := strings.Repeat(fmt.Sprintf("%s conversation content %02d ", prefix, i), 24) + contentTail
+		b.WriteString(fmt.Sprintf(`{
+			"id":"%s-%d",
+			"unread":%t,
+			"updated_at":"2026-05-17T18:%02d:00Z",
+			"accounts":[
+				{
+					"id":"acct-%s-%d-a",
+					"username":"%s%da",
+					"acct":"%s%da@example.com",
+					"display_name":"%s %d A",
+					"url":"https://example.com/@%s%da",
+					"note":"%s %s"
+				},
+				{
+					"id":"acct-%s-%d-b",
+					"username":"%s%db",
+					"acct":"%s%db@example.com",
+					"display_name":"%s %d B",
+					"url":"https://example.com/@%s%db",
+					"note":"%s %s"
+				}
+			],
+			"last_status":{
+				"id":"post-%s-%d",
+				"url":"https://example.com/@%s%da/post-%s-%d",
+				"created_at":"2026-05-17T17:%02d:00Z",
+				"visibility":"direct",
+				"content":"%s"
+			},
+			"debugPayload":{"large":"%s %s"}
+		}`,
+			prefix, i,
+			i%2 == 1,
+			i,
+			prefix, i,
+			prefix, i,
+			prefix, i,
+			titlePrefix, i,
+			prefix, i,
+			accountNote, strings.Repeat("account note ", 80),
 			prefix, i,
 			prefix, i,
 			prefix, i,
