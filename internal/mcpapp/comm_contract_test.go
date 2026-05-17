@@ -198,6 +198,11 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "archived", "boolean")
 		expectPropType(t, s, "includeDeleted", "boolean")
 		expectPropType(t, s, "deleted", "boolean")
+		view := expectPropType(t, s, "view", "string")
+		enum, _ := view["enum"].([]any)
+		if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+			t.Fatalf("email_read view enum = %+v", view)
+		}
 		limit := expectPropType(t, s, "limit", "integer")
 		if limit["maximum"] != float64(100) {
 			t.Fatalf("email_read limit.maximum: want 100 got %#v", limit["maximum"])

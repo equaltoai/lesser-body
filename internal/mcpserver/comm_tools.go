@@ -95,7 +95,8 @@ func emailReadDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":100},
 				"cursor":{"type":"string"},
 				"since":{"type":"string","description":"Legacy alias for cursor."},
-				"threadId":{"type":"string"}
+				"threadId":{"type":"string"},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve today's mailbox list shape; compact returns bounded refs/previews with email_get/email_get_content expansion metadata; full includes sanitized _raw mailbox metadata without fetching full bodies."}
 			}
 		}`),
 	}

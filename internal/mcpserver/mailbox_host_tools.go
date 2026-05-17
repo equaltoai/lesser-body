@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	mailboxDefaultLimit = 20
-	mailboxMaxLimit     = 100
+	mailboxDefaultLimit          = 20
+	mailboxMaxLimit              = 100
+	mailboxCompactMaxOutputBytes = 8000
 )
 
 type commMailboxDependencies struct {
@@ -312,14 +313,14 @@ func normalizeMailboxMessage(raw any, includeRaw bool) map[string]any {
 		"preview":       preview,
 		"body":          preview,
 		"bodyIsPreview": true,
-		"content":       mapFromAny(m["content"]),
+		"content":       sanitizeMailboxRawContent(mapFromAny(m["content"])),
 		"state":         mapFromAny(m["state"]),
 		"createdAt":     createdAt,
 		"receivedAt":    createdAt,
 		"updatedAt":     strings.TrimSpace(stringFromMap(m, "updatedAt")),
 	}
 	if includeRaw {
-		out["_raw"] = m
+		out["_raw"] = sanitizeMailboxRawMessage(m)
 	}
 	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(out["direction"])), "outbound") {
 		out["sentAt"] = createdAt
@@ -408,12 +409,205 @@ func validateMailboxReadFilters(unreadOnly bool, read *bool) error {
 	return nil
 }
 
+func validateMailboxListReadView(view string) error {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case readViewCompact, readViewStandard, readViewFull:
+		return nil
+	default:
+		return fmt.Errorf("invalid view (expected compact, standard, or full)")
+	}
+}
+
 func mailboxListNotes() map[string]any {
 	return map[string]any{
 		"authority":       "lesser-host Soul Comm Mailbox",
 		"bodyField":       "body is a redacted preview in list/get results; call email_get_content for full content when content.available is true",
 		"messageIdRef":    "messageId is an opaque host messageRef suitable for get/content/state/reply calls",
 		"legacySinceName": "nextSince is an alias of nextCursor for older clients; pass it back as cursor or since",
+	}
+}
+
+func mailboxCompactListResult(standard map[string]any) map[string]any {
+	messagesRaw, _ := standard["messages"].([]any)
+	messages := make([]any, 0, len(messagesRaw))
+	for _, item := range messagesRaw {
+		message, _ := item.(map[string]any)
+		if message == nil {
+			continue
+		}
+		messages = append(messages, compactMailboxMessage(message))
+	}
+
+	out := map[string]any{
+		"source":     standard["source"],
+		"view":       readViewCompact,
+		"messages":   messages,
+		"count":      standard["count"],
+		"hasMore":    standard["hasMore"],
+		"nextCursor": standard["nextCursor"],
+		"filters":    mailboxCompactFilters(standard),
+		"notes": map[string]any{
+			"authority":    "lesser-host Soul Comm Mailbox",
+			"messageRef":   "messageRef is the canonical opaque host reference for email_get, email_get_content, state, and reply calls",
+			"preview":      "compact preview is not duplicated into body; call email_get_content for full content when content.available is true",
+			"standardView": "call email_read with view=standard for compatibility aliases and repeated legacy notes",
+		},
+		"omitted": compactMailboxListOmissions(),
+	}
+	if v := strings.TrimSpace(stringFromMap(standard, "folder")); v != "" {
+		out["folder"] = v
+	}
+	return out
+}
+
+func compactMailboxMessage(message map[string]any) map[string]any {
+	messageRef := strings.TrimSpace(stringFromMap(message, "messageRef"))
+	out := map[string]any{
+		"messageRef":  messageRef,
+		"channelType": strings.TrimSpace(stringFromMap(message, "channelType")),
+		"content":     compactMailboxContent(mapFromAny(message["content"])),
+		"state":       compactMailboxState(mapFromAny(message["state"])),
+	}
+	putIfNotEmpty(out, "direction", stringFromMap(message, "direction"))
+	putIfNotEmpty(out, "status", stringFromMap(message, "status"))
+	putIfNotEmpty(out, "threadId", stringFromMap(message, "threadId"))
+	putIfNotEmpty(out, "subject", stringFromMap(message, "subject"))
+	putIfNotEmpty(out, "preview", stringFromMap(message, "preview"))
+	putIfNotEmpty(out, "createdAt", stringFromMap(message, "createdAt"))
+	putIfNotEmpty(out, "updatedAt", stringFromMap(message, "updatedAt"))
+	if strings.EqualFold(strings.TrimSpace(stringFromMap(message, "direction")), "outbound") {
+		putIfNotEmpty(out, "sentAt", stringFromMap(message, "sentAt"))
+	}
+	if messageRef != "" {
+		out["expand"] = map[string]any{
+			"metadata": SocialExpansionRef{
+				Tool:       "email_get",
+				Arguments:  map[string]any{"messageId": messageRef, "include_raw": false},
+				ResultPath: "structuredContent.message",
+			},
+			"content": SocialExpansionRef{
+				Tool:       "email_get_content",
+				Arguments:  map[string]any{"messageId": messageRef},
+				ResultPath: "structuredContent",
+			},
+		}
+	} else {
+		out["missingFields"] = []any{"messageRef"}
+	}
+	return out
+}
+
+func compactMailboxContent(content map[string]any) map[string]any {
+	out := map[string]any{}
+	if v, ok := content["available"]; ok {
+		out["available"] = v
+	}
+	return out
+}
+
+func compactMailboxState(state map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"read", "archived", "deleted"} {
+		if v, ok := state[key]; ok {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+func mailboxCompactFilters(standard map[string]any) map[string]any {
+	filters := map[string]any{}
+	for _, key := range []string{"folder", "query", "unreadOnly", "read", "includeArchived", "archived", "includeDeleted", "deleted", "cursor", "since"} {
+		if v, ok := standard[key]; ok {
+			filters[key] = v
+		}
+	}
+	return filters
+}
+
+func compactMailboxListOmissions() []any {
+	return []any{
+		map[string]any{"path": "messages[].messageId", "reason": "compatibility_alias", "expansion": "call email_read with view=standard"},
+		map[string]any{"path": "messages[].deliveryId", "reason": "compatibility_alias", "expansion": "call email_read with view=standard"},
+		map[string]any{"path": "messages[].hostMessageId", "reason": "compatibility_alias", "expansion": "call email_read with view=standard"},
+		map[string]any{"path": "messages[].channel", "reason": "compatibility_alias", "expansion": "use messages[].channelType or call email_read with view=standard"},
+		map[string]any{"path": "messages[].body", "reason": "full_body_not_in_list", "expansion": "messages[].expand.content"},
+		map[string]any{"path": "messages[]._raw", "reason": "debug_payload", "expansion": "call email_read with view=full"},
+		map[string]any{"path": "notes.legacySinceName", "reason": "legacy_note", "expansion": "call email_read with view=standard"},
+	}
+}
+
+func compactMailboxListToolResult(toolName string, payload map[string]any) (*mcpruntime.ToolResult, error) {
+	textPayload := map[string]any{
+		"summary": fmt.Sprintf("%d compact mailbox messages", len(firstArrayFromAny(payload, "messages"))),
+		"tool":    toolName,
+		"view":    readViewCompact,
+		"count":   payload["count"],
+		"data":    map[string]any{"location": "structuredContent"},
+	}
+	b, err := json.Marshal(textPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal compact mailbox tool text: %w", err)
+	}
+	result := &mcpruntime.ToolResult{
+		Content: []mcpruntime.ContentBlock{{
+			Type: "text",
+			Text: string(b),
+		}},
+		StructuredContent: payload,
+	}
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return nil, err
+	}
+	if measurement.JSONRPCEnvelopeBytes <= mailboxCompactMaxOutputBytes {
+		return result, nil
+	}
+	return toolErrorResult("response_too_large", toolName+" compact response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
+		"tool":             toolName,
+		"view":             readViewCompact,
+		"measuredBytes":    measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":   mailboxCompactMaxOutputBytes,
+		"contentTextBytes": measurement.ContentTextBytes,
+		"structuredBytes":  measurement.StructuredContentBytes,
+		"guidance":         "reduce limit or use view=standard/full for explicit expansion",
+	})
+}
+
+func sanitizeMailboxRawMessage(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		if isMailboxBodyField(key) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "content") {
+			if content, ok := value.(map[string]any); ok {
+				out[key] = sanitizeMailboxRawContent(content)
+				continue
+			}
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func sanitizeMailboxRawContent(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		if isMailboxBodyField(key) {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func isMailboxBodyField(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "body", "textbody", "htmlbody", "bodytext", "bodyhtml", "messagebody", "rawbody":
+		return true
+	default:
+		return false
 	}
 }
 

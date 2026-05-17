@@ -371,7 +371,7 @@ Scope key:
 | `skills_catalog` | Read | List approved skill bundles from Lesser's authoritative skills catalog, preserving bundle digests, provenance, install hints, and exposure metadata. |
 | `skill_bundle_get` | Read | Fetch a selected approved Lesser skill bundle and optionally report local install-state verification from caller-supplied local file bytes. When `MCP_TASK_TABLE` is configured, this read-only tool also supports optional task-backed execution. |
 | `email_send` | Write | Send a new email through lesser-host on behalf of the authenticated soul agent; use `email_reply` for mailbox replies. |
-| `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox. |
+| `email_read` | Read | List email metadata/previews from lesser-host's canonical Soul Comm Mailbox; supports opt-in compact mailbox refs. |
 | `email_get` | Read | Get email metadata/state by opaque host `messageId`/`messageRef`. |
 | `email_get_content` | Read | Explicitly fetch full email content for a specific mailbox message. |
 | `email_search` | Read | Run bounded host metadata/preview search over the email mailbox. |
@@ -521,14 +521,27 @@ Notes:
   Verbose upstream mailbox payloads are omitted by default. `email_read`, `email_get`, `email_search`, `sms_read`,
   and `voicemail_read` accept optional `include_raw=true` for audit/debug use cases, which adds the upstream payload
   under `_raw` on each returned message.
+- `email_read` advertises opt-in `view=compact|standard|full`. Omitted/default and `view=standard` preserve the
+  existing mailbox list shape, including compatibility aliases (`messageId`, `messageRef`, `deliveryId`,
+  `hostMessageId`, `channel`/`channelType`), preview-as-`body` plus `bodyIsPreview`, `nextCursor`/`nextSince`, notes,
+  and filter echo fields. `email_read(view=compact)` returns compact mailbox refs with canonical `messageRef`,
+  `channelType`, subject/preview, content availability metadata, read/archive/delete state, page cursor metadata,
+  omission records, and deterministic expansion refs to `email_get` and
+  `email_get_content`. Compact mode does not duplicate preview into `body`, does not include `_raw`, and does not inline
+  full message bodies. `email_read(folder=inbox, limit=10, view=compact)` targets an 8 KB MCP JSON-RPC payload budget;
+  if a compact response exceeds that budget, body returns `response_too_large` with measured byte details.
+  `view=full` and `include_raw=true` are explicit audit/debug paths for sanitized mailbox metadata only: list responses
+  still do not fetch or inline full email bodies, and `email_get_content` remains the only full-body path.
 - `email_send` starts a new outbound email. It accepts optional `idempotencyKey` for retry-safe new sends, but it does
   not accept `messageId` or `inReplyTo`; those legacy reply/message-reference fields are rejected locally with a
   structured `invalid_request` tool error before lesser-host is called. To reply to an inbound mailbox message, use
   `email_reply` with the opaque mailbox `messageId` returned by `email_read`, `email_search`, `email_get`, or
   notification `communication.messageId`.
-- Mailbox and memory tools use dual MCP result surfaces: `content[0].text` contains the JSON payload for text-reading
-  clients, and `structuredContent` contains the same typed fields directly (for example `messages` or `events` at the
-  top level) rather than nesting them under a `data` wrapper.
+- Mailbox and memory tools use dual MCP result surfaces in standard/default mode: `content[0].text` contains the JSON
+  payload for text-reading clients, and `structuredContent` contains the same typed fields directly (for example
+  `messages` or `events` at the top level) rather than nesting them under a `data` wrapper. Compact mailbox list views
+  keep the flat top-level `structuredContent` shape but use concise text with a locator to `structuredContent` instead
+  of duplicating every compact message in `content[0].text`.
 - Selected tools now publish MCP `outputSchema` metadata in `tools/list` and `.well-known/mcp.json`. The schema
   describes the tool's `structuredContent` success shape, not the full JSON-RPC envelope: memory query tools describe
   direct top-level fields such as `events`, while selected identity, soul, and skills tools that use the generic
