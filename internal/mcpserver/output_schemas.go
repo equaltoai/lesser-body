@@ -98,6 +98,28 @@ func skillBundleGetOutputSchema() json.RawMessage {
 	}`)
 }
 
+func postGetOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string"},
+					"view":{"type":"string"},
+					"source":{"type":"string"},
+					"status":{"type":"object","additionalProperties":true},
+					"statusRef":{"type":"object","additionalProperties":true}
+				},
+				"required":["id","view","source","status","statusRef"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
