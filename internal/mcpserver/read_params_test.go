@@ -36,6 +36,7 @@ func TestParseSharedReadParamsNormalizesOptInShape(t *testing.T) {
 func TestParseSharedReadParamsRejectsInvalidShape(t *testing.T) {
 	for name, raw := range map[string]string{
 		"view":                `{"view":"dense"}`,
+		"view_type":           `{"view":3}`,
 		"fields":              `{"fields":["id",3]}`,
 		"preview_chars":       `{"preview_chars":-1}`,
 		"max_output_bytes":    `{"max_output_bytes":1.25}`,

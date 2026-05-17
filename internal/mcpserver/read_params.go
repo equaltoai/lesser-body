@@ -51,14 +51,19 @@ func parseSharedReadParams(args json.RawMessage) (sharedReadParams, error) {
 		return out, nil
 	}
 
-	out.View = strings.ToLower(strings.TrimSpace(stringFromAny(raw["view"])))
-	if out.View != "" {
-		if _, ok := supportedReadViews[out.View]; !ok {
-			return out, fmt.Errorf("unsupported view %q", out.View)
+	view, ok, err := optionalStringFromAny(raw["view"], "view")
+	if err != nil {
+		return out, err
+	}
+	if ok {
+		out.View = strings.ToLower(strings.TrimSpace(view))
+		if out.View != "" {
+			if _, ok := supportedReadViews[out.View]; !ok {
+				return out, fmt.Errorf("unsupported view %q", out.View)
+			}
 		}
 	}
 
-	var err error
 	out.Fields, err = stringListFromAny(raw["fields"], "fields")
 	if err != nil {
 		return out, err
@@ -224,7 +229,13 @@ func optionalBoolFromAny(v any, name string) (bool, bool, error) {
 	return b, true, nil
 }
 
-func stringFromAny(v any) string {
-	s, _ := v.(string)
-	return s
+func optionalStringFromAny(v any, name string) (string, bool, error) {
+	if v == nil {
+		return "", false, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", false, fmt.Errorf("%s must be a string", name)
+	}
+	return s, true, nil
 }
