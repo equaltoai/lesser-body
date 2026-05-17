@@ -120,6 +120,28 @@ func postGetOutputSchema() json.RawMessage {
 	}`)
 }
 
+func notificationGetOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string"},
+					"view":{"type":"string"},
+					"source":{"type":"string"},
+					"notification":{"type":"object","additionalProperties":true},
+					"notificationRef":{"type":"object","additionalProperties":true}
+				},
+				"required":["id","view","source","notification","notificationRef"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",

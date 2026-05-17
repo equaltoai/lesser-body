@@ -88,6 +88,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"following_list",
 		"conversations_read",
 		"notifications_read",
+		"notification_get",
 		"notification_dismiss",
 		"post_create",
 		"post_boost",
@@ -129,6 +130,17 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if maxItems, _ := typesProp["maxItems"].(float64); maxItems != 8 {
 		t.Fatalf("notifications_read types should advertise maxItems=8, got %+v", typesProp)
 	}
+	viewProp := notificationSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+		t.Fatalf("notifications_read view enum = %+v", viewProp)
+	}
+	if propType, _ := notificationSchema.Properties["max_output_bytes"]["type"].(string); propType != "integer" {
+		t.Fatalf("notifications_read max_output_bytes should be integer, got %+v", notificationSchema.Properties["max_output_bytes"])
+	}
+	if propType, _ := notificationSchema.Properties["preview_chars"]["type"].(string); propType != "integer" {
+		t.Fatalf("notifications_read preview_chars should be integer, got %+v", notificationSchema.Properties["preview_chars"])
+	}
 	var postGetSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
 		Required   []string                  `json:"required"`
@@ -139,13 +151,31 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if propType, _ := postGetSchema.Properties["id"]["type"].(string); propType != "string" {
 		t.Fatalf("post_get id should be string, got %+v", postGetSchema.Properties["id"])
 	}
-	viewProp := postGetSchema.Properties["view"]
+	viewProp = postGetSchema.Properties["view"]
 	enum, _ = viewProp["enum"].([]any)
 	if !reflect.DeepEqual(enum, []any{"standard", "full"}) {
 		t.Fatalf("post_get view enum = %+v", viewProp)
 	}
 	if !containsString(postGetSchema.Required, "id") {
 		t.Fatalf("post_get should require id, got %+v", postGetSchema.Required)
+	}
+	var notificationGetSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+	if err := json.Unmarshal(toolsByName["notification_get"].InputSchema, &notificationGetSchema); err != nil {
+		t.Fatalf("unmarshal notification_get schema: %v", err)
+	}
+	if propType, _ := notificationGetSchema.Properties["id"]["type"].(string); propType != "string" {
+		t.Fatalf("notification_get id should be string, got %+v", notificationGetSchema.Properties["id"])
+	}
+	viewProp = notificationGetSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"standard", "full"}) {
+		t.Fatalf("notification_get view enum = %+v", viewProp)
+	}
+	if !containsString(notificationGetSchema.Required, "id") {
+		t.Fatalf("notification_get should require id, got %+v", notificationGetSchema.Required)
 	}
 	for _, toolName := range []string{"timeline_read", "post_search"} {
 		var schema struct {
@@ -287,6 +317,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			},
 		},
 		{
+			name:        "notification_get",
+			tool:        "notification_get",
+			scope:       "read",
+			args:        map[string]any{"id": "n1"},
+			invalidArgs: map[string]any{"id": ""},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "GET", Path: "/api/v1/notifications/n1"},
+			},
+		},
+		{
 			name:        "notification_dismiss",
 			tool:        "notification_dismiss",
 			scope:       "write",
@@ -414,6 +455,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`{"id":"s1","url":"https://example.com/@agent/s1","content":"hello","account":{"id":"acct1","acct":"agent@example.com"},"visibility":"public"}`))
 				case "/api/v1/notifications":
 					_, _ = w.Write([]byte(`[{"id":"n1"}]`))
+				case "/api/v1/notifications/n1":
+					_, _ = w.Write([]byte(`{"id":"n1","type":"mention","created_at":"2026-05-17T18:00:00Z","account":{"id":"acct1","acct":"agent@example.com"},"status":{"id":"s1","content":"hello","visibility":"public"}}`))
 				case "/api/v1/notifications/n1/dismiss":
 					_, _ = w.Write([]byte(`{}`))
 				case "/api/v1/statuses":
@@ -1362,6 +1405,182 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested
 	)
 }
 
+func TestM5_NotificationsReadCompactAndNotificationGetExpansion(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "NOTIFICATION_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR"
+	const accountNote = "NOTIFICATION_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "NOTIFICATION_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications":
+			_, _ = w.Write([]byte(socialNotificationsFixtureJSON(10, "notif", contentTail, accountNote, debugPayload)))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications/notif-1":
+			_, _ = w.Write([]byte(`{
+				"id":"notif-1",
+				"type":"mention",
+				"created_at":"2026-05-17T18:01:00Z",
+				"read":false,
+				"account":{"id":"acct-notif-1","username":"notif1","acct":"notif1@example.com","display_name":"Notif 1","url":"https://example.com/@notif1","note":"` + accountNote + ` ` + strings.Repeat("account note ", 80) + `"},
+				"status":{"id":"post-notif-1","url":"https://example.com/@notif1/post-notif-1","created_at":"2026-05-17T17:01:00Z","visibility":"public","content":"` + strings.Repeat("notification content ", 80) + contentTail + `"},
+				"debugPayload":{"large":"` + debugPayload + ` ` + strings.Repeat("debug payload ", 100) + `"}
+			}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "notifications_read", map[string]any{
+		"limit": 10,
+		"view":  "compact",
+	})
+	if compact.Result.IsError {
+		t.Fatalf("notifications_read compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
+	}
+	assertMCPPayloadBudget(t, "notifications_read compact limit=10 large fixture", len(compact.ResponseBody), 8000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact notifications response leaked %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+	compactData, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if compactData["view"] != "compact" || compactData["count"] != float64(10) {
+		t.Fatalf("unexpected compact notifications metadata: %+v", compactData)
+	}
+	if _, ok := compactData["diagnostics"]; ok {
+		t.Fatalf("compact notifications should not include diagnostics by default: %+v", compactData)
+	}
+	if _, ok := compact.Result.StructuredContent["diagnostics"]; ok {
+		t.Fatalf("compact structured diagnostics should be opt-in: %+v", compact.Result.StructuredContent)
+	}
+	notifications, _ := compactData["notifications"].([]any)
+	if len(notifications) != 10 {
+		t.Fatalf("expected 10 compact notifications, got %+v", compactData["notifications"])
+	}
+	first, _ := notifications[0].(map[string]any)
+	if first["id"] != "notif-10" || first["type"] != "mention" {
+		t.Fatalf("notifications should be newest-first compact refs, got %+v", first)
+	}
+	actorRef, _ := first["actorRef"].(map[string]any)
+	if actorRef["id"] != "acct-notif-10" || actorRef["acct"] != "notif10@example.com" {
+		t.Fatalf("unexpected compact actorRef: %+v", actorRef)
+	}
+	if _, ok := actorRef["note"]; ok {
+		t.Fatalf("compact actorRef must not inline account notes: %+v", actorRef)
+	}
+	targetPostRef, _ := first["targetPostRef"].(map[string]any)
+	if targetPostRef["id"] != "post-notif-10" || targetPostRef["contentTruncated"] != true {
+		t.Fatalf("unexpected compact targetPostRef: %+v", targetPostRef)
+	}
+	if preview, _ := targetPostRef["contentPreview"].(string); preview == "" || len([]rune(preview)) > 48 || strings.Contains(preview, contentTail) {
+		t.Fatalf("expected bounded target post preview, got %q (%d runes)", preview, len([]rune(preview)))
+	}
+	expand, _ := first["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "notification_get" || expandArgs["id"] != "notif-10" || expandArgs["view"] != "standard" {
+		t.Fatalf("unexpected notification expansion metadata: %+v", expand)
+	}
+	postExpand, _ := targetPostRef["expand"].(map[string]any)
+	postArgs, _ := postExpand["arguments"].(map[string]any)
+	if postExpand["tool"] != "post_get" || postArgs["id"] != "post-notif-10" {
+		t.Fatalf("unexpected target post expansion metadata: %+v", postExpand)
+	}
+	topOmitted, _ := compactData["omitted"].([]any)
+	if len(topOmitted) < 3 {
+		t.Fatalf("expected list-level notification omitted metadata, got %+v", compactData["omitted"])
+	}
+	var text map[string]any
+	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
+		t.Fatalf("unmarshal compact text: %v", err)
+	}
+	if _, ok := text["notifications"]; ok {
+		t.Fatalf("compact text should use structured-first locator instead of duplicating notifications: %+v", text)
+	}
+	if locator, _ := text["data"].(map[string]any); locator["location"] != "structuredContent.data" {
+		t.Fatalf("expected structured data locator in compact text, got %+v", text)
+	}
+
+	defaultResult := callSocialTool(t, env, app, authHeader, sessionID, 3, "notifications_read", map[string]any{"limit": 10})
+	diagnosticCompact := callSocialTool(t, env, app, authHeader, sessionID, 4, "notifications_read", map[string]any{
+		"limit":               10,
+		"view":                "compact",
+		"include_diagnostics": true,
+		"max_output_bytes":    12000,
+	})
+	if _, ok := diagnosticCompact.Result.StructuredContent["diagnostics"].(map[string]any); !ok {
+		t.Fatalf("include_diagnostics=true should expose compact diagnostics, got %+v", diagnosticCompact.Result.StructuredContent)
+	}
+	assertMCPPayloadIncrease(t,
+		"notifications_read compact limit=10 large fixture",
+		len(compact.ResponseBody),
+		"notifications_read default normalized fixture",
+		len(defaultResult.ResponseBody),
+	)
+
+	tooLarge := callSocialTool(t, env, app, authHeader, sessionID, 5, "notifications_read", map[string]any{
+		"limit":            10,
+		"view":             "compact",
+		"max_output_bytes": 1000,
+	})
+	if !tooLarge.Result.IsError {
+		t.Fatalf("expected response_too_large notification tool error, got %+v", tooLarge.Result)
+	}
+	errorPayload, _ := tooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+
+	standardGet := callSocialTool(t, env, app, authHeader, sessionID, 6, "notification_get", map[string]any{
+		"id":   "notif-1",
+		"view": "standard",
+	})
+	getData, _ := standardGet.Result.StructuredContent["data"].(map[string]any)
+	if getData["id"] != "notif-1" || getData["view"] != "standard" || getData["source"] != "lesser-api" {
+		t.Fatalf("unexpected notification_get standard metadata: %+v", getData)
+	}
+	notification, _ := getData["notification"].(map[string]any)
+	if notification["id"] != "notif-1" || notification["type"] != "mention" {
+		t.Fatalf("unexpected normalized notification_get payload: %+v", notification)
+	}
+	if _, ok := notification["debugPayload"]; ok {
+		t.Fatalf("standard notification_get must not inline upstream debug payload: %+v", notification)
+	}
+	notificationRef, _ := getData["notificationRef"].(map[string]any)
+	refExpand, _ := notificationRef["expand"].(map[string]any)
+	if refExpand["tool"] != "notification_get" {
+		t.Fatalf("notification_get should include notificationRef expansion metadata: %+v", notificationRef)
+	}
+
+	fullGet := callSocialTool(t, env, app, authHeader, sessionID, 7, "notification_get", map[string]any{
+		"id":   "notif-1",
+		"view": "full",
+	})
+	fullData, _ := fullGet.Result.StructuredContent["data"].(map[string]any)
+	rawNotification, _ := fullData["notification"].(map[string]any)
+	if _, ok := rawNotification["debugPayload"].(map[string]any); !ok {
+		t.Fatalf("full notification_get should preserve upstream debug payload, got %+v", rawNotification)
+	}
+	if !strings.Contains(string(fullGet.ResponseBody), debugPayload) || !strings.Contains(string(fullGet.ResponseBody), accountNote) {
+		t.Fatalf("full notification_get should expose upstream payload for audit/debug expansion")
+	}
+
+	if len(gotPaths) < 6 {
+		t.Fatalf("expected Lesser calls for compact/default/get flows, got %+v", gotPaths)
+	}
+}
+
 func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
@@ -1480,8 +1699,27 @@ func TestM2_DroneNotificationsReadBlocksCommunicationNotifications(t *testing.T)
 
 	const privateSentinel = "private-drone-comm-sentinel@example.test"
 	var gotQueries []string
+	gotSingleNotification := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Path == "/api/v1/notifications/n-mail" {
+			gotSingleNotification = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"n-mail",
+				"type":"communication:inbound",
+				"created_at":"2026-05-10T12:00:00Z",
+				"channel":"email",
+				"messageId":"comm-delivery-email",
+				"from":{"address":"` + privateSentinel + `"},
+				"subject":"Private",
+				"preview":"private preview"
+			}`))
+			return
+		}
+		if r.URL.Path != "/api/v1/notifications" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		gotQueries = append(gotQueries, r.URL.RawQuery)
@@ -1530,23 +1768,23 @@ func TestM2_DroneNotificationsReadBlocksCommunicationNotifications(t *testing.T)
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
-	call := func(id int, args map[string]any) mcpruntime.ToolResult {
+	callTool := func(id int, name string, args map[string]any) mcpruntime.ToolResult {
 		t.Helper()
-		callParams, _ := json.Marshal(map[string]any{"name": "notifications_read", "arguments": args})
+		callParams, _ := json.Marshal(map[string]any{"name": name, "arguments": args})
 		resp := invokeJSON(t, env, app, map[string][]string{
 			"authorization":  {authHeader},
 			"mcp-session-id": {sessionID},
 		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
 		if resp.Status != 200 {
-			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
+			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
 		}
 
 		var rpc mcpruntime.Response
 		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
-			t.Fatalf("unmarshal notifications_read: %v", err)
+			t.Fatalf("unmarshal %s: %v", name, err)
 		}
 		if rpc.Error != nil {
-			t.Fatalf("notifications_read rpc error: %+v", rpc.Error)
+			t.Fatalf("%s rpc error: %+v", name, rpc.Error)
 		}
 		var out mcpruntime.ToolResult
 		b, _ := json.Marshal(rpc.Result)
@@ -1554,6 +1792,10 @@ func TestM2_DroneNotificationsReadBlocksCommunicationNotifications(t *testing.T)
 			t.Fatalf("unmarshal tool result: %v", err)
 		}
 		return out
+	}
+	call := func(id int, args map[string]any) mcpruntime.ToolResult {
+		t.Helper()
+		return callTool(id, "notifications_read", args)
 	}
 
 	blocked := call(2, map[string]any{"limit": 5, "types": []string{"communication:inbound"}})
@@ -1584,6 +1826,22 @@ func TestM2_DroneNotificationsReadBlocksCommunicationNotifications(t *testing.T)
 	b, _ := json.Marshal(filtered)
 	if strings.Contains(string(b), privateSentinel) || strings.Contains(string(b), "private preview") {
 		t.Fatalf("drone notification response leaked communication metadata: %s", string(b))
+	}
+
+	singleBlocked := callTool(4, "notification_get", map[string]any{"id": "n-mail"})
+	if !singleBlocked.IsError {
+		t.Fatalf("expected communication notification_get to be rejected for drone runtime")
+	}
+	if !gotSingleNotification {
+		t.Fatalf("expected notification_get to fetch the notification before applying response boundary")
+	}
+	errPayload, _ = singleBlocked.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "runtime_boundary" || errPayload["status"] != float64(403) {
+		t.Fatalf("unexpected notification_get runtime-boundary error: %+v", errPayload)
+	}
+	b, _ = json.Marshal(singleBlocked)
+	if strings.Contains(string(b), privateSentinel) || strings.Contains(string(b), "private preview") {
+		t.Fatalf("drone notification_get error leaked communication metadata: %s", string(b))
 	}
 }
 
@@ -2461,6 +2719,56 @@ func socialStatusesFixtureJSON(count int, prefix string, contentTail string, acc
 			titlePrefix, i,
 			prefix, i,
 			accountNote, strings.Repeat("account note ", 80),
+			debugPayload, strings.Repeat("debug payload ", 80),
+		))
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func socialNotificationsFixtureJSON(count int, prefix string, contentTail string, accountNote string, debugPayload string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	titlePrefix := strings.ToUpper(prefix[:1]) + prefix[1:]
+	for i := 1; i <= count; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		content := strings.Repeat(fmt.Sprintf("%s notification content %02d ", prefix, i), 30) + contentTail
+		b.WriteString(fmt.Sprintf(`{
+			"id":"%s-%d",
+			"type":"mention",
+			"created_at":"2026-05-17T18:%02d:00Z",
+			"read":false,
+			"account":{
+				"id":"acct-%s-%d",
+				"username":"%s%d",
+				"acct":"%s%d@example.com",
+				"display_name":"%s %d",
+				"url":"https://example.com/@%s%d",
+				"note":"%s %s"
+			},
+			"status":{
+				"id":"post-%s-%d",
+				"url":"https://example.com/@%s%d/post-%s-%d",
+				"created_at":"2026-05-17T17:%02d:00Z",
+				"visibility":"public",
+				"content":"%s"
+			},
+			"debugPayload":{"large":"%s %s"}
+		}`,
+			prefix, i,
+			i,
+			prefix, i,
+			prefix, i,
+			prefix, i,
+			titlePrefix, i,
+			prefix, i,
+			accountNote, strings.Repeat("account note ", 80),
+			prefix, i,
+			prefix, i, prefix, i,
+			i,
+			content,
 			debugPayload, strings.Repeat("debug payload ", 80),
 		))
 	}

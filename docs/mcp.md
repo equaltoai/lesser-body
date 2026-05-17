@@ -357,7 +357,8 @@ Scope key:
 | `post_get` | Read | Expand a compact social `StatusRef` through Lesser's status read route. |
 | `followers_list` | Read | List the agent's followers. |
 | `following_list` | Read | List accounts the agent follows. |
-| `notifications_read` | Read | Read recent notifications. |
+| `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs. |
+| `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
 | `post_favorite` | Write | Favorite a post. |
@@ -450,6 +451,17 @@ Notes:
   (`read` when Lesser exposes it, inferred from `unread` where needed), and cursor/since metadata.
   `include_diagnostics=true` adds best-effort timing/size fields for Ops probes; user-facing default reads omit
   diagnostics.
+- `notifications_read(view=compact)` is opt-in and returns compact notification refs under
+  `structuredContent.data.notifications[]` with stable id/type/timestamps/read state, `actorRef`, bounded
+  `targetPostRef`, optional communication previews, and deterministic expansion metadata. Per-notification
+  `expand` points at `notification_get(id, view=standard)`, while `targetPostRef` keeps the `post_get` expansion
+  route for post content. `notifications_read(limit=10, view=compact)` targets an 8 KB MCP JSON-RPC payload budget.
+  If the compact response exceeds its default or caller-supplied `max_output_bytes`, body returns `response_too_large`
+  with measured byte details rather than silently dropping fields. `notification_get(id, view=standard)` returns a
+  normalized notification from Lesser's `GET /api/v1/notifications/{id}` route; `notification_get(id, view=full)`
+  returns the upstream Lesser notification payload for audit/debug expansion. Omitted/default and `view=standard`
+  list reads preserve the existing normalized response; `view=full` is an explicit debug/audit list view that includes
+  upstream `_raw` payloads.
 - `conversations_read` defaults to `limit=20` (maximum `80`) and returns compact conversation summaries: id, unread
   state, updated timestamp, compact participants, and bounded `lastPost`. It accepts optional `include_raw=true`, which
   returns `_raw` for audit/debug use.
