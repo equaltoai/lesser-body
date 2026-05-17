@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -187,6 +188,9 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	}
 	if emailReadStandard["nextCursor"] != "cursor-2" || emailReadStandard["nextSince"] != "cursor-2" || emailReadStandard["unreadOnly"] != true {
 		t.Fatalf("view=standard should preserve cursor/filter echo fields, got %+v", emailReadStandard)
+	}
+	if !reflect.DeepEqual(emailRead, emailReadStandard) {
+		t.Fatalf("email_read omitted view must remain equivalent to view=standard: default=%+v standard=%+v", emailRead, emailReadStandard)
 	}
 
 	emailReadCompact := callTool(25, "email_read", map[string]any{"folder": "inbox", "limit": 10, "view": "compact"})

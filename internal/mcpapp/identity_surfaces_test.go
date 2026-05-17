@@ -1921,6 +1921,10 @@ func TestP21_SoulReadSummaryStandardFullViews(t *testing.T) {
 	if len(standardCapabilities) != 2 || standardCapabilities[0].(map[string]any)["constraints"] != capabilityConstraint {
 		t.Fatalf("view=standard should preserve existing capability bodies, got %+v", standardCapabilities)
 	}
+	if !reflect.DeepEqual(defaultOut.StructuredContent, standardOut.StructuredContent) ||
+		defaultOut.Content[0].Text != standardOut.Content[0].Text {
+		t.Fatalf("soul_read omitted view must remain equivalent to view=standard")
+	}
 
 	summaryOut, summaryBody := call(4, map[string]any{"self": true, "view": "summary"})
 	if summaryOut.IsError {

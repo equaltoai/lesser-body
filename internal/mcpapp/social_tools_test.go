@@ -894,6 +894,10 @@ func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 	if _, ok := defaultResult.Result.StructuredContent["data"].([]any); !ok {
 		t.Fatalf("default timeline response must remain upstream array-shaped, got %+v", defaultResult.Result.StructuredContent["data"])
 	}
+	if !reflect.DeepEqual(defaultResult.Result.StructuredContent, standard.Result.StructuredContent) ||
+		defaultResult.Result.Content[0].Text != standard.Result.Content[0].Text {
+		t.Fatalf("timeline_read omitted view must remain equivalent to view=standard")
+	}
 }
 
 func TestM5_PostSearchCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
@@ -997,6 +1001,21 @@ func TestM5_PostSearchCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 	)
 	if !strings.Contains(string(standard.ResponseBody), contentTail) || !strings.Contains(string(standard.ResponseBody), accountNote) {
 		t.Fatalf("standard search response should preserve upstream payload")
+	}
+
+	defaultResult := callSocialTool(t, env, app, authHeader, sessionID, 4, "post_search", map[string]any{
+		"query": "mcp",
+		"limit": 10,
+	})
+	if gotQueries[2] != "limit=10&q=mcp&type=statuses" {
+		t.Fatalf("expected default search query, got %q", gotQueries[2])
+	}
+	if !strings.Contains(string(defaultResult.ResponseBody), contentTail) || !strings.Contains(string(defaultResult.ResponseBody), accountNote) {
+		t.Fatalf("default search response should preserve upstream payload")
+	}
+	if !reflect.DeepEqual(defaultResult.Result.StructuredContent, standard.Result.StructuredContent) ||
+		defaultResult.Result.Content[0].Text != standard.Result.Content[0].Text {
+		t.Fatalf("post_search omitted view must remain equivalent to view=standard")
 	}
 }
 

@@ -409,6 +409,12 @@ Structured-first result shaping is additive. Existing tools that use `content[0]
 `structuredContent.data`. If diagnostics are requested, concise text should point to `structuredContent.diagnostics`
 rather than duplicating timing/size payloads.
 
+Project 33 P4.1 compatibility decision: compact defaults remain opt-in for now. `timeline_read`, `post_search`,
+`soul_read`, and `email_read` keep their omitted/default behavior equivalent to `view=standard`; callers must request
+`view=compact` or `view=summary` explicitly for the bounded agent-context shape. A later default flip requires P4.2
+docs/probe guidance plus Ops live evidence against compact-default behavior. See
+`docs/project33-p4.1-compatibility-decision.md`.
+
 Social compact references use deterministic expansion metadata. `AccountRef` values include only source-backed stable
 fields (`id`, `acct`, `displayName`, and `url`) and report `missingFields` rather than guessing absent data. `StatusRef`
 values include `id`, `url`, `authorRef`, `createdAt`, `visibility`, `contentPreview`, and a `contentTruncated` marker.
@@ -429,10 +435,12 @@ Notes:
 
 - Social tools require an **OAuth JWT** bearer token (not just an instance key) because they call the Lesser API on behalf
   of the authenticated agent.
-- M0 baseline read-tool policy: daily agent read paths must have compact, bounded defaults. List/read tools should return
-  operational metadata (ids, timestamps, actor/from/to, subject/type, preview/status/state, and cursor metadata) rather
-  than full upstream product payloads. Raw/debug payloads are opt-in only via `include_raw=true` where currently
-  supported, and full content remains on explicit get/content tools rather than default list responses.
+- M0 baseline read-tool policy: daily agent read paths should move toward compact, bounded defaults only after
+  compatibility review, docs/probe guidance, and live evidence. In P4.1, `timeline_read`, `post_search`, `soul_read`,
+  and `email_read` explicitly keep compact/summary views opt-in. List/read tools should return operational metadata
+  (ids, timestamps, actor/from/to, subject/type, preview/status/state, and cursor metadata) rather than full upstream
+  product payloads when compact mode is selected. Raw/debug payloads are opt-in only via `include_raw=true` where
+  currently supported, and full content remains on explicit get/content tools rather than default list responses.
 - `notifications_read.since` is a temporal RFC3339/RFC3339Nano lower bound (`createdAt > since`). Use the optional
   `cursor` argument for pagination/backfill; `nextCursor` is returned when Lesser supplies an opaque pagination cursor.
   Cursor pagination is strongest for untyped reads or reads with a single `types` value; multi-type reads fan out to
