@@ -24,6 +24,7 @@ const (
 	soulReadPrivateDefaultConversationLimit = 20
 	soulReadPrivateMaxConversationLimit     = 50
 	soulReadPrivateConversationIDMaxLen     = 128
+	soulReadSummaryMaxOutputBytes           = 8000
 	// Keep Body's private single-read MCP response below AppTheory's stream
 	// event limit so callers receive a stable tool error before the MCP stream
 	// store is asked to persist an undeliverable event.
@@ -43,6 +44,7 @@ type soulReadInput struct {
 	MintConversationID    string   `json:"mintConversationId,omitempty"`
 	MintConversationLimit int      `json:"mintConversationLimit,omitempty"`
 	IncludeRaw            bool     `json:"include_raw,omitempty"`
+	View                  string   `json:"view,omitempty"`
 }
 
 type soulReadPrivateRequest struct {
@@ -55,6 +57,15 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	var in soulReadInput
 	if err := json.Unmarshal(args, &in); err != nil {
 		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
+	}
+	view := strings.ToLower(strings.TrimSpace(in.View))
+	if view == "" {
+		view = readViewStandard
+	}
+	switch view {
+	case readViewSummary, readViewStandard, readViewFull:
+	default:
+		return toolErrorResult("invalid_request", "invalid view (expected summary, standard, or full)", 400, map[string]any{"view": in.View})
 	}
 
 	agentIDInput := strings.TrimSpace(in.AgentID)
@@ -72,6 +83,12 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 	privateReq, err := soulReadPrivateRequestFromInput(in)
 	if err != nil {
 		return identityToolResultFromError(err)
+	}
+	if view == readViewSummary && privateReq.IncludeMintConversations {
+		return toolErrorResult("invalid_request", "view=summary cannot include private blocks; use view=standard or view=full for explicit private expansion", 400, map[string]any{
+			"view":           view,
+			"includePrivate": in.IncludePrivate,
+		})
 	}
 	if ensNameInput != "" && !looksLikeENSName(ensNameInput) {
 		return toolErrorResult("invalid_request", "ensName must be a public ENS name", 400, map[string]any{"query": ensNameInput})
@@ -123,7 +140,8 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 
 	souls := make([]any, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
-		soul, err := soulReadPayload(ctx, client, agentID, in.IncludeRaw, privateReq)
+		includeRaw := (in.IncludeRaw || view == readViewFull) && view != readViewSummary
+		soul, err := soulReadPayload(ctx, client, agentID, includeRaw, privateReq)
 		if err != nil {
 			return identityToolResultFromError(err)
 		}
@@ -136,7 +154,229 @@ func handleSoulRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		"access": soulReadAccess(accessMode, privateReq.privateBlocks()),
 		"souls":  souls,
 	}
+	if view == readViewSummary {
+		return soulReadSummaryToolResult(soulReadSummaryPayload(payload, in, accessMode))
+	}
 	return soulReadToolResult(payload, privateReq)
+}
+
+func soulReadSummaryPayload(standardPayload map[string]any, in soulReadInput, accessMode string) map[string]any {
+	soulsRaw, _ := standardPayload["souls"].([]any)
+	summaries := make([]any, 0, len(soulsRaw))
+	for _, item := range soulsRaw {
+		soul, _ := item.(map[string]any)
+		if soul == nil {
+			continue
+		}
+		summaries = append(summaries, soulReadSummarySoul(soul, in, accessMode))
+	}
+	out := map[string]any{
+		"view":    readViewSummary,
+		"query":   standardPayload["query"],
+		"count":   len(summaries),
+		"access":  standardPayload["access"],
+		"souls":   summaries,
+		"omitted": soulReadSummaryOmissions(),
+		"budget": map[string]any{
+			"maxOutputBytes": soulReadSummaryMaxOutputBytes,
+			"enforcement":    "response_too_large",
+		},
+	}
+	return out
+}
+
+func soulReadSummarySoul(soul map[string]any, in soulReadInput, accessMode string) map[string]any {
+	identity, _ := soul["identity"].(map[string]any)
+	registration, _ := soul["registration"].(map[string]any)
+	channels, _ := soul["channels"].(map[string]any)
+	agentID := firstNonEmptyStringMap(identity, "agentId")
+
+	out := map[string]any{}
+	putIfNotEmpty(out, "agentId", agentID)
+	if id := soulReadSummaryIdentity(identity); len(id) > 0 {
+		out["identity"] = id
+	}
+	if lifecycle := soulReadSummaryLifecycle(identity); len(lifecycle) > 0 {
+		out["lifecycle"] = lifecycle
+	}
+	if capabilityNames := soulReadSummaryCapabilityNames(soul["capabilities"]); len(capabilityNames) > 0 {
+		out["capabilities"] = map[string]any{
+			"names": capabilityNames,
+			"count": len(capabilityNames),
+		}
+	}
+	if channelSummary := soulReadSummaryChannels(channels); len(channelSummary) > 0 {
+		out["channels"] = channelSummary
+	}
+	if provenance := soulReadSummaryProvenance(soul, registration); len(provenance) > 0 {
+		out["provenance"] = provenance
+	}
+	out["expand"] = soulReadSummaryExpansion(agentID, in, accessMode)
+	missing := missingSocialRefFields(map[string]string{
+		"agentId": agentID,
+	})
+	if len(missing) > 0 {
+		out["missingFields"] = missing
+	}
+	return out
+}
+
+func soulReadSummaryIdentity(identity map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"agentId", "domain", "localId", "ensName", "wallet", "tokenId", "status", "lifecycleStatus"} {
+		putFirstAny(out, key, identity, key)
+	}
+	return out
+}
+
+func soulReadSummaryLifecycle(identity map[string]any) map[string]any {
+	out := map[string]any{}
+	putFirstAny(out, "status", identity, "lifecycleStatus", "status")
+	putFirstAny(out, "reason", identity, "lifecycleReason")
+	putFirstAny(out, "updatedAt", identity, "updatedAt")
+	putFirstAny(out, "mintedAt", identity, "mintedAt")
+	return out
+}
+
+func soulReadSummaryCapabilityNames(raw any) []any {
+	items, _ := raw.([]any)
+	names := make([]any, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		name := ""
+		switch typed := item.(type) {
+		case string:
+			name = typed
+		case map[string]any:
+			name = firstNonEmptyStringMap(typed, "name")
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func soulReadSummaryChannels(channels map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"ens", "email", "phone"} {
+		channel, _ := channels[key].(map[string]any)
+		if channel == nil {
+			continue
+		}
+		summary := map[string]any{}
+		putFirstAny(summary, "status", channel, "status")
+		putFirstAny(summary, "reason", channel, "reason")
+		putFirstAny(summary, "name", channel, "name")
+		if len(summary) > 0 {
+			out[key] = summary
+		}
+	}
+	return out
+}
+
+func soulReadSummaryProvenance(soul map[string]any, registration map[string]any) map[string]any {
+	out := map[string]any{}
+	putFirstAny(out, "registrationVersion", registration, "version")
+	if sources, ok := soul["sources"].([]any); ok {
+		summary := make([]any, 0, len(sources))
+		for _, item := range sources {
+			source, _ := item.(map[string]any)
+			if source == nil {
+				continue
+			}
+			entry := map[string]any{}
+			putFirstAny(entry, "block", source, "block")
+			putFirstAny(entry, "status", source, "status")
+			putFirstAny(entry, "reason", source, "reason")
+			if len(entry) > 0 {
+				summary = append(summary, entry)
+			}
+		}
+		if len(summary) > 0 {
+			out["sources"] = summary
+		}
+	}
+	if deferred, ok := soul["deferred"].([]any); ok && len(deferred) > 0 {
+		out["deferredCount"] = len(deferred)
+	}
+	return out
+}
+
+func soulReadSummaryExpansion(agentID string, in soulReadInput, accessMode string) map[string]any {
+	return map[string]any{
+		"standard": soulReadExpansionRef(agentID, readViewStandard, in, accessMode),
+		"full":     soulReadExpansionRef(agentID, readViewFull, in, accessMode),
+	}
+}
+
+func soulReadExpansionRef(agentID string, view string, in soulReadInput, accessMode string) *SocialExpansionRef {
+	args := map[string]any{"view": view}
+	if strings.EqualFold(accessMode, "self") && in.Self {
+		args["self"] = true
+	} else if strings.TrimSpace(agentID) != "" {
+		args["agentId"] = strings.TrimSpace(agentID)
+	} else {
+		if query := strings.TrimSpace(firstNonEmpty(in.AgentID, in.ENSName, in.Query)); query != "" {
+			args["query"] = query
+		}
+	}
+	if in.IncludeRaw && view == readViewFull {
+		args["include_raw"] = true
+	}
+	return &SocialExpansionRef{
+		Tool:       "soul_read",
+		Arguments:  args,
+		ResultPath: "structuredContent.data",
+	}
+}
+
+func soulReadSummaryOmissions() []any {
+	return []any{
+		map[string]any{"path": "souls[].registration", "reason": "summary_identity_only", "expansion": "souls[].expand.standard"},
+		map[string]any{"path": "souls[].capabilities[].body", "reason": "capability_names_only", "expansion": "souls[].expand.standard"},
+		map[string]any{"path": "souls[].boundaries", "reason": "summary_omits_full_boundaries", "expansion": "souls[].expand.standard"},
+		map[string]any{"path": "souls[].transparency", "reason": "summary_omits_full_transparency", "expansion": "souls[].expand.standard"},
+		map[string]any{"path": "souls[]._raw", "reason": "debug_payload", "expansion": "souls[].expand.full"},
+		map[string]any{"path": "souls[].private", "reason": "private_blocks_not_in_summary", "expansion": "call soul_read with view=standard or view=full and explicit include_private"},
+	}
+}
+
+func soulReadSummaryToolResult(payload map[string]any) (*mcpruntime.ToolResult, error) {
+	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
+		Summary: fmt.Sprintf("%d soul summaries", len(firstArrayFromAny(payload, "souls"))),
+		Data:    payload,
+		Text: map[string]any{
+			"tool":  "soul_read",
+			"view":  readViewSummary,
+			"count": payload["count"],
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return nil, err
+	}
+	if measurement.JSONRPCEnvelopeBytes <= soulReadSummaryMaxOutputBytes {
+		return result, nil
+	}
+	return toolErrorResult("response_too_large", "soul_read summary response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
+		"tool":             "soul_read",
+		"view":             readViewSummary,
+		"measuredBytes":    measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":   soulReadSummaryMaxOutputBytes,
+		"contentTextBytes": measurement.ContentTextBytes,
+		"structuredBytes":  measurement.StructuredContentBytes,
+		"guidance":         "use view=standard or view=full for explicit expansion, or narrow the query",
+	})
 }
 
 func soulReadToolResult(payload map[string]any, privateReq soulReadPrivateRequest) (*mcpruntime.ToolResult, error) {
