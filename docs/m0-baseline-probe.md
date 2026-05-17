@@ -45,16 +45,38 @@ export PROBE_NOTIFICATION_WORKFLOW_UNREAD_ONLY_VIEW=false
 export PROBE_WRONG_USER_BEARER_TOKEN='<OAuth token for a different actor>'
 ```
 
+Optional compact/summary projection probe input:
+
+```bash
+# Used only for the explicit post_search(view=compact) probe. Defaults to "mcp".
+export PROBE_POST_SEARCH_QUERY='mcp'
+```
+
 ## Command
 
 ```bash
 scripts/m0_baseline_mcp_probe.py | tee m0-baseline-probe.jsonl
 ```
 
-The script prints one line per probe with pass/fail/skip, elapsed time, HTTP response size, and compact metadata. It
-prints a final `SUMMARY` JSON object suitable for attaching to the Project 21 issue or deploy notes. The summary includes
-`mode`, `closureRequired`, `closureReady`, and `closureProbeNames` so smoke/read-surface passes cannot be mistaken for
-full M0 closure evidence.
+The script prints one line per probe with pass/fail/skip, elapsed time, HTTP response size, compact/summary omission
+counts, and expansion tool names. It prints a final `SUMMARY` JSON object suitable for attaching to the Project 21 issue
+or deploy notes. The summary includes `mode`, `closureRequired`, `closureReady`, and `closureProbeNames` so
+smoke/read-surface passes cannot be mistaken for full M0 closure evidence.
+
+P4.2 compact/summary probes are explicit opt-ins. They do not imply compact defaults:
+
+- `notifications_read(view=compact)` records payload bytes, omitted metadata count, and expansion tools.
+- `email_read(view=compact)` verifies canonical `messageRef`, no `body`/`raw`/`_raw` list fields, and
+  `email_get` / `email_get_content` expansion refs.
+- `conversations_read(view=compact)` verifies compact expansion metadata and fails if a `conversation_get` route is
+  advertised.
+- `soul_read(view=summary)` verifies summary omission/expansion metadata without private blocks or raw payloads.
+- `timeline_read(view=compact)` and `post_search(view=compact)` verify `post_get` expansion metadata when list entries
+  are present.
+
+The probe output remains sanitized: bearer tokens, message bodies, full tool JSON, raw upstream payloads, private
+reachability details, and full recipient addresses are not printed. Message/content checks emit counts, booleans,
+opaque refs only where needed for expansion validation, byte sizes, and SHA-256 digests.
 
 The probe treats semantic failure payloads as failures, not successful MCP transport:
 
@@ -76,7 +98,10 @@ The report must include:
 - elapsed time per probe;
 - approximate payload size for large read paths;
 - `notifications_read.diagnostics` timing/size fields when probes request `include_diagnostics=true`;
+- compact/summary opt-in payload sizes, omitted metadata counts, and expansion tool names;
 - whether default notification output omitted raw/debug payloads;
+- whether explicit compact mailbox output avoided `body`, `raw`, and `_raw`, kept canonical `messageRef`, and advertised
+  `email_get` / `email_get_content`;
 - whether the run is smoke-only or closure-mode (`SUMMARY.mode` and `SUMMARY.closureReady`);
 - for closure-mode runs, notification workflow details: selected notification type/id (redacted), direct Lesser
   single-get status, MCP dismiss result, follow-up `notifications_read` `read` state, direct follow-up read-state
@@ -106,6 +131,11 @@ For the Project 21 post-M0 cleanup issues, Ops can verify these narrow contract 
 - `notifications_read({"types":["communication:inbound"],"limit":5})` must be accepted. Returned rows, if any, must have
   `type:"communication:inbound"` and preserve the compact `communication` summary; the call must not expose `raw` /
   `_raw` unless `include_raw=true`.
+- `notifications_read({"limit":10,"view":"compact"})`, `conversations_read({"limit":10,"view":"compact"})`,
+  `soul_read({"self":true,"view":"summary"})`, `timeline_read({"timeline":"home","limit":5,"view":"compact"})`,
+  `post_search({"query":"mcp","limit":10,"view":"compact"})`, and
+  `email_read({"folder":"inbox","limit":10,"view":"compact"})` must be treated as explicit opt-ins and should report
+  concise payload/omission/expansion evidence without changing omitted/default behavior.
 - A normal `email_send` without reply fields must still queue through lesser-host.
 - `email_send` with legacy `messageId` or `inReplyTo` arguments must fail locally as a structured `invalid_request`
   tool error that directs callers to `email_reply`; the failure must occur before lesser-host returns a conversation

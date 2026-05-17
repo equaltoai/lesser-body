@@ -203,7 +203,8 @@ Expected headers include:
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 
 For host-backed communication validation in lab, run the mailbox canary with an actor-scoped OAuth token. The script
-redacts credentials and prints hashes/lengths instead of message bodies:
+checks default/standard mailbox compatibility plus explicit `email_read(view=compact)` expansion refs. It redacts
+credentials and prints hashes/lengths instead of message bodies:
 
 ```bash
 MCP_ENDPOINT="https://api.<stageDomain>/mcp/<actor>" \

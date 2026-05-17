@@ -10,7 +10,8 @@ Optional environment:
                      first email_read message is used.
   MAILBOX_QUERY      Bounded metadata/preview query for email_search (default: subject/from preview from message, else "canary")
 
-The script intentionally redacts bearer tokens and never prints message bodies or full recipient addresses.
+The script intentionally redacts bearer tokens and never prints message bodies, raw upstream payloads, or full recipient
+addresses. Compact-view checks print only payload sizes, opaque message refs, state booleans, and content hashes.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ if not AUTHORIZATION:
 
 session_id = ""
 next_id = 1
+last_response_bytes = 0
 
 
 def log(message: str) -> None:
@@ -153,7 +155,7 @@ def decode_rpc_response(method: str, request_id: int, raw: bytes, content_type: 
 
 
 def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    global next_id, session_id
+    global next_id, session_id, last_response_bytes
     request_id = next_id
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
     next_id += 1
@@ -177,6 +179,7 @@ def post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any
     try:
         with authenticated_open(req, timeout=30) as resp:
             raw = resp.read()
+            last_response_bytes = len(raw)
             content_type = resp.headers.get("Content-Type", "")
             if not session_id:
                 session_id = resp.headers.get("mcp-session-id", "").strip()
@@ -210,9 +213,39 @@ def tool_call(name: str, arguments: dict[str, Any], *, expect_error: bool = Fals
         error_payload = structured.get("error") or result
         raise CanaryError(f"{name} tool error: {json.dumps(sanitized_error_payload(error_payload), sort_keys=True)}")
     data = structured.get("data")
-    if not isinstance(data, dict):
-        raise CanaryError(f"{name} missing structuredContent.data")
-    return data
+    if isinstance(data, dict):
+        return data
+    if isinstance(structured, dict):
+        return structured
+    raise CanaryError(f"{name} missing structuredContent")
+
+
+def expansion_tool_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        tool_name = value.get("tool")
+        if isinstance(tool_name, str) and tool_name:
+            names.add(tool_name)
+        for nested in value.values():
+            names.update(expansion_tool_names(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            names.update(expansion_tool_names(nested))
+    return names
+
+
+def omitted_count(value: Any) -> int:
+    total = 0
+    if isinstance(value, dict):
+        omitted = value.get("omitted")
+        if isinstance(omitted, list):
+            total += len(omitted)
+        for nested in value.values():
+            total += omitted_count(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            total += omitted_count(nested)
+    return total
 
 
 def summarize_message(message: dict[str, Any]) -> str:
@@ -235,6 +268,49 @@ def first_message(data: dict[str, Any]) -> dict[str, Any] | None:
         return None
     first = messages[0]
     return first if isinstance(first, dict) else None
+
+
+def require_standard_message_shape(message: dict[str, Any], context: str) -> None:
+    if not message:
+        return
+    if not str(message.get("messageId") or message.get("messageRef") or "").strip():
+        raise CanaryError(f"{context} missing messageId/messageRef compatibility alias")
+    if not str(message.get("channel") or message.get("channelType") or "").strip():
+        raise CanaryError(f"{context} missing channel/channelType compatibility alias")
+    if "_raw" in message or "raw" in message:
+        raise CanaryError(f"{context} exposed raw payload without include_raw")
+    if "body" not in message and "preview" not in message:
+        raise CanaryError(f"{context} missing preview/body compatibility field")
+
+
+def compact_message_ref(message: dict[str, Any]) -> str:
+    return str(message.get("messageRef") or "").strip()
+
+
+def require_compact_email_shape(data: dict[str, Any]) -> str:
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+    dict_messages = [item for item in messages if isinstance(item, dict)]
+    if not dict_messages:
+        return ""
+    for index, item in enumerate(dict_messages):
+        for forbidden in ("body", "_raw", "raw"):
+            if forbidden in item:
+                raise CanaryError(f"email_read compact message {index} exposed forbidden {forbidden}")
+    message = dict_messages[0]
+    message_ref = compact_message_ref(message)
+    if not message_ref:
+        raise CanaryError("email_read compact first message missing canonical messageRef")
+    tools = expansion_tool_names(message)
+    missing = {"email_get", "email_get_content"} - tools
+    if missing:
+        raise CanaryError(f"email_read compact missing expansion tools: {sorted(missing)}")
+    expand = message.get("expand") if isinstance(message.get("expand"), dict) else {}
+    for label, tool_name in (("metadata", "email_get"), ("content", "email_get_content")):
+        ref = expand.get(label) if isinstance(expand.get(label), dict) else {}
+        args = ref.get("arguments") if isinstance(ref.get("arguments"), dict) else {}
+        if ref.get("tool") != tool_name or args.get("messageId") != message_ref:
+            raise CanaryError(f"email_read compact {label} expansion does not target {tool_name} with messageRef")
+    return message_ref
 
 
 def main() -> int:
@@ -264,13 +340,56 @@ def main() -> int:
     log("ok tools/list host mailbox tools present")
 
     email_list = tool_call("email_read", {"folder": "inbox", "limit": 5, "includeArchived": False})
+    default_payload_bytes = last_response_bytes
     messages = email_list.get("messages") if isinstance(email_list.get("messages"), list) else []
-    log(f"ok email_read count={len(messages)} hasMore={email_list.get('hasMore')} nextCursor_present={bool(email_list.get('nextCursor'))}")
+    default_message = first_message(email_list)
+    require_standard_message_shape(default_message or {}, "email_read default")
+    log(
+        "ok email_read default "
+        f"count={len(messages)} hasMore={email_list.get('hasMore')} "
+        f"nextCursor_present={bool(email_list.get('nextCursor'))} payloadB={default_payload_bytes}"
+    )
+
+    standard_list = tool_call("email_read", {"folder": "inbox", "limit": 5, "view": "standard", "includeArchived": False})
+    standard_payload_bytes = last_response_bytes
+    standard_messages = standard_list.get("messages") if isinstance(standard_list.get("messages"), list) else []
+    require_standard_message_shape(first_message(standard_list) or {}, "email_read standard")
+    log(
+        "ok email_read standard "
+        f"count={len(standard_messages)} hasMore={standard_list.get('hasMore')} "
+        f"payloadB={standard_payload_bytes}"
+    )
+
+    compact_list = tool_call("email_read", {"folder": "inbox", "limit": 5, "view": "compact", "includeArchived": False})
+    compact_payload_bytes = last_response_bytes
+    compact_messages = compact_list.get("messages") if isinstance(compact_list.get("messages"), list) else []
+    compact_ref = require_compact_email_shape(compact_list)
+    log(
+        "ok email_read compact "
+        f"count={len(compact_messages)} messageRef_present={bool(compact_ref)} "
+        f"omitted={omitted_count(compact_list)} expansionTools={sorted(expansion_tool_names(compact_list))} "
+        f"payloadB={compact_payload_bytes}"
+    )
 
     message_ref = os.environ.get("MAILBOX_MESSAGE_ID", "").strip()
-    message = first_message(email_list)
+    message = default_message
     if not message_ref and message:
         message_ref = str(message.get("messageId") or message.get("messageRef") or "").strip()
+    if compact_ref:
+        compact_get_data = tool_call("email_get", {"messageId": compact_ref})
+        compact_got_message = compact_get_data.get("message") if isinstance(compact_get_data.get("message"), dict) else {}
+        log(f"ok compact expansion email_get {summarize_message(compact_got_message)}")
+        compact_content = compact_got_message.get("content") if isinstance(compact_got_message.get("content"), dict) else {}
+        if compact_content.get("available") is not False:
+            compact_content_data = tool_call("email_get_content", {"messageId": compact_ref})
+            compact_body = str(compact_content_data.get("body") or "")
+            log(
+                "ok compact expansion email_get_content "
+                f"bytes={compact_content_data.get('bytes', len(compact_body.encode('utf-8')))} "
+                f"body_len={len(compact_body)} body_sha256_12={hashlib.sha256(compact_body.encode('utf-8')).hexdigest()[:12]}"
+            )
+        else:
+            log("skip compact expansion email_get_content content.available=false")
     if not message_ref:
         raise CanaryError("no mailbox message found; set MAILBOX_MESSAGE_ID to validate get/content/state paths")
     log(f"using mailbox message {summarize_message(message or {'messageId': message_ref})}")

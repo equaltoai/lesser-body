@@ -83,7 +83,8 @@ MCP_BEARER_TOKEN="<oauth-access-token>" \
 scripts/canary_host_mailbox_mcp.py
 ```
 
-The canary checks `tools/list`, `email_read`, `email_get`, `email_get_content`, `email_search`,
-`email_mark_read`, `email_mark_unread`, `sms_read`, `voicemail_read`, and a not-found error path. It never prints
-full message bodies, full recipient addresses, bearer tokens, or raw upstream error payloads; error logs keep only
-stable codes/status plus hashed payload summaries where details are needed.
+The canary checks `tools/list`, default/standard `email_read`, explicit `email_read(view=compact)` expansion refs,
+`email_get`, `email_get_content`, `email_search`, `email_mark_read`, `email_mark_unread`, `sms_read`,
+`voicemail_read`, and a not-found error path. It never prints full message bodies, full recipient addresses, bearer
+tokens, or raw upstream error payloads; error logs keep only stable codes/status plus hashed payload summaries where
+details are needed.

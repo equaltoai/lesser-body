@@ -19,11 +19,13 @@ Recommended probe inputs:
   PROBE_NOTIFICATION_WORKFLOW_ID Optional specific list-returned notification ID to exercise
   PROBE_NOTIFICATION_WORKFLOW_TYPES Optional comma-separated notification types to exercise separately
   PROBE_WRONG_USER_BEARER_TOKEN Optional wrong-user token for negative notification controls
+  PROBE_POST_SEARCH_QUERY      Query for the compact post_search probe (default: mcp)
   PROBE_SAFE_SEND_EMAIL       Set true to run self-email send/search/readback
   PROBE_SELF_EMAIL_TO         Recipient for the safe self-email send
 
-The script prints only probe status, timing, sizes, and compact metadata. It never prints bearer tokens,
-message bodies, full tool JSON, or full recipient lists.
+The script prints only probe status, timing, sizes, compact/summary omission counts, and expansion tool names. It never
+prints bearer tokens, message bodies, full tool JSON, raw upstream payloads, private reachability details, or full
+recipient lists.
 """
 
 from __future__ import annotations
@@ -389,6 +391,116 @@ def assert_mailbox_page_sane(data: dict[str, Any], context: str) -> None:
         raise ProbeError(f"{context} returned hasMore=true without nextCursor")
 
 
+def list_of_dicts(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    values = data.get(key)
+    if not isinstance(values, list):
+        return []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def expansion_tool_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        tool_name = value.get("tool")
+        if isinstance(tool_name, str) and tool_name:
+            names.add(tool_name)
+        for nested in value.values():
+            names.update(expansion_tool_names(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            names.update(expansion_tool_names(nested))
+    return names
+
+
+def omitted_count(value: Any) -> int:
+    total = 0
+    if isinstance(value, dict):
+        omitted = value.get("omitted")
+        if isinstance(omitted, list):
+            total += len(omitted)
+        for nested in value.values():
+            total += omitted_count(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            total += omitted_count(nested)
+    return total
+
+
+def assert_forbidden_keys_absent(value: Any, keys: set[str], context: str) -> None:
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value:
+                raise ProbeError(f"{context} exposed forbidden key {key}")
+        for nested in value.values():
+            assert_forbidden_keys_absent(nested, keys, context)
+    elif isinstance(value, list):
+        for nested in value:
+            assert_forbidden_keys_absent(nested, keys, context)
+
+
+def probe_compact_projection(
+    name: str,
+    tool_name: str,
+    args: dict[str, Any],
+    item_key: str,
+    *,
+    expected_tools: set[str] | None = None,
+    forbidden_tools: set[str] | None = None,
+    forbidden_keys: set[str] | None = None,
+) -> None:
+    result, data, elapsed, size = tool(tool_name, args)
+    assert_tool_ok(result)
+    items = list_of_dicts(data, item_key)
+    tools = expansion_tool_names(data)
+    if forbidden_tools:
+        present_forbidden = sorted(tools & forbidden_tools)
+        if present_forbidden:
+            raise ProbeError(f"{name} exposed forbidden expansion tools: {', '.join(present_forbidden)}")
+    if forbidden_keys:
+        assert_forbidden_keys_absent(items, forbidden_keys, name)
+    missing_tools = sorted((expected_tools or set()) - tools) if items else []
+    if missing_tools:
+        raise ProbeError(f"{name} missing expansion tools: {', '.join(missing_tools)}")
+    record(
+        name,
+        "pass",
+        elapsed,
+        size,
+        view=data.get("view"),
+        count=len(items),
+        omitted=omitted_count(data),
+        expansionTools=sorted(tools),
+    )
+
+
+def probe_email_compact_projection() -> None:
+    result, data, elapsed, size = tool("email_read", {"folder": "inbox", "limit": 10, "view": "compact"})
+    assert_tool_ok(result)
+    assert_mailbox_page_sane(data, "email_read compact")
+    messages = list_of_dicts(data, "messages")
+    tools = expansion_tool_names(data)
+    assert_forbidden_keys_absent(messages, {"body", "_raw", "raw"}, "email_read compact")
+    has_ref = False
+    if messages:
+        first = messages[0]
+        has_ref = bool(str(first.get("messageRef", "")).strip())
+        missing = {"email_get", "email_get_content"} - tools
+        if not has_ref:
+            raise ProbeError("email_read compact first message missing canonical messageRef")
+        if missing:
+            raise ProbeError(f"email_read compact missing expansion tools: {', '.join(sorted(missing))}")
+    record(
+        "email_read compact expansion",
+        "pass",
+        elapsed,
+        size,
+        count=len(messages),
+        messageRef=has_ref,
+        omitted=omitted_count(data),
+        expansionTools=sorted(tools),
+    )
+
+
 def notifications_list(data: dict[str, Any]) -> list[dict[str, Any]]:
     values = data.get("notifications")
     if not isinstance(values, list):
@@ -744,6 +856,17 @@ def main() -> int:
 
     run_probe("notifications_read limit=20", lambda: probe_notifications_read("notifications_read limit=20", {"limit": 20, "include_diagnostics": True}))
     run_probe(
+        "notifications_read compact expansion",
+        lambda: probe_compact_projection(
+            "notifications_read compact expansion",
+            "notifications_read",
+            {"limit": 10, "view": "compact"},
+            "notifications",
+            expected_tools={"notification_get"},
+            forbidden_keys={"raw", "_raw"},
+        ),
+    )
+    run_probe(
         "notifications_read since empty limit=30",
         lambda: probe_notifications_read("notifications_read since empty limit=30", {"since": "", "limit": 30, "include_diagnostics": True}),
     )
@@ -790,6 +913,8 @@ def main() -> int:
     else:
         skip("email_get_content listed message", "email_read inbox returned no messageId")
 
+    run_probe("email_read compact expansion", probe_email_compact_projection)
+
     if env("PROBE_SAFE_SEND_EMAIL").lower() == "true":
         to = require_input("self-email send/search/readback", "PROBE_SELF_EMAIL_TO")
         if to:
@@ -808,7 +933,52 @@ def main() -> int:
     probe_tool_success("memory_query", "memory_query", {"query": "M0 baseline probe", "limit": 5}, "events")
 
     probe_tool_success("conversations_read", "conversations_read", {"limit": 20}, "conversations")
+    run_probe(
+        "conversations_read compact expansion",
+        lambda: probe_compact_projection(
+            "conversations_read compact expansion",
+            "conversations_read",
+            {"limit": 10, "view": "compact"},
+            "conversations",
+            expected_tools=set(),
+            forbidden_tools={"conversation_get"},
+            forbidden_keys={"raw", "_raw"},
+        ),
+    )
+    run_probe(
+        "soul_read summary expansion",
+        lambda: probe_compact_projection(
+            "soul_read summary expansion",
+            "soul_read",
+            {"self": True, "view": "summary"},
+            "souls",
+            expected_tools={"soul_read"},
+            forbidden_keys={"private", "_raw"},
+        ),
+    )
     probe_tool_success("timeline_read home", "timeline_read", {"timeline": "home", "limit": 20})
+    run_probe(
+        "timeline_read compact expansion",
+        lambda: probe_compact_projection(
+            "timeline_read compact expansion",
+            "timeline_read",
+            {"timeline": "home", "limit": 5, "view": "compact"},
+            "statuses",
+            expected_tools={"post_get"},
+            forbidden_keys={"raw", "_raw"},
+        ),
+    )
+    run_probe(
+        "post_search compact expansion",
+        lambda: probe_compact_projection(
+            "post_search compact expansion",
+            "post_search",
+            {"query": env("PROBE_POST_SEARCH_QUERY", "mcp"), "limit": 10, "view": "compact"},
+            "statuses",
+            expected_tools={"post_get"},
+            forbidden_keys={"raw", "_raw"},
+        ),
+    )
 
     failed = sum(1 for r in results if r.status == "fail")
     skipped = sum(1 for r in results if r.status == "skip")
