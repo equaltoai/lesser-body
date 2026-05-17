@@ -573,6 +573,7 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
+	responseBytes := map[int]int{}
 	call := func(id int, args map[string]any) map[string]any {
 		t.Helper()
 		callParams, _ := json.Marshal(map[string]any{"name": "conversations_read", "arguments": args})
@@ -583,6 +584,7 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("conversations_read: status=%d body=%s", resp.Status, string(resp.Body))
 		}
+		responseBytes[id] = len(resp.Body)
 		var rpc mcpruntime.Response
 		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
 			t.Fatalf("unmarshal conversations_read: %v", err)
@@ -623,6 +625,7 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 	if content, _ := lastPost["content"].(string); len([]rune(content)) > 500 {
 		t.Fatalf("expected bounded lastPost content, got %d runes", len([]rune(content)))
 	}
+	assertMCPPayloadBudget(t, "conversations_read default compact large fixture", responseBytes[2], 7000)
 
 	rawData := call(3, map[string]any{"limit": 200, "include_raw": true})
 	if gotQueries[1] != "limit=80" {
@@ -633,6 +636,12 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 	if _, ok := rawConversation["_raw"].(map[string]any); !ok {
 		t.Fatalf("expected include_raw=true to expose _raw, got %+v", rawConversation)
 	}
+	assertMCPPayloadIncrease(t,
+		"conversations_read default compact large fixture",
+		responseBytes[2],
+		"conversations_read include_raw expanded fixture",
+		responseBytes[3],
+	)
 }
 
 func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
@@ -818,6 +827,7 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
+	responseBytes := map[int]int{}
 	call := func(id int, args map[string]any) map[string]any {
 		t.Helper()
 		callParams, _ := json.Marshal(map[string]any{"name": "notifications_read", "arguments": args})
@@ -828,6 +838,7 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested
 		if resp.Status != 200 {
 			t.Fatalf("notifications_read: status=%d body=%s", resp.Status, string(resp.Body))
 		}
+		responseBytes[id] = len(resp.Body)
 
 		var rpc mcpruntime.Response
 		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
@@ -872,6 +883,7 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested
 	if _, ok := defaultData["diagnostics"]; ok {
 		t.Fatalf("diagnostics should be opt-in by default, got %+v", defaultData["diagnostics"])
 	}
+	assertMCPPayloadBudget(t, "notifications_read default compact large fixture", responseBytes[2], 7000)
 
 	diagnosticData := call(3, map[string]any{"limit": 20, "include_diagnostics": true})
 	diagnostics, _ := diagnosticData["diagnostics"].(map[string]any)
@@ -891,6 +903,12 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested
 	if _, ok := rawNotification["raw"]; ok {
 		t.Fatalf("include_raw=true should use _raw, not raw: %+v", rawNotification)
 	}
+	assertMCPPayloadIncrease(t,
+		"notifications_read default compact large fixture",
+		responseBytes[2],
+		"notifications_read include_raw expanded fixture",
+		responseBytes[4],
+	)
 }
 
 func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {

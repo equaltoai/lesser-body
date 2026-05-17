@@ -17,6 +17,13 @@ type structuredFirstResultOptions struct {
 	IncludeDiagnostics bool
 }
 
+type toolPayloadMeasurement struct {
+	ContentTextBytes       int
+	StructuredContentBytes int
+	ResultBytes            int
+	JSONRPCEnvelopeBytes   int
+}
+
 func toolStructuredFirstResult(opts structuredFirstResultOptions) (*mcpruntime.ToolResult, error) {
 	data := opts.Data
 	if data == nil {
@@ -67,4 +74,39 @@ func toolStructuredFirstResult(opts structuredFirstResultOptions) (*mcpruntime.T
 		}},
 		StructuredContent: structured,
 	}, nil
+}
+
+func measureToolResultPayload(result *mcpruntime.ToolResult) (toolPayloadMeasurement, error) {
+	if result == nil {
+		return toolPayloadMeasurement{}, fmt.Errorf("measure tool result payload: nil result")
+	}
+
+	measurement := toolPayloadMeasurement{}
+	for _, block := range result.Content {
+		if block.Type == "text" {
+			measurement.ContentTextBytes += len([]byte(block.Text))
+		}
+	}
+
+	if result.StructuredContent != nil {
+		b, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			return toolPayloadMeasurement{}, fmt.Errorf("measure structuredContent bytes: %w", err)
+		}
+		measurement.StructuredContentBytes = len(b)
+	}
+
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return toolPayloadMeasurement{}, fmt.Errorf("measure tool result bytes: %w", err)
+	}
+	measurement.ResultBytes = len(resultBytes)
+
+	envelopeBytes, err := mcpruntime.MarshalResponse(mcpruntime.NewResultResponse("payload_measurement_probe", result))
+	if err != nil {
+		return toolPayloadMeasurement{}, fmt.Errorf("measure JSON-RPC envelope bytes: %w", err)
+	}
+	measurement.JSONRPCEnvelopeBytes = len(envelopeBytes)
+
+	return measurement, nil
 }
