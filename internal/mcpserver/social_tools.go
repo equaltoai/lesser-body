@@ -413,11 +413,12 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
-		Types      []string `json:"types,omitempty"`
-		Since      *string  `json:"since"`
-		Cursor     string   `json:"cursor,omitempty"`
-		Limit      int      `json:"limit,omitempty"`
-		IncludeRaw bool     `json:"include_raw,omitempty"`
+		Types              []string `json:"types,omitempty"`
+		Since              *string  `json:"since"`
+		Cursor             string   `json:"cursor,omitempty"`
+		Limit              int      `json:"limit,omitempty"`
+		IncludeRaw         bool     `json:"include_raw,omitempty"`
+		IncludeDiagnostics bool     `json:"include_diagnostics,omitempty"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
@@ -507,14 +508,16 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"notifications": notifications,
 		"includeRaw":    in.IncludeRaw,
 	}
-	attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
-		API:             apiDuration,
-		Normalize:       normalizeDuration,
-		Total:           time.Since(startedAt),
-		UpstreamCount:   len(list),
-		NormalizedCount: len(notifications),
-		RawIncluded:     in.IncludeRaw,
-	})
+	if in.IncludeDiagnostics {
+		attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
+			API:             apiDuration,
+			Normalize:       normalizeDuration,
+			Total:           time.Since(startedAt),
+			UpstreamCount:   len(list),
+			NormalizedCount: len(notifications),
+			RawIncluded:     in.IncludeRaw,
+		})
+	}
 	return toolJSONResult(payload, nil)
 }
 
@@ -839,7 +842,8 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"since":{"type":"string"},
 				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80},
-				"include_raw":{"type":"boolean","description":"Include verbose upstream notification payloads under _raw for audit/debug use. Defaults to false and increases response size."}
+				"include_raw":{"type":"boolean","description":"Include verbose upstream notification payloads under _raw for audit/debug use. Defaults to false and increases response size."},
+				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."}
 			}
 		}`),
 	}

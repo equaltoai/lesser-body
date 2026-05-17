@@ -477,7 +477,7 @@ def workflow_read_args(notification_type: str = "") -> dict[str, Any]:
             limit = max(1, min(80, int(raw_limit)))
         except ValueError as exc:
             raise ProbeError(f"invalid PROBE_NOTIFICATION_WORKFLOW_LIMIT {raw_limit!r}") from exc
-    args: dict[str, Any] = {"limit": limit}
+    args: dict[str, Any] = {"limit": limit, "include_diagnostics": True}
     if notification_type:
         args["types"] = [notification_type]
     return args
@@ -742,17 +742,17 @@ def main() -> int:
     else:
         skip("identity_verify messageRef", "missing PROBE_MESSAGE_REF")
 
-    run_probe("notifications_read limit=20", lambda: probe_notifications_read("notifications_read limit=20", {"limit": 20}))
+    run_probe("notifications_read limit=20", lambda: probe_notifications_read("notifications_read limit=20", {"limit": 20, "include_diagnostics": True}))
     run_probe(
         "notifications_read since empty limit=30",
-        lambda: probe_notifications_read("notifications_read since empty limit=30", {"since": "", "limit": 30}),
+        lambda: probe_notifications_read("notifications_read since empty limit=30", {"since": "", "limit": 30, "include_diagnostics": True}),
     )
     since = env("PROBE_NOTIFICATION_SINCE", notification_since_default())
     for typ in ("mention", "reply"):
         run_probe(
             f"notifications_read {typ} timestamp",
             lambda typ=typ: probe_notifications_read(
-                f"notifications_read {typ} timestamp", {"since": since, "limit": 30, "types": [typ]}
+                f"notifications_read {typ} timestamp", {"since": since, "limit": 30, "types": [typ], "include_diagnostics": True}
             ),
         )
 
