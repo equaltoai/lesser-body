@@ -65,9 +65,11 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 						"to":{"address":"agent@example.com"},
 						"subject":"Hi",
 						"preview":"Hello preview",
+						"body":"` + strings.Repeat("full mailbox body ", 240) + `",
 						"content":{"available":true,"bytes":11,"mimeType":"text/plain","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","contentHref":"/content"},
 						"state":{"read":false,"archived":false,"deleted":false},
-						"createdAt":"2026-03-04T12:00:00Z"
+						"createdAt":"2026-03-04T12:00:00Z",
+						"debugPayload":{"large":"` + strings.Repeat("mailbox-debug ", 320) + `"}
 					}],
 					"count":1,
 					"hasMore":true,
@@ -122,6 +124,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	}
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
+	responseBytes := map[int]int{}
 	callTool := func(id int, name string, arguments map[string]any) map[string]any {
 		t.Helper()
 		callParams, _ := json.Marshal(map[string]any{"name": name, "arguments": arguments})
@@ -132,6 +135,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 		if resp.Status != 200 {
 			t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
 		}
+		responseBytes[id] = len(resp.Body)
 		var rpc mcpruntime.Response
 		_ = json.Unmarshal(resp.Body, &rpc)
 		if rpc.Error != nil {
@@ -155,6 +159,11 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	if msg["messageId"] != "comm-delivery-email" || msg["hostMessageId"] != "comm-msg-email" || msg["body"] != "Hello preview" || msg["bodyIsPreview"] != true {
 		t.Fatalf("unexpected email message: %+v", msg)
 	}
+	for _, alias := range []string{"messageId", "messageRef", "deliveryId", "hostMessageId"} {
+		if value, _ := msg[alias].(string); value == "" {
+			t.Fatalf("expected mailbox compatibility alias %q to remain populated, got %+v", alias, msg)
+		}
+	}
 	if _, ok := msg["raw"]; ok {
 		t.Fatalf("raw field should be absent by default: %+v", msg)
 	}
@@ -164,6 +173,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	if emailRead["nextCursor"] != "cursor-2" || emailRead["nextSince"] != "cursor-2" {
 		t.Fatalf("expected cursor aliases, got %+v", emailRead)
 	}
+	assertMCPPayloadBudget(t, "email_read default mailbox preview large fixture", responseBytes[2], 6500)
 
 	emailReadRaw := callTool(20, "email_read", map[string]any{"folder": "inbox", "limit": 10, "include_raw": true})
 	rawMessages, _ := emailReadRaw["messages"].([]any)
@@ -174,6 +184,12 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	if _, ok := rawMsg["raw"]; ok {
 		t.Fatalf("include_raw=true should use _raw, not raw: %+v", rawMsg)
 	}
+	assertMCPPayloadIncrease(t,
+		"email_read default mailbox preview large fixture",
+		responseBytes[2],
+		"email_read include_raw expanded fixture",
+		responseBytes[20],
+	)
 
 	smsRead := callTool(3, "sms_read", map[string]any{"limit": 10})
 	smsMessages, _ := smsRead["messages"].([]any)

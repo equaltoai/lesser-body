@@ -123,6 +123,163 @@ func TestToolStructuredFirstResultKeepsFullDataStructured(t *testing.T) {
 	}
 }
 
+func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *testing.T) {
+	const heavyPostSentinel = "FULL_HEAVY_POST_BODY_SHOULD_NOT_APPEAR_IN_COMPACT_TEXT"
+	const heavyAccountSentinel = "FULL_HEAVY_ACCOUNT_NOTE_SHOULD_NOT_APPEAR_IN_COMPACT_TEXT"
+
+	fullData := map[string]any{
+		"view": "standard",
+		"items": []any{
+			map[string]any{
+				"id":        "post-1",
+				"postRef":   "post:post-1",
+				"createdAt": "2026-05-17T15:00:00Z",
+				"content":   heavyPostSentinel + " " + strings.Repeat("post body ", 500),
+				"account": map[string]any{
+					"id":         "acct-1",
+					"accountRef": "account:acct-1",
+					"note":       heavyAccountSentinel + " " + strings.Repeat("profile note ", 300),
+				},
+			},
+		},
+		"nextCursor": "cursor-post-1",
+	}
+	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
+		Summary: "1 compact post",
+		Data:    fullData,
+		Text: map[string]any{
+			"view": "compact",
+			"items": []any{
+				map[string]any{
+					"postRef":    "post:post-1",
+					"accountRef": "account:acct-1",
+					"createdAt":  "2026-05-17T15:00:00Z",
+					"preview":    "short preview",
+				},
+			},
+			"omitted": []any{
+				map[string]any{
+					"path":   "items[].content",
+					"reason": "heavy_text",
+					"expand": map[string]any{
+						"ref":      "post:post-1",
+						"location": "structuredContent.data.items[0].content",
+					},
+				},
+				map[string]any{
+					"path":   "items[].account.note",
+					"reason": "profile_bio",
+					"expand": map[string]any{
+						"ref":      "account:acct-1",
+						"location": "structuredContent.data.items[0].account.note",
+					},
+				},
+			},
+			"budget": map[string]any{
+				"maxOutputBytes": 2048,
+				"enforcement":    "test_gate_only",
+				"truncation":     "none; gate fails instead of silently dropping fields",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("structured-first compact result: %v", err)
+	}
+
+	textJSON := result.Content[0].Text
+	for _, heavy := range []string{heavyPostSentinel, heavyAccountSentinel, "post body", "profile note"} {
+		if strings.Contains(textJSON, heavy) {
+			t.Fatalf("compact text leaked heavy field %q: %s", heavy, textJSON)
+		}
+	}
+
+	var text map[string]any
+	if err := json.Unmarshal([]byte(textJSON), &text); err != nil {
+		t.Fatalf("unmarshal compact text: %v", err)
+	}
+	if text["view"] != readViewCompact {
+		t.Fatalf("compact text view = %#v", text["view"])
+	}
+	items, _ := text["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("compact text should retain one item ref, got %#v", text["items"])
+	}
+	item, _ := items[0].(map[string]any)
+	if item["postRef"] != "post:post-1" || item["accountRef"] != "account:acct-1" {
+		t.Fatalf("compact text lost stable refs: %#v", item)
+	}
+	if _, ok := item["content"]; ok {
+		t.Fatalf("compact text item must omit content: %#v", item)
+	}
+	if _, ok := item["account"]; ok {
+		t.Fatalf("compact text item must omit nested account payload: %#v", item)
+	}
+
+	omitted, _ := text["omitted"].([]any)
+	if len(omitted) != 2 {
+		t.Fatalf("expected two omitted-field records, got %#v", text["omitted"])
+	}
+	wantOmitted := map[string]string{
+		"items[].content":      "structuredContent.data.items[0].content",
+		"items[].account.note": "structuredContent.data.items[0].account.note",
+	}
+	for _, raw := range omitted {
+		record, _ := raw.(map[string]any)
+		path, _ := record["path"].(string)
+		expand, _ := record["expand"].(map[string]any)
+		location, _ := expand["location"].(string)
+		if wantOmitted[path] != location {
+			t.Fatalf("unexpected expansion metadata for omitted path %q: %#v", path, record)
+		}
+		delete(wantOmitted, path)
+	}
+	if len(wantOmitted) != 0 {
+		t.Fatalf("missing omitted-field records: %#v", wantOmitted)
+	}
+
+	data, _ := result.StructuredContent["data"].(map[string]any)
+	fullItems, _ := data["items"].([]any)
+	fullItem, _ := fullItems[0].(map[string]any)
+	if content, _ := fullItem["content"].(string); !strings.Contains(content, heavyPostSentinel) {
+		t.Fatalf("structuredContent.data must retain full post content, got %#v", fullItem["content"])
+	}
+	account, _ := fullItem["account"].(map[string]any)
+	if note, _ := account["note"].(string); !strings.Contains(note, heavyAccountSentinel) {
+		t.Fatalf("structuredContent.data must retain full account note, got %#v", account["note"])
+	}
+
+	compactMeasurement, err := measureToolResultPayload(result)
+	if err != nil {
+		t.Fatalf("measure compact result payload: %v", err)
+	}
+	standardResult, err := toolJSONResult(fullData, nil)
+	if err != nil {
+		t.Fatalf("standard tool result: %v", err)
+	}
+	standardMeasurement, err := measureToolResultPayload(standardResult)
+	if err != nil {
+		t.Fatalf("measure standard result payload: %v", err)
+	}
+	const compactTextBudgetBytes = 2048
+	t.Logf("compact structured-first text bytes=%d, envelope bytes=%d; standard envelope bytes=%d",
+		compactMeasurement.ContentTextBytes,
+		compactMeasurement.JSONRPCEnvelopeBytes,
+		standardMeasurement.JSONRPCEnvelopeBytes,
+	)
+	if compactMeasurement.ContentTextBytes > compactTextBudgetBytes {
+		t.Fatalf("compact text bytes %d exceed explicit budget %d; do not silently truncate",
+			compactMeasurement.ContentTextBytes,
+			compactTextBudgetBytes,
+		)
+	}
+	if compactMeasurement.JSONRPCEnvelopeBytes >= standardMeasurement.JSONRPCEnvelopeBytes {
+		t.Fatalf("compact structured-first envelope must be smaller than standard duplicated JSON: compact=%d standard=%d",
+			compactMeasurement.JSONRPCEnvelopeBytes,
+			standardMeasurement.JSONRPCEnvelopeBytes,
+		)
+	}
+}
+
 func TestToolStructuredFirstResultCanOptInDiagnostics(t *testing.T) {
 	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
 		Data:               map[string]any{"ok": true},
