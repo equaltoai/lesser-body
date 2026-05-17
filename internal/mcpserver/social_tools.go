@@ -24,19 +24,21 @@ import (
 )
 
 const (
-	notificationCursorMemoryPrefix   = "notification_cursor:"
-	notificationCursorMemoryTag      = "notification_cursor"
-	notificationCommunicationInbound = "communication:inbound"
-	notificationReadDefaultLimit     = 30
-	notificationReadMaxLimit         = 80
-	notificationReadMaxTypes         = 8
-	notificationContentPreviewRunes  = 500
-	notificationCommPreviewRunes     = 240
-	conversationReadDefaultLimit     = 20
-	conversationReadMaxLimit         = 80
-	socialCompactListPreviewRunes    = 48
-	timelineCompactMaxOutputBytes    = 6000
-	postSearchCompactMaxOutputBytes  = 8000
+	notificationCursorMemoryPrefix    = "notification_cursor:"
+	notificationCursorMemoryTag       = "notification_cursor"
+	notificationCommunicationInbound  = "communication:inbound"
+	notificationReadDefaultLimit      = 30
+	notificationReadMaxLimit          = 80
+	notificationReadMaxTypes          = 8
+	notificationCompactMaxOutputBytes = 8000
+	notificationCompactPreviewRunes   = 24
+	notificationContentPreviewRunes   = 500
+	notificationCommPreviewRunes      = 240
+	conversationReadDefaultLimit      = 20
+	conversationReadMaxLimit          = 80
+	socialCompactListPreviewRunes     = 48
+	timelineCompactMaxOutputBytes     = 6000
+	postSearchCompactMaxOutputBytes   = 8000
 )
 
 var notificationCursorEventIDs = struct {
@@ -94,6 +96,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: followingListDef(), Handler: handleFollowingList},
 		{Def: conversationsReadDef(), Handler: handleConversationsRead},
 		{Def: notificationsReadDef(), Handler: handleNotificationsRead},
+		{Def: notificationGetDef(), Handler: handleNotificationGet},
 		{Def: notificationDismissDef(), Handler: handleNotificationDismiss},
 		{Def: postCreateDef(), Handler: handlePostCreate},
 		{Def: postBoostDef(), Handler: handlePostBoost},
@@ -733,6 +736,14 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 }
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if err := validateNotificationReadView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
 	var in struct {
 		Types              []string `json:"types,omitempty"`
 		Since              *string  `json:"since"`
@@ -788,7 +799,8 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if !runtimeAllowsCommunicationNotifications(ctx) {
 		list = filterRawCommunicationNotifications(list)
 	}
-	notifications := socialNotificationsFromAPI(list, in.IncludeRaw)
+	includeRaw := in.IncludeRaw || readParams.View == readViewFull
+	notifications := socialNotificationsFromAPI(list, includeRaw)
 	if hasTemporalSince {
 		notifications = filterSocialNotificationsAfter(notifications, sinceTime)
 	}
@@ -827,7 +839,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"count":         len(notifications),
 		"types":         requestedTypes,
 		"notifications": notifications,
-		"includeRaw":    in.IncludeRaw,
+		"includeRaw":    includeRaw,
 	}
 	if in.IncludeDiagnostics {
 		attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
@@ -836,10 +848,306 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 			Total:           time.Since(startedAt),
 			UpstreamCount:   len(list),
 			NormalizedCount: len(notifications),
-			RawIncluded:     in.IncludeRaw,
+			RawIncluded:     includeRaw,
 		})
 	}
+	if readParams.View == readViewCompact {
+		return socialCompactNotificationsResult(payload, notifications, readParams, in.IncludeDiagnostics)
+	}
 	return toolJSONResult(payload, nil)
+}
+
+func handleNotificationGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		ID   string `json:"id"`
+		View string `json:"view,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	in.ID = strings.TrimSpace(in.ID)
+	if in.ID == "" {
+		return nil, invalidParams("missing id")
+	}
+	view := strings.ToLower(strings.TrimSpace(in.View))
+	if view == "" {
+		view = readViewStandard
+	}
+	switch view {
+	case readViewStandard, readViewFull:
+	default:
+		return nil, invalidParams("invalid view (expected standard or full)")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := client.DoJSON(ctx, "GET", "/api/v1/notifications/"+url.PathEscape(in.ID), nil, token, nil)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	notification, ok := out.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected notification response")
+	}
+	if !runtimeAllowsCommunicationNotifications(ctx) && isRawCommunicationNotification(notification) {
+		return toolErrorResult("runtime_boundary", "communication notification is unavailable to this runtime profile", 403, map[string]any{
+			"surface":               "notification_get",
+			"id":                    in.ID,
+			"profile":               runtimeProfileName(ctx),
+			"communicationsEnabled": false,
+		})
+	}
+
+	notificationID := firstNonEmptyStringMap(notification, "id")
+	if notificationID == "" {
+		notificationID = in.ID
+	}
+	payload := map[string]any{
+		"id":              notificationID,
+		"view":            view,
+		"source":          "lesser-api",
+		"notificationRef": compactSocialNotificationRef(normalizeSocialNotification(notification, false), notificationCompactPreviewRunes),
+	}
+	if view == readViewFull {
+		payload["notification"] = notification
+	} else {
+		payload["notification"] = normalizeSocialNotification(notification, false)
+	}
+	return toolJSONResult(payload, nil)
+}
+
+func validateNotificationReadView(view string) error {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "", readViewStandard, readViewFull, readViewCompact:
+		return nil
+	default:
+		return fmt.Errorf("invalid view (expected compact, standard, or full)")
+	}
+}
+
+func socialCompactNotificationsResult(standardPayload map[string]any, notifications []any, params sharedReadParams, includeDiagnostics bool) (*mcpruntime.ToolResult, error) {
+	previewRunes := notificationCompactPreviewRunes
+	if params.PreviewChars > 0 {
+		previewRunes = params.PreviewChars
+	}
+
+	refs := make([]any, 0, len(notifications))
+	for _, item := range notifications {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			return nil, fmt.Errorf("unexpected notification item")
+		}
+		ref := compactSocialNotificationRef(raw, previewRunes)
+		if ref == nil {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+
+	budget := socialCompactOutputBudget(params, notificationCompactMaxOutputBytes)
+	payload := map[string]any{
+		"view":          readViewCompact,
+		"since":         standardPayload["since"],
+		"cursor":        standardPayload["cursor"],
+		"nextSince":     standardPayload["nextSince"],
+		"nextCursor":    standardPayload["nextCursor"],
+		"count":         len(refs),
+		"types":         standardPayload["types"],
+		"notifications": refs,
+		"includeRaw":    false,
+		"omitted":       compactNotificationListOmissions(),
+		"budget": map[string]any{
+			"maxOutputBytes":      budget,
+			"contentPreviewRunes": previewRunes,
+			"enforcement":         "response_too_large",
+		},
+	}
+
+	diagnostics := map[string]any(nil)
+	if includeDiagnostics {
+		if d, ok := standardPayload["diagnostics"].(map[string]any); ok {
+			diagnostics = d
+		}
+	}
+	text := map[string]any{
+		"tool":  "notifications_read",
+		"view":  readViewCompact,
+		"count": len(refs),
+	}
+	return toolStructuredFirstResultWithBudget("notifications_read", fmt.Sprintf("%d compact notifications", len(refs)), payload, text, diagnostics, includeDiagnostics, budget)
+}
+
+func compactSocialNotificationRef(raw map[string]any, previewRunes int) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if previewRunes <= 0 {
+		previewRunes = notificationCompactPreviewRunes
+	}
+	id := strings.TrimSpace(firstNonEmptyStringMap(raw, "id"))
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", id)
+	putIfNotEmpty(ref, "type", normalizeSocialNotificationType(raw))
+	putIfNotEmpty(ref, "createdAt", firstNonEmptyStringMap(raw, "createdAt", "created_at"))
+	attachSocialNotificationReadState(ref, raw)
+	if actor := compactSocialAccountRef(firstMap(raw, "actor", "account")); actor != nil {
+		ref["actorRef"] = actor
+	}
+	if post := firstMap(raw, "targetPost", "status", "post"); post != nil {
+		if statusRef := compactNotificationStatusRef(post, previewRunes); statusRef != nil {
+			ref["targetPostRef"] = statusRef
+		}
+	}
+	if communication := compactSocialNotificationCommunicationRef(raw); communication != nil {
+		ref["communication"] = communication
+	}
+	missing := missingSocialRefFields(map[string]string{
+		"id":        id,
+		"createdAt": firstNonEmptyStringMap(raw, "createdAt", "created_at"),
+	})
+	if typ := strings.TrimSpace(normalizeSocialNotificationType(raw)); typ == "" {
+		missing = append(missing, "type")
+	}
+	if len(missing) > 0 {
+		ref["missingFields"] = missing
+	}
+	if id != "" {
+		ref["expand"] = socialNotificationGetExpansion(id, readViewStandard, "structuredContent.data.notification")
+	}
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
+}
+
+func compactNotificationStatusRef(raw map[string]any, previewRunes int) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if previewRunes <= 0 {
+		previewRunes = notificationCompactPreviewRunes
+	}
+	id := firstNonEmptyStringMap(raw, "id")
+	content := rawSocialStatusContent(raw)
+	preview, truncated := compactStringWithTruncation(content, previewRunes)
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", id)
+	putIfNotEmpty(ref, "url", firstNonEmptyStringMap(raw, "url", "uri"))
+	putIfNotEmpty(ref, "createdAt", firstNonEmptyStringMap(raw, "created_at", "createdAt"))
+	putIfNotEmpty(ref, "visibility", firstNonEmptyStringMap(raw, "visibility"))
+	putIfNotEmpty(ref, "contentPreview", preview)
+	ref["contentTruncated"] = truncated
+	if id != "" {
+		ref["expand"] = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+	}
+	if len(ref) == 1 {
+		return nil
+	}
+	return ref
+}
+
+func compactSocialNotificationCommunicationRef(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	channel := notificationChannel(raw)
+	if channel == "" {
+		return nil
+	}
+	out := map[string]any{
+		"channel": channel,
+	}
+	putIfNotEmpty(out, "messageId", commMessageID(raw))
+	putIfNotEmpty(out, "subject", commSubject(raw))
+	putIfNotEmpty(out, "receivedAt", commReceivedAt(raw))
+	if from := compactCommunicationEndpoint(commFrom(raw)); from != nil {
+		out["from"] = from
+	}
+	if preview := compactString(firstNonEmpty(commPreview(raw), commBody(raw)), notificationCommPreviewRunes); preview != "" {
+		out["preview"] = preview
+	}
+	return out
+}
+
+func socialNotificationGetExpansion(id string, view string, resultPath string) *SocialExpansionRef {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	view = strings.ToLower(strings.TrimSpace(view))
+	if view == "" {
+		view = readViewStandard
+	}
+	return &SocialExpansionRef{
+		Tool: "notification_get",
+		Arguments: map[string]any{
+			"id":   id,
+			"view": view,
+		},
+		ResultPath: strings.TrimSpace(resultPath),
+	}
+}
+
+func compactNotificationListOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":      "notifications[].notification",
+			"reason":    "notification_ref_only",
+			"expansion": "structuredContent.data.notifications[].expand",
+		},
+		map[string]any{
+			"path":                  "notifications[].raw",
+			"reason":                "debug_payload",
+			"expansionTool":         "notification_get",
+			"expansionArgsTemplate": map[string]any{"id": "structuredContent.data.notifications[].id", "view": readViewFull},
+			"resultPath":            "structuredContent.data.notification",
+		},
+		map[string]any{
+			"path":      "notifications[].targetPost.content",
+			"reason":    "target_post_preview",
+			"expansion": "structuredContent.data.notifications[].targetPostRef.expand",
+		},
+	}
+}
+
+func toolStructuredFirstResultWithBudget(toolName string, summary string, payload map[string]any, text map[string]any, diagnostics map[string]any, includeDiagnostics bool, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
+		Summary:            summary,
+		Data:               payload,
+		Text:               text,
+		Diagnostics:        diagnostics,
+		IncludeDiagnostics: includeDiagnostics,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if maxOutputBytes <= 0 {
+		return result, nil
+	}
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return nil, err
+	}
+	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
+		return result, nil
+	}
+	return toolErrorResult("response_too_large", toolName+" compact response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
+		"tool":                 toolName,
+		"view":                 readViewCompact,
+		"measuredBytes":        measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":       maxOutputBytes,
+		"contentTextBytes":     measurement.ContentTextBytes,
+		"structuredBytes":      measurement.StructuredContentBytes,
+		"guidance":             "reduce limit or increase max_output_bytes",
+		"omittedFieldMetadata": "available under structuredContent.data.omitted for successful compact responses",
+	})
 }
 
 func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1187,8 +1495,28 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80},
 				"include_raw":{"type":"boolean","description":"Include verbose upstream notification payloads under _raw for audit/debug use. Defaults to false and increases response size."},
-				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."}
+				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded notification refs with notification_get/post_get expansion metadata."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			}
+		}`),
+	}
+}
+
+func notificationGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "notification_get",
+		Description:  "Expand a compact notification reference by reading a notification through Lesser.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: notificationGetOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"Stable Lesser notification id from a compact notification ref."},
+				"view":{"type":"string","enum":["standard","full"],"description":"standard returns normalized notification fields; full returns the upstream Lesser notification payload."}
+			},
+			"required":["id"]
 		}`),
 	}
 }
