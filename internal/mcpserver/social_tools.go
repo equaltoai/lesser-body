@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -33,6 +34,9 @@ const (
 	notificationCommPreviewRunes     = 240
 	conversationReadDefaultLimit     = 20
 	conversationReadMaxLimit         = 80
+	socialCompactListPreviewRunes    = 48
+	timelineCompactMaxOutputBytes    = 6000
+	postSearchCompactMaxOutputBytes  = 8000
 )
 
 var notificationCursorEventIDs = struct {
@@ -193,6 +197,14 @@ func handleProfileRead(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 }
 
 func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if err := validateSocialListReadView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
 	var in struct {
 		Timeline string `json:"timeline"`
 		Since    string `json:"since,omitempty"`
@@ -240,10 +252,21 @@ func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.
 	if err != nil {
 		return authToolResultFromError(err)
 	}
+	if readParams.View == readViewCompact {
+		return socialCompactTimelineResult(in.Timeline, strings.TrimSpace(in.Since), in.Limit, out, readParams)
+	}
 	return toolJSONResult(out, nil)
 }
 
 func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if err := validateSocialListReadView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
 	var in struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit,omitempty"`
@@ -276,7 +299,246 @@ func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 	if err != nil {
 		return authToolResultFromError(err)
 	}
+	if readParams.View == readViewCompact {
+		return socialCompactPostSearchResult(in.Query, in.Limit, out, readParams)
+	}
 	return toolJSONResult(out, nil)
+}
+
+func validateSocialListReadView(view string) error {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "", readViewStandard, readViewFull, readViewCompact:
+		return nil
+	default:
+		return fmt.Errorf("invalid view (expected compact, standard, or full)")
+	}
+}
+
+func socialCompactTimelineResult(timeline string, since string, limit int, raw any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected timeline response")
+	}
+
+	previewRunes := socialCompactPreviewRunes(params)
+	statuses, statusIDs, err := compactSocialStatusRefsFromItems(items, previewRunes)
+	if err != nil {
+		return nil, err
+	}
+	budget := socialCompactOutputBudget(params, timelineCompactMaxOutputBytes)
+	payload := map[string]any{
+		"view":     readViewCompact,
+		"timeline": timeline,
+		"count":    len(statuses),
+		"statuses": statuses,
+		"omitted":  socialCompactStatusListOmissions("statuses"),
+		"budget":   socialCompactBudgetMetadata(budget, previewRunes),
+	}
+	if strings.TrimSpace(since) != "" {
+		payload["since"] = strings.TrimSpace(since)
+	}
+	if limit > 0 {
+		payload["limit"] = limit
+	}
+
+	return socialCompactListToolResult("timeline_read", fmt.Sprintf("%d compact %s timeline statuses", len(statuses), timeline), payload, map[string]any{
+		"tool":      "timeline_read",
+		"view":      readViewCompact,
+		"timeline":  timeline,
+		"count":     len(statuses),
+		"statusIds": statusIDs,
+		"omitted":   socialCompactStatusListTextOmissions("statuses"),
+	}, budget)
+}
+
+func socialCompactPostSearchResult(query string, limit int, raw any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	search, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected search response")
+	}
+	statusesRaw, ok := search["statuses"].([]any)
+	if !ok && search["statuses"] != nil {
+		return nil, fmt.Errorf("unexpected search statuses response")
+	}
+
+	previewRunes := socialCompactPreviewRunes(params)
+	statuses, statusIDs, err := compactSocialStatusRefsFromItems(statusesRaw, previewRunes)
+	if err != nil {
+		return nil, err
+	}
+	budget := socialCompactOutputBudget(params, postSearchCompactMaxOutputBytes)
+	payload := map[string]any{
+		"view":     readViewCompact,
+		"query":    query,
+		"count":    len(statuses),
+		"statuses": statuses,
+		"omitted":  socialCompactStatusListOmissions("statuses"),
+		"budget":   socialCompactBudgetMetadata(budget, previewRunes),
+	}
+	if limit > 0 {
+		payload["limit"] = limit
+	}
+	if accounts := compactSocialAccountRefsFromItems(search["accounts"]); len(accounts) > 0 {
+		payload["accounts"] = accounts
+	}
+	if hashtags := compactSocialHashtagsFromItems(search["hashtags"]); len(hashtags) > 0 {
+		payload["hashtags"] = hashtags
+	}
+
+	return socialCompactListToolResult("post_search", fmt.Sprintf("%d compact post search results", len(statuses)), payload, map[string]any{
+		"tool":      "post_search",
+		"view":      readViewCompact,
+		"query":     query,
+		"count":     len(statuses),
+		"statusIds": statusIDs,
+		"omitted":   socialCompactStatusListTextOmissions("statuses"),
+	}, budget)
+}
+
+func compactSocialStatusRefsFromItems(items []any, previewRunes int) ([]any, []string, error) {
+	statuses := make([]any, 0, len(items))
+	statusIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			return nil, nil, fmt.Errorf("unexpected status item")
+		}
+		ref := compactSocialStatusRefWithPreview(raw, previewRunes)
+		if ref == nil {
+			return nil, nil, fmt.Errorf("unexpected empty status item")
+		}
+		statuses = append(statuses, ref)
+		if strings.TrimSpace(ref.ID) != "" {
+			statusIDs = append(statusIDs, strings.TrimSpace(ref.ID))
+		}
+	}
+	return statuses, statusIDs, nil
+}
+
+func compactSocialAccountRefsFromItems(raw any) []any {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	accounts := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			continue
+		}
+		ref := compactSocialAccountRef(raw)
+		if ref != nil {
+			accounts = append(accounts, ref)
+		}
+	}
+	return accounts
+}
+
+func compactSocialHashtagsFromItems(raw any) []any {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	hashtags := make([]any, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case string:
+			if value := strings.TrimSpace(typed); value != "" {
+				hashtags = append(hashtags, value)
+			}
+		case map[string]any:
+			hashtag := map[string]any{}
+			putIfNotEmpty(hashtag, "name", firstNonEmptyStringMap(typed, "name", "tag"))
+			putIfNotEmpty(hashtag, "url", firstNonEmptyStringMap(typed, "url"))
+			if len(hashtag) > 0 {
+				hashtags = append(hashtags, hashtag)
+			}
+		}
+	}
+	return hashtags
+}
+
+func socialCompactPreviewRunes(params sharedReadParams) int {
+	if params.PreviewChars > 0 {
+		return params.PreviewChars
+	}
+	return socialCompactListPreviewRunes
+}
+
+func socialCompactOutputBudget(params sharedReadParams, defaultBudget int) int {
+	if params.MaxOutputBytes > 0 {
+		return params.MaxOutputBytes
+	}
+	return defaultBudget
+}
+
+func socialCompactBudgetMetadata(maxOutputBytes int, previewRunes int) map[string]any {
+	return map[string]any{
+		"maxOutputBytes":      maxOutputBytes,
+		"contentPreviewRunes": previewRunes,
+		"enforcement":         "response_too_large",
+	}
+}
+
+func socialCompactStatusListOmissions(statusPath string) []any {
+	return []any{
+		map[string]any{
+			"path":      statusPath + "[].content",
+			"reason":    "content_preview",
+			"expansion": statusPath + "[].omitted[].expand",
+		},
+		map[string]any{
+			"path":      statusPath + "[].account",
+			"reason":    "author_ref_only",
+			"expansion": statusPath + "[].expand with post_get(id, view=full)",
+		},
+	}
+}
+
+func socialCompactStatusListTextOmissions(statusPath string) []any {
+	return []any{
+		map[string]any{
+			"path":      statusPath + "[].content",
+			"reason":    "content_preview",
+			"expansion": "structuredContent.data." + statusPath + "[].omitted[].expand",
+		},
+		map[string]any{
+			"path":      statusPath + "[].account",
+			"reason":    "author_ref_only",
+			"expansion": "structuredContent.data." + statusPath + "[].expand with view=full",
+		},
+	}
+}
+
+func socialCompactListToolResult(toolName string, summary string, payload map[string]any, text map[string]any, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
+		Summary: summary,
+		Data:    payload,
+		Text:    text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if maxOutputBytes <= 0 {
+		return result, nil
+	}
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return nil, err
+	}
+	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
+		return result, nil
+	}
+	return toolErrorResult("response_too_large", toolName+" compact response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
+		"tool":                 toolName,
+		"view":                 readViewCompact,
+		"measuredBytes":        measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":       maxOutputBytes,
+		"contentTextBytes":     measurement.ContentTextBytes,
+		"structuredBytes":      measurement.StructuredContentBytes,
+		"guidance":             "reduce limit or increase max_output_bytes",
+		"omittedFieldMetadata": "available under structuredContent.data.omitted for successful compact responses",
+	})
 }
 
 func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -840,7 +1102,10 @@ func timelineReadDef() mcpruntime.ToolDef {
 			"properties":{
 				"timeline":{"type":"string","enum":["home","local","federated"]},
 				"since":{"type":"string"},
-				"limit":{"type":"integer","minimum":1,"maximum":200}
+				"limit":{"type":"integer","minimum":1,"maximum":200},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			},
 			"required":["timeline"]
 		}`),
@@ -855,7 +1120,10 @@ func postSearchDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"query":{"type":"string"},
-				"limit":{"type":"integer","minimum":1,"maximum":200}
+				"limit":{"type":"integer","minimum":1,"maximum":200},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			},
 			"required":["query"]
 		}`),

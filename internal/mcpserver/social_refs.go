@@ -57,13 +57,20 @@ func compactSocialAccountRef(raw map[string]any) *AccountRef {
 }
 
 func compactSocialStatusRef(raw map[string]any) *StatusRef {
+	return compactSocialStatusRefWithPreview(raw, socialStatusContentPreviewRunes)
+}
+
+func compactSocialStatusRefWithPreview(raw map[string]any, previewRunes int) *StatusRef {
 	if raw == nil {
 		return nil
+	}
+	if previewRunes <= 0 {
+		previewRunes = socialStatusContentPreviewRunes
 	}
 
 	id := firstNonEmptyStringMap(raw, "id")
 	content := rawSocialStatusContent(raw)
-	preview, truncated := compactStringWithTruncation(content, socialStatusContentPreviewRunes)
+	preview, truncated := compactStringWithTruncation(content, previewRunes)
 
 	ref := &StatusRef{
 		ID:               id,
