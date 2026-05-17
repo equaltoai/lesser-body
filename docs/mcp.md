@@ -415,6 +415,33 @@ Project 33 P4.1 compatibility decision: compact defaults remain opt-in for now. 
 docs/probe guidance plus Ops live evidence against compact-default behavior. See
 `docs/project33-p4.1-compatibility-decision.md`.
 
+### Agent-facing compact expansion workflows
+
+Compact/summary responses are explicit requests, not new defaults. Agents should treat compact list responses as
+index/ref pages and expand only the items they need:
+
+- `timeline_read({"timeline":"home","limit":5,"view":"compact"})` and
+  `post_search({"query":"mcp","limit":10,"view":"compact"})` return `StatusRef` entries. Use each ref's `expand`
+  metadata, or call `post_get({"id":"<status-id>","view":"standard"})` for normalized content and
+  `post_get({"id":"<status-id>","view":"full"})` for explicit audit/debug expansion.
+- `notifications_read({"limit":10,"view":"compact"})` returns notification refs. Use
+  `notification_get({"id":"<notification-id>","view":"standard"})` or `view:"full"` for a single notification, and
+  follow any `targetPostRef.expand` route through `post_get` for post content.
+- `conversations_read({"limit":10,"view":"compact"})` returns conversation refs with bounded participant and last-post
+  metadata. There is no `conversation_get` tool; expand only the `lastPostRef` through `post_get` when Lesser supplies a
+  stable post id.
+- `soul_read({"self":true,"view":"summary"})` returns bounded public identity essentials. Use the summary `expand`
+  metadata, or call `soul_read(..., "view":"standard")` for the compatibility bundle and `view:"full"` for explicit
+  sanitized audit/debug raw public payloads.
+- `email_read({"folder":"inbox","limit":10,"view":"compact"})` returns mailbox refs with canonical `messageRef`. Use
+  `email_get({"messageId":"<messageRef>"})` for mailbox metadata and
+  `email_get_content({"messageId":"<messageRef>"})` for the full body when `content.available=true`.
+
+Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
+private reachability from compact omissions: private email/phone reachability still fails closed with
+`private_reachability_unavailable`, explicit source/contract/status/reason metadata remains significant, and private
+mint-conversation blocks require explicit self-scope expansion outside summary mode.
+
 Social compact references use deterministic expansion metadata. `AccountRef` values include only source-backed stable
 fields (`id`, `acct`, `displayName`, and `url`) and report `missingFields` rather than guessing absent data. `StatusRef`
 values include `id`, `url`, `authorRef`, `createdAt`, `visibility`, `contentPreview`, and a `contentTruncated` marker.
