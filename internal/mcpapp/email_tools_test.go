@@ -328,12 +328,12 @@ func TestBoundBodyOperationPolicyDeniesImplicitAndPublicPaidEmail(t *testing.T) 
 			wantReason: "capability_policy_denied",
 		},
 		{
-			name:         "public paid caller remains modeled but denied in M1",
+			name:         "public paid oauth caller requires scoped x402 grant",
 			registration: `{"version":"3","channels":{"email":{"capabilities":["email-send"]}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.email.send") + `}`,
 			token: func(tb testing.TB) string {
 				return newTestTokenWithClientClass(tb, "test", "agent1", []string{"write"}, "public_paid")
 			},
-			wantReason:    "public_paid_callers_denied_in_m1",
+			wantReason:    "x402_grant_required",
 			wantPolicyVer: "2026-05-16",
 		},
 	}

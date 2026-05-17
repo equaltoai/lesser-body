@@ -25,14 +25,34 @@ type PrincipalType string
 const (
 	PrincipalTypeOAuthToken  PrincipalType = "oauth_token"
 	PrincipalTypeInstanceKey PrincipalType = "instance_key"
+	PrincipalTypeX402Grant   PrincipalType = "x402_grant"
 )
 
 const legacyInstanceKeyInboundAuthEnv = "MCP_ALLOW_LEGACY_INSTANCE_KEY"
 
 type Principal struct {
-	Type     PrincipalType
-	Identity string
-	Claims   *Claims
+	Type      PrincipalType
+	Identity  string
+	Claims    *Claims
+	X402Grant *X402InvocationGrant
+}
+
+type X402InvocationGrant struct {
+	GrantIDHash         string
+	AgentID             string
+	Actor               string
+	Tool                string
+	Capability          string
+	Scope               string
+	GrantVersion        string
+	PolicyVersion       string
+	Resource            string
+	RequestHash         string
+	PaymentEvidenceHash string
+	CallerEvidenceHash  string
+	ExpiresAt           time.Time
+	MaxUses             int
+	RemainingUses       int
 }
 
 func PrincipalFromContext(ctx *apptheory.Context) *Principal {

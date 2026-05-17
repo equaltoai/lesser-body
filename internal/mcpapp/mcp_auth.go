@@ -32,6 +32,19 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 			return invalidDiscoveryConfigResponse(err), nil
 		}
 
+		if identity, attempted, resp, err := tryAuthorizeX402InvocationGrant(ctx); attempted {
+			if err != nil {
+				return nil, err
+			}
+			if resp != nil {
+				return resp, nil
+			}
+			if strings.TrimSpace(identity) == "" {
+				return unauthorizedMCPResponse(ctx), nil
+			}
+			return next(ctx)
+		}
+
 		identity, err := authHook(ctx)
 		if err != nil {
 			return unauthorizedMCPResponse(ctx), nil

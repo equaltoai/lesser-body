@@ -113,8 +113,13 @@ func decideBoundOperation(ctx context.Context, registration map[string]any, oper
 		return decision
 	}
 	if callerClass == boundCallerClassPublicPaid {
-		decision.Reason = "public_paid_callers_denied_in_m1"
-		return decision
+		if grant := auth.X402GrantFromToolContext(ctx); grant == nil {
+			decision.Reason = "x402_grant_required"
+			return decision
+		} else if !x402GrantAllowsBoundOperation(grant, operation) {
+			decision.Reason = "x402_grant_scope_denied"
+			return decision
+		}
 	}
 
 	capabilityAllowed := boundCapabilityPolicyAllows(registration, operation)
@@ -141,6 +146,9 @@ func classifyBoundOperationCaller(ctx context.Context) boundCallerClass {
 	principal := auth.PrincipalFromToolContext(ctx)
 	if principal == nil {
 		return boundCallerClassUnknown
+	}
+	if principal.Type == auth.PrincipalTypeX402Grant {
+		return boundCallerClassPublicPaid
 	}
 	if principal.Type == auth.PrincipalTypeInstanceKey {
 		return boundCallerClassInstanceKey
@@ -405,7 +413,27 @@ func hostedBoundSoulAllowedCallerClasses(policy map[string]any) []any {
 	if hostedBoundSoulCallerAccessAllows(callerAccessPayment, "allowlistedPeer", "allowlisted_peer") {
 		classes = append(classes, string(boundCallerClassAllowlistedPeer))
 	}
+	if hostedBoundSoulCallerAccessAllows(callerAccessPayment, "publicPaidCaller", "public_paid", "publicPaid", "x402") {
+		classes = append(classes, string(boundCallerClassPublicPaid))
+	}
 	return classes
+}
+
+func x402GrantAllowsBoundOperation(grant *auth.X402InvocationGrant, operation boundOperation) bool {
+	if grant == nil {
+		return false
+	}
+	aliases := boundOperationAliases(operation)
+	for _, value := range []string{grant.Capability, grant.Tool} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if stringListContainsNormalized(aliases, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostedBoundSoulCallerPolicyPresent(policy map[string]any) bool {
