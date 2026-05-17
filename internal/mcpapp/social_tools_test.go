@@ -2,12 +2,14 @@ package mcpapp_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
 
@@ -144,6 +146,25 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	}
 	if !containsString(postGetSchema.Required, "id") {
 		t.Fatalf("post_get should require id, got %+v", postGetSchema.Required)
+	}
+	for _, toolName := range []string{"timeline_read", "post_search"} {
+		var schema struct {
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal(toolsByName[toolName].InputSchema, &schema); err != nil {
+			t.Fatalf("unmarshal %s schema: %v", toolName, err)
+		}
+		viewProp := schema.Properties["view"]
+		enum, _ := viewProp["enum"].([]any)
+		if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+			t.Fatalf("%s view enum = %+v", toolName, viewProp)
+		}
+		if propType, _ := schema.Properties["max_output_bytes"]["type"].(string); propType != "integer" {
+			t.Fatalf("%s max_output_bytes should be integer, got %+v", toolName, schema.Properties["max_output_bytes"])
+		}
+		if propType, _ := schema.Properties["preview_chars"]["type"].(string); propType != "integer" {
+			t.Fatalf("%s preview_chars should be integer, got %+v", toolName, schema.Properties["preview_chars"])
+		}
 	}
 	var conversationSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
@@ -695,6 +716,265 @@ func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
 
 	if !reflect.DeepEqual(gotPaths, []string{"GET /api/v1/statuses/post-1", "GET /api/v1/statuses/post-1"}) {
 		t.Fatalf("unexpected Lesser status routes: %+v", gotPaths)
+	}
+}
+
+func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "TIMELINE_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR"
+	const accountNote = "TIMELINE_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "TIMELINE_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/timelines/home" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(socialStatusesFixtureJSON(5, "timeline", contentTail, accountNote, debugPayload)))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "timeline_read", map[string]any{
+		"timeline": "home",
+		"limit":    5,
+		"view":     "compact",
+	})
+	if gotQueries[0] != "limit=5" {
+		t.Fatalf("expected compact timeline query limit=5, got %q", gotQueries[0])
+	}
+	assertMCPPayloadBudget(t, "timeline_read compact limit=5 large fixture", len(compact.ResponseBody), 6000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact timeline response leaked %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+	data, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if data["view"] != "compact" || data["timeline"] != "home" || data["count"] != float64(5) {
+		t.Fatalf("unexpected compact timeline metadata: %+v", data)
+	}
+	statuses, _ := data["statuses"].([]any)
+	if len(statuses) != 5 {
+		t.Fatalf("expected 5 compact statuses, got %+v", data["statuses"])
+	}
+	firstStatus, _ := statuses[0].(map[string]any)
+	if firstStatus["id"] != "timeline-1" || firstStatus["url"] == "" || firstStatus["visibility"] != "public" {
+		t.Fatalf("unexpected compact status ref: %+v", firstStatus)
+	}
+	if preview, _ := firstStatus["contentPreview"].(string); preview == "" || len([]rune(preview)) > 160 || strings.Contains(preview, contentTail) {
+		t.Fatalf("expected bounded compact preview without tail, got %q (%d runes)", preview, len([]rune(preview)))
+	}
+	if firstStatus["contentTruncated"] != true {
+		t.Fatalf("expected contentTruncated marker, got %+v", firstStatus)
+	}
+	authorRef, _ := firstStatus["authorRef"].(map[string]any)
+	if authorRef["id"] != "acct-timeline-1" || authorRef["acct"] != "timeline1@example.com" || authorRef["displayName"] != "Timeline 1" {
+		t.Fatalf("unexpected authorRef: %+v", authorRef)
+	}
+	if _, ok := authorRef["note"]; ok {
+		t.Fatalf("authorRef must not inline upstream account note: %+v", authorRef)
+	}
+	expand, _ := firstStatus["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "post_get" || expandArgs["id"] != "timeline-1" || expandArgs["view"] != "standard" {
+		t.Fatalf("unexpected compact expansion metadata: %+v", expand)
+	}
+	omitted, _ := firstStatus["omitted"].([]any)
+	if len(omitted) != 1 {
+		t.Fatalf("expected per-status omitted metadata, got %+v", firstStatus["omitted"])
+	}
+	omittedRecord, _ := omitted[0].(map[string]any)
+	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
+	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
+		t.Fatalf("unexpected omitted metadata: %+v", omittedRecord)
+	}
+	topOmitted, _ := data["omitted"].([]any)
+	if len(topOmitted) == 0 {
+		t.Fatalf("compact timeline should name list-level omitted fields: %+v", data)
+	}
+	var text map[string]any
+	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
+		t.Fatalf("unmarshal compact text: %v", err)
+	}
+	if _, ok := text["statuses"]; ok {
+		t.Fatalf("compact text should use structured-first locator instead of duplicating statuses: %+v", text)
+	}
+	if locator, _ := text["data"].(map[string]any); locator["location"] != "structuredContent.data" {
+		t.Fatalf("expected structured data locator in compact text, got %+v", text)
+	}
+
+	standard := callSocialTool(t, env, app, authHeader, sessionID, 3, "timeline_read", map[string]any{
+		"timeline": "home",
+		"limit":    5,
+		"view":     "standard",
+	})
+	assertMCPPayloadIncrease(t,
+		"timeline_read compact limit=5 large fixture",
+		len(compact.ResponseBody),
+		"timeline_read standard large fixture",
+		len(standard.ResponseBody),
+	)
+	if !strings.Contains(string(standard.ResponseBody), contentTail) || !strings.Contains(string(standard.ResponseBody), accountNote) {
+		t.Fatalf("standard timeline response should preserve upstream shape/content")
+	}
+
+	defaultResult := callSocialTool(t, env, app, authHeader, sessionID, 4, "timeline_read", map[string]any{
+		"timeline": "home",
+		"limit":    5,
+	})
+	if _, ok := defaultResult.Result.StructuredContent["data"].([]any); !ok {
+		t.Fatalf("default timeline response must remain upstream array-shaped, got %+v", defaultResult.Result.StructuredContent["data"])
+	}
+}
+
+func TestM5_PostSearchCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "SEARCH_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR"
+	const accountNote = "SEARCH_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "SEARCH_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/search" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"statuses":` + socialStatusesFixtureJSON(10, "search", contentTail, accountNote, debugPayload) + `,
+			"accounts":[{"id":"acct-search-root","acct":"root@example.com","display_name":"Root","url":"https://example.com/@root","note":"` + accountNote + ` ` + strings.Repeat("search account note ", 100) + `"}],
+			"hashtags":[{"name":"mcp","url":"https://example.com/tags/mcp","history":[{"day":"1","uses":"100"}]}],
+			"debugPayload":{"large":"` + debugPayload + ` ` + strings.Repeat("debug payload ", 200) + `"}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "post_search", map[string]any{
+		"query": "mcp",
+		"limit": 10,
+		"view":  "compact",
+	})
+	if compact.Result.IsError {
+		t.Fatalf("post_search compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
+	}
+	if gotQueries[0] != "limit=10&q=mcp&type=statuses" {
+		t.Fatalf("expected compact search query, got %q", gotQueries[0])
+	}
+	assertMCPPayloadBudget(t, "post_search compact limit=10 large fixture", len(compact.ResponseBody), 8000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "search account note ", "debug payload "} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact search response leaked %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+
+	data, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if data["view"] != "compact" || data["query"] != "mcp" || data["count"] != float64(10) {
+		t.Fatalf("unexpected compact search metadata: %+v", data)
+	}
+	statuses, _ := data["statuses"].([]any)
+	if len(statuses) != 10 {
+		t.Fatalf("expected 10 compact statuses, got %+v", data["statuses"])
+	}
+	firstStatus, _ := statuses[0].(map[string]any)
+	if firstStatus["id"] != "search-1" || firstStatus["contentTruncated"] != true {
+		t.Fatalf("unexpected compact search status: %+v", firstStatus)
+	}
+	expand, _ := firstStatus["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "post_get" || expandArgs["id"] != "search-1" || expandArgs["view"] != "standard" {
+		t.Fatalf("unexpected compact search expansion: %+v", expand)
+	}
+	accounts, _ := data["accounts"].([]any)
+	if len(accounts) != 1 {
+		t.Fatalf("expected compact account refs for search accounts, got %+v", data["accounts"])
+	}
+	accountRef, _ := accounts[0].(map[string]any)
+	if accountRef["id"] != "acct-search-root" || accountRef["acct"] != "root@example.com" || accountRef["displayName"] != "Root" {
+		t.Fatalf("unexpected compact search account ref: %+v", accountRef)
+	}
+	if _, ok := accountRef["note"]; ok {
+		t.Fatalf("search account ref must not inline upstream note: %+v", accountRef)
+	}
+	hashtags, _ := data["hashtags"].([]any)
+	if len(hashtags) != 1 {
+		t.Fatalf("expected compact hashtag summary, got %+v", data["hashtags"])
+	}
+	var text map[string]any
+	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
+		t.Fatalf("unmarshal compact search text: %v", err)
+	}
+	if _, ok := text["statuses"]; ok {
+		t.Fatalf("compact search text should not duplicate statuses: %+v", text)
+	}
+
+	standard := callSocialTool(t, env, app, authHeader, sessionID, 3, "post_search", map[string]any{
+		"query": "mcp",
+		"limit": 10,
+		"view":  "standard",
+	})
+	assertMCPPayloadIncrease(t,
+		"post_search compact limit=10 large fixture",
+		len(compact.ResponseBody),
+		"post_search standard large fixture",
+		len(standard.ResponseBody),
+	)
+	if !strings.Contains(string(standard.ResponseBody), contentTail) || !strings.Contains(string(standard.ResponseBody), accountNote) {
+		t.Fatalf("standard search response should preserve upstream payload")
+	}
+}
+
+func TestM5_SocialCompactHonorsMaxOutputBytesTooLarge(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/timelines/home" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(socialStatusesFixtureJSON(5, "tiny-budget", "tail", "note", "debug")))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	result := callSocialTool(t, env, app, authHeader, sessionID, 2, "timeline_read", map[string]any{
+		"timeline":         "home",
+		"limit":            5,
+		"view":             "compact",
+		"max_output_bytes": 1000,
+	})
+	if !result.Result.IsError {
+		t.Fatalf("expected response_too_large tool error, got %+v", result.Result)
+	}
+	errorPayload, _ := result.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["tool"] != "timeline_read" || details["maxOutputBytes"] != float64(1000) || details["measuredBytes"] == float64(0) {
+		t.Fatalf("unexpected too-large details: %+v", details)
 	}
 }
 
@@ -2086,4 +2366,104 @@ func TestM5_NotificationDismissSingleKeepsCursorAndHandlesNotFound(t *testing.T)
 	if !strings.Contains(strings.ToLower(rpc.Error.Message), "not found") {
 		t.Fatalf("expected not-found error message, got %+v", rpc.Error)
 	}
+}
+
+type socialToolCallResult struct {
+	ResponseBody []byte
+	RPC          mcpruntime.Response
+	Result       mcpruntime.ToolResult
+}
+
+func newSocialToolTestSession(t testing.TB) (*apptheory.App, *testkit.Env, string, string) {
+	t.Helper()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	return app, env, initResp.Headers["mcp-session-id"][0], authHeader
+}
+
+func callSocialTool(t testing.TB, env *testkit.Env, app *apptheory.App, authHeader string, sessionID string, id int, name string, args map[string]any) socialToolCallResult {
+	t.Helper()
+
+	callParams, _ := json.Marshal(map[string]any{"name": name, "arguments": args})
+	resp := invokeJSON(t, env, app, map[string][]string{
+		"authorization":  {authHeader},
+		"mcp-session-id": {sessionID},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+	if resp.Status != 200 {
+		t.Fatalf("%s: status=%d body=%s", name, resp.Status, string(resp.Body))
+	}
+
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal %s: %v", name, err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("%s rpc error: %+v", name, rpc.Error)
+	}
+
+	var out mcpruntime.ToolResult
+	b, _ := json.Marshal(rpc.Result)
+	_ = json.Unmarshal(b, &out)
+	return socialToolCallResult{
+		ResponseBody: resp.Body,
+		RPC:          rpc,
+		Result:       out,
+	}
+}
+
+func socialStatusesFixtureJSON(count int, prefix string, contentTail string, accountNote string, debugPayload string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	titlePrefix := strings.ToUpper(prefix[:1]) + prefix[1:]
+	for i := 1; i <= count; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		content := strings.Repeat(fmt.Sprintf("%s content %02d ", prefix, i), 18) + contentTail
+		b.WriteString(fmt.Sprintf(`{
+			"id":"%s-%d",
+			"url":"https://example.com/@%s%d/%s-%d",
+			"created_at":"2026-05-17T17:%02d:00Z",
+			"visibility":"public",
+			"content":"%s",
+			"account":{
+				"id":"acct-%s-%d",
+				"username":"%s%d",
+				"acct":"%s%d@example.com",
+				"display_name":"%s %d",
+				"url":"https://example.com/@%s%d",
+				"note":"%s %s"
+			},
+			"debugPayload":{"large":"%s %s"}
+		}`,
+			prefix, i,
+			prefix, i, prefix, i,
+			i,
+			content,
+			prefix, i,
+			prefix, i,
+			prefix, i,
+			titlePrefix, i,
+			prefix, i,
+			accountNote, strings.Repeat("account note ", 80),
+			debugPayload, strings.Repeat("debug payload ", 80),
+		))
+	}
+	b.WriteString("]")
+	return b.String()
 }
