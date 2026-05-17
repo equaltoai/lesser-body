@@ -43,7 +43,7 @@ Variables:
   - If set, supports three distinct roles:
     - deprecated inbound MCP compatibility when legacy instance-key auth is enabled
     - lesser-host service auth for host-backed communication tools (mailbox reads/state plus outbound send/reply)
-    - lesser-host service auth for validating scoped public x402 invocation grants
+    - lesser-host service auth for scoped public x402 invocation grant consume/verification
 - `LESSER_HOST_INSTANCE_KEY_ARN` (string, optional)
   - If set, fetches the managed instance key from Secrets Manager.
   - Managed CDK deploys can inject this directly via the optional `LesserHostInstanceKeyARN` template/context input.
@@ -102,7 +102,8 @@ that runtime only for the current read-only `skill_bundle_get` pilot; task state
   - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.
   - Example: `https://claude.ai,https://app.dev.example.com,https://api.dev.example.com`
   - API Gateway CORS also permits the scoped public x402 invocation headers `lesser-x402-grant`,
-    `x-lesser-x402-grant`, `payment-signature`, and `x-payment` for browser-based paid callers.
+    `x-lesser-x402-grant`, `lesser-x402-grant-id`, `x-lesser-x402-grant-id`, `lesser-x402-capability`,
+    `x-lesser-x402-capability`, `payment-signature`, and `x-payment` for browser-based paid callers.
 - `MCP_ALLOW_LEGACY_INSTANCE_KEY` (string, optional)
   - Compatibility flag for inbound `/mcp/{actor}` requests that authenticate with `LESSER_HOST_INSTANCE_KEY`.
   - Default: disabled.

@@ -56,10 +56,12 @@ presence or channel `capabilities` alone do not grant private operation authorit
 validated scoped x402 invocation grant plus explicit caller-access/payment policy allowance and never receives
 principal/operator authority.
 
-Scoped x402 grant validation is independent from OAuth principal sessions. Requests carrying a Host grant are rejected
-if they also carry OAuth `Authorization`, if payment evidence is missing, or if the Host validation response does not
-bind the actor/agent, tool, MCP resource URL, request hash, expiry, usage acceptance, and supported policy version.
-Logs and error payloads include only sanitized grant/payment hashes and policy-safe denial reasons.
+Scoped x402 grant consume/verification is independent from OAuth principal sessions. Requests carrying a Host grant are
+rejected if they also carry OAuth `Authorization`, if the Host grant id or capability is missing, if payment evidence is
+missing, or if the Host consume response does not bind the actor-resolved agent, capability/tool, MCP resource URL, request hash,
+payment evidence hash, caller subject hash, expiry, scoped-invocation authority, issued status, usage limit, and
+supported policy version. Logs and error payloads include only sanitized grant/payment hashes and policy-safe denial
+reasons.
 
 Denied operation-policy checks fail closed with a sanitized `operation_not_allowed` result. The details include only
 policy-safe fields such as `reason`, `operation`, `callerClass`, and optional `policyVersion`; they must not include

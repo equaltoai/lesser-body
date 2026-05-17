@@ -2,13 +2,18 @@ package mcpapp_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/soulapi"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
@@ -20,10 +25,10 @@ func TestX402Grant_AllowsScopedToolCallWithoutOAuthSession(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
-	var gotReq mcpapp.X402GrantValidationRequestForTests
-	restore := mcpapp.SetX402GrantValidatorForTests(func(_ context.Context, req mcpapp.X402GrantValidationRequestForTests) (mcpapp.X402GrantValidationResponseForTests, error) {
+	var gotReq mcpapp.X402GrantConsumeRequestForTests
+	restore := mcpapp.SetX402GrantConsumerForTests(func(_ context.Context, req mcpapp.X402GrantConsumeRequestForTests) (mcpapp.X402GrantConsumeResponseForTests, error) {
 		gotReq = req
-		return validX402GrantResponse(req, time.Now().UTC().Add(time.Hour)), nil
+		return validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour)), nil
 	})
 	defer restore()
 
@@ -44,24 +49,120 @@ func TestX402Grant_AllowsScopedToolCallWithoutOAuthSession(t *testing.T) {
 		t.Fatalf("tools/call error: %+v", rpc.Error)
 	}
 
-	if gotReq.Grant != "grant-token" {
-		t.Fatalf("host validation did not receive opaque grant")
+	if gotReq.GrantID != "grant-123" || gotReq.GrantToken != "grant-token" {
+		t.Fatalf("host consume did not receive grant id/token binding: %+v", gotReq)
 	}
-	if gotReq.Actor != "agent1" || gotReq.AgentID != "agent1" || gotReq.Tool != "echo" || gotReq.Method != "tools/call" {
-		t.Fatalf("unexpected validation request binding: %+v", gotReq)
+	if gotReq.Actor != "agent1" || gotReq.AgentID != "agent1" || gotReq.Capability != "tools.invoke" || gotReq.Tool != "echo" {
+		t.Fatalf("unexpected consume request binding: %+v", gotReq)
 	}
 	if gotReq.Resource != "https://api.example.com/mcp/agent1" {
 		t.Fatalf("unexpected resource binding: %q", gotReq.Resource)
 	}
 	if gotReq.PaymentEvidenceHash == "" || strings.Contains(gotReq.PaymentEvidenceHash, "payment-signature-value") {
-		t.Fatalf("payment evidence must be hashed before host validation, got %q", gotReq.PaymentEvidenceHash)
+		t.Fatalf("payment evidence must be hashed before host consume validation, got %q", gotReq.PaymentEvidenceHash)
+	}
+	wireReq, err := json.Marshal(gotReq)
+	if err != nil {
+		t.Fatalf("marshal consume request: %v", err)
+	}
+	wire := string(wireReq)
+	for _, forbidden := range []string{"grantId", "actor", "paymentEvidenceHash"} {
+		if strings.Contains(wire, forbidden) {
+			t.Fatalf("consume request body should match accepted Host shape and omit %s: %s", forbidden, wire)
+		}
+	}
+	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey"} {
+		if !strings.Contains(wire, required) {
+			t.Fatalf("consume request body missing accepted Host field %s: %s", required, wire)
+		}
+	}
+}
+
+func TestX402Grant_DefaultConsumerCallsAcceptedHostConsumeContract(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "instance-key-123")
+	auth.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(soulapi.ResetForTests)
+
+	var gotPath string
+	var gotAuth string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotAuth = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST consume request, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode consume request: %v", err)
+		}
+		forbidden := []string{"grantId", "actor", "paymentEvidenceHash"}
+		for _, key := range forbidden {
+			if _, ok := gotBody[key]; ok {
+				t.Fatalf("consume request body must omit %s: %+v", key, gotBody)
+			}
+		}
+		evidenceHash := sha256.Sum256([]byte("payment-signature-value"))
+		response := map[string]any{
+			"accepted": true,
+			"replayed": false,
+			"grant": map[string]any{
+				"grantId":           "grant-123",
+				"agentId":           gotBody["agentId"],
+				"capability":        gotBody["capability"],
+				"tool":              gotBody["tool"],
+				"resource":          gotBody["resource"],
+				"requestHash":       gotBody["requestHash"],
+				"callerSubjectHash": "caller-subject-hash",
+				"payment": map[string]any{
+					"evidenceHash": hex.EncodeToString(evidenceHash[:]),
+				},
+				"policyVersion": "caller-access-payment/v1",
+				"authority":     "scoped_invocation",
+				"status":        "issued",
+				"maxUsage":      1,
+				"usedCount":     1,
+				"expiresAt":     time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+			},
+			"usage": map[string]any{
+				"usedCount": 1,
+				"maxUsage":  1,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+	t.Setenv("LESSER_HOST_URL", server.URL)
+
+	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "echo", map[string]any{"message": "paid hi"})
+	if resp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	if gotPath != "/api/v1/soul/x402/grants/grant-123/consume" {
+		t.Fatalf("expected accepted Host consume path, got %q", gotPath)
+	}
+	if gotAuth != "Bearer instance-key-123" {
+		t.Fatalf("expected instance-key bearer auth, got %q", gotAuth)
+	}
+	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey"} {
+		value, _ := gotBody[required].(string)
+		if strings.TrimSpace(value) == "" {
+			t.Fatalf("consume request body missing %s: %+v", required, gotBody)
+		}
+	}
+	if gotBody["grantToken"] != "grant-token" || gotBody["capability"] != "tools.invoke" || gotBody["tool"] != "echo" {
+		t.Fatalf("unexpected consume request body: %+v", gotBody)
 	}
 }
 
 func TestX402Grant_RejectsWrongAgentID(t *testing.T) {
-	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-		resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
-		resp.AgentID = "other-agent"
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Grant.AgentID = "other-agent"
 		return resp
 	})
 	defer restore()
@@ -71,9 +172,9 @@ func TestX402Grant_RejectsWrongAgentID(t *testing.T) {
 }
 
 func TestX402Grant_RejectsWrongTool(t *testing.T) {
-	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-		resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
-		resp.Tool = "profile_read"
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Grant.Tool = "profile_read"
 		return resp
 	})
 	defer restore()
@@ -83,8 +184,8 @@ func TestX402Grant_RejectsWrongTool(t *testing.T) {
 }
 
 func TestX402Grant_RejectsExpiredGrant(t *testing.T) {
-	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-		return validX402GrantResponse(req, time.Now().UTC().Add(-time.Minute))
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		return validX402GrantConsumeResponse(req, time.Now().UTC().Add(-time.Minute))
 	})
 	defer restore()
 
@@ -93,10 +194,9 @@ func TestX402Grant_RejectsExpiredGrant(t *testing.T) {
 }
 
 func TestX402Grant_RejectsReplay(t *testing.T) {
-	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-		resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
-		resp.UsageAccepted = false
-		resp.Replay = true
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Replayed = true
 		return resp
 	})
 	defer restore()
@@ -108,27 +208,28 @@ func TestX402Grant_RejectsReplay(t *testing.T) {
 func TestX402Grant_RejectsMissingCallerEvidenceAndUsageLimit(t *testing.T) {
 	for _, scenario := range []struct {
 		name   string
-		mutate func(*mcpapp.X402GrantValidationResponseForTests)
+		mutate func(*mcpapp.X402GrantConsumeResponseForTests)
 		reason string
 	}{
 		{
 			name: "caller evidence",
-			mutate: func(resp *mcpapp.X402GrantValidationResponseForTests) {
-				resp.CallerEvidenceHash = ""
+			mutate: func(resp *mcpapp.X402GrantConsumeResponseForTests) {
+				resp.Grant.CallerSubjectHash = ""
 			},
 			reason: "x402_caller_evidence_missing",
 		},
 		{
 			name: "usage limit",
-			mutate: func(resp *mcpapp.X402GrantValidationResponseForTests) {
-				resp.MaxUses = 0
+			mutate: func(resp *mcpapp.X402GrantConsumeResponseForTests) {
+				resp.Grant.MaxUsage = 0
+				resp.Usage.MaxUsage = 0
 			},
 			reason: "x402_usage_limit_missing",
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-				resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
+			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+				resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
 				scenario.mutate(&resp)
 				return resp
 			})
@@ -147,9 +248,9 @@ func TestX402Grant_RejectsMissingPaymentEvidence(t *testing.T) {
 	auth.ResetForTests()
 
 	hostCalled := false
-	restore := mcpapp.SetX402GrantValidatorForTests(func(_ context.Context, req mcpapp.X402GrantValidationRequestForTests) (mcpapp.X402GrantValidationResponseForTests, error) {
+	restore := mcpapp.SetX402GrantConsumerForTests(func(_ context.Context, req mcpapp.X402GrantConsumeRequestForTests) (mcpapp.X402GrantConsumeResponseForTests, error) {
 		hostCalled = true
-		return validX402GrantResponse(req, time.Now().UTC().Add(time.Hour)), nil
+		return validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour)), nil
 	})
 	defer restore()
 
@@ -167,9 +268,9 @@ func TestX402Grant_RejectsMixedOAuthAndGrantAuth(t *testing.T) {
 	auth.ResetForTests()
 
 	hostCalled := false
-	restore := mcpapp.SetX402GrantValidatorForTests(func(_ context.Context, req mcpapp.X402GrantValidationRequestForTests) (mcpapp.X402GrantValidationResponseForTests, error) {
+	restore := mcpapp.SetX402GrantConsumerForTests(func(_ context.Context, req mcpapp.X402GrantConsumeRequestForTests) (mcpapp.X402GrantConsumeResponseForTests, error) {
 		hostCalled = true
-		return validX402GrantResponse(req, time.Now().UTC().Add(time.Hour)), nil
+		return validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour)), nil
 	})
 	defer restore()
 
@@ -197,9 +298,9 @@ func TestX402Grant_RejectsWrongOrMissingPolicyVersion(t *testing.T) {
 		{name: "wrong", policyVersion: "caller-access-payment/v0"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-				resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
-				resp.PolicyVersion = scenario.policyVersion
+			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+				resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+				resp.Grant.PolicyVersion = scenario.policyVersion
 				return resp
 			})
 			defer restore()
@@ -213,27 +314,27 @@ func TestX402Grant_RejectsWrongOrMissingPolicyVersion(t *testing.T) {
 func TestX402Grant_RejectsRequestResourceBindingMismatch(t *testing.T) {
 	for _, scenario := range []struct {
 		name   string
-		mutate func(*mcpapp.X402GrantValidationResponseForTests)
+		mutate func(*mcpapp.X402GrantConsumeResponseForTests)
 		reason string
 	}{
 		{
 			name: "resource",
-			mutate: func(resp *mcpapp.X402GrantValidationResponseForTests) {
-				resp.Resource = "https://api.example.com/mcp/other-agent"
+			mutate: func(resp *mcpapp.X402GrantConsumeResponseForTests) {
+				resp.Grant.Resource = "https://api.example.com/mcp/other-agent"
 			},
 			reason: "x402_resource_mismatch",
 		},
 		{
 			name: "request hash",
-			mutate: func(resp *mcpapp.X402GrantValidationResponseForTests) {
-				resp.RequestHash = "sha256:wrong"
+			mutate: func(resp *mcpapp.X402GrantConsumeResponseForTests) {
+				resp.Grant.RequestHash = strings.Repeat("0", 64)
 			},
 			reason: "x402_request_hash_mismatch",
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests {
-				resp := validX402GrantResponse(req, time.Now().UTC().Add(time.Hour))
+			restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+				resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
 				scenario.mutate(&resp)
 				return resp
 			})
@@ -245,14 +346,14 @@ func TestX402Grant_RejectsRequestResourceBindingMismatch(t *testing.T) {
 	}
 }
 
-func setupX402GrantTest(t *testing.T, response func(mcpapp.X402GrantValidationRequestForTests) mcpapp.X402GrantValidationResponseForTests) func() {
+func setupX402GrantTest(t *testing.T, response func(mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests) func() {
 	t.Helper()
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
 
-	return mcpapp.SetX402GrantValidatorForTests(func(_ context.Context, req mcpapp.X402GrantValidationRequestForTests) (mcpapp.X402GrantValidationResponseForTests, error) {
+	return mcpapp.SetX402GrantConsumerForTests(func(_ context.Context, req mcpapp.X402GrantConsumeRequestForTests) (mcpapp.X402GrantConsumeResponseForTests, error) {
 		return response(req), nil
 	})
 }
@@ -269,7 +370,9 @@ func mustNewTestApp(t *testing.T) *apptheory.App {
 func invokeX402Tool(t *testing.T, app *apptheory.App, actor string, grant string, paymentEvidence string, tool string, args map[string]any) apptheory.Response {
 	t.Helper()
 	headers := map[string][]string{
-		"lesser-x402-grant": {grant},
+		"lesser-x402-grant":      {grant},
+		"lesser-x402-grant-id":   {"grant-123"},
+		"lesser-x402-capability": {"tools.invoke"},
 	}
 	if paymentEvidence != "" {
 		headers["payment-signature"] = []string{paymentEvidence}
@@ -305,25 +408,33 @@ func invokeX402Tool(t *testing.T, app *apptheory.App, actor string, grant string
 	})
 }
 
-func validX402GrantResponse(req mcpapp.X402GrantValidationRequestForTests, expiresAt time.Time) mcpapp.X402GrantValidationResponseForTests {
-	return mcpapp.X402GrantValidationResponseForTests{
-		Valid:               true,
-		GrantID:             "grant-123",
-		AgentID:             req.AgentID,
-		Actor:               req.Actor,
-		Tool:                req.Tool,
-		Capability:          req.Tool,
-		Scope:               req.Method,
-		GrantVersion:        req.Version,
-		PolicyVersion:       "caller-access-payment/v1",
-		Resource:            req.Resource,
-		RequestHash:         req.RequestHash,
-		PaymentEvidenceHash: req.PaymentEvidenceHash,
-		CallerEvidenceHash:  req.PaymentEvidenceHash,
-		ExpiresAt:           expiresAt.Format(time.RFC3339),
-		MaxUses:             1,
-		RemainingUses:       0,
-		UsageAccepted:       true,
+func validX402GrantConsumeResponse(req mcpapp.X402GrantConsumeRequestForTests, expiresAt time.Time) mcpapp.X402GrantConsumeResponseForTests {
+	return mcpapp.X402GrantConsumeResponseForTests{
+		Accepted: true,
+		Replayed: false,
+		Grant: mcpapp.X402InvocationGrantViewForTests{
+			GrantID:           req.GrantID,
+			AgentID:           req.AgentID,
+			Actor:             req.Actor,
+			Tool:              req.Tool,
+			Capability:        req.Capability,
+			PolicyVersion:     "caller-access-payment/v1",
+			Authority:         "scoped_invocation",
+			Status:            "issued",
+			Resource:          req.Resource,
+			RequestHash:       req.RequestHash,
+			CallerSubjectHash: req.PaymentEvidenceHash,
+			Payment: mcpapp.X402GrantPaymentBindingForTests{
+				EvidenceHash: req.PaymentEvidenceHash,
+			},
+			ExpiresAt: expiresAt.Format(time.RFC3339),
+			MaxUsage:  1,
+			UsedCount: 1,
+		},
+		Usage: mcpapp.X402InvocationGrantUsageForTests{
+			UsedCount: 1,
+			MaxUsage:  1,
+		},
 	}
 }
 

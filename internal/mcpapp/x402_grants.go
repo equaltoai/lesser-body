@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -21,50 +22,66 @@ import (
 const (
 	x402GrantHeader             = "lesser-x402-grant"
 	x402GrantLegacyHeader       = "x-lesser-x402-grant"
+	x402GrantIDHeader           = "lesser-x402-grant-id"
+	x402GrantIDLegacyHeader     = "x-lesser-x402-grant-id"
+	x402GrantCapabilityHeader   = "lesser-x402-capability"
+	x402GrantCapabilityLegacy   = "x-lesser-x402-capability"
 	x402PaymentSignatureHeader  = "payment-signature"
 	x402LegacyPaymentHeader     = "x-payment"
-	x402GrantValidationPath     = "/api/v1/soul/x402/grants/validate"
+	x402GrantConsumePathPrefix  = "/api/v1/soul/x402/grants/"
+	x402GrantConsumePathSuffix  = "/consume"
 	x402InvocationGrantVersion  = "scoped-x402-invocation-grant/v1"
 	x402InvocationGrantScope    = "tools/call"
 	x402MaxEvidenceHeaderLength = 64 << 10
 )
 
-type x402GrantValidationRequest struct {
-	Version             string `json:"version"`
-	Grant               string `json:"grant"`
-	Actor               string `json:"actor"`
+type x402GrantConsumeRequest struct {
+	GrantID             string `json:"-"`
+	GrantToken          string `json:"grantToken"`
+	Actor               string `json:"-"`
 	AgentID             string `json:"agentId"`
-	Resource            string `json:"resource"`
-	Method              string `json:"method"`
+	Capability          string `json:"capability"`
 	Tool                string `json:"tool"`
+	Resource            string `json:"resource"`
 	RequestHash         string `json:"requestHash"`
-	PaymentEvidenceHash string `json:"paymentEvidenceHash"`
-	PaymentHeader       string `json:"paymentHeader"`
-	Consume             bool   `json:"consume"`
+	IdempotencyKey      string `json:"idempotencyKey"`
+	PaymentEvidenceHash string `json:"-"`
 }
 
-type x402GrantValidationResponse struct {
-	Valid               bool   `json:"valid"`
-	Reason              string `json:"reason,omitempty"`
-	GrantID             string `json:"grantId,omitempty"`
-	GrantIDHash         string `json:"grantIdHash,omitempty"`
-	AgentID             string `json:"agentId,omitempty"`
-	Actor               string `json:"actor,omitempty"`
-	Tool                string `json:"tool,omitempty"`
-	Capability          string `json:"capability,omitempty"`
-	Scope               string `json:"scope,omitempty"`
-	GrantVersion        string `json:"grantVersion,omitempty"`
-	Version             string `json:"version,omitempty"`
-	PolicyVersion       string `json:"policyVersion,omitempty"`
-	Resource            string `json:"resource,omitempty"`
-	RequestHash         string `json:"requestHash,omitempty"`
-	PaymentEvidenceHash string `json:"paymentEvidenceHash,omitempty"`
-	CallerEvidenceHash  string `json:"callerEvidenceHash,omitempty"`
-	ExpiresAt           string `json:"expiresAt,omitempty"`
-	MaxUses             int    `json:"maxUses,omitempty"`
-	RemainingUses       int    `json:"remainingUses,omitempty"`
-	UsageAccepted       bool   `json:"usageAccepted,omitempty"`
-	Replay              bool   `json:"replay,omitempty"`
+type x402GrantConsumeResponse struct {
+	Accepted bool                     `json:"accepted"`
+	Replayed bool                     `json:"replayed"`
+	Grant    x402InvocationGrantView  `json:"grant"`
+	Usage    x402InvocationGrantUsage `json:"usage"`
+	Reason   string                   `json:"reason,omitempty"`
+}
+
+type x402InvocationGrantView struct {
+	GrantID           string                  `json:"grantId,omitempty"`
+	GrantToken        string                  `json:"grantToken,omitempty"`
+	AgentID           string                  `json:"agentId,omitempty"`
+	Actor             string                  `json:"actor,omitempty"`
+	Capability        string                  `json:"capability,omitempty"`
+	Tool              string                  `json:"tool,omitempty"`
+	Resource          string                  `json:"resource,omitempty"`
+	RequestHash       string                  `json:"requestHash,omitempty"`
+	CallerSubjectHash string                  `json:"callerSubjectHash,omitempty"`
+	Payment           x402GrantPaymentBinding `json:"payment,omitempty"`
+	PolicyVersion     string                  `json:"policyVersion,omitempty"`
+	Authority         string                  `json:"authority,omitempty"`
+	Status            string                  `json:"status,omitempty"`
+	MaxUsage          int                     `json:"maxUsage,omitempty"`
+	UsedCount         int                     `json:"usedCount,omitempty"`
+	ExpiresAt         string                  `json:"expiresAt,omitempty"`
+}
+
+type x402GrantPaymentBinding struct {
+	EvidenceHash string `json:"evidenceHash,omitempty"`
+}
+
+type x402InvocationGrantUsage struct {
+	UsedCount int `json:"usedCount,omitempty"`
+	MaxUsage  int `json:"maxUsage,omitempty"`
 }
 
 type x402GrantFailure struct {
@@ -75,7 +92,7 @@ type x402GrantFailure struct {
 	PolicyVersion string
 }
 
-var validateX402GrantWithHost = defaultValidateX402GrantWithHost
+var consumeX402GrantWithHost = defaultConsumeX402GrantWithHost
 
 func tryAuthorizeX402InvocationGrant(ctx *apptheory.Context) (string, bool, *apptheory.Response, error) {
 	rawGrant := firstHeaderValue(headersForContext(ctx), x402GrantHeader)
@@ -155,7 +172,23 @@ func validateX402InvocationGrant(ctx *apptheory.Context, rawGrant string) (*auth
 		return nil, &x402GrantFailure{Reason: "x402_grant_tool_required", Status: 403}, nil
 	}
 
-	paymentEvidence, paymentHeader := x402PaymentEvidence(headersForContext(ctx))
+	headers := headersForContext(ctx)
+	grantID := x402GrantID(headers)
+	if grantID == "" {
+		return nil, &x402GrantFailure{Reason: "x402_grant_id_required", Status: 403, Tool: toolName}, nil
+	}
+	if len(grantID) > 128 {
+		return nil, &x402GrantFailure{Reason: "x402_grant_id_invalid", Status: 403, Tool: toolName}, nil
+	}
+	capability := x402GrantCapability(headers)
+	if capability == "" {
+		return nil, &x402GrantFailure{Reason: "x402_capability_required", Status: 403, Tool: toolName}, nil
+	}
+	if len(capability) > 128 {
+		return nil, &x402GrantFailure{Reason: "x402_capability_invalid", Status: 403, Tool: toolName}, nil
+	}
+
+	paymentEvidence, _ := x402PaymentEvidence(headers)
 	if paymentEvidence == "" {
 		return nil, &x402GrantFailure{Reason: "missing_payment_evidence", Status: http.StatusPaymentRequired, Tool: toolName}, nil
 	}
@@ -182,26 +215,26 @@ func validateX402InvocationGrant(ctx *apptheory.Context, rawGrant string) (*auth
 		return nil, &x402GrantFailure{Reason: "x402_agent_unresolved", Status: 403, Tool: toolName}, nil
 	}
 
-	validationReq := x402GrantValidationRequest{
-		Version:             x402InvocationGrantVersion,
-		Grant:               rawGrant,
+	requestHash := hashString("", strings.TrimSpace(string(ctx.Request.Body)))
+	consumeReq := x402GrantConsumeRequest{
+		GrantID:             grantID,
+		GrantToken:          rawGrant,
 		Actor:               actor,
 		AgentID:             expectedAgentID,
-		Resource:            resource,
-		Method:              "tools/call",
+		Capability:          capability,
 		Tool:                toolName,
-		RequestHash:         hashString("sha256", strings.TrimSpace(string(ctx.Request.Body))),
-		PaymentEvidenceHash: hashString("sha256", paymentEvidence),
-		PaymentHeader:       paymentHeader,
-		Consume:             true,
+		Resource:            resource,
+		RequestHash:         requestHash,
+		IdempotencyKey:      x402ConsumeIdempotencyKey(grantID, requestHash),
+		PaymentEvidenceHash: hashString("", paymentEvidence),
 	}
 
-	validationResp, err := validateX402GrantWithHost(contextForRuntimePolicy(ctx), validationReq)
+	consumeResp, err := consumeX402GrantWithHost(contextForRuntimePolicy(ctx), consumeReq)
 	if err != nil {
-		return nil, &x402GrantFailure{Reason: "x402_grant_validation_unavailable", Status: 502, Tool: toolName}, nil
+		return nil, &x402GrantFailure{Reason: "x402_grant_consume_unavailable", Status: 502, Tool: toolName}, nil
 	}
 
-	return normalizeX402GrantValidationResponse(validationReq, validationResp)
+	return normalizeX402GrantConsumeResponse(consumeReq, consumeResp)
 }
 
 func singleToolCallRequestForX402(ctx *apptheory.Context) (*mcpruntime.Request, *x402GrantFailure) {
@@ -235,6 +268,30 @@ func x402PaymentEvidence(headers map[string][]string) (string, string) {
 	return "", ""
 }
 
+func x402GrantID(headers map[string][]string) string {
+	if value := firstHeaderValue(headers, x402GrantIDHeader); value != "" {
+		return strings.TrimSpace(value)
+	}
+	if value := firstHeaderValue(headers, x402GrantIDLegacyHeader); value != "" {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func x402GrantCapability(headers map[string][]string) string {
+	if value := firstHeaderValue(headers, x402GrantCapabilityHeader); value != "" {
+		return strings.TrimSpace(value)
+	}
+	if value := firstHeaderValue(headers, x402GrantCapabilityLegacy); value != "" {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func x402ConsumeIdempotencyKey(grantID string, requestHash string) string {
+	return hashString("sha256", strings.TrimSpace(grantID)+"\n"+strings.TrimSpace(requestHash)+"\nlesser-body-x402-consume/v1")
+}
+
 func expectedAgentIDForX402Request(ctx *apptheory.Context, actor string) string {
 	actor = strings.TrimSpace(actor)
 	resolved := runtimepolicy.ResolveForActor(contextForRuntimePolicy(ctx), actor)
@@ -249,99 +306,113 @@ func expectedAgentIDFromResolvedX402Actor(actor string, resolved runtimepolicy.R
 	return actor
 }
 
-func defaultValidateX402GrantWithHost(ctx context.Context, req x402GrantValidationRequest) (x402GrantValidationResponse, error) {
+func defaultConsumeX402GrantWithHost(ctx context.Context, req x402GrantConsumeRequest) (x402GrantConsumeResponse, error) {
 	commBearer, err := auth.LesserHostInstanceKey(ctx)
 	if err != nil {
-		return x402GrantValidationResponse{}, fmt.Errorf("resolve lesser-host instance key for x402 grant validation: %w", err)
+		return x402GrantConsumeResponse{}, fmt.Errorf("resolve lesser-host instance key for x402 grant consume: %w", err)
 	}
 	commBearer = strings.TrimSpace(commBearer)
 	if commBearer == "" {
-		return x402GrantValidationResponse{}, errors.New("LESSER_HOST_INSTANCE_KEY is required for x402 grant validation")
+		return x402GrantConsumeResponse{}, errors.New("LESSER_HOST_INSTANCE_KEY is required for x402 grant consume")
 	}
 
 	client, err := soulapi.Default()
 	if err != nil {
-		return x402GrantValidationResponse{}, err
+		return x402GrantConsumeResponse{}, err
 	}
 
-	raw, err := client.DoJSON(ctx, "POST", x402GrantValidationPath, nil, commBearer, req)
+	grantID := strings.TrimSpace(req.GrantID)
+	if grantID == "" {
+		return x402GrantConsumeResponse{}, errors.New("grantId is required for x402 grant consume")
+	}
+	path := x402GrantConsumePathPrefix + url.PathEscape(grantID) + x402GrantConsumePathSuffix
+	raw, err := client.DoJSON(ctx, "POST", path, nil, commBearer, req)
 	if err != nil {
-		return x402GrantValidationResponse{}, err
+		return x402GrantConsumeResponse{}, err
 	}
 	b, err := json.Marshal(raw)
 	if err != nil {
-		return x402GrantValidationResponse{}, fmt.Errorf("marshal x402 validation response: %w", err)
+		return x402GrantConsumeResponse{}, fmt.Errorf("marshal x402 consume response: %w", err)
 	}
-	var out x402GrantValidationResponse
+	var out x402GrantConsumeResponse
 	if err := json.Unmarshal(b, &out); err != nil {
-		return x402GrantValidationResponse{}, fmt.Errorf("unmarshal x402 validation response: %w", err)
+		return x402GrantConsumeResponse{}, fmt.Errorf("unmarshal x402 consume response: %w", err)
 	}
 	return out, nil
 }
 
-func normalizeX402GrantValidationResponse(req x402GrantValidationRequest, resp x402GrantValidationResponse) (*auth.X402InvocationGrant, *x402GrantFailure, error) {
+func normalizeX402GrantConsumeResponse(req x402GrantConsumeRequest, resp x402GrantConsumeResponse) (*auth.X402InvocationGrant, *x402GrantFailure, error) {
 	failure := func(reason string) (*auth.X402InvocationGrant, *x402GrantFailure, error) {
 		return nil, &x402GrantFailure{
 			Reason:        reason,
 			Status:        403,
 			Tool:          req.Tool,
-			GrantIDHash:   normalizedGrantIDHash(resp),
-			PolicyVersion: strings.TrimSpace(resp.PolicyVersion),
+			GrantIDHash:   normalizedGrantIDHash(req, resp),
+			PolicyVersion: strings.TrimSpace(resp.Grant.PolicyVersion),
 		}, nil
 	}
 
-	if !resp.Valid {
+	if !resp.Accepted {
 		reason := safeX402HostDenialReason(resp.Reason)
 		if reason == "" {
 			reason = "x402_grant_denied"
 		}
 		return failure(reason)
 	}
-	if strings.TrimSpace(resp.AgentID) == "" || !strings.EqualFold(strings.TrimSpace(resp.AgentID), strings.TrimSpace(req.AgentID)) {
+	if resp.Replayed {
+		return failure("x402_grant_replay")
+	}
+	grant := resp.Grant
+	if strings.TrimSpace(grant.AgentID) == "" || !strings.EqualFold(strings.TrimSpace(grant.AgentID), strings.TrimSpace(req.AgentID)) {
 		return failure("x402_grant_agent_mismatch")
 	}
-	if actor := strings.TrimSpace(resp.Actor); actor != "" && !strings.EqualFold(actor, strings.TrimSpace(req.Actor)) {
+	if actor := strings.TrimSpace(grant.Actor); actor != "" && !strings.EqualFold(actor, strings.TrimSpace(req.Actor)) {
 		return failure("x402_grant_actor_mismatch")
 	}
-	if !strings.EqualFold(strings.TrimSpace(resp.Tool), strings.TrimSpace(req.Tool)) {
+	if !strings.EqualFold(strings.TrimSpace(grant.Tool), strings.TrimSpace(req.Tool)) {
 		return failure("x402_grant_tool_mismatch")
 	}
-	if !strings.EqualFold(strings.TrimSpace(resp.Scope), x402InvocationGrantScope) {
-		return failure("x402_grant_scope_mismatch")
+	if !strings.EqualFold(strings.TrimSpace(grant.Capability), strings.TrimSpace(req.Capability)) {
+		return failure("x402_grant_capability_mismatch")
 	}
-	grantVersion := strings.TrimSpace(resp.GrantVersion)
-	if grantVersion == "" {
-		grantVersion = strings.TrimSpace(resp.Version)
-	}
-	if !strings.EqualFold(grantVersion, x402InvocationGrantVersion) {
-		return failure("x402_grant_version_mismatch")
-	}
-	if !x402PolicyVersionAllowed(resp.PolicyVersion) {
+	if !x402PolicyVersionAllowed(grant.PolicyVersion) {
 		return failure("x402_policy_version_mismatch")
 	}
-	if !strings.EqualFold(strings.TrimSpace(resp.Resource), strings.TrimSpace(req.Resource)) {
+	if !strings.EqualFold(strings.TrimSpace(grant.Authority), "scoped_invocation") {
+		return failure("x402_grant_authority_mismatch")
+	}
+	if !strings.EqualFold(strings.TrimSpace(grant.Status), "issued") {
+		return failure("x402_grant_status_mismatch")
+	}
+	if !strings.EqualFold(strings.TrimSpace(grant.Resource), strings.TrimSpace(req.Resource)) {
 		return failure("x402_resource_mismatch")
 	}
-	if !strings.EqualFold(strings.TrimSpace(resp.RequestHash), strings.TrimSpace(req.RequestHash)) {
+	if !x402HashEqual(grant.RequestHash, req.RequestHash) {
 		return failure("x402_request_hash_mismatch")
 	}
-	if !strings.EqualFold(strings.TrimSpace(resp.PaymentEvidenceHash), strings.TrimSpace(req.PaymentEvidenceHash)) {
+	if !x402HashEqual(grant.Payment.EvidenceHash, req.PaymentEvidenceHash) {
 		return failure("x402_payment_evidence_mismatch")
 	}
-	if strings.TrimSpace(resp.CallerEvidenceHash) == "" {
+	if strings.TrimSpace(grant.CallerSubjectHash) == "" {
 		return failure("x402_caller_evidence_missing")
 	}
-	if !resp.UsageAccepted {
-		if resp.Replay {
-			return failure("x402_grant_replay")
-		}
-		return failure("x402_usage_not_accepted")
+	maxUses := grant.MaxUsage
+	if maxUses == 0 {
+		maxUses = resp.Usage.MaxUsage
 	}
-	if resp.MaxUses <= 0 {
+	if maxUses <= 0 {
 		return failure("x402_usage_limit_missing")
 	}
+	usedCount := grant.UsedCount
+	if resp.Usage.UsedCount > usedCount {
+		usedCount = resp.Usage.UsedCount
+	}
+	remainingUses := maxUses - usedCount
+	if remainingUses < 0 {
+		remainingUses = 0
+	}
 
-	expiresAt, err := parseX402Expiry(resp.ExpiresAt)
+	expiresAt, err := parseX402Expiry(grant.ExpiresAt)
 	if err != nil {
 		return failure("x402_grant_expiry_invalid")
 	}
@@ -353,21 +424,21 @@ func normalizeX402GrantValidationResponse(req x402GrantValidationRequest, resp x
 	}
 
 	return &auth.X402InvocationGrant{
-		GrantIDHash:         normalizedGrantIDHash(resp),
-		AgentID:             strings.TrimSpace(resp.AgentID),
-		Actor:               strings.TrimSpace(resp.Actor),
-		Tool:                strings.TrimSpace(resp.Tool),
-		Capability:          strings.TrimSpace(resp.Capability),
-		Scope:               strings.TrimSpace(resp.Scope),
-		GrantVersion:        grantVersion,
-		PolicyVersion:       strings.TrimSpace(resp.PolicyVersion),
-		Resource:            strings.TrimSpace(resp.Resource),
-		RequestHash:         strings.TrimSpace(resp.RequestHash),
-		PaymentEvidenceHash: strings.TrimSpace(resp.PaymentEvidenceHash),
-		CallerEvidenceHash:  strings.TrimSpace(resp.CallerEvidenceHash),
+		GrantIDHash:         normalizedGrantIDHash(req, resp),
+		AgentID:             strings.TrimSpace(grant.AgentID),
+		Actor:               strings.TrimSpace(grant.Actor),
+		Tool:                strings.TrimSpace(grant.Tool),
+		Capability:          strings.TrimSpace(grant.Capability),
+		Scope:               x402InvocationGrantScope,
+		GrantVersion:        x402InvocationGrantVersion,
+		PolicyVersion:       strings.TrimSpace(grant.PolicyVersion),
+		Resource:            strings.TrimSpace(grant.Resource),
+		RequestHash:         normalizeX402HashForCompare(grant.RequestHash),
+		PaymentEvidenceHash: normalizeX402HashForCompare(grant.Payment.EvidenceHash),
+		CallerEvidenceHash:  strings.TrimSpace(grant.CallerSubjectHash),
 		ExpiresAt:           expiresAt,
-		MaxUses:             resp.MaxUses,
-		RemainingUses:       resp.RemainingUses,
+		MaxUses:             maxUses,
+		RemainingUses:       remainingUses,
 	}, nil, nil
 }
 
@@ -385,7 +456,8 @@ func safeX402HostDenialReason(value string) string {
 	case "x402_grant_denied", "x402_grant_expired", "x402_grant_replay", "x402_usage_not_accepted",
 		"x402_payment_evidence_mismatch", "x402_caller_evidence_missing", "x402_policy_version_mismatch",
 		"x402_resource_mismatch", "x402_request_hash_mismatch", "x402_grant_agent_mismatch",
-		"x402_grant_tool_mismatch", "x402_grant_scope_mismatch", "x402_grant_version_mismatch":
+		"x402_grant_tool_mismatch", "x402_grant_capability_mismatch", "x402_grant_scope_mismatch",
+		"x402_grant_version_mismatch", "x402_grant_authority_mismatch", "x402_grant_status_mismatch":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -404,17 +476,25 @@ func parseX402Expiry(value string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-func normalizedGrantIDHash(resp x402GrantValidationResponse) string {
-	if value := strings.TrimSpace(resp.GrantIDHash); value != "" {
-		if strings.HasPrefix(strings.ToLower(value), "sha256:") {
-			return value
-		}
+func normalizedGrantIDHash(req x402GrantConsumeRequest, resp x402GrantConsumeResponse) string {
+	if value := strings.TrimSpace(resp.Grant.GrantID); value != "" {
 		return hashString("sha256", value)
 	}
-	if value := strings.TrimSpace(resp.GrantID); value != "" {
+	if value := strings.TrimSpace(req.GrantID); value != "" {
 		return hashString("sha256", value)
 	}
 	return ""
+}
+
+func x402HashEqual(left string, right string) bool {
+	l := normalizeX402HashForCompare(left)
+	r := normalizeX402HashForCompare(right)
+	return l != "" && r != "" && strings.EqualFold(l, r)
+}
+
+func normalizeX402HashForCompare(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.TrimPrefix(value, "sha256:")
 }
 
 func x402GrantAllowsMCPRequest(req *mcpruntime.Request, grant *auth.X402InvocationGrant) bool {
@@ -490,7 +570,7 @@ func x402ErrorMessageForStatus(status int) string {
 		return "unauthorized"
 	}
 	if status >= 500 {
-		return "x402 grant validation unavailable"
+		return "x402 grant consume unavailable"
 	}
 	return "forbidden"
 }
