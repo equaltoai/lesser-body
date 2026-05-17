@@ -383,7 +383,7 @@ Scope key:
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
-| `soul_read` | Read | Read a public soul identity bundle and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
+| `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
 
@@ -474,6 +474,17 @@ Notes:
   returns `response_too_large` with measured byte details rather than silently dropping fields. `preview_chars` bounds
   compact last-post previews. `include_raw=true` and `view=full` remain explicit audit/debug paths that include
   upstream `_raw` conversation payloads; compact mode does not inline upstream raw payloads.
+- `soul_read` advertises `view=summary|standard|full`. Omitted/default and `view=standard` preserve the existing public
+  soul bundle shape. `view=summary` is opt-in and returns bounded agent-facing essentials under
+  `structuredContent.data.souls[]`: stable identity/lifecycle fields, public capability names (not full capability
+  bodies), public channel availability markers, provenance/source markers, omission metadata, and deterministic
+  `soul_read(..., view=standard|full)` expansion refs. `soul_read(self=true, view=summary)` targets an 8 KB MCP
+  JSON-RPC payload budget; if a summary still exceeds that budget, body returns `response_too_large` with measured byte
+  details instead of silently dropping fields. Summary mode never inlines sanitized `_raw`, full
+  registration/capability/boundary/transparency payloads, private mint-conversation bodies, or private reachability data.
+  Private mint-conversation expansion remains explicit and is rejected for `view=summary`; use `view=standard` or
+  `view=full` with explicit `include_private` when private self expansion is required. `view=full` is an explicit
+  audit/debug view equivalent to requesting sanitized public raw payloads.
 - `skills_catalog` and `skill_bundle_get` are read-only Project 21 M4 skills tools backed by Lesser's authoritative
   skill publication contract. `skills_catalog` calls `GET /api/v1/skills/catalog`; `skill_bundle_get` calls
   `GET /api/v1/skills/{skillId}/revisions/{revisionNumber}/bundle` and accepts either `skill_id` + `revision_number`
@@ -540,12 +551,14 @@ Notes:
 - `soul_read` is the Project 21 public soul read-model tool. It accepts either `self=true` (the caller's
   OAuth-bound soul), or one of `agentId`, `ensName`, or `query` (full soul agent ID, ENS name, current-instance local
   ID, explicit `@user@domain` ActivityPub handle, or canonical actor URL), plus optional `limit` for search-backed
-  matches and `include_raw=true` for audit/debug. Raw audit payloads are sanitized before being returned; private
-  reachability fields such as email/phone channels and contact preferences are redacted even when `include_raw=true`.
-  `self=true` conflicts with `agentId`, `ensName`, and `query`.
+  matches, `view=summary|standard|full`, and `include_raw=true` for audit/debug. Omitted `view` and `view=standard`
+  preserve the existing public bundle shape; `view=summary` is the bounded agent-context shape; `view=full` includes
+  sanitized public raw payloads for audit/debug. Raw audit payloads are sanitized before being returned; private
+  reachability fields such as email/phone channels and contact preferences are redacted even when `include_raw=true` or
+  `view=full`. `self=true` conflicts with `agentId`, `ensName`, and `query`.
   Bare current-instance local IDs require trustworthy current-instance domain context; use a full soul `agentId`,
   ENS name, explicit handle, canonical actor URL, or `self=true` when that context is unavailable. The default response
-  is compact and returns `access` metadata plus `souls[]`, each with stable MCP blocks: `identity`, `registration`,
+  returns `access` metadata plus `souls[]`, each with stable MCP blocks: `identity`, `registration`,
   `capabilities`, `boundaries`, `transparency`, `channels`, `avatar`, `sources`, `sourceEndpoints`, and `deferred`.
 - `soul_read` composes from the most-specific public source available. When dedicated public `capabilities`,
   `boundaries`, or `transparency` endpoints are unavailable, it falls back to the same blocks in public registration

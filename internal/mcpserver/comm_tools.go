@@ -337,7 +337,8 @@ func soulReadDef() mcpruntime.ToolDef {
 				"mintConversationId":{"type":"string","maxLength":128,"description":"Opaque mint-conversation ID for an explicit single-conversation private self read. Requires include_private=[\"mintConversations\"]."},
 				"mintConversationLimit":{"type":"integer","minimum":1,"maximum":50,"description":"Maximum compact mint-conversation summaries for private self list reads. Defaults to 20 and does not affect public search match limit."},
 				"limit":{"type":"integer","minimum":1,"maximum":3,"description":"Maximum matches to compose when query resolves through search. Defaults to 1."},
-				"include_raw":{"type":"boolean","description":"Include sanitized raw public Host/Soul endpoint payloads under _raw for audit/debug use. Private reachability fields are redacted. Defaults to false."}
+				"include_raw":{"type":"boolean","description":"Include sanitized raw public Host/Soul endpoint payloads under _raw for audit/debug use. Private reachability fields are redacted. Defaults to false."},
+				"view":{"type":"string","enum":["summary","standard","full"],"description":"Optional projection. Omitted/standard preserve today's public soul_read bundle; summary returns bounded agent-facing essentials with expansion metadata; full includes sanitized _raw public endpoint payloads."}
 			}
 		}`),
 	}

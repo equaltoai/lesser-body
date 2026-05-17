@@ -178,6 +178,11 @@ func TestLBM0_CommunicationToolSchemasMatchSpec(t *testing.T) {
 		expectPropType(t, s, "mintConversationLimit", "integer")
 		expectPropType(t, s, "limit", "integer")
 		expectPropType(t, s, "include_raw", "boolean")
+		view := expectPropType(t, s, "view", "string")
+		enum, _ := view["enum"].([]any)
+		if !reflect.DeepEqual(enum, []any{"summary", "standard", "full"}) {
+			t.Fatalf("soul_read view enum = %+v", view)
+		}
 	}
 
 	{

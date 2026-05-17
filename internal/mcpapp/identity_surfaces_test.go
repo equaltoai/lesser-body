@@ -1786,6 +1786,239 @@ func TestLBM1_SoulReadSelfModeVerifiesBoundCaller(t *testing.T) {
 	}
 }
 
+func TestP21_SoulReadSummaryStandardFullViews(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	t.Cleanup(soulapi.ResetForTests)
+
+	const agentID = "0xfafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa"
+	const privateEmail = "summary-private@example.test"
+	const privatePhone = "+15550199999"
+	const capabilityConstraint = "SUMMARY_CAPABILITY_CONSTRAINT_SHOULD_NOT_APPEAR"
+	const boundaryStatement = "SUMMARY_BOUNDARY_STATEMENT_SHOULD_NOT_APPEAR"
+	const transparencyPayload = "SUMMARY_TRANSPARENCY_PAYLOAD_SHOULD_NOT_APPEAR"
+	const selfDescription = "SUMMARY_SELF_DESCRIPTION_SHOULD_NOT_APPEAR"
+	installSoulBindingLookup(t, "agent1", agentID)
+
+	var privatePathCalled string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "agent-summary")))
+		case "/api/v1/souls/bound/me/mint-conversations":
+			privatePathCalled = r.URL.Path
+			_, _ = w.Write([]byte(`{"conversations":[{"conversation_id":"mint-1","messages":"PRIVATE_MINT_BODY_SHOULD_NOT_APPEAR"}]}`))
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{
+				"agent":{
+					"agent_id":"` + agentID + `",
+					"domain":"test.example.com",
+					"local_id":"agent-summary",
+					"ens_name":"agent-summary.lessersoul.eth",
+					"wallet":"0xabc",
+					"token_id":"42",
+					"status":"active",
+					"lifecycle_status":"active",
+					"lifecycle_reason":"operational",
+					"email":"` + privateEmail + `",
+					"phone":"` + privatePhone + `",
+					"updated_at":"2026-05-17T20:00:00Z"
+				}
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			_, _ = w.Write([]byte(`{
+				"version":"7",
+				"selfDescription":"` + selfDescription + ` ` + strings.Repeat("self description ", 120) + `",
+				"channels":{"ens":{"name":"agent-summary.lessersoul.eth"},"email":{"address":"` + privateEmail + `"},"phone":{"number":"` + privatePhone + `"}},
+				"avatar":{"current_style_id":"friendly","image":"https://example.com/avatar.png"},
+				"capabilities":[{"name":"social.post","constraints":"` + capabilityConstraint + `"},{"name":"memory.query","constraints":"` + capabilityConstraint + `"}]
+			}`))
+		case "/api/v1/soul/agents/" + agentID + "/capabilities":
+			_, _ = w.Write([]byte(`{"capabilities":[
+				{"name":"social.post","scope":"write","constraints":"` + capabilityConstraint + `","validation_ref":"cap-ref-1"},
+				{"name":"memory.query","scope":"read","constraints":"` + capabilityConstraint + `","validation_ref":"cap-ref-2"}
+			]}`))
+		case "/api/v1/soul/agents/" + agentID + "/boundaries":
+			_, _ = w.Write([]byte(`{"boundaries":[{"id":"b1","statement":"` + boundaryStatement + `","category":"safety","issued_at":"2026-05-17T20:00:00Z"}]}`))
+		case "/api/v1/soul/agents/" + agentID + "/transparency":
+			_, _ = w.Write([]byte(`{"transparency":{"audit":"` + transparencyPayload + `","source":"public"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"not found"}}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	soulapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{
+		"authorization": {authHeader},
+	}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, args map[string]any) (mcpruntime.ToolResult, []byte) {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": "soul_read", "arguments": args})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("soul_read: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal soul_read response: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("soul_read rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		return out, resp.Body
+	}
+
+	defaultOut, defaultBody := call(2, map[string]any{"self": true})
+	defaultData, _ := defaultOut.StructuredContent["data"].(map[string]any)
+	defaultSouls, _ := defaultData["souls"].([]any)
+	defaultSoul, _ := defaultSouls[0].(map[string]any)
+	if _, ok := defaultData["view"]; ok {
+		t.Fatalf("omitted/default soul_read should preserve existing top-level shape, got %+v", defaultData)
+	}
+	defaultCapabilities, _ := defaultSoul["capabilities"].([]any)
+	if len(defaultCapabilities) != 2 || defaultCapabilities[0].(map[string]any)["constraints"] != capabilityConstraint {
+		t.Fatalf("default soul_read should preserve full normalized capability bodies, got %+v", defaultCapabilities)
+	}
+
+	standardOut, standardBody := call(3, map[string]any{"self": true, "view": "standard"})
+	standardData, _ := standardOut.StructuredContent["data"].(map[string]any)
+	standardSouls, _ := standardData["souls"].([]any)
+	standardSoul, _ := standardSouls[0].(map[string]any)
+	if _, ok := standardSoul["private"]; ok {
+		t.Fatalf("standard self read without include_private should not include private blocks: %+v", standardSoul)
+	}
+	standardCapabilities, _ := standardSoul["capabilities"].([]any)
+	if len(standardCapabilities) != 2 || standardCapabilities[0].(map[string]any)["constraints"] != capabilityConstraint {
+		t.Fatalf("view=standard should preserve existing capability bodies, got %+v", standardCapabilities)
+	}
+
+	summaryOut, summaryBody := call(4, map[string]any{"self": true, "view": "summary"})
+	if summaryOut.IsError {
+		t.Fatalf("summary returned tool error: %+v", summaryOut.StructuredContent)
+	}
+	assertMCPPayloadBudget(t, "soul_read self summary large fixture", len(summaryBody), 8000)
+	for _, forbidden := range []string{capabilityConstraint, boundaryStatement, transparencyPayload, selfDescription, privateEmail, privatePhone, "PRIVATE_MINT_BODY_SHOULD_NOT_APPEAR", "\"_raw\"", "\"private\""} {
+		if strings.Contains(string(summaryBody), forbidden) {
+			t.Fatalf("summary leaked forbidden payload %q: %s", forbidden, string(summaryBody))
+		}
+	}
+	summaryData, _ := summaryOut.StructuredContent["data"].(map[string]any)
+	if summaryData["view"] != "summary" || summaryData["count"] != float64(1) {
+		t.Fatalf("unexpected summary metadata: %+v", summaryData)
+	}
+	summarySouls, _ := summaryData["souls"].([]any)
+	summarySoul, _ := summarySouls[0].(map[string]any)
+	identity, _ := summarySoul["identity"].(map[string]any)
+	if identity["agentId"] != agentID || identity["localId"] != "agent-summary" || identity["ensName"] != "agent-summary.lessersoul.eth" {
+		t.Fatalf("unexpected summary identity: %+v", identity)
+	}
+	caps, _ := summarySoul["capabilities"].(map[string]any)
+	names, _ := caps["names"].([]any)
+	if !reflect.DeepEqual(names, []any{"social.post", "memory.query"}) {
+		t.Fatalf("summary should expose capability names only, got %+v", caps)
+	}
+	channels, _ := summarySoul["channels"].(map[string]any)
+	email, _ := channels["email"].(map[string]any)
+	if email["status"] != "unavailable" || email["reason"] != "deferred_private_reachability" {
+		t.Fatalf("summary should preserve public channel availability without reachability data, got %+v", channels)
+	}
+	provenance, _ := summarySoul["provenance"].(map[string]any)
+	if provenance["registrationVersion"] != "7" {
+		t.Fatalf("expected summary provenance markers, got %+v", provenance)
+	}
+	expand, _ := summarySoul["expand"].(map[string]any)
+	standardExpand, _ := expand["standard"].(map[string]any)
+	standardArgs, _ := standardExpand["arguments"].(map[string]any)
+	fullExpand, _ := expand["full"].(map[string]any)
+	fullArgs, _ := fullExpand["arguments"].(map[string]any)
+	if standardExpand["tool"] != "soul_read" || standardArgs["self"] != true || standardArgs["view"] != "standard" {
+		t.Fatalf("unexpected standard expansion: %+v", standardExpand)
+	}
+	if fullExpand["tool"] != "soul_read" || fullArgs["self"] != true || fullArgs["view"] != "full" {
+		t.Fatalf("unexpected full expansion: %+v", fullExpand)
+	}
+	var summaryText map[string]any
+	if err := json.Unmarshal([]byte(summaryOut.Content[0].Text), &summaryText); err != nil {
+		t.Fatalf("unmarshal summary text: %v", err)
+	}
+	if _, ok := summaryText["souls"]; ok {
+		t.Fatalf("summary text should use structured-first locator, got %+v", summaryText)
+	}
+	if locator, _ := summaryText["data"].(map[string]any); locator["location"] != "structuredContent.data" {
+		t.Fatalf("expected structured data locator in summary text, got %+v", summaryText)
+	}
+
+	fullOut, fullBody := call(5, map[string]any{"self": true, "view": "full"})
+	fullData, _ := fullOut.StructuredContent["data"].(map[string]any)
+	fullSouls, _ := fullData["souls"].([]any)
+	fullSoul, _ := fullSouls[0].(map[string]any)
+	if _, ok := fullSoul["_raw"].(map[string]any); !ok {
+		t.Fatalf("view=full should expose sanitized _raw public payloads, got %+v", fullSoul)
+	}
+	if !strings.Contains(string(fullBody), capabilityConstraint) || !strings.Contains(string(fullBody), boundaryStatement) || !strings.Contains(string(fullBody), transparencyPayload) {
+		t.Fatalf("view=full should preserve full public debug payloads")
+	}
+	if strings.Contains(string(fullBody), privateEmail) || strings.Contains(string(fullBody), privatePhone) {
+		t.Fatalf("view=full leaked private reachability data: %s", string(fullBody))
+	}
+	if len(summaryBody) >= len(defaultBody) {
+		t.Fatalf("expected summary payload to be smaller than default: summary=%d default=%d", len(summaryBody), len(defaultBody))
+	}
+
+	privateSummary, privateSummaryBody := call(6, map[string]any{"self": true, "view": "summary", "include_private": []string{"mintConversations"}})
+	if !privateSummary.IsError {
+		t.Fatalf("summary with include_private should fail explicitly")
+	}
+	errPayload, _ := privateSummary.StructuredContent["error"].(map[string]any)
+	if errPayload["code"] != "invalid_request" || errPayload["status"] != float64(400) {
+		t.Fatalf("unexpected summary private error: %+v", errPayload)
+	}
+	if privatePathCalled != "" {
+		t.Fatalf("summary private rejection should not call private endpoint, got %q", privatePathCalled)
+	}
+
+	invalidString, _ := call(7, map[string]any{"self": true, "view": "tiny"})
+	if !invalidString.IsError {
+		t.Fatalf("invalid view string should be a tool error")
+	}
+	invalidNumber, _ := call(8, map[string]any{"self": true, "view": 17})
+	if !invalidNumber.IsError {
+		t.Fatalf("non-string view should be a tool error")
+	}
+	t.Logf("soul_read payload bytes default=%d standard=%d summary=%d full=%d private_summary_error=%d",
+		len(defaultBody), len(standardBody), len(summaryBody), len(fullBody), len(privateSummaryBody))
+}
+
 func TestLBM1_SoulReadComposesRegistrationFallbackBlocks(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
