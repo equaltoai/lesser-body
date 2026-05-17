@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,6 +81,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"profile_read",
 		"timeline_read",
 		"post_search",
+		"post_get",
 		"followers_list",
 		"following_list",
 		"conversations_read",
@@ -124,6 +126,24 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	}
 	if maxItems, _ := typesProp["maxItems"].(float64); maxItems != 8 {
 		t.Fatalf("notifications_read types should advertise maxItems=8, got %+v", typesProp)
+	}
+	var postGetSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+	if err := json.Unmarshal(toolsByName["post_get"].InputSchema, &postGetSchema); err != nil {
+		t.Fatalf("unmarshal post_get schema: %v", err)
+	}
+	if propType, _ := postGetSchema.Properties["id"]["type"].(string); propType != "string" {
+		t.Fatalf("post_get id should be string, got %+v", postGetSchema.Properties["id"])
+	}
+	viewProp := postGetSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"standard", "full"}) {
+		t.Fatalf("post_get view enum = %+v", viewProp)
+	}
+	if !containsString(postGetSchema.Required, "id") {
+		t.Fatalf("post_get should require id, got %+v", postGetSchema.Required)
 	}
 	var conversationSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
@@ -186,6 +206,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v2/search"},
+			},
+		},
+		{
+			name:        "post_get",
+			tool:        "post_get",
+			scope:       "read",
+			args:        map[string]any{"id": "s1"},
+			invalidArgs: map[string]any{"id": ""},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "GET", Path: "/api/v1/statuses/s1"},
 			},
 		},
 		{
@@ -358,6 +389,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`[{"id":"t2"}]`))
 				case "/api/v2/search":
 					_, _ = w.Write([]byte(`{"statuses":[{"id":"s1"}],"accounts":[],"hashtags":[]}`))
+				case "/api/v1/statuses/s1":
+					_, _ = w.Write([]byte(`{"id":"s1","url":"https://example.com/@agent/s1","content":"hello","account":{"id":"acct1","acct":"agent@example.com"},"visibility":"public"}`))
 				case "/api/v1/notifications":
 					_, _ = w.Write([]byte(`[{"id":"n1"}]`))
 				case "/api/v1/notifications/n1/dismiss":
@@ -524,6 +557,144 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	fullContent := strings.TrimSpace("full post content " + strings.Repeat("abcdefghijklmnopqrstuvwxyz ", 40))
+
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.Method+" "+r.URL.Path)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/statuses/post-1" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"post-1",
+			"url":"https://example.com/@alice/post-1",
+			"created_at":"2026-05-17T17:00:00Z",
+			"visibility":"public",
+			"content":"` + fullContent + `",
+			"account":{
+				"id":"acct-1",
+				"username":"alice",
+				"acct":"alice@example.com",
+				"display_name":"Alice",
+				"url":"https://example.com/@alice",
+				"note":"` + strings.Repeat("raw profile note ", 40) + `"
+			},
+			"debugPayload":{"large":"` + strings.Repeat("debug ", 200) + `"}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestToken(t, "test", "agent1", []string{"read"})
+	authHeader := "Bearer " + token
+
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {authHeader}}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	call := func(id int, args map[string]any) map[string]any {
+		t.Helper()
+		callParams, _ := json.Marshal(map[string]any{"name": "post_get", "arguments": args})
+		resp := invokeJSON(t, env, app, map[string][]string{
+			"authorization":  {authHeader},
+			"mcp-session-id": {sessionID},
+		}, &mcpruntime.Request{JSONRPC: "2.0", ID: id, Method: "tools/call", Params: callParams})
+		if resp.Status != 200 {
+			t.Fatalf("post_get: status=%d body=%s", resp.Status, string(resp.Body))
+		}
+		var rpc mcpruntime.Response
+		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+			t.Fatalf("unmarshal post_get: %v", err)
+		}
+		if rpc.Error != nil {
+			t.Fatalf("post_get rpc error: %+v", rpc.Error)
+		}
+		var out mcpruntime.ToolResult
+		b, _ := json.Marshal(rpc.Result)
+		_ = json.Unmarshal(b, &out)
+		data, _ := out.StructuredContent["data"].(map[string]any)
+		if data == nil {
+			t.Fatalf("expected structured data, got %+v", out.StructuredContent)
+		}
+		return data
+	}
+
+	standard := call(2, map[string]any{"id": "post-1", "view": "standard"})
+	if standard["id"] != "post-1" || standard["view"] != "standard" || standard["source"] != "lesser-api" {
+		t.Fatalf("unexpected standard post_get metadata: %+v", standard)
+	}
+	status, _ := standard["status"].(map[string]any)
+	if status["content"] != fullContent || status["visibility"] != "public" || status["createdAt"] != "2026-05-17T17:00:00Z" {
+		t.Fatalf("standard post_get should return normalized full status fields, got %+v", status)
+	}
+	authorRef, _ := status["authorRef"].(map[string]any)
+	if authorRef["id"] != "acct-1" || authorRef["acct"] != "alice@example.com" || authorRef["displayName"] != "Alice" || authorRef["url"] != "https://example.com/@alice" {
+		t.Fatalf("standard post_get author ref = %+v", authorRef)
+	}
+	statusRef, _ := standard["statusRef"].(map[string]any)
+	if statusRef["id"] != "post-1" || statusRef["contentTruncated"] != true {
+		t.Fatalf("expected compact statusRef with truncation marker, got %+v", statusRef)
+	}
+	if preview, _ := statusRef["contentPreview"].(string); preview == "" || len([]rune(preview)) > 500 {
+		t.Fatalf("expected bounded contentPreview, got %d runes", len([]rune(preview)))
+	}
+	expand, _ := statusRef["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "post_get" || expandArgs["id"] != "post-1" || expandArgs["view"] != "standard" || expand["resultPath"] != "structuredContent.data.status" {
+		t.Fatalf("unexpected statusRef expansion metadata: %+v", expand)
+	}
+	omitted, _ := statusRef["omitted"].([]any)
+	if len(omitted) != 1 {
+		t.Fatalf("expected compact statusRef omitted metadata, got %+v", statusRef["omitted"])
+	}
+	omittedRecord, _ := omitted[0].(map[string]any)
+	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
+	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
+		t.Fatalf("unexpected omitted expansion metadata: %+v", omittedRecord)
+	}
+
+	full := call(3, map[string]any{"id": "post-1", "view": "full"})
+	if full["view"] != "full" {
+		t.Fatalf("expected full view metadata, got %+v", full)
+	}
+	rawStatus, _ := full["status"].(map[string]any)
+	if rawStatus["content"] != fullContent {
+		t.Fatalf("full post_get should expose upstream content, got %+v", rawStatus["content"])
+	}
+	if _, ok := rawStatus["debugPayload"].(map[string]any); !ok {
+		t.Fatalf("full post_get should expose upstream payload for audit/debug expansion, got %+v", rawStatus)
+	}
+	rawAccount, _ := rawStatus["account"].(map[string]any)
+	if _, ok := rawAccount["note"].(string); !ok {
+		t.Fatalf("full post_get should preserve upstream account payload, got %+v", rawAccount)
+	}
+
+	if !reflect.DeepEqual(gotPaths, []string{"GET /api/v1/statuses/post-1", "GET /api/v1/statuses/post-1"}) {
+		t.Fatalf("unexpected Lesser status routes: %+v", gotPaths)
 	}
 }
 

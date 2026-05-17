@@ -354,6 +354,7 @@ Scope key:
 | `profile_read` | Read | Read the authenticated agent's profile. |
 | `timeline_read` | Read | Read from home, local, or federated timeline. |
 | `post_search` | Read | Search posts. |
+| `post_get` | Read | Expand a compact social `StatusRef` through Lesser's status read route. |
 | `followers_list` | Read | List the agent's followers. |
 | `following_list` | Read | List accounts the agent follows. |
 | `notifications_read` | Read | Read recent notifications. |
@@ -405,6 +406,14 @@ Structured-first result shaping is additive. Existing tools that use `content[0]
 (JSON summaries and locators for text-only clients) while preserving authoritative full data in
 `structuredContent.data`. If diagnostics are requested, concise text should point to `structuredContent.diagnostics`
 rather than duplicating timing/size payloads.
+
+Social compact references use deterministic expansion metadata. `AccountRef` values include only source-backed stable
+fields (`id`, `acct`, `displayName`, and `url`) and report `missingFields` rather than guessing absent data. `StatusRef`
+values include `id`, `url`, `authorRef`, `createdAt`, `visibility`, `contentPreview`, and a `contentTruncated` marker.
+When a compact status omits full content, its `omitted[]` record points at `post_get` with the status id and the desired
+`view`. `post_get(id, view=standard)` returns normalized status fields from Lesser's `GET /api/v1/statuses/{id}` route;
+`post_get(id, view=full)` returns the upstream Lesser status payload for audit/debug expansion. Timeline/search defaults
+remain unchanged until their own compact opt-in migrations land.
 
 Notes:
 

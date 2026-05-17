@@ -85,6 +85,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: profileReadDef(), Handler: handleProfileRead},
 		{Def: timelineReadDef(), Handler: handleTimelineRead},
 		{Def: postSearchDef(), Handler: handlePostSearch},
+		{Def: postGetDef(), Handler: handlePostGet},
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
 		{Def: conversationsReadDef(), Handler: handleConversationsRead},
@@ -276,6 +277,64 @@ func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 		return authToolResultFromError(err)
 	}
 	return toolJSONResult(out, nil)
+}
+
+func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		ID   string `json:"id"`
+		View string `json:"view,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	in.ID = strings.TrimSpace(in.ID)
+	if in.ID == "" {
+		return nil, invalidParams("missing id")
+	}
+	view := strings.ToLower(strings.TrimSpace(in.View))
+	if view == "" {
+		view = readViewStandard
+	}
+	switch view {
+	case readViewStandard, readViewFull:
+	default:
+		return nil, invalidParams("invalid view (expected standard or full)")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := client.DoJSON(ctx, "GET", "/api/v1/statuses/"+url.PathEscape(in.ID), nil, token, nil)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	status, ok := out.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected status response")
+	}
+
+	statusID := firstNonEmptyStringMap(status, "id")
+	if statusID == "" {
+		statusID = in.ID
+	}
+	payload := map[string]any{
+		"id":        statusID,
+		"view":      view,
+		"source":    "lesser-api",
+		"statusRef": compactSocialStatusRef(status),
+	}
+	if view == readViewFull {
+		payload["status"] = status
+	} else {
+		payload["status"] = socialStatusStandardPayload(status)
+	}
+	return toolJSONResult(payload, nil)
 }
 
 func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -799,6 +858,23 @@ func postSearchDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":200}
 			},
 			"required":["query"]
+		}`),
+	}
+}
+
+func postGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "post_get",
+		Description:  "Expand a compact social status reference by reading a post through Lesser.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: postGetOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"Stable Lesser status/post id from a StatusRef."},
+				"view":{"type":"string","enum":["standard","full"],"description":"standard returns normalized status fields; full returns the upstream Lesser status payload."}
+			},
+			"required":["id"]
 		}`),
 	}
 }
