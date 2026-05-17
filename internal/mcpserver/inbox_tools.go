@@ -13,6 +13,18 @@ import (
 )
 
 func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return toolErrorResult("invalid_request", "invalid args: "+err.Error(), 400, nil)
+	}
+	view := readParams.View
+	if view == "" {
+		view = readViewStandard
+	}
+	if err := validateMailboxListReadView(view); err != nil {
+		return toolErrorResult("invalid_request", err.Error(), 400, map[string]any{"view": view})
+	}
+
 	var in struct {
 		Folder          string `json:"folder,omitempty"`
 		UnreadOnly      bool   `json:"unreadOnly,omitempty"`
@@ -51,12 +63,13 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	if in.Folder == "sent" {
 		direction = "outbound"
 	}
+	includeRaw := (in.IncludeRaw || view == readViewFull) && view != readViewCompact
 
 	out, err := listHostMailboxMessages(ctx, deps, commMailboxListOptions{
 		ChannelType:     "email",
 		Direction:       direction,
 		UnreadOnly:      in.UnreadOnly,
-		IncludeRaw:      in.IncludeRaw,
+		IncludeRaw:      includeRaw,
 		IncludeArchived: in.IncludeArchived,
 		IncludeDeleted:  in.IncludeDeleted,
 		Archived:        archived,
@@ -84,6 +97,12 @@ func handleEmailRead(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 	}
 	out["cursor"] = strings.TrimSpace(in.Cursor)
 	out["since"] = strings.TrimSpace(in.Since)
+	if view == readViewCompact {
+		return compactMailboxListToolResult("email_read", mailboxCompactListResult(out))
+	}
+	if view == readViewFull {
+		out["view"] = readViewFull
+	}
 	return toolJSONResult(out, out)
 }
 
