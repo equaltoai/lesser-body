@@ -59,7 +59,7 @@ full M0 closure evidence.
 The probe treats semantic failure payloads as failures, not successful MCP transport:
 
 - message-scoped `identity_verify` must return `messageFound:true` and `verified:true`;
-- `notifications_read` default calls must include diagnostics and must not expose `raw` or `_raw` notification payloads;
+- `notifications_read` probe calls request `include_diagnostics=true` and must not expose `raw` or `_raw` notification payloads;
 - `email_read`, `sms_read`, and `voicemail_read` must not return an empty page with `hasMore:true`, and any
   `hasMore:true` page must include `nextCursor`.
 - when `PROBE_M0_CLOSURE=true`, a list-returned notification ID must pass the semantic workflow
@@ -75,7 +75,7 @@ The report must include:
 - pass/fail/skip per probe;
 - elapsed time per probe;
 - approximate payload size for large read paths;
-- `notifications_read.diagnostics` timing/size fields;
+- `notifications_read.diagnostics` timing/size fields when probes request `include_diagnostics=true`;
 - whether default notification output omitted raw/debug payloads;
 - whether the run is smoke-only or closure-mode (`SUMMARY.mode` and `SUMMARY.closureReady`);
 - for closure-mode runs, notification workflow details: selected notification type/id (redacted), direct Lesser
@@ -87,7 +87,7 @@ The report must include:
 
 M0 is not closed until Ops reports repeatable baseline usability in the deployed environment:
 
-- `notifications_read({"since":"", "limit":30})` no longer times out;
+- `notifications_read({"since":"", "limit":30, "include_diagnostics":true})` no longer times out;
 - Host mailbox messageRef verification works where authoritative sender provenance exists;
 - email/SMS/voicemail filtered pagination is sane;
 - identity lookup/verify and timestamp-since notification reads do not regress;

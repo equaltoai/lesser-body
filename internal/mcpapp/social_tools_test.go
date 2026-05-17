@@ -106,6 +106,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if propType, _ := notificationSchema.Properties["include_raw"]["type"].(string); propType != "boolean" {
 		t.Fatalf("notifications_read include_raw should be boolean, got %+v", notificationSchema.Properties["include_raw"])
 	}
+	if propType, _ := notificationSchema.Properties["include_diagnostics"]["type"].(string); propType != "boolean" {
+		t.Fatalf("notifications_read include_diagnostics should be boolean, got %+v", notificationSchema.Properties["include_diagnostics"])
+	}
 	typesProp := notificationSchema.Properties["types"]
 	items, _ := typesProp["items"].(map[string]any)
 	enum, _ := items["enum"].([]any)
@@ -764,7 +767,7 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 	}
 }
 
-func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T) {
+func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnosticsWhenRequested(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
@@ -866,7 +869,12 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T
 	if content, _ := post["content"].(string); len([]rune(content)) > 500 {
 		t.Fatalf("expected bounded targetPost content, got %d runes", len([]rune(content)))
 	}
-	diagnostics, _ := defaultData["diagnostics"].(map[string]any)
+	if _, ok := defaultData["diagnostics"]; ok {
+		t.Fatalf("diagnostics should be opt-in by default, got %+v", defaultData["diagnostics"])
+	}
+
+	diagnosticData := call(3, map[string]any{"limit": 20, "include_diagnostics": true})
+	diagnostics, _ := diagnosticData["diagnostics"].(map[string]any)
 	if diagnostics["upstreamCount"] != float64(1) || diagnostics["normalizedCount"] != float64(1) {
 		t.Fatalf("expected notification diagnostics counts, got %+v", diagnostics)
 	}
@@ -874,7 +882,7 @@ func TestM5_NotificationsReadOmitsRawByDefaultAndExposesDiagnostics(t *testing.T
 		t.Fatalf("expected response size diagnostics, got %+v", diagnostics)
 	}
 
-	rawData := call(3, map[string]any{"limit": 20, "include_raw": true})
+	rawData := call(4, map[string]any{"limit": 20, "include_raw": true})
 	rawNotifications, _ := rawData["notifications"].([]any)
 	rawNotification, _ := rawNotifications[0].(map[string]any)
 	if _, ok := rawNotification["_raw"].(map[string]any); !ok {

@@ -112,6 +112,11 @@ actor-scoped MCP resource; lesser-host control-plane auth cannot derive the loca
 soul/body binding proof from that token. Lesser owns that self-scope proof, derives the bound Host `agentId`, and then
 uses managed instance trust to call Host.
 
+Large read-tool diagnostics are opt-in. User-facing default reads must not emit timing, byte-count, upstream-count, or
+other operational diagnostics unless the caller explicitly requests the tool's advertised diagnostic flag such as
+`include_diagnostics=true`. Diagnostic payloads remain sanitized operational metadata only; they must not include bearer
+tokens, instance keys, message bodies, private reachability details, or raw upstream objects.
+
 Private mint-conversation list responses are compact summaries only. Full `messages` and `producedDeclarations` content
 is returned only by explicit single-conversation reads and must not be logged. For explicit single reads, full private
 fields are preserved in `structuredContent.data`; the text `content` block omits those verbose fields to avoid
