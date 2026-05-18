@@ -24,23 +24,27 @@ import (
 )
 
 const (
-	notificationCursorMemoryPrefix    = "notification_cursor:"
-	notificationCursorMemoryTag       = "notification_cursor"
-	notificationCommunicationInbound  = "communication:inbound"
-	notificationReadDefaultLimit      = 30
-	notificationReadMaxLimit          = 80
-	notificationReadMaxTypes          = 8
-	notificationCompactMaxOutputBytes = 8000
-	notificationCompactPreviewRunes   = 24
-	notificationContentPreviewRunes   = 500
-	notificationCommPreviewRunes      = 240
-	conversationReadDefaultLimit      = 20
-	conversationReadMaxLimit          = 80
-	conversationCompactMaxOutputBytes = 6000
-	conversationCompactPreviewRunes   = 16
-	socialCompactListPreviewRunes     = 48
-	timelineCompactMaxOutputBytes     = 6000
-	postSearchCompactMaxOutputBytes   = 8000
+	notificationCursorMemoryPrefix       = "notification_cursor:"
+	notificationCursorMemoryTag          = "notification_cursor"
+	notificationCommunicationInbound     = "communication:inbound"
+	notificationReadDefaultLimit         = 30
+	notificationReadMaxLimit             = 80
+	notificationReadMaxTypes             = 8
+	notificationCompactMaxOutputBytes    = 8000
+	notificationCompactPreviewRunes      = 24
+	notificationContentPreviewRunes      = 500
+	notificationCommPreviewRunes         = 240
+	conversationReadDefaultLimit         = 20
+	conversationReadMaxLimit             = 80
+	conversationCompactMaxOutputBytes    = 6000
+	conversationCompactPreviewRunes      = 16
+	conversationGetDefaultLimit          = 20
+	conversationGetMaxLimit              = 80
+	conversationGetCompactMaxOutputBytes = 12000
+	conversationGetCompactPreviewRunes   = 160
+	socialCompactListPreviewRunes        = 48
+	timelineCompactMaxOutputBytes        = 6000
+	postSearchCompactMaxOutputBytes      = 8000
 )
 
 var notificationCursorEventIDs = struct {
@@ -97,6 +101,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
 		{Def: conversationsReadDef(), Handler: handleConversationsRead},
+		{Def: conversationGetDef(), Handler: handleConversationGet},
 		{Def: notificationsReadDef(), Handler: handleNotificationsRead},
 		{Def: notificationGetDef(), Handler: handleNotificationGet},
 		{Def: notificationDismissDef(), Handler: handleNotificationDismiss},
@@ -795,6 +800,161 @@ func socialCompactConversationsResult(standardPayload map[string]any, conversati
 	return toolStructuredFirstResultWithBudget("conversations_read", fmt.Sprintf("%d compact conversations", len(refs)), payload, text, nil, false, budget)
 }
 
+func handleConversationGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if readParams.View == "" {
+		readParams.View = readViewCompact
+	}
+	if err := validateConversationGetView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
+	var in struct {
+		ConversationID string `json:"conversationId,omitempty"`
+		ID             string `json:"id,omitempty"`
+		Limit          int    `json:"limit,omitempty"`
+		Cursor         string `json:"cursor,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	conversationID := strings.TrimSpace(in.ConversationID)
+	if conversationID == "" {
+		conversationID = strings.TrimSpace(in.ID)
+	}
+	if conversationID == "" {
+		return nil, invalidParams("missing conversationId")
+	}
+	limit := boundedConversationGetLimit(in.Limit)
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor := strings.TrimSpace(in.Cursor); cursor != "" {
+		query.Set("max_id", cursor)
+	}
+
+	out, headers, err := client.DoJSONWithHeaders(ctx, "GET", "/api/v1/conversations/"+url.PathEscape(conversationID), query, token, nil)
+	if err != nil {
+		return conversationGetToolResultFromError(conversationID, err)
+	}
+	raw, err := conversationDetailFromAPI(out)
+	if err != nil {
+		return nil, err
+	}
+	includeRaw := readParams.View == readViewFull
+	conversation := normalizeSocialConversationDetail(raw, includeRaw)
+	if id := strings.TrimSpace(firstNonEmptyStringMap(conversation, "id")); id == "" {
+		conversation["id"] = conversationID
+	}
+
+	payload := map[string]any{
+		"id":           firstNonEmptyStringMap(conversation, "id"),
+		"view":         readParams.View,
+		"source":       "lesser-api",
+		"conversation": conversation,
+		"limit":        limit,
+	}
+	if nextCursor := nextNotificationCursorFromHeaders(headers); nextCursor != "" {
+		payload["nextCursor"] = nextCursor
+	}
+	if readParams.View == readViewCompact {
+		return socialCompactConversationGetResult(payload, conversation, readParams)
+	}
+	return socialConversationGetStructuredResult(payload, readParams)
+}
+
+func validateConversationGetView(view string) error {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case readViewStandard, readViewFull, readViewCompact:
+		return nil
+	default:
+		return fmt.Errorf("invalid view (expected compact, standard, or full)")
+	}
+}
+
+func socialConversationGetStructuredResult(payload map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	view := strings.ToLower(strings.TrimSpace(firstNonEmptyStringMap(payload, "view")))
+	if view == "" {
+		view = readViewStandard
+	}
+	budget := params.MaxOutputBytes
+	text := map[string]any{
+		"tool": "conversation_get",
+		"view": view,
+		"id":   firstNonEmptyStringMap(payload, "id"),
+	}
+	return toolStructuredFirstResultWithBudget("conversation_get", "conversation details", payload, text, nil, false, budget)
+}
+
+func socialCompactConversationGetResult(standardPayload map[string]any, conversation map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	previewRunes := conversationGetCompactPreviewRunes
+	if params.PreviewChars > 0 {
+		previewRunes = params.PreviewChars
+	}
+
+	ref := compactSocialConversationDetailRef(conversation, previewRunes)
+	if ref == nil {
+		ref = map[string]any{}
+	}
+	id := firstNonEmptyStringMap(ref, "id")
+	if id == "" {
+		id = firstNonEmptyStringMap(standardPayload, "id")
+		putIfNotEmpty(ref, "id", id)
+	}
+
+	budget := socialCompactOutputBudget(params, conversationGetCompactMaxOutputBytes)
+	payload := map[string]any{
+		"id":           id,
+		"view":         readViewCompact,
+		"source":       standardPayload["source"],
+		"conversation": ref,
+		"limit":        standardPayload["limit"],
+		"includeRaw":   false,
+		"omitted":      compactConversationGetOmissions(),
+		"budget":       socialCompactBudgetMetadata(budget, previewRunes),
+	}
+	if nextCursor, _ := standardPayload["nextCursor"].(string); strings.TrimSpace(nextCursor) != "" {
+		payload["nextCursor"] = strings.TrimSpace(nextCursor)
+	}
+	text := map[string]any{
+		"tool": "conversation_get",
+		"view": readViewCompact,
+		"id":   id,
+	}
+	messageCount := 0
+	if refs, _ := ref["messageRefs"].([]any); len(refs) > 0 {
+		messageCount = len(refs)
+	}
+	return toolStructuredFirstResultWithBudget("conversation_get", fmt.Sprintf("conversation %s with %d compact message previews", id, messageCount), payload, text, nil, false, budget)
+}
+
+func conversationGetToolResultFromError(conversationID string, err error) (*mcpruntime.ToolResult, error) {
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+		return toolErrorResult("not_found", "conversation not found", http.StatusNotFound, map[string]any{
+			"conversationId": strings.TrimSpace(conversationID),
+			"source":         "lesser-api",
+			"upstreamCode":   apiErr.Status,
+		})
+	}
+	return authToolResultFromError(err)
+}
+
 func compactSocialConversationRef(raw map[string]any, previewRunes int) map[string]any {
 	if raw == nil {
 		return nil
@@ -841,6 +1001,52 @@ func compactSocialConversationRef(raw map[string]any, previewRunes int) map[stri
 		return nil
 	}
 	return ref
+}
+
+func compactSocialConversationDetailRef(raw map[string]any, previewRunes int) map[string]any {
+	ref := compactSocialConversationRef(raw, previewRunes)
+	if ref == nil {
+		ref = map[string]any{}
+	}
+	if messages := compactConversationMessageRefs(conversationMessagesFromMap(raw), previewRunes); len(messages) > 0 {
+		ref["messageRefs"] = messages
+		ref["messageCount"] = len(messages)
+	}
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
+}
+
+func compactConversationMessageRefs(messages []any, previewRunes int) []any {
+	if len(messages) == 0 {
+		return nil
+	}
+	refs := make([]any, 0, len(messages))
+	for _, item := range messages {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			continue
+		}
+		ref := compactSocialStatusRefWithPreview(raw, previewRunes)
+		if ref == nil {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func conversationMessagesFromMap(raw map[string]any) []any {
+	if raw == nil {
+		return nil
+	}
+	for _, key := range []string{"messages", "statuses", "items"} {
+		if messages, ok := raw[key].([]any); ok {
+			return messages
+		}
+	}
+	return nil
 }
 
 func compactConversationParticipantRefs(raw any) []any {
@@ -951,6 +1157,25 @@ func compactConversationListOmissions() []any {
 			"path":      "conversations[]._raw",
 			"reason":    "debug_payload",
 			"expansion": "call conversations_read with view=full or include_raw=true",
+		},
+	}
+}
+
+func compactConversationGetOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":   "conversation.participants",
+			"reason": "participant_ref_only",
+		},
+		map[string]any{
+			"path":      "conversation.messageRefs[].content",
+			"reason":    "message_content_preview",
+			"expansion": "structuredContent.data.conversation.messageRefs[].expand when messageRefs[].id is present",
+		},
+		map[string]any{
+			"path":      "conversation._raw",
+			"reason":    "debug_payload",
+			"expansion": "call conversation_get with view=full",
 		},
 	}
 }
@@ -1797,6 +2022,27 @@ func conversationsReadDef() mcpruntime.ToolDef {
 	}
 }
 
+func conversationGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "conversation_get",
+		Description:  "Expand a specific direct-message conversation into bounded recent message previews. Defaults to compact; use standard/full only when message content or raw Lesser payloads are explicitly needed.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: conversationGetOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"conversationId":{"type":"string","description":"Stable Lesser conversation id from conversations_read compact expansion metadata."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum recent messages to return. Defaults to 20."},
+				"cursor":{"type":"string","description":"Optional pagination cursor; forwarded to Lesser as max_id."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+			},
+			"required":["conversationId"]
+		}`),
+	}
+}
+
 func notificationDismissDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "notification_dismiss",
@@ -2072,6 +2318,17 @@ func boundedConversationReadLimit(limit int) int {
 	}
 }
 
+func boundedConversationGetLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return conversationGetDefaultLimit
+	case limit > conversationGetMaxLimit:
+		return conversationGetMaxLimit
+	default:
+		return limit
+	}
+}
+
 func readSocialNotifications(ctx context.Context, client *lesserapi.Client, token string, upstreamTypes []string, limit int, cursor string) ([]any, string, error) {
 	if client == nil {
 		return nil, "", fmt.Errorf("lesser api client not initialized")
@@ -2169,6 +2426,26 @@ func socialConversationsFromAPI(raw any, includeRaw bool) ([]any, error) {
 	return out, nil
 }
 
+func conversationDetailFromAPI(raw any) (map[string]any, error) {
+	conversation, ok := raw.(map[string]any)
+	if !ok || conversation == nil {
+		return nil, fmt.Errorf("unexpected conversation response")
+	}
+
+	if nested := firstMap(conversation, "conversation"); nested != nil {
+		merged := cloneStringAnyMap(nested)
+		for _, key := range []string{"messages", "statuses", "items", "nextCursor", "next_cursor"} {
+			if _, exists := merged[key]; !exists {
+				if value, ok := conversation[key]; ok {
+					merged[key] = value
+				}
+			}
+		}
+		return merged, nil
+	}
+	return conversation, nil
+}
+
 func normalizeSocialConversation(raw map[string]any, includeRaw bool) map[string]any {
 	out := map[string]any{
 		"id": strings.TrimSpace(stringFromMap(raw, "id")),
@@ -2195,6 +2472,43 @@ func normalizeSocialConversation(raw map[string]any, includeRaw bool) map[string
 	}
 	if last := normalizeSocialNotificationPost(firstMap(raw, "last_status", "lastStatus", "lastPost")); last != nil {
 		out["lastPost"] = last
+	}
+	return out
+}
+
+func normalizeSocialConversationDetail(raw map[string]any, includeRaw bool) map[string]any {
+	out := normalizeSocialConversation(raw, includeRaw)
+	if messages := normalizeSocialConversationMessages(conversationMessagesFromMap(raw)); len(messages) > 0 {
+		out["messages"] = messages
+	}
+	if nextCursor := firstNonEmptyStringMap(raw, "nextCursor", "next_cursor"); nextCursor != "" {
+		out["nextCursor"] = nextCursor
+	}
+	return out
+}
+
+func normalizeSocialConversationMessages(items []any) []any {
+	if len(items) == 0 {
+		return nil
+	}
+	messages := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok || raw == nil {
+			continue
+		}
+		messages = append(messages, socialStatusStandardPayload(raw))
+	}
+	return messages
+}
+
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
 	return out
 }

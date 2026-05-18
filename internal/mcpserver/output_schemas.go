@@ -142,6 +142,31 @@ func notificationGetOutputSchema() json.RawMessage {
 	}`)
 }
 
+func conversationGetOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string"},
+					"view":{"type":"string"},
+					"source":{"type":"string"},
+					"conversation":{"type":"object","additionalProperties":true},
+					"limit":{"type":"integer"},
+					"nextCursor":{"type":"string"},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true}
+				},
+				"required":["id","view","source","conversation"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",

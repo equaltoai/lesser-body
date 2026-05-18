@@ -36,6 +36,7 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["identity_verify"], "data"), "verified", "boolean")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["post_get"], "data"), "statusRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["notification_get"], "data"), "notificationRef", "object")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["conversation_get"], "data"), "conversation", "object")
 
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",

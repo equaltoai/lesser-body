@@ -38,6 +38,9 @@ type SocialOmittedRef struct {
 }
 
 func compactSocialAccountRef(raw map[string]any) *AccountRef {
+	if raw == nil {
+		return nil
+	}
 	ref := &AccountRef{
 		ID:          firstNonEmptyStringMap(raw, "id"),
 		Acct:        firstNonEmptyStringMap(raw, "acct"),
@@ -75,11 +78,14 @@ func compactSocialStatusRefWithPreview(raw map[string]any, previewRunes int) *St
 	ref := &StatusRef{
 		ID:               id,
 		URL:              firstNonEmptyStringMap(raw, "url", "uri"),
-		AuthorRef:        compactSocialAccountRef(firstMap(raw, "account", "author")),
+		AuthorRef:        compactSocialAccountRefValue(firstMap(raw, "account", "author")),
 		CreatedAt:        firstNonEmptyStringMap(raw, "created_at", "createdAt"),
 		Visibility:       firstNonEmptyStringMap(raw, "visibility"),
 		ContentPreview:   preview,
 		ContentTruncated: truncated,
+	}
+	if ref.AuthorRef == nil {
+		ref.AuthorRef = compactSocialAccountRefValue(raw["authorRef"])
 	}
 	ref.MissingFields = missingSocialRefFields(map[string]string{
 		"id":         ref.ID,
@@ -99,6 +105,21 @@ func compactSocialStatusRefWithPreview(raw map[string]any, previewRunes int) *St
 		}
 	}
 	return ref
+}
+
+func compactSocialAccountRefValue(raw any) *AccountRef {
+	switch typed := raw.(type) {
+	case nil:
+		return nil
+	case *AccountRef:
+		return typed
+	case AccountRef:
+		return &typed
+	case map[string]any:
+		return compactSocialAccountRef(typed)
+	default:
+		return nil
+	}
 }
 
 func socialStatusStandardPayload(raw map[string]any) map[string]any {

@@ -357,7 +357,8 @@ Scope key:
 | `post_get` | Read | Expand a compact social `StatusRef` through Lesser's status read route. |
 | `followers_list` | Read | List the agent's followers. |
 | `following_list` | Read | List accounts the agent follows. |
-| `conversations_read` | Read | Read direct-message conversations; supports opt-in compact conversation refs without a `conversation_get` expansion promise. |
+| `conversations_read` | Read | Read direct-message conversations; supports opt-in compact conversation refs. |
+| `conversation_get` | Read | Expand one direct-message conversation into bounded recent message previews; defaults to compact and requires explicit standard/full opt-in for message bodies/raw payloads. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `post_create` | Write | Create a new post. |
@@ -430,7 +431,8 @@ index/ref pages and expand only the items they need:
   notification target snapshots where the target id is not a direct Lesser status lookup key, use the notification ref's
   `notification_get` expansion as the reliable snapshot path.
 - `conversations_read({"limit":10,"view":"compact"})` returns conversation refs with bounded participant and last-post
-  metadata. There is no `conversation_get` tool; expand only the `lastPostRef` through `post_get` when Lesser supplies a
+  metadata. Use `conversation_get({"conversationId":"<conversation-id>","limit":20,"view":"compact"})` to expand one
+  conversation into recent message previews. `lastPostRef` can still expand through `post_get` when Lesser supplies a
   stable post id.
 - `soul_read({"self":true,"view":"summary"})` returns bounded public identity essentials. Use the summary `expand`
   metadata, or call `soul_read(..., "view":"standard")` for the compatibility bundle and `view:"full"` for explicit
@@ -505,14 +507,21 @@ Notes:
 - `conversations_read` defaults to `limit=20` (maximum `80`) and preserves the existing normalized conversation-list
   response unless a view is requested. `conversations_read(view=compact)` is opt-in and returns compact conversation
   summaries under `structuredContent.data.conversations[]`: stable conversation id, read/unread/update metadata,
-  `participantRefs`, and bounded `lastPostRef` previews. Conversation refs intentionally do **not** advertise
-  `conversation_get`; there is no single-conversation expansion route in body's local contract. `lastPostRef.expand`
+  `participantRefs`, and bounded `lastPostRef` previews. `lastPostRef.expand`
   uses `post_get(id, view=standard)` when Lesser supplies a stable post/status id; otherwise the ref reports missing
   metadata instead of inventing an expansion path. `conversations_read(limit=10, view=compact)` targets a 6 KB MCP
   JSON-RPC payload budget. If the compact response exceeds its default or caller-supplied `max_output_bytes`, body
   returns `response_too_large` with measured byte details rather than silently dropping fields. `preview_chars` bounds
   compact last-post previews. `include_raw=true` and `view=full` remain explicit audit/debug paths that include
   upstream `_raw` conversation payloads; compact mode does not inline upstream raw payloads.
+- `conversation_get` defaults to `view=compact`, `limit=20` (maximum `80`), a 160-character message preview budget,
+  and a 12 KB compact MCP JSON-RPC payload budget. It calls Lesser's
+  `GET /api/v1/conversations/{conversationId}` route with the MCP caller bearer and returns one conversation under
+  `structuredContent.data.conversation`. Compact output contains stable conversation metadata, `participantRefs`,
+  bounded `messageRefs` with author refs/timestamps/visibility/content previews, omission metadata, and `post_get`
+  expansion metadata when a message id is available. `view=standard` explicitly includes normalized message content;
+  `view=full` also includes the upstream Lesser conversation payload under `_raw` for audit/debug. A 404 from Lesser is
+  returned as a `not_found` tool error, while Lesser 401/403 responses preserve OAuth reauthorization guidance.
 - `soul_read` advertises `view=summary|standard|full`. Omitted/default and `view=standard` preserve the existing public
   soul bundle shape. `view=summary` is opt-in and returns bounded agent-facing essentials under
   `structuredContent.data.souls[]`: stable identity/lifecycle fields, public capability names (not full capability
