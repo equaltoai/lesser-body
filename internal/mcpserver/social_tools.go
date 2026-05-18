@@ -1264,13 +1264,52 @@ func compactNotificationStatusRef(raw map[string]any, previewRunes int) map[stri
 	putIfNotEmpty(ref, "visibility", firstNonEmptyStringMap(raw, "visibility"))
 	putIfNotEmpty(ref, "contentPreview", preview)
 	ref["contentTruncated"] = truncated
-	if id != "" {
-		ref["expand"] = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+	if expandID := compactNotificationStatusPostGetID(raw); expandID != "" {
+		ref["expand"] = socialPostGetExpansion(expandID, readViewStandard, "structuredContent.data.status")
 	}
 	if len(ref) == 1 {
 		return nil
 	}
 	return ref
+}
+
+func compactNotificationStatusPostGetID(raw map[string]any) string {
+	if raw == nil {
+		return ""
+	}
+	for _, key := range []string{
+		"statusId",
+		"statusID",
+		"status_id",
+		"canonicalStatusId",
+		"canonicalStatusID",
+		"canonical_status_id",
+		"lookupId",
+		"lookupID",
+		"lookup_id",
+	} {
+		if id := strings.TrimSpace(stringFromMap(raw, key)); id != "" {
+			return id
+		}
+	}
+	id := strings.TrimSpace(firstNonEmptyStringMap(raw, "id"))
+	if notificationTargetStatusIDLooksGenerated(id) {
+		return ""
+	}
+	return id
+}
+
+func notificationTargetStatusIDLooksGenerated(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) < 12 {
+		return false
+	}
+	for _, ch := range id {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func compactSocialNotificationCommunicationRef(raw map[string]any) map[string]any {
@@ -1332,7 +1371,7 @@ func compactNotificationListOmissions() []any {
 		map[string]any{
 			"path":      "notifications[].targetPost.content",
 			"reason":    "target_post_preview",
-			"expansion": "structuredContent.data.notifications[].targetPostRef.expand",
+			"expansion": "structuredContent.data.notifications[].targetPostRef.expand when present; otherwise structuredContent.data.notifications[].expand",
 		},
 	}
 }
@@ -1716,7 +1755,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":80},
 				"include_raw":{"type":"boolean","description":"Include verbose upstream notification payloads under _raw for audit/debug use. Defaults to false and increases response size."},
 				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."},
-				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded notification refs with notification_get/post_get expansion metadata."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded notification refs with notification_get expansion metadata and conditional post_get expansion metadata only for directly resolvable target posts."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			}
