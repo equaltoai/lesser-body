@@ -36,7 +36,7 @@ const (
 	notificationCommPreviewRunes         = 240
 	conversationReadDefaultLimit         = 20
 	conversationReadMaxLimit             = 80
-	conversationCompactMaxOutputBytes    = 6000
+	conversationCompactMaxOutputBytes    = 8000
 	conversationCompactPreviewRunes      = 16
 	conversationGetDefaultLimit          = 20
 	conversationGetMaxLimit              = 80
@@ -966,6 +966,9 @@ func compactSocialConversationRef(raw map[string]any, previewRunes int) map[stri
 	id := strings.TrimSpace(firstNonEmptyStringMap(raw, "id"))
 	ref := map[string]any{}
 	putIfNotEmpty(ref, "id", id)
+	if id != "" {
+		ref["expand"] = socialConversationGetExpansion(id, readViewCompact, "structuredContent.data.conversation")
+	}
 	if unread, ok := firstBoolMap(raw, "unread", "is_unread", "isUnread"); ok {
 		ref["unread"] = unread
 		ref["read"] = !unread
@@ -1152,6 +1155,11 @@ func compactConversationListOmissions() []any {
 			"path":      "conversations[].lastPost.content",
 			"reason":    "last_post_preview",
 			"expansion": "structuredContent.data.conversations[].lastPostRef.expand when lastPostRef.id is present",
+		},
+		map[string]any{
+			"path":      "conversations[].messages",
+			"reason":    "conversation_get_required",
+			"expansion": "structuredContent.data.conversations[].expand",
 		},
 		map[string]any{
 			"path":      "conversations[]._raw",
@@ -2008,13 +2016,13 @@ func notificationGetDef() mcpruntime.ToolDef {
 func conversationsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "conversations_read",
-		Description: "Read direct message conversation summaries. Use compact for bounded refs and include_raw/full only for audit/debug.",
+		Description: "Read direct message conversation summaries. Use compact for bounded refs that expand through conversation_get; include_raw/full only for audit/debug.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"limit":{"type":"integer","minimum":1,"maximum":80},
 				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."},
-				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded conversation refs without a single-conversation expansion tool."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded conversation refs with conversation_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact last-post preview character budget. Zero means the tool default."},
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
 			}

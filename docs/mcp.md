@@ -507,9 +507,10 @@ Notes:
 - `conversations_read` defaults to `limit=20` (maximum `80`) and preserves the existing normalized conversation-list
   response unless a view is requested. `conversations_read(view=compact)` is opt-in and returns compact conversation
   summaries under `structuredContent.data.conversations[]`: stable conversation id, read/unread/update metadata,
-  `participantRefs`, and bounded `lastPostRef` previews. `lastPostRef.expand`
+  `participantRefs`, bounded `lastPostRef` previews, and per-conversation `expand` metadata pointing at
+  `conversation_get({"conversationId":"<id>","view":"compact"})`. `lastPostRef.expand`
   uses `post_get(id, view=standard)` when Lesser supplies a stable post/status id; otherwise the ref reports missing
-  metadata instead of inventing an expansion path. `conversations_read(limit=10, view=compact)` targets a 6 KB MCP
+  metadata instead of inventing an expansion path. `conversations_read(limit=10, view=compact)` targets an 8 KB MCP
   JSON-RPC payload budget. If the compact response exceeds its default or caller-supplied `max_output_bytes`, body
   returns `response_too_large` with measured byte details rather than silently dropping fields. `preview_chars` bounds
   compact last-post previews. `include_raw=true` and `view=full` remain explicit audit/debug paths that include

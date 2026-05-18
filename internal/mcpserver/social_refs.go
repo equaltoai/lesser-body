@@ -158,6 +158,25 @@ func socialPostGetExpansion(id string, view string, resultPath string) *SocialEx
 	}
 }
 
+func socialConversationGetExpansion(conversationID string, view string, resultPath string) *SocialExpansionRef {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil
+	}
+	view = strings.ToLower(strings.TrimSpace(view))
+	if view == "" {
+		view = readViewCompact
+	}
+	return &SocialExpansionRef{
+		Tool: "conversation_get",
+		Arguments: map[string]any{
+			"conversationId": conversationID,
+			"view":           view,
+		},
+		ResultPath: strings.TrimSpace(resultPath),
+	}
+}
+
 func compactStringWithTruncation(value string, maxRunes int) (string, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" || maxRunes <= 0 {

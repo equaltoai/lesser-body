@@ -1214,7 +1214,7 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 	)
 }
 
-func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
+func TestM5_ConversationsReadCompactRefsAdvertiseConversationGet(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
@@ -1246,8 +1246,8 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if compact.Result.IsError {
 		t.Fatalf("conversations_read compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
 	}
-	assertMCPPayloadBudget(t, "conversations_read compact limit=10 large fixture", len(compact.ResponseBody), 6000)
-	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload ", "conversation_get"} {
+	assertMCPPayloadBudget(t, "conversations_read compact limit=10 large fixture", len(compact.ResponseBody), 8000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
 		if strings.Contains(string(compact.ResponseBody), forbidden) {
 			t.Fatalf("compact conversations response leaked or advertised %q: %s", forbidden, string(compact.ResponseBody))
 		}
@@ -1267,8 +1267,10 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if first["id"] != "conv-1" || first["unread"] != true || first["read"] != false || first["updatedAt"] == "" {
 		t.Fatalf("unexpected compact conversation metadata: %+v", first)
 	}
-	if _, ok := first["expand"]; ok {
-		t.Fatalf("conversation refs must not advertise conversation_get-style expansion: %+v", first)
+	convExpand, _ := first["expand"].(map[string]any)
+	convArgs, _ := convExpand["arguments"].(map[string]any)
+	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "structuredContent.data.conversation" {
+		t.Fatalf("expected conversation_get expansion metadata, got %+v", convExpand)
 	}
 	participantRefs, _ := first["participantRefs"].([]any)
 	if len(participantRefs) != 2 {
@@ -1297,8 +1299,8 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if len(topOmitted) < 3 {
 		t.Fatalf("expected list-level conversation omitted metadata, got %+v", compactData["omitted"])
 	}
-	if b, _ := json.Marshal(topOmitted); strings.Contains(string(b), "conversation_get") {
-		t.Fatalf("omitted metadata must not advertise conversation_get: %s", string(b))
+	if b, _ := json.Marshal(topOmitted); !strings.Contains(string(b), "conversation_get") {
+		t.Fatalf("omitted metadata should point to conversation_get expansion: %s", string(b))
 	}
 	var text map[string]any
 	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
@@ -1315,11 +1317,11 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 		"limit":            10,
 		"view":             "compact",
 		"preview_chars":    8,
-		"max_output_bytes": 6000,
+		"max_output_bytes": 8000,
 	})
 	previewData, _ := previewCompact.Result.StructuredContent["data"].(map[string]any)
 	previewBudget, _ := previewData["budget"].(map[string]any)
-	if previewBudget["contentPreviewRunes"] != float64(8) || previewBudget["maxOutputBytes"] != float64(6000) {
+	if previewBudget["contentPreviewRunes"] != float64(8) || previewBudget["maxOutputBytes"] != float64(8000) {
 		t.Fatalf("expected preview/max budget metadata to honor args, got %+v", previewBudget)
 	}
 	previewConversations, _ := previewData["conversations"].([]any)
@@ -1365,9 +1367,6 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	details, _ := errorPayload["details"].(map[string]any)
 	if details["tool"] != "conversations_read" || details["maxOutputBytes"] != float64(1000) || details["measuredBytes"] == float64(0) {
 		t.Fatalf("unexpected too-large details: %+v", details)
-	}
-	if strings.Contains(string(tooLarge.ResponseBody), "conversation_get") {
-		t.Fatalf("too-large error must not advertise conversation_get: %s", string(tooLarge.ResponseBody))
 	}
 }
 

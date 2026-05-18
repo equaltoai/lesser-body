@@ -68,8 +68,8 @@ P4.2 compact/summary probes are explicit opt-ins. They do not imply compact defa
 - `notifications_read(view=compact)` records payload bytes, omitted metadata count, and expansion tools.
 - `email_read(view=compact)` verifies canonical `messageRef`, no `body`/`raw`/`_raw` list fields, and
   `email_get` / `email_get_content` expansion refs.
-- `conversations_read(view=compact)` verifies compact expansion metadata and fails if a `conversation_get` route is
-  advertised.
+- `conversations_read(view=compact)` verifies compact expansion metadata and requires `conversation_get` expansion refs
+  when conversation rows are present.
 - `soul_read(view=summary)` verifies summary omission/expansion metadata without private blocks or raw payloads.
 - `timeline_read(view=compact)` and `post_search(view=compact)` verify `post_get` expansion metadata when list entries
   are present.

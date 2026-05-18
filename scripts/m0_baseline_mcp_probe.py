@@ -940,8 +940,7 @@ def main() -> int:
             "conversations_read",
             {"limit": 10, "view": "compact"},
             "conversations",
-            expected_tools=set(),
-            forbidden_tools={"conversation_get"},
+            expected_tools={"conversation_get"},
             forbidden_keys={"raw", "_raw"},
         ),
     )
