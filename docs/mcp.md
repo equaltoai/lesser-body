@@ -426,7 +426,9 @@ index/ref pages and expand only the items they need:
   `post_get({"id":"<status-id>","view":"full"})` for explicit audit/debug expansion.
 - `notifications_read({"limit":10,"view":"compact"})` returns notification refs. Use
   `notification_get({"id":"<notification-id>","view":"standard"})` or `view:"full"` for a single notification, and
-  follow any `targetPostRef.expand` route through `post_get` for post content.
+  follow `targetPostRef.expand` through `post_get` only when that expansion is present. For remote/generated
+  notification target snapshots where the target id is not a direct Lesser status lookup key, use the notification ref's
+  `notification_get` expansion as the reliable snapshot path.
 - `conversations_read({"limit":10,"view":"compact"})` returns conversation refs with bounded participant and last-post
   metadata. There is no `conversation_get` tool; expand only the `lastPostRef` through `post_get` when Lesser supplies a
   stable post id.
@@ -490,8 +492,10 @@ Notes:
 - `notifications_read(view=compact)` is opt-in and returns compact notification refs under
   `structuredContent.data.notifications[]` with stable id/type/timestamps/read state, `actorRef`, bounded
   `targetPostRef`, optional communication previews, and deterministic expansion metadata. Per-notification
-  `expand` points at `notification_get(id, view=standard)`, while `targetPostRef` keeps the `post_get` expansion
-  route for post content. `notifications_read(limit=10, view=compact)` targets an 8 KB MCP JSON-RPC payload budget.
+  `expand` points at `notification_get(id, view=standard)`. `targetPostRef.expand` points at `post_get` only when the
+  target exposes a direct Lesser status lookup key; remote/generated snapshot-only target ids keep id/url/preview
+  metadata but omit `post_get` so clients do not follow an expansion that can only 404. `notifications_read(limit=10,
+  view=compact)` targets an 8 KB MCP JSON-RPC payload budget.
   If the compact response exceeds its default or caller-supplied `max_output_bytes`, body returns `response_too_large`
   with measured byte details rather than silently dropping fields. `notification_get(id, view=standard)` returns a
   normalized notification from Lesser's `GET /api/v1/notifications/{id}` route; `notification_get(id, view=full)`

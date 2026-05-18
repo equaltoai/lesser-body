@@ -1774,6 +1774,106 @@ func TestM5_NotificationsReadCompactAndNotificationGetExpansion(t *testing.T) {
 	}
 }
 
+func TestM5_NotificationsReadCompactOmitsGeneratedRemoteTargetPostExpansion(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const generatedTargetID = "5558118937478178008"
+	const remoteURL = "https://remote.example/users/theory/statuses/source-note"
+	var gotStatusLookup bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications":
+			_, _ = w.Write([]byte(`[
+				{
+					"id":"remote-notif-1",
+					"type":"mention",
+					"created_at":"2026-05-18T14:32:00Z",
+					"account":{"id":"acct-remote","username":"theory","acct":"theory@remote.example","display_name":"Remote Theory"},
+					"status":{
+						"id":"` + generatedTargetID + `",
+						"url":"` + remoteURL + `",
+						"uri":"` + remoteURL + `",
+						"created_at":"2026-05-18T14:31:00Z",
+						"visibility":"public",
+						"content":"Remote generated notification target content remains available through notification_get."
+					}
+				}
+			]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications/remote-notif-1":
+			_, _ = w.Write([]byte(`{
+				"id":"remote-notif-1",
+				"type":"mention",
+				"created_at":"2026-05-18T14:32:00Z",
+				"account":{"id":"acct-remote","username":"theory","acct":"theory@remote.example","display_name":"Remote Theory"},
+				"status":{
+					"id":"` + generatedTargetID + `",
+					"url":"` + remoteURL + `",
+					"uri":"` + remoteURL + `",
+					"created_at":"2026-05-18T14:31:00Z",
+					"visibility":"public",
+					"content":"Remote generated notification target content remains available through notification_get."
+				}
+			}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/statuses/"):
+			gotStatusLookup = true
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "notifications_read", map[string]any{
+		"limit": 1,
+		"view":  "compact",
+	})
+	compactData, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	notifications, _ := compactData["notifications"].([]any)
+	if len(notifications) != 1 {
+		t.Fatalf("expected one compact notification, got %+v", compactData)
+	}
+	notification, _ := notifications[0].(map[string]any)
+	notificationExpand, _ := notification["expand"].(map[string]any)
+	notificationExpandArgs, _ := notificationExpand["arguments"].(map[string]any)
+	if notificationExpand["tool"] != "notification_get" || notificationExpandArgs["id"] != "remote-notif-1" {
+		t.Fatalf("compact notification must retain notification_get expansion: %+v", notificationExpand)
+	}
+	targetPostRef, _ := notification["targetPostRef"].(map[string]any)
+	if targetPostRef["id"] != generatedTargetID || targetPostRef["url"] != remoteURL {
+		t.Fatalf("compact remote target should preserve id/url metadata, got %+v", targetPostRef)
+	}
+	if preview, _ := targetPostRef["contentPreview"].(string); preview == "" {
+		t.Fatalf("compact remote target should preserve a content preview, got %+v", targetPostRef)
+	}
+	if _, ok := targetPostRef["expand"]; ok {
+		t.Fatalf("generated remote target must not advertise post_get expansion: %+v", targetPostRef)
+	}
+
+	standardGet := callSocialTool(t, env, app, authHeader, sessionID, 3, "notification_get", map[string]any{
+		"id":   "remote-notif-1",
+		"view": "standard",
+	})
+	getData, _ := standardGet.Result.StructuredContent["data"].(map[string]any)
+	notificationSnapshot, _ := getData["notification"].(map[string]any)
+	targetPost, _ := notificationSnapshot["targetPost"].(map[string]any)
+	if targetPost["id"] != generatedTargetID || targetPost["url"] != remoteURL {
+		t.Fatalf("notification_get should preserve remote target snapshot data, got %+v", targetPost)
+	}
+	if gotStatusLookup {
+		t.Fatalf("test should not need to call generated target post_get")
+	}
+}
+
 func TestM5_NotificationsReadSupportsCommunicationInboundFilter(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
