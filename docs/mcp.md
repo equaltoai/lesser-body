@@ -501,6 +501,10 @@ measured byte details rather than silently dropping fields.
 
 Notes:
 
+- Article / CMS authoring tools are not public MCP tools yet. `lesser-body` has an internal CMS GraphQL client boundary
+  for Lesser `POST /api/graphql`, but public Article draft/preview/publish tools remain gated on the Lesser Article
+  contract, renderer, and publish behavior stabilizing. Long-form Article authoring must not be routed through
+  Mastodon-compatible status APIs such as `post_create`.
 - Social tools require an **OAuth JWT** bearer token (not just an instance key) because they call the Lesser API on behalf
   of the authenticated agent.
 - M0 baseline read-tool policy: daily agent read paths should move toward compact, bounded defaults only after

@@ -56,6 +56,14 @@ Notes:
   - `LESSER_API_BASE_URL` or `MCP_ENDPOINT`-derived base URL
   - calls Mastodon-compatible endpoints (for example: `/api/v1/accounts/verify_credentials`)
 
+### CMS / Article client path (internal, calls Lesser API)
+
+- `internal/cmsapi/`
+  - wraps the Lesser API client for `POST /api/graphql`
+  - forwards the caller's OAuth bearer token to Lesser and preserves Lesser HTTP errors through `lesserapi.APIError`
+  - preserves GraphQL `data`, `errors`, and `extensions` without encoding Article-specific operations yet
+  - exists so future Article/Draft MCP tools can use Lesser's CMS contract instead of Mastodon status APIs for long-form authoring
+
 ### Communication tools (delegate to lesser-host)
 
 - `internal/soulapi/`

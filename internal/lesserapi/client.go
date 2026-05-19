@@ -85,6 +85,28 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 }
 
 func (c *Client) DoJSONWithHeaders(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, http.Header, error) {
+	respBody, headers, err := c.DoRawJSONWithHeaders(ctx, method, path, query, bearerToken, body)
+	if err != nil {
+		return nil, headers, err
+	}
+
+	if len(respBody) == 0 {
+		return map[string]any{}, headers, nil
+	}
+
+	var out any
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return out, headers, nil
+}
+
+func (c *Client) DoRawJSON(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) ([]byte, error) {
+	out, _, err := c.DoRawJSONWithHeaders(ctx, method, path, query, bearerToken, body)
+	return out, err
+}
+
+func (c *Client) DoRawJSONWithHeaders(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) ([]byte, http.Header, error) {
 	if c == nil || c.baseURL == nil || c.http == nil {
 		return nil, nil, fmt.Errorf("lesser api client not initialized")
 	}
@@ -137,16 +159,7 @@ func (c *Client) DoJSONWithHeaders(ctx context.Context, method string, path stri
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, headers, &APIError{Status: resp.StatusCode, Body: respBody}
 	}
-
-	if len(respBody) == 0 {
-		return map[string]any{}, headers, nil
-	}
-
-	var out any
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return nil, nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-	return out, headers, nil
+	return respBody, headers, nil
 }
 
 func resolveBaseURL() (*url.URL, error) {
