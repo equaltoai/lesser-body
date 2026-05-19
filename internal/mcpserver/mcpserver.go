@@ -196,6 +196,10 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 		return err
 	}
 
+	if err := registerArticleTools(r); err != nil {
+		return err
+	}
+
 	if err := registerMemoryTools(r); err != nil {
 		return err
 	}

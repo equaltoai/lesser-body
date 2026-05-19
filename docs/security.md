@@ -44,6 +44,7 @@ cancels session-scoped execution of the read-only `skill_bundle_get` tool.
 Write tools include:
 
 - `post_create`, `post_boost`, `post_favorite`, `follow`, `unfollow`, `profile_update`, `memory_append`
+- `article_draft_create`, `article_draft_update`
 - `email_send`, `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`
 
 ## Bound-body operation authorization

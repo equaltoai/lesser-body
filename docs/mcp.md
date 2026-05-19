@@ -362,6 +362,10 @@ Scope key:
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
+| `article_draft_create` | Write | Create an unpublished Article draft through Lesser CMS; defaults to a compact draft ref and never auto-publishes. |
+| `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
+| `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
+| `article_draft_list` | Read | List the authenticated actor's unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
 | `post_favorite` | Write | Favorite a post. |
@@ -448,6 +452,11 @@ index/ref pages and expand only the items they need:
 - `email_read({"folder":"inbox","limit":10,"view":"compact"})` returns mailbox refs with canonical `messageRef`. Use
   `email_get({"messageId":"<messageRef>"})` for mailbox metadata and
   `email_get_content({"messageId":"<messageRef>"})` for the full body when `content.available=true`.
+- `article_draft_list({"limit":10})` defaults to compact `DRAFT` refs with `expand` metadata; call
+  `article_draft_get({"id":"<draft-id>","view":"standard"})` when an agent explicitly needs draft content.
+  `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
+  `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
+  draft id as a final published Article id.
 
 ### Named-counterpart DM workflow
 
@@ -501,12 +510,13 @@ measured byte details rather than silently dropping fields.
 
 Notes:
 
-- Article / CMS authoring tools are not public MCP tools yet. `lesser-body` has an internal CMS GraphQL client boundary
-  for Lesser `POST /api/graphql`, but public Article draft/preview/publish tools remain gated on the Lesser Article
-  contract, renderer, and publish behavior stabilizing. Long-form Article authoring must not be routed through
-  Mastodon-compatible status APIs such as `post_create`.
-- Social tools require an **OAuth JWT** bearer token (not just an instance key) because they call the Lesser API on behalf
-  of the authenticated agent.
+- Article draft authoring is exposed through `article_draft_create`, `article_draft_update`, `article_draft_get`,
+  and `article_draft_list`. These tools use Lesser `POST /api/graphql` via the internal CMS client boundary, force
+  draft-only Article semantics, and never auto-publish. Article preview (`#265`), publish/update published Article
+  tools (`#266`), and end-to-end canaries (`#267`) remain gated on the Lesser renderer and publish workflow.
+  Long-form Article authoring must not be routed through Mastodon-compatible status APIs such as `post_create`.
+- Social and Article draft tools require an **OAuth JWT** bearer token (not just an instance key) because they call the
+  Lesser API on behalf of the authenticated agent.
 - M0 baseline read-tool policy: daily agent read paths should move toward compact, bounded defaults only after
   compatibility review, docs/probe guidance, and live evidence. In P4.1, `timeline_read`, `post_search`, `soul_read`,
   and `email_read` explicitly keep compact/summary views opt-in. List/read tools should return operational metadata
@@ -663,11 +673,12 @@ Notes:
 - `timeline_read` remains upstream-shaped by default for compatibility. Use `view=compact` for bounded `StatusRef`
   lists with deterministic `post_get` expansion metadata. `post_search` follows the same opt-in model for status
   search results. Neither tool silently flips defaults to compact.
-- Mailbox, memory, and skills read tools publish MCP annotations in `tools/list`: read-only hints for mailbox
-  reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, and `skill_bundle_get`; destructive hints
-  for send/reply/delete tools; and idempotent hints for mailbox read-state mutation tools. `memory_append` remains an
-  additive write and is only idempotent when callers provide `event_id`, so it is not advertised as unconditionally
-  idempotent.
+- Mailbox, memory, skills, and Article draft tools publish MCP annotations in `tools/list`: read-only hints for mailbox
+  reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, `skill_bundle_get`,
+  `article_draft_get`, and `article_draft_list`; destructive hints for send/reply/delete tools; non-destructive
+  additive mutation hints for `article_draft_create` and `article_draft_update`; and idempotent hints for mailbox
+  read-state mutation tools. `memory_append` remains an additive write and is only idempotent when callers provide
+  `event_id`, so it is not advertised as unconditionally idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.
