@@ -32,6 +32,10 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 		{Def: articleDraftUpdateDef(), Handler: handleArticleDraftUpdate},
 		{Def: articleDraftGetDef(), Handler: handleArticleDraftGet},
 		{Def: articleDraftListDef(), Handler: handleArticleDraftList},
+		{Def: articleDraftPublishDef(), Handler: handleArticleDraftPublish},
+		{Def: articleUpdateDef(), Handler: handleArticleUpdate},
+		{Def: articleGetDef(), Handler: handleArticleGet},
+		{Def: articleListDef(), Handler: handleArticleList},
 	} {
 		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
 			return err
@@ -505,7 +509,8 @@ func articleDraftPolicyMetadata() map[string]any {
 		"draftOnly":            true,
 		"autoPublishes":        false,
 		"canonicalArticleId":   "not_promised_until_publish",
-		"publishToolAvailable": false,
+		"publishToolAvailable": true,
+		"publishTool":          "article_draft_publish",
 	}
 }
 
