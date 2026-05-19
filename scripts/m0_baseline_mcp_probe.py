@@ -20,6 +20,7 @@ Recommended probe inputs:
   PROBE_NOTIFICATION_WORKFLOW_TYPES Optional comma-separated notification types to exercise separately
   PROBE_WRONG_USER_BEARER_TOKEN Optional wrong-user token for negative notification controls
   PROBE_POST_SEARCH_QUERY      Query for the compact post_search probe (default: mcp)
+  PROBE_DM_COUNTERPART         Named DM counterpart for direct_messages_read compact probe (optional)
   PROBE_SAFE_SEND_EMAIL       Set true to run self-email send/search/readback
   PROBE_SELF_EMAIL_TO         Recipient for the safe self-email send
 
@@ -468,6 +469,39 @@ def probe_compact_projection(
         size,
         view=data.get("view"),
         count=len(items),
+        omitted=omitted_count(data),
+        expansionTools=sorted(tools),
+    )
+
+
+def probe_direct_messages_compact(counterpart: str) -> None:
+    args = {
+        "counterpart": counterpart,
+        "limit": 10,
+        "view": "compact",
+        "max_output_bytes": 12000,
+    }
+    result, data, elapsed, size = tool("direct_messages_read", args)
+    assert_tool_ok(result)
+    if data.get("view") != "compact":
+        raise ProbeError(f"direct_messages_read returned unexpected view {data.get('view')!r}")
+    if str(data.get("counterpart", "")).strip() != counterpart:
+        raise ProbeError("direct_messages_read did not echo the requested counterpart")
+    messages = list_of_dicts(data, "messages")
+    if messages:
+        assert_forbidden_keys_absent(messages, {"content", "raw", "_raw"}, "direct_messages_read compact")
+    tools = expansion_tool_names(data)
+    if messages and "post_get" not in tools:
+        raise ProbeError("direct_messages_read compact messages missing post_get expansion refs")
+    if "conversation_get" not in tools:
+        raise ProbeError("direct_messages_read compact missing conversation_get expansion ref")
+    record(
+        "direct_messages_read compact counterpart",
+        "pass",
+        elapsed,
+        size,
+        counterpart=redact(counterpart),
+        count=len(messages),
         omitted=omitted_count(data),
         expansionTools=sorted(tools),
     )
@@ -944,6 +978,11 @@ def main() -> int:
             forbidden_keys={"raw", "_raw"},
         ),
     )
+    dm_counterpart = env("PROBE_DM_COUNTERPART")
+    if dm_counterpart:
+        run_probe("direct_messages_read compact counterpart", lambda: probe_direct_messages_compact(dm_counterpart))
+    else:
+        skip("direct_messages_read compact counterpart", "set PROBE_DM_COUNTERPART to a teammate with an existing DM thread")
     run_probe(
         "soul_read summary expansion",
         lambda: probe_compact_projection(

@@ -446,6 +446,35 @@ index/ref pages and expand only the items they need:
   `email_get({"messageId":"<messageRef>"})` for mailbox metadata and
   `email_get_content({"messageId":"<messageRef>"})` for the full body when `content.available=true`.
 
+### Named-counterpart DM workflow
+
+For agent-to-agent coordination, DMs are the primary path. Prefer `direct_messages_read` before reaching for email
+search:
+
+- Recent DMs from Ops:
+
+  ```json
+  {"tool":"direct_messages_read","arguments":{"counterpart":"ops","limit":10,"view":"compact"}}
+  ```
+
+- Unread DMs from Medic:
+
+  ```json
+  {"tool":"direct_messages_read","arguments":{"counterpart":"medic","unreadOnly":true,"limit":10,"view":"compact"}}
+  ```
+
+- Expand this conversation after a compact result:
+
+  ```json
+  {"tool":"conversation_get","arguments":{"conversationId":"<structuredContent.data.id>","limit":20,"view":"compact"}}
+  ```
+
+`direct_messages_read` uses Lesser's named counterpart lookup and returns either the focused one-to-one conversation or
+an explicit `not_found` tool error with suggested fallbacks. It never silently scans unrelated conversations,
+notifications, timelines, or email. Existing advisor check-in workflows should migrate from broad mailbox/email search
+to "read DMs from the named advisor first; use `conversation_get` only for focused expansion; use `email_search` only
+when the DM path reports `not_found` or the advisor explicitly coordinated by email."
+
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with
 `private_reachability_unavailable`, explicit source/contract/status/reason metadata remains significant, and private

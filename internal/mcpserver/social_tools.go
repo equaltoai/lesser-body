@@ -2272,7 +2272,7 @@ func conversationGetDef() mcpruntime.ToolDef {
 func directMessagesReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "direct_messages_read",
-		Description:  "Read recent direct-message previews from a named counterpart using Lesser's one-to-one conversation lookup. Defaults to compact; returns explicit not_found rather than scanning unrelated surfaces.",
+		Description:  "Read recent direct-message previews from a named counterpart using Lesser's one-to-one conversation lookup. Examples: recent DMs from Ops with {\"counterpart\":\"ops\",\"limit\":10,\"view\":\"compact\"}; unread DMs from Medic with {\"counterpart\":\"medic\",\"unreadOnly\":true,\"view\":\"compact\"}. Defaults to compact and returns explicit not_found rather than scanning unrelated surfaces.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: directMessagesReadOutputSchema(),
 		InputSchema: json.RawMessage(`{

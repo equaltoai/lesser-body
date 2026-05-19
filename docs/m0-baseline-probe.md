@@ -70,6 +70,9 @@ P4.2 compact/summary probes are explicit opt-ins. They do not imply compact defa
   `email_get` / `email_get_content` expansion refs.
 - `conversations_read(view=compact)` verifies compact expansion metadata and requires `conversation_get` expansion refs
   when conversation rows are present.
+- `direct_messages_read(view=compact)` is optional unless `PROBE_DM_COUNTERPART` is set; when set, it verifies named
+  counterpart DM retrieval under the 12 KB compact budget, requires the focused conversation's `conversation_get`
+  expansion ref, and checks compact message previews do not expose full content/raw payloads.
 - `soul_read(view=summary)` verifies summary omission/expansion metadata without private blocks or raw payloads.
 - `timeline_read(view=compact)` and `post_search(view=compact)` verify `post_get` expansion metadata when list entries
   are present.
@@ -132,7 +135,9 @@ For the Project 21 post-M0 cleanup issues, Ops can verify these narrow contract 
   `type:"communication:inbound"` and preserve the compact `communication` summary; the call must not expose `raw` /
   `_raw` unless `include_raw=true`.
 - `notifications_read({"limit":10,"view":"compact"})`, `conversations_read({"limit":10,"view":"compact"})`,
-  `soul_read({"self":true,"view":"summary"})`, `timeline_read({"timeline":"home","limit":5,"view":"compact"})`,
+  `direct_messages_read({"counterpart":"<PROBE_DM_COUNTERPART>","limit":10,"view":"compact"})` when a probe
+  counterpart is configured, `soul_read({"self":true,"view":"summary"})`,
+  `timeline_read({"timeline":"home","limit":5,"view":"compact"})`,
   `post_search({"query":"mcp","limit":10,"view":"compact"})`, and
   `email_read({"folder":"inbox","limit":10,"view":"compact"})` must be treated as explicit opt-ins and should report
   concise payload/omission/expansion evidence without changing omitted/default behavior.
