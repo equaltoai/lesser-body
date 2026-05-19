@@ -63,10 +63,6 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if rpc.Error != nil {
 		t.Fatalf("tools/list error: %+v", rpc.Error)
 	}
-	if strings.Contains(string(listResp.Body), "conversation_get") {
-		t.Fatalf("tools/list must not advertise conversation_get without a real expansion route: %s", string(listResp.Body))
-	}
-
 	var result struct {
 		Tools []mcpruntime.ToolDef `json:"tools"`
 	}
@@ -81,8 +77,8 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		have[tool.Name] = true
 		toolsByName[tool.Name] = tool
 	}
-	if have["conversation_get"] {
-		t.Fatalf("conversation_get must not be advertised without a real expansion route")
+	if !have["conversation_get"] {
+		t.Fatalf("expected conversation_get now that the single-conversation expansion route is registered")
 	}
 
 	for _, name := range []string{
@@ -93,6 +89,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"followers_list",
 		"following_list",
 		"conversations_read",
+		"conversation_get",
 		"notifications_read",
 		"notification_get",
 		"notification_dismiss",
@@ -222,6 +219,36 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if propType, _ := conversationSchema.Properties["preview_chars"]["type"].(string); propType != "integer" {
 		t.Fatalf("conversations_read preview_chars should be integer, got %+v", conversationSchema.Properties["preview_chars"])
 	}
+	var conversationGetSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+	if err := json.Unmarshal(toolsByName["conversation_get"].InputSchema, &conversationGetSchema); err != nil {
+		t.Fatalf("unmarshal conversation_get schema: %v", err)
+	}
+	if propType, _ := conversationGetSchema.Properties["conversationId"]["type"].(string); propType != "string" {
+		t.Fatalf("conversation_get conversationId should be string, got %+v", conversationGetSchema.Properties["conversationId"])
+	}
+	viewProp = conversationGetSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+		t.Fatalf("conversation_get view enum = %+v", viewProp)
+	}
+	if propType, _ := conversationGetSchema.Properties["limit"]["type"].(string); propType != "integer" {
+		t.Fatalf("conversation_get limit should be integer, got %+v", conversationGetSchema.Properties["limit"])
+	}
+	if propType, _ := conversationGetSchema.Properties["cursor"]["type"].(string); propType != "string" {
+		t.Fatalf("conversation_get cursor should be string, got %+v", conversationGetSchema.Properties["cursor"])
+	}
+	if propType, _ := conversationGetSchema.Properties["max_output_bytes"]["type"].(string); propType != "integer" {
+		t.Fatalf("conversation_get max_output_bytes should be integer, got %+v", conversationGetSchema.Properties["max_output_bytes"])
+	}
+	if propType, _ := conversationGetSchema.Properties["preview_chars"]["type"].(string); propType != "integer" {
+		t.Fatalf("conversation_get preview_chars should be integer, got %+v", conversationGetSchema.Properties["preview_chars"])
+	}
+	if !containsString(conversationGetSchema.Required, "conversationId") {
+		t.Fatalf("conversation_get should require conversationId, got %+v", conversationGetSchema.Required)
+	}
 }
 
 func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
@@ -320,6 +347,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/conversations", Query: "limit=2"},
+			},
+		},
+		{
+			name:        "conversation_get",
+			tool:        "conversation_get",
+			scope:       "read",
+			args:        map[string]any{"conversationId": "conv-1", "limit": 2, "cursor": "cursor-1"},
+			invalidArgs: map[string]any{"conversationId": ""},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "GET", Path: "/api/v1/conversations/conv-1", Query: "limit=2&max_id=cursor-1"},
 			},
 		},
 		{
@@ -462,6 +500,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`[{"id":"g1"}]`))
 				case "/api/v1/conversations":
 					_, _ = w.Write([]byte(`[{"id":"conv1"}]`))
+				case "/api/v1/conversations/conv-1":
+					_, _ = w.Write([]byte(`{"id":"conv-1","messages":[{"id":"msg-1","content":"hello","account":{"id":"acct1","acct":"agent@example.com"},"visibility":"direct"}]}`))
 				case "/api/v1/timelines/home":
 					_, _ = w.Write([]byte(`[{"id":"t1"}]`))
 				case "/api/v1/timelines/public":
@@ -1174,7 +1214,7 @@ func TestM5_ConversationsReadUsesCompactBoundedDefaults(t *testing.T) {
 	)
 }
 
-func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
+func TestM5_ConversationsReadCompactRefsAdvertiseConversationGet(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
@@ -1206,8 +1246,8 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if compact.Result.IsError {
 		t.Fatalf("conversations_read compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
 	}
-	assertMCPPayloadBudget(t, "conversations_read compact limit=10 large fixture", len(compact.ResponseBody), 6000)
-	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload ", "conversation_get"} {
+	assertMCPPayloadBudget(t, "conversations_read compact limit=10 large fixture", len(compact.ResponseBody), 8000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
 		if strings.Contains(string(compact.ResponseBody), forbidden) {
 			t.Fatalf("compact conversations response leaked or advertised %q: %s", forbidden, string(compact.ResponseBody))
 		}
@@ -1227,8 +1267,10 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if first["id"] != "conv-1" || first["unread"] != true || first["read"] != false || first["updatedAt"] == "" {
 		t.Fatalf("unexpected compact conversation metadata: %+v", first)
 	}
-	if _, ok := first["expand"]; ok {
-		t.Fatalf("conversation refs must not advertise conversation_get-style expansion: %+v", first)
+	convExpand, _ := first["expand"].(map[string]any)
+	convArgs, _ := convExpand["arguments"].(map[string]any)
+	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "structuredContent.data.conversation" {
+		t.Fatalf("expected conversation_get expansion metadata, got %+v", convExpand)
 	}
 	participantRefs, _ := first["participantRefs"].([]any)
 	if len(participantRefs) != 2 {
@@ -1257,8 +1299,8 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if len(topOmitted) < 3 {
 		t.Fatalf("expected list-level conversation omitted metadata, got %+v", compactData["omitted"])
 	}
-	if b, _ := json.Marshal(topOmitted); strings.Contains(string(b), "conversation_get") {
-		t.Fatalf("omitted metadata must not advertise conversation_get: %s", string(b))
+	if b, _ := json.Marshal(topOmitted); !strings.Contains(string(b), "conversation_get") {
+		t.Fatalf("omitted metadata should point to conversation_get expansion: %s", string(b))
 	}
 	var text map[string]any
 	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &text); err != nil {
@@ -1275,11 +1317,11 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 		"limit":            10,
 		"view":             "compact",
 		"preview_chars":    8,
-		"max_output_bytes": 6000,
+		"max_output_bytes": 8000,
 	})
 	previewData, _ := previewCompact.Result.StructuredContent["data"].(map[string]any)
 	previewBudget, _ := previewData["budget"].(map[string]any)
-	if previewBudget["contentPreviewRunes"] != float64(8) || previewBudget["maxOutputBytes"] != float64(6000) {
+	if previewBudget["contentPreviewRunes"] != float64(8) || previewBudget["maxOutputBytes"] != float64(8000) {
 		t.Fatalf("expected preview/max budget metadata to honor args, got %+v", previewBudget)
 	}
 	previewConversations, _ := previewData["conversations"].([]any)
@@ -1326,8 +1368,172 @@ func TestM5_ConversationsReadCompactRefsNoConversationGet(t *testing.T) {
 	if details["tool"] != "conversations_read" || details["maxOutputBytes"] != float64(1000) || details["measuredBytes"] == float64(0) {
 		t.Fatalf("unexpected too-large details: %+v", details)
 	}
-	if strings.Contains(string(tooLarge.ResponseBody), "conversation_get") {
-		t.Fatalf("too-large error must not advertise conversation_get: %s", string(tooLarge.ResponseBody))
+}
+
+func TestM5_ConversationGetExpandsConversationWithCompactBudgetedRefs(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "CONVERSATION_GET_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR_IN_COMPACT"
+	const accountNote = "CONVERSATION_GET_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "CONVERSATION_GET_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/conversations/conv-1":
+			w.Header().Set("Link", `<https://example.com/api/v1/conversations/conv-1?max_id=cursor-next>; rel="next"`)
+			_, _ = w.Write([]byte(socialConversationDetailFixtureJSON("conv-1", contentTail, accountNote, debugPayload)))
+		case "/api/v1/conversations/missing":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		case "/api/v1/conversations/expired":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"expired"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "conversation_get", map[string]any{
+		"conversationId":   "conv-1",
+		"limit":            2,
+		"preview_chars":    24,
+		"max_output_bytes": 12000,
+	})
+	if compact.Result.IsError {
+		t.Fatalf("conversation_get compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
+	}
+	if gotQueries[0] != "limit=2" {
+		t.Fatalf("expected compact limit query, got %q", gotQueries[0])
+	}
+	assertMCPPayloadBudget(t, "conversation_get compact fixture", len(compact.ResponseBody), 12000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact conversation_get leaked %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+	compactData, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if compactData["id"] != "conv-1" || compactData["view"] != "compact" || compactData["nextCursor"] != "cursor-next" {
+		t.Fatalf("unexpected compact conversation_get metadata: %+v", compactData)
+	}
+	conversation, _ := compactData["conversation"].(map[string]any)
+	if conversation["id"] != "conv-1" || conversation["unread"] != true || conversation["read"] != false {
+		t.Fatalf("unexpected compact conversation ref: %+v", conversation)
+	}
+	participantRefs, _ := conversation["participantRefs"].([]any)
+	if len(participantRefs) != 2 {
+		t.Fatalf("expected participant refs, got %+v", conversation)
+	}
+	messageRefs, _ := conversation["messageRefs"].([]any)
+	if len(messageRefs) != 2 || conversation["messageCount"] != float64(2) {
+		t.Fatalf("expected two message refs, got %+v", conversation)
+	}
+	firstMessage, _ := messageRefs[0].(map[string]any)
+	if firstMessage["id"] != "msg-1" || firstMessage["visibility"] != "direct" || firstMessage["contentTruncated"] != true {
+		t.Fatalf("unexpected first message ref: %+v", firstMessage)
+	}
+	if preview, _ := firstMessage["contentPreview"].(string); preview == "" || len([]rune(preview)) > 24 || strings.Contains(preview, contentTail) {
+		t.Fatalf("expected bounded first message preview, got %q (%d runes)", preview, len([]rune(preview)))
+	}
+	authorRef, _ := firstMessage["authorRef"].(map[string]any)
+	if authorRef["id"] != "acct-alice" || authorRef["acct"] != "alice@example.com" {
+		t.Fatalf("expected compact author ref, got %+v", authorRef)
+	}
+	expand, _ := firstMessage["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "post_get" || expandArgs["id"] != "msg-1" || expandArgs["view"] != "standard" {
+		t.Fatalf("unexpected first message expansion: %+v", expand)
+	}
+	var compactText map[string]any
+	if err := json.Unmarshal([]byte(compact.Result.Content[0].Text), &compactText); err != nil {
+		t.Fatalf("unmarshal compact conversation text: %v", err)
+	}
+	if _, ok := compactText["conversation"]; ok {
+		t.Fatalf("compact text should use structured-first locator instead of duplicating conversation: %+v", compactText)
+	}
+
+	standard := callSocialTool(t, env, app, authHeader, sessionID, 3, "conversation_get", map[string]any{
+		"conversationId": "conv-1",
+		"view":           "standard",
+	})
+	if standard.Result.IsError {
+		t.Fatalf("conversation_get standard returned tool error: %+v", standard.Result.StructuredContent)
+	}
+	standardData, _ := standard.Result.StructuredContent["data"].(map[string]any)
+	standardConversation, _ := standardData["conversation"].(map[string]any)
+	standardMessages, _ := standardConversation["messages"].([]any)
+	standardFirst, _ := standardMessages[0].(map[string]any)
+	if content, _ := standardFirst["content"].(string); !strings.Contains(content, contentTail) {
+		t.Fatalf("view=standard should include normalized message content, got %+v", standardFirst)
+	}
+	if strings.Contains(string(standard.ResponseBody), debugPayload) {
+		t.Fatalf("view=standard should not expose upstream debug payloads")
+	}
+
+	full := callSocialTool(t, env, app, authHeader, sessionID, 4, "conversation_get", map[string]any{
+		"conversationId": "conv-1",
+		"view":           "full",
+	})
+	if full.Result.IsError {
+		t.Fatalf("conversation_get full returned tool error: %+v", full.Result.StructuredContent)
+	}
+	fullData, _ := full.Result.StructuredContent["data"].(map[string]any)
+	fullConversation, _ := fullData["conversation"].(map[string]any)
+	if _, ok := fullConversation["_raw"].(map[string]any); !ok || !strings.Contains(string(full.ResponseBody), debugPayload) {
+		t.Fatalf("view=full should expose upstream raw/debug payload, got %+v", fullConversation)
+	}
+
+	tooLarge := callSocialTool(t, env, app, authHeader, sessionID, 5, "conversation_get", map[string]any{
+		"conversationId":   "conv-1",
+		"view":             "compact",
+		"max_output_bytes": 500,
+	})
+	if !tooLarge.Result.IsError {
+		t.Fatalf("expected response_too_large conversation_get tool error, got %+v", tooLarge.Result)
+	}
+	errorPayload, _ := tooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["tool"] != "conversation_get" || details["maxOutputBytes"] != float64(500) || details["measuredBytes"] == float64(0) {
+		t.Fatalf("unexpected too-large details: %+v", details)
+	}
+
+	missing := callSocialTool(t, env, app, authHeader, sessionID, 6, "conversation_get", map[string]any{
+		"conversationId": "missing",
+	})
+	if !missing.Result.IsError {
+		t.Fatalf("expected not_found conversation_get tool error, got %+v", missing.Result)
+	}
+	errorPayload, _ = missing.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "not_found" || errorPayload["status"] != float64(404) {
+		t.Fatalf("unexpected not-found payload: %+v", errorPayload)
+	}
+
+	expired := callSocialTool(t, env, app, authHeader, sessionID, 7, "conversation_get", map[string]any{
+		"conversationId": "expired",
+	})
+	if !expired.Result.IsError {
+		t.Fatalf("expected unauthorized conversation_get tool error, got %+v", expired.Result)
+	}
+	errorPayload, _ = expired.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "unauthorized" || errorPayload["status"] != float64(401) {
+		t.Fatalf("unexpected unauthorized payload: %+v", errorPayload)
 	}
 }
 
@@ -3133,4 +3339,82 @@ func socialConversationsFixtureJSON(count int, prefix string, contentTail string
 	}
 	b.WriteString("]")
 	return b.String()
+}
+
+func socialConversationDetailFixtureJSON(id string, contentTail string, accountNote string, debugPayload string) string {
+	firstContent := strings.Repeat("alice direct message content ", 16) + contentTail
+	secondContent := strings.Repeat("agent direct response content ", 12) + contentTail
+	return fmt.Sprintf(`{
+		"id":%q,
+		"unread":true,
+		"updated_at":"2026-05-18T12:00:00Z",
+		"accounts":[
+			{
+				"id":"acct-alice",
+				"username":"alice",
+				"acct":"alice@example.com",
+				"display_name":"Alice",
+				"url":"https://example.com/@alice",
+				"note":"%s %s"
+			},
+			{
+				"id":"acct-agent",
+				"username":"agent1",
+				"acct":"agent1@example.com",
+				"display_name":"Agent One",
+				"url":"https://example.com/@agent1",
+				"note":"%s %s"
+			}
+		],
+		"messages":[
+			{
+				"id":"msg-1",
+				"url":"https://example.com/@alice/msg-1",
+				"created_at":"2026-05-18T11:59:00Z",
+				"visibility":"direct",
+				"content":%q,
+				"account":{
+					"id":"acct-alice",
+					"username":"alice",
+					"acct":"alice@example.com",
+					"display_name":"Alice",
+					"url":"https://example.com/@alice",
+					"note":"%s %s"
+				}
+			},
+			{
+				"id":"msg-2",
+				"url":"https://example.com/@agent1/msg-2",
+				"created_at":"2026-05-18T12:00:00Z",
+				"visibility":"direct",
+				"content":%q,
+				"account":{
+					"id":"acct-agent",
+					"username":"agent1",
+					"acct":"agent1@example.com",
+					"display_name":"Agent One",
+					"url":"https://example.com/@agent1",
+					"note":"%s %s"
+				}
+			}
+		],
+		"last_status":{
+			"id":"msg-2",
+			"url":"https://example.com/@agent1/msg-2",
+			"created_at":"2026-05-18T12:00:00Z",
+			"visibility":"direct",
+			"content":%q
+		},
+		"debugPayload":{"large":"%s %s"}
+	}`,
+		id,
+		accountNote, strings.Repeat("account note ", 80),
+		accountNote, strings.Repeat("account note ", 80),
+		firstContent,
+		accountNote, strings.Repeat("account note ", 80),
+		secondContent,
+		accountNote, strings.Repeat("account note ", 80),
+		secondContent,
+		debugPayload, strings.Repeat("debug payload ", 80),
+	)
 }
