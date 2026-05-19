@@ -528,8 +528,11 @@ Notes:
   `identifier` where Lesser/host include it). Because Lesser does not yet expose an upstream actor filter, body
   over-fetches a bounded notification page (`min(limit*4, 80)`) and returns
   `structuredContent.data.filter.strategy="mcp_side_overfetch"` with `requestedLimit`, `overFetchLimit`,
-  `upstreamCount`, `matchedCount`, and `returnedCount`. Actor-filtered compact reads still use the normal compact
-  budget and return `response_too_large` rather than silently dropping fields.
+  `upstreamCount`, `matchedCount`, `returnedCount`, and `windowOffset`. If an over-fetched page contains more actor
+  matches than the requested return `limit`, `nextCursor` is an opaque body actor-filter cursor that re-reads the same
+  over-fetch window and returns the remaining matches before advancing to Lesser's upstream cursor. This prevents
+  matched-but-not-returned notifications inside the over-fetch window from becoming unreachable. Actor-filtered compact
+  reads still use the normal compact budget and return `response_too_large` rather than silently dropping fields.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state

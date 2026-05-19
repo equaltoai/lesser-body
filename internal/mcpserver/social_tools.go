@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ const (
 	notificationCursorMemoryPrefix       = "notification_cursor:"
 	notificationCursorMemoryTag          = "notification_cursor"
 	notificationCommunicationInbound     = "communication:inbound"
+	notificationActorFilterCursorPrefix  = "actor-filter:v1:"
 	notificationReadDefaultLimit         = 30
 	notificationReadMaxLimit             = 80
 	notificationReadMaxTypes             = 8
@@ -1455,6 +1457,15 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	if explicitSince && requestedSince != "" && !hasTemporalSince && effectiveCursor == "" {
 		effectiveCursor = requestedSince
 	}
+	actorCursorOffset := 0
+	if actorFilter.Active {
+		parsedCursor, parsedOffset, err := parseNotificationActorFilterCursor(effectiveCursor, actorFilter)
+		if err != nil {
+			return nil, invalidParams(err.Error())
+		}
+		effectiveCursor = parsedCursor
+		actorCursorOffset = parsedOffset
+	}
 
 	token, err := requireOAuthBearer(ctx)
 	if err != nil {
@@ -1485,12 +1496,25 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		notifications = filterSocialNotificationsByType(notifications, requestedTypes)
 	}
 	actorMatchedCount := 0
+	actorSameWindowCursor := ""
 	if actorFilter.Active {
 		notifications = filterSocialNotificationsByActor(notifications, actorFilter)
 		actorMatchedCount = len(notifications)
 	}
 	sortSocialNotificationsNewestFirst(notifications)
-	if len(notifications) > limit {
+	if actorFilter.Active {
+		if actorCursorOffset > len(notifications) {
+			notifications = nil
+		} else {
+			notifications = notifications[actorCursorOffset:]
+		}
+		if len(notifications) > limit {
+			if cursor := notificationActorFilterCursor(actorFilter, effectiveCursor, actorCursorOffset+limit); cursor != "" {
+				actorSameWindowCursor = cursor
+			}
+			notifications = notifications[:limit]
+		}
+	} else if len(notifications) > limit {
 		notifications = notifications[:limit]
 	}
 
@@ -1524,7 +1548,10 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"includeRaw":    includeRaw,
 	}
 	if actorFilter.Active {
-		payload["filter"] = notificationActorFilterMetadata(actorFilter, fetchLimit, limit, len(list), actorMatchedCount, len(notifications))
+		if actorSameWindowCursor != "" {
+			payload["nextCursor"] = actorSameWindowCursor
+		}
+		payload["filter"] = notificationActorFilterMetadata(actorFilter, fetchLimit, limit, len(list), actorMatchedCount, len(notifications), actorCursorOffset, actorSameWindowCursor != "")
 	}
 	if in.IncludeDiagnostics {
 		attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
@@ -2818,6 +2845,13 @@ type notificationActorFilter struct {
 	Candidates map[string]struct{}
 }
 
+type notificationActorFilterCursorPayload struct {
+	Version        int    `json:"v"`
+	Actor          string `json:"actor"`
+	UpstreamCursor string `json:"upstreamCursor,omitempty"`
+	Offset         int    `json:"offset,omitempty"`
+}
+
 func newNotificationActorFilter(raw string) notificationActorFilter {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -2840,6 +2874,58 @@ func notificationActorFilterFetchLimit(limit int) int {
 	return boundedNotificationReadLimit(overFetch)
 }
 
+func parseNotificationActorFilterCursor(cursor string, filter notificationActorFilter) (string, int, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" || !strings.HasPrefix(cursor, notificationActorFilterCursorPrefix) {
+		return cursor, 0, nil
+	}
+	encoded := strings.TrimPrefix(cursor, notificationActorFilterCursorPrefix)
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid actor filter cursor")
+	}
+	var payload notificationActorFilterCursorPayload
+	if err := json.Unmarshal(decoded, &payload); err != nil {
+		return "", 0, fmt.Errorf("invalid actor filter cursor")
+	}
+	if payload.Version != 1 || payload.Offset < 0 {
+		return "", 0, fmt.Errorf("invalid actor filter cursor")
+	}
+	if !notificationActorFilterSameActor(payload.Actor, filter) {
+		return "", 0, fmt.Errorf("actor filter cursor does not match actor")
+	}
+	return strings.TrimSpace(payload.UpstreamCursor), payload.Offset, nil
+}
+
+func notificationActorFilterCursor(filter notificationActorFilter, upstreamCursor string, offset int) string {
+	if !filter.Active || offset <= 0 {
+		return ""
+	}
+	payload := notificationActorFilterCursorPayload{
+		Version:        1,
+		Actor:          filter.Raw,
+		UpstreamCursor: strings.TrimSpace(upstreamCursor),
+		Offset:         offset,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return notificationActorFilterCursorPrefix + base64.RawURLEncoding.EncodeToString(b)
+}
+
+func notificationActorFilterSameActor(actor string, filter notificationActorFilter) bool {
+	if !filter.Active {
+		return false
+	}
+	for candidate := range notificationActorFilterCandidates(actor) {
+		if _, ok := filter.Candidates[candidate]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func filterSocialNotificationsByActor(items []any, filter notificationActorFilter) []any {
 	if !filter.Active || len(items) == 0 {
 		return items
@@ -2854,8 +2940,12 @@ func filterSocialNotificationsByActor(items []any, filter notificationActorFilte
 	return out
 }
 
-func notificationActorFilterMetadata(filter notificationActorFilter, overFetchLimit int, requestedLimit int, upstreamCount int, matchedCount int, returnedCount int) map[string]any {
-	return map[string]any{
+func notificationActorFilterMetadata(filter notificationActorFilter, overFetchLimit int, requestedLimit int, upstreamCount int, matchedCount int, returnedCount int, windowOffset int, sameWindowContinuation bool) map[string]any {
+	continuation := "upstream_cursor"
+	if sameWindowContinuation {
+		continuation = "same_overfetch_window"
+	}
+	out := map[string]any{
 		"actor":          filter.Raw,
 		"strategy":       "mcp_side_overfetch",
 		"requestedLimit": requestedLimit,
@@ -2863,6 +2953,8 @@ func notificationActorFilterMetadata(filter notificationActorFilter, overFetchLi
 		"upstreamCount":  upstreamCount,
 		"matchedCount":   matchedCount,
 		"returnedCount":  returnedCount,
+		"windowOffset":   windowOffset,
+		"continuation":   continuation,
 		"matchFields": []any{
 			"actor.id",
 			"actor.username",
@@ -2876,6 +2968,10 @@ func notificationActorFilterMetadata(filter notificationActorFilter, overFetchLi
 			"communication.from.identifier",
 		},
 	}
+	if sameWindowContinuation {
+		out["sameWindowRemainder"] = matchedCount - (windowOffset + returnedCount)
+	}
+	return out
 }
 
 func notificationActorMatches(notification map[string]any, filter notificationActorFilter) bool {

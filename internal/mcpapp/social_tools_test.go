@@ -1915,6 +1915,7 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 		}
 		gotQueries = append(gotQueries, r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<https://example.com/api/v1/notifications?max_id=cursor-after-window>; rel="next"`)
 		_, _ = w.Write([]byte(`[
 			{
 				"id":"n-ops",
@@ -1922,6 +1923,20 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 				"created_at":"2026-05-18T12:00:00Z",
 				"account":{"id":"acct-ops","username":"ops","acct":"ops@example.com","display_name":"Ops","url":"https://example.com/@ops"},
 				"status":{"id":"post-ops","content":"` + strings.Repeat("ops notification content ", 20) + contentTail + `","visibility":"public"}
+			},
+			{
+				"id":"n-ops-2",
+				"type":"reply",
+				"created_at":"2026-05-18T11:30:00Z",
+				"account":{"id":"acct-ops","username":"ops","acct":"ops@example.com","display_name":"Ops","url":"https://example.com/@ops"},
+				"status":{"id":"post-ops-2","content":"ops reply","visibility":"public"}
+			},
+			{
+				"id":"n-ops-3",
+				"type":"favourite",
+				"created_at":"2026-05-18T11:15:00Z",
+				"account":{"id":"acct-ops","username":"ops","acct":"ops@example.com","display_name":"Ops","url":"https://example.com/@ops"},
+				"status":{"id":"post-ops-3","content":"ops favourite","visibility":"public"}
 			},
 			{
 				"id":"n-sentinel",
@@ -1974,11 +1989,11 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 	}
 	assertMCPPayloadBudget(t, "notifications_read actor compact", len(ops.ResponseBody), 8000)
 	opsData, _ := ops.Result.StructuredContent["data"].(map[string]any)
-	if opsData["count"] != float64(1) {
-		t.Fatalf("expected one Ops notification, got %+v", opsData)
+	if opsData["count"] != float64(2) {
+		t.Fatalf("expected two Ops notifications, got %+v", opsData)
 	}
 	filter, _ := opsData["filter"].(map[string]any)
-	if filter["actor"] != "ops" || filter["strategy"] != "mcp_side_overfetch" || filter["requestedLimit"] != float64(2) || filter["overFetchLimit"] != float64(8) || filter["upstreamCount"] != float64(4) || filter["matchedCount"] != float64(1) || filter["returnedCount"] != float64(1) {
+	if filter["actor"] != "ops" || filter["strategy"] != "mcp_side_overfetch" || filter["requestedLimit"] != float64(2) || filter["overFetchLimit"] != float64(8) || filter["upstreamCount"] != float64(6) || filter["matchedCount"] != float64(3) || filter["returnedCount"] != float64(2) || filter["continuation"] != "same_overfetch_window" || filter["sameWindowRemainder"] != float64(1) {
 		t.Fatalf("unexpected actor filter metadata: %+v", filter)
 	}
 	notifications, _ := opsData["notifications"].([]any)
@@ -1986,6 +2001,33 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 	actorRef, _ := first["actorRef"].(map[string]any)
 	if first["id"] != "n-ops" || actorRef["acct"] != "ops@example.com" {
 		t.Fatalf("expected Ops compact notification ref, got %+v", first)
+	}
+	sameWindowCursor, _ := opsData["nextCursor"].(string)
+	if !strings.HasPrefix(sameWindowCursor, "actor-filter:v1:") {
+		t.Fatalf("expected generated same-window actor cursor, got %+v", opsData)
+	}
+
+	opsContinuation := callSocialTool(t, env, app, authHeader, sessionID, 7, "notifications_read", map[string]any{
+		"actor":  "ops",
+		"limit":  2,
+		"view":   "compact",
+		"cursor": sameWindowCursor,
+	})
+	if opsContinuation.Result.IsError {
+		t.Fatalf("notifications_read actor continuation returned tool error: %+v", opsContinuation.Result.StructuredContent)
+	}
+	if gotQueries[len(gotQueries)-1] != "limit=8" {
+		t.Fatalf("same-window actor cursor should re-read the same over-fetch window before advancing, got %q", gotQueries[len(gotQueries)-1])
+	}
+	continuationData, _ := opsContinuation.Result.StructuredContent["data"].(map[string]any)
+	continuationFilter, _ := continuationData["filter"].(map[string]any)
+	if continuationData["count"] != float64(1) || continuationFilter["windowOffset"] != float64(2) || continuationFilter["continuation"] != "upstream_cursor" || continuationData["nextCursor"] != "cursor-after-window" {
+		t.Fatalf("expected continuation to return remaining Ops match before upstream cursor, got %+v filter=%+v", continuationData, continuationFilter)
+	}
+	continuationNotifications, _ := continuationData["notifications"].([]any)
+	continuationFirst, _ := continuationNotifications[0].(map[string]any)
+	if continuationFirst["id"] != "n-ops-3" {
+		t.Fatalf("expected remaining same-window Ops match, got %+v", continuationFirst)
 	}
 
 	actorURL := callSocialTool(t, env, app, authHeader, sessionID, 3, "notifications_read", map[string]any{
