@@ -77,6 +77,7 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	foundEcho := false
 	foundSkillsCatalog := false
 	foundSkillBundleGet := false
+	foundArticleDraftCreate := false
 	foundPhoneCall := false
 	for _, tool := range out.Tools {
 		if tool["name"] == "echo" {
@@ -88,6 +89,9 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 		if tool["name"] == "skill_bundle_get" {
 			foundSkillBundleGet = true
 		}
+		if tool["name"] == "article_draft_create" {
+			foundArticleDraftCreate = true
+		}
 		if tool["name"] == "phone_call" {
 			foundPhoneCall = true
 		}
@@ -97,6 +101,9 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	}
 	if !foundSkillsCatalog || !foundSkillBundleGet {
 		t.Fatalf("expected skills tools in well-known doc")
+	}
+	if !foundArticleDraftCreate {
+		t.Fatalf("expected article_draft_create in well-known doc")
 	}
 	if foundPhoneCall {
 		t.Fatalf("phone_call should not appear in well-known doc")

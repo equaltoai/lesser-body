@@ -170,6 +170,7 @@ func requiredScopesForMCPRequest(req *mcpruntime.Request) []string {
 func requiredScopesForTool(toolName string) []string {
 	switch toolName {
 	case "post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "memory_append", "notification_dismiss",
+		"article_draft_create", "article_draft_update",
 		"email_send", "email_reply", "email_delete", "email_mark_read", "email_mark_unread", "sms_send":
 		return []string{"write"}
 	default:

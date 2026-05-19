@@ -198,6 +198,62 @@ func directMessagesReadOutputSchema() json.RawMessage {
 	}`)
 }
 
+func articleDraftSingleOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"view":{"type":"string"},
+					"draft":{"type":"object","additionalProperties":true},
+					"draftRef":{"type":"object","additionalProperties":true},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true},
+					"policy":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","view","draft","draftRef","policy"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func articleDraftListOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"view":{"type":"string"},
+					"drafts":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"},
+					"limit":{"type":"integer"},
+					"nextCursor":{"type":"string"},
+					"pageInfo":{"type":"object","additionalProperties":true},
+					"totalCount":{"type":"integer"},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true},
+					"policy":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","view","drafts","count","limit","policy"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",

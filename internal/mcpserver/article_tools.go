@@ -1,0 +1,566 @@
+package mcpserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/equaltoai/lesser-body/internal/cmsapi"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+)
+
+const (
+	articleDraftDefaultLimit       = 20
+	articleDraftMaxLimit           = 80
+	articleDraftPreviewRunes       = 240
+	articleDraftDefaultBudgetBytes = 12000
+)
+
+func registerArticleTools(r *mcpruntime.ToolRegistry) error {
+	if r == nil {
+		return fmt.Errorf("tool registry is nil")
+	}
+	for _, tool := range []struct {
+		Def     mcpruntime.ToolDef
+		Handler mcpruntime.ToolHandler
+	}{
+		{Def: articleDraftCreateDef(), Handler: handleArticleDraftCreate},
+		{Def: articleDraftUpdateDef(), Handler: handleArticleDraftUpdate},
+		{Def: articleDraftGetDef(), Handler: handleArticleDraftGet},
+		{Def: articleDraftListDef(), Handler: handleArticleDraftList},
+	} {
+		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func articleDraftCreateDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "article_draft_create",
+		Description:  "Create a draft-only Article through Lesser CMS. Defaults to a compact draft ref; nothing auto-publishes.",
+		Annotations:  additiveMutationToolAnnotations(),
+		OutputSchema: articleDraftSingleOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"title":{"type":"string","description":"Optional draft title."},
+				"slug":{"type":"string","description":"Optional draft slug hint. Lesser normalizes the final draft slug."},
+				"content":{"type":"string","description":"Draft body content. This creates an unpublished ARTICLE draft only."},
+				"content_format":{"type":"string","enum":["MARKDOWN","HTML"],"description":"Draft body format. Defaults to MARKDOWN."},
+				"object_id":{"type":"string","description":"Optional existing object target for draft updates; not a promised canonical Article id before publish."},
+				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact. standard returns the draft content after creation."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
+			},
+			"required":["content"]
+		}`),
+	}
+}
+
+func articleDraftUpdateDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "article_draft_update",
+		Description:  "Update an existing draft-only Article through Lesser CMS. Does not preview or publish.",
+		Annotations:  additiveMutationToolAnnotations(),
+		OutputSchema: articleDraftSingleOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"Lesser CMS draft id."},
+				"title":{"type":"string","description":"Optional replacement draft title."},
+				"slug":{"type":"string","description":"Optional replacement draft slug hint. Lesser normalizes the final draft slug."},
+				"content":{"type":"string","description":"Optional replacement draft body content."},
+				"content_format":{"type":"string","enum":["MARKDOWN","HTML"],"description":"Optional replacement draft body format."},
+				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact. standard returns the draft content after update."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
+			},
+			"required":["id"]
+		}`),
+	}
+}
+
+func articleDraftGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "article_draft_get",
+		Description:  "Read one Article draft by draft id. Defaults to a compact ref with bounded preview and expansion metadata.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: articleDraftSingleOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"Lesser CMS draft id."},
+				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact. standard returns draft content."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
+			},
+			"required":["id"]
+		}`),
+	}
+}
+
+func articleDraftListDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "article_draft_list",
+		Description:  "List unpublished Article draft refs for the authenticated actor. Defaults compact and filters to DRAFT status.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: articleDraftListOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum draft refs to return. Defaults to 20."},
+				"cursor":{"type":"string","description":"Optional pagination cursor from a previous article_draft_list response."},
+				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact refs. standard returns draft content for each listed draft."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget when content is available. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
+			}
+		}`),
+	}
+}
+
+func handleArticleDraftCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	params, err := parseArticleDraftViewParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	var in struct {
+		Title         *string `json:"title,omitempty"`
+		Slug          *string `json:"slug,omitempty"`
+		Content       *string `json:"content,omitempty"`
+		ContentFormat string  `json:"content_format,omitempty"`
+		ObjectID      *string `json:"object_id,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if in.Content == nil {
+		return nil, invalidParams("content is required")
+	}
+	format, err := normalizeArticleDraftContentFormat(in.ContentFormat)
+	if err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := articleCMS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := client.CreateArticleDraft(ctx, token, cmsapi.CreateDraftInput{
+		Title:         trimOptionalString(in.Title),
+		Slug:          trimOptionalString(in.Slug),
+		Content:       *in.Content,
+		ContentFormat: format,
+		ObjectID:      trimOptionalString(in.ObjectID),
+	}, params.View == readViewStandard)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_create", err)
+	}
+
+	fallback := in.Content
+	return articleDraftSingleResult("article_draft_create", "created", draft, params, fallback)
+}
+
+func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	params, err := parseArticleDraftViewParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	var in struct {
+		ID            string  `json:"id"`
+		Title         *string `json:"title,omitempty"`
+		Slug          *string `json:"slug,omitempty"`
+		Content       *string `json:"content,omitempty"`
+		ContentFormat *string `json:"content_format,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return nil, invalidParams("id is required")
+	}
+	if in.Title == nil && in.Slug == nil && in.Content == nil && in.ContentFormat == nil {
+		return nil, invalidParams("at least one draft field is required")
+	}
+	var format *string
+	if in.ContentFormat != nil {
+		normalized, err := normalizeArticleDraftContentFormat(*in.ContentFormat)
+		if err != nil {
+			return nil, invalidParams(err.Error())
+		}
+		format = &normalized
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := articleCMS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := client.UpdateArticleDraft(ctx, token, id, cmsapi.UpdateDraftInput{
+		Title:         trimOptionalString(in.Title),
+		Slug:          trimOptionalString(in.Slug),
+		Content:       in.Content,
+		ContentFormat: format,
+	}, params.View == readViewStandard)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_update", err)
+	}
+
+	return articleDraftSingleResult("article_draft_update", "updated", draft, params, in.Content)
+}
+
+func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	params, err := parseArticleDraftViewParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	var in struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return nil, invalidParams("id is required")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := articleCMS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := client.GetArticleDraft(ctx, token, id, true)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_get", err)
+	}
+
+	return articleDraftSingleResult("article_draft_get", "read", draft, params, nil)
+}
+
+func handleArticleDraftList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	params, err := parseArticleDraftViewParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	var in struct {
+		Limit  int    `json:"limit,omitempty"`
+		Cursor string `json:"cursor,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = articleDraftDefaultLimit
+	}
+	if limit < 1 || limit > articleDraftMaxLimit {
+		return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d", articleDraftMaxLimit))
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := articleCMS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	includeContent := params.View == readViewStandard
+	conn, err := client.ListArticleDrafts(ctx, token, limit, in.Cursor, includeContent)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_list", err)
+	}
+	return articleDraftListResult(conn, limit, params)
+}
+
+func articleCMS(ctx context.Context) (*cmsapi.Client, error) {
+	_ = ctx
+	return cmsapi.Default()
+}
+
+type articleDraftViewParams struct {
+	View           string
+	PreviewRunes   int
+	MaxOutputBytes int
+}
+
+func parseArticleDraftViewParams(args json.RawMessage) (articleDraftViewParams, error) {
+	shared, err := parseSharedReadParams(args)
+	if err != nil {
+		return articleDraftViewParams{}, err
+	}
+	view := strings.ToLower(strings.TrimSpace(shared.View))
+	if view == "" {
+		view = readViewCompact
+	}
+	if view != readViewCompact && view != readViewStandard {
+		return articleDraftViewParams{}, fmt.Errorf("view must be compact or standard")
+	}
+	previewRunes := articleDraftPreviewRunes
+	if shared.PreviewChars > 0 {
+		previewRunes = shared.PreviewChars
+	}
+	budget := shared.MaxOutputBytes
+	if budget <= 0 && view == readViewCompact {
+		budget = articleDraftDefaultBudgetBytes
+	}
+	return articleDraftViewParams{View: view, PreviewRunes: previewRunes, MaxOutputBytes: budget}, nil
+}
+
+func normalizeArticleDraftContentFormat(value string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", cmsapi.ContentFormatMarkdown:
+		return cmsapi.ContentFormatMarkdown, nil
+	case cmsapi.ContentFormatHTML:
+		return cmsapi.ContentFormatHTML, nil
+	default:
+		return "", fmt.Errorf("content_format must be MARKDOWN or HTML")
+	}
+}
+
+func trimOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	return &trimmed
+}
+
+func articleDraftSingleResult(toolName string, operation string, draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) (*mcpruntime.ToolResult, error) {
+	if draft == nil {
+		return nil, fmt.Errorf("%s returned no draft", toolName)
+	}
+	shaped := shapeArticleDraft(draft, params, fallbackContent)
+	payload := map[string]any{
+		"tool":      toolName,
+		"operation": operation,
+		"source":    "lesser_cms_graphql",
+		"view":      params.View,
+		"draft":     shaped,
+		"draftRef":  compactArticleDraftRef(draft, params, fallbackContent),
+		"omitted":   articleDraftOmissions(params.View, false),
+		"budget":    articleDraftBudget(params),
+		"policy":    articleDraftPolicyMetadata(),
+	}
+	text := map[string]any{
+		"tool":      toolName,
+		"operation": operation,
+		"draftId":   draft.ID,
+		"view":      params.View,
+	}
+	return articleDraftStructuredResult(toolName, params.View, fmt.Sprintf("Article draft %s: %s", operation, draft.ID), payload, text, params.MaxOutputBytes)
+}
+
+func articleDraftListResult(conn *cmsapi.DraftConnection, limit int, params articleDraftViewParams) (*mcpruntime.ToolResult, error) {
+	if conn == nil {
+		conn = &cmsapi.DraftConnection{}
+	}
+	drafts := make([]map[string]any, 0, len(conn.Edges))
+	for _, edge := range conn.Edges {
+		if edge.Node == nil {
+			continue
+		}
+		item := shapeArticleDraft(edge.Node, params, nil)
+		if strings.TrimSpace(edge.Cursor) != "" {
+			item["cursor"] = strings.TrimSpace(edge.Cursor)
+		}
+		drafts = append(drafts, item)
+	}
+	nextCursor := ""
+	if conn.PageInfo.EndCursor != nil && strings.TrimSpace(*conn.PageInfo.EndCursor) != "" && conn.PageInfo.HasNextPage {
+		nextCursor = strings.TrimSpace(*conn.PageInfo.EndCursor)
+	}
+	payload := map[string]any{
+		"tool":       "article_draft_list",
+		"operation":  "list",
+		"source":     "lesser_cms_graphql",
+		"view":       params.View,
+		"drafts":     drafts,
+		"count":      len(drafts),
+		"limit":      limit,
+		"nextCursor": nextCursor,
+		"pageInfo":   conn.PageInfo,
+		"totalCount": conn.TotalCount,
+		"omitted":    articleDraftOmissions(params.View, true),
+		"budget":     articleDraftBudget(params),
+		"policy":     articleDraftPolicyMetadata(),
+	}
+	text := map[string]any{
+		"tool":  "article_draft_list",
+		"count": len(drafts),
+		"view":  params.View,
+	}
+	if nextCursor != "" {
+		text["nextCursor"] = nextCursor
+	}
+	return articleDraftStructuredResult("article_draft_list", params.View, fmt.Sprintf("%d Article draft refs", len(drafts)), payload, text, params.MaxOutputBytes)
+}
+
+func shapeArticleDraft(draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) map[string]any {
+	if params.View == readViewStandard {
+		return standardArticleDraft(draft)
+	}
+	return compactArticleDraftRef(draft, params, fallbackContent)
+}
+
+func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) map[string]any {
+	out := map[string]any{
+		"id":            strings.TrimSpace(draft.ID),
+		"status":        strings.TrimSpace(draft.Status),
+		"contentFormat": strings.TrimSpace(draft.ContentFormat),
+		"expand": map[string]any{
+			"tool":       "article_draft_get",
+			"arguments":  map[string]any{"id": strings.TrimSpace(draft.ID), "view": readViewStandard},
+			"resultPath": "structuredContent.data.draft",
+		},
+	}
+	putIfNotEmpty(out, "title", stringPtrValue(draft.Title))
+	putIfNotEmpty(out, "slug", stringPtrValue(draft.Slug))
+	putIfNotEmpty(out, "objectId", stringPtrValue(draft.ObjectID))
+	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
+	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
+	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)
+	content := draft.Content
+	if strings.TrimSpace(content) == "" && fallbackContent != nil {
+		content = *fallbackContent
+	}
+	if strings.TrimSpace(content) != "" {
+		preview, truncated := compactStringWithTruncation(content, params.PreviewRunes)
+		putIfNotEmpty(out, "contentPreview", preview)
+		out["contentTruncated"] = truncated
+	}
+	return out
+}
+
+func standardArticleDraft(draft *cmsapi.Draft) map[string]any {
+	out := map[string]any{
+		"id":              strings.TrimSpace(draft.ID),
+		"contentType":     strings.TrimSpace(draft.ContentType),
+		"content":         draft.Content,
+		"contentFormat":   strings.TrimSpace(draft.ContentFormat),
+		"status":          strings.TrimSpace(draft.Status),
+		"autosaveVersion": draft.AutosaveVersion,
+	}
+	putIfNotEmpty(out, "title", stringPtrValue(draft.Title))
+	putIfNotEmpty(out, "slug", stringPtrValue(draft.Slug))
+	putIfNotEmpty(out, "scheduledAt", stringPtrValue(draft.ScheduledAt))
+	putIfNotEmpty(out, "objectId", stringPtrValue(draft.ObjectID))
+	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
+	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
+	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)
+	return out
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func articleDraftOmissions(view string, list bool) []any {
+	if view == readViewStandard {
+		return nil
+	}
+	path := "draft.content"
+	if list {
+		path = "drafts[].content"
+	}
+	return []any{
+		map[string]any{
+			"path":      path,
+			"reason":    "compact_default",
+			"expansion": "call article_draft_get with view=standard",
+		},
+	}
+}
+
+func articleDraftBudget(params articleDraftViewParams) map[string]any {
+	return map[string]any{
+		"view":                params.View,
+		"contentPreviewRunes": params.PreviewRunes,
+		"maxOutputBytes":      params.MaxOutputBytes,
+	}
+}
+
+func articleDraftPolicyMetadata() map[string]any {
+	return map[string]any{
+		"draftOnly":            true,
+		"autoPublishes":        false,
+		"canonicalArticleId":   "not_promised_until_publish",
+		"publishToolAvailable": false,
+	}
+}
+
+func articleDraftStructuredResult(toolName string, view string, summary string, payload map[string]any, text map[string]any, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
+		Summary: summary,
+		Data:    payload,
+		Text:    text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if maxOutputBytes <= 0 {
+		return result, nil
+	}
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return nil, err
+	}
+	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
+		return result, nil
+	}
+	return toolErrorResult("response_too_large", toolName+" response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
+		"tool":                   toolName,
+		"view":                   view,
+		"measuredBytes":          measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":         maxOutputBytes,
+		"contentTextBytes":       measurement.ContentTextBytes,
+		"structuredContentBytes": measurement.StructuredContentBytes,
+		"guidance":               "use compact view, reduce limit, reduce preview_chars, or increase max_output_bytes",
+	})
+}
+
+func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.ToolResult, error) {
+	if err == nil {
+		return nil, nil
+	}
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+	var gqlErr *cmsapi.GraphQLErrors
+	if errors.As(err, &gqlErr) {
+		details := map[string]any{"source": "lesser_cms_graphql", "tool": toolName}
+		if len(gqlErr.Errors) > 0 {
+			details["graphqlErrors"] = gqlErr.Errors
+		}
+		return toolErrorResult("lesser_cms_graphql_error", "Lesser CMS GraphQL returned errors", http.StatusBadGateway, details)
+	}
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) {
+		return toolErrorResult("lesser_cms_http_error", "Lesser CMS API request failed", apiErr.Status, map[string]any{
+			"source":       "lesser_cms_graphql",
+			"tool":         toolName,
+			"upstreamCode": apiErr.Status,
+		})
+	}
+	return nil, err
+}
