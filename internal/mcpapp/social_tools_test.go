@@ -121,6 +121,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if propType, _ := notificationSchema.Properties["include_diagnostics"]["type"].(string); propType != "boolean" {
 		t.Fatalf("notifications_read include_diagnostics should be boolean, got %+v", notificationSchema.Properties["include_diagnostics"])
 	}
+	if propType, _ := notificationSchema.Properties["actor"]["type"].(string); propType != "string" {
+		t.Fatalf("notifications_read actor should be string, got %+v", notificationSchema.Properties["actor"])
+	}
 	typesProp := notificationSchema.Properties["types"]
 	items, _ := typesProp["items"].(map[string]any)
 	enum, _ := items["enum"].([]any)
@@ -1892,6 +1895,161 @@ func TestM5_NotificationsReadReturnsStructuredNotifications(t *testing.T) {
 	favourite, _ := notifications[0].(map[string]any)
 	if favourite["type"] != "favourite" {
 		t.Fatalf("expected favourite notification type, got %+v", favourite)
+	}
+}
+
+func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	installSoulBindingLookup(t, "agent1", "0x1111111111111111111111111111111111111111111111111111111111111111")
+	auth.ResetForTests()
+
+	const contentTail = "NOTIFICATION_ACTOR_FILTER_FULL_CONTENT_SHOULD_NOT_APPEAR"
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/notifications" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("actor") != "" {
+			t.Fatalf("actor filter should be MCP-side, not forwarded upstream: %q", r.URL.RawQuery)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{
+				"id":"n-ops",
+				"type":"mention",
+				"created_at":"2026-05-18T12:00:00Z",
+				"account":{"id":"acct-ops","username":"ops","acct":"ops@example.com","display_name":"Ops","url":"https://example.com/@ops"},
+				"status":{"id":"post-ops","content":"` + strings.Repeat("ops notification content ", 20) + contentTail + `","visibility":"public"}
+			},
+			{
+				"id":"n-sentinel",
+				"type":"reply",
+				"created_at":"2026-05-18T11:00:00Z",
+				"account":{"id":"acct-sentinel","username":"sentinel","acct":"sentinel@remote.example","display_name":"Sentinel","url":"https://remote.example/users/sentinel"},
+				"status":{"id":"post-sentinel","content":"sentinel reply","visibility":"public"}
+			},
+			{
+				"id":"n-medic-email",
+				"type":"communication:inbound",
+				"created_at":"2026-05-18T10:00:00Z",
+				"channel":"email",
+				"messageId":"comm-medic",
+				"from":{"name":"Medic","address":"medic@lessersoul.ai","email":"medic@lessersoul.ai","soulAgentId":"agent://medic","identifier":"medic"},
+				"subject":"Medic check-in",
+				"body":"` + strings.Repeat("medic body ", 40) + contentTail + `"
+			},
+			{
+				"id":"n-other",
+				"type":"mention",
+				"created_at":"2026-05-18T09:00:00Z",
+				"account":{"id":"acct-other","username":"other","acct":"other@example.com","url":"https://example.com/@other"},
+				"status":{"id":"post-other","content":"other notification","visibility":"public"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	ops := callSocialTool(t, env, app, authHeader, sessionID, 2, "notifications_read", map[string]any{
+		"actor":            "ops",
+		"limit":            2,
+		"view":             "compact",
+		"preview_chars":    24,
+		"max_output_bytes": 8000,
+	})
+	if ops.Result.IsError {
+		t.Fatalf("notifications_read actor=ops returned tool error: %+v body=%s", ops.Result.StructuredContent, string(ops.ResponseBody))
+	}
+	if gotQueries[0] != "limit=8" {
+		t.Fatalf("expected actor filter to over-fetch bounded Lesser page with limit=8, got %q", gotQueries[0])
+	}
+	if strings.Contains(string(ops.ResponseBody), contentTail) {
+		t.Fatalf("compact actor-filtered notifications leaked full content: %s", string(ops.ResponseBody))
+	}
+	assertMCPPayloadBudget(t, "notifications_read actor compact", len(ops.ResponseBody), 8000)
+	opsData, _ := ops.Result.StructuredContent["data"].(map[string]any)
+	if opsData["count"] != float64(1) {
+		t.Fatalf("expected one Ops notification, got %+v", opsData)
+	}
+	filter, _ := opsData["filter"].(map[string]any)
+	if filter["actor"] != "ops" || filter["strategy"] != "mcp_side_overfetch" || filter["requestedLimit"] != float64(2) || filter["overFetchLimit"] != float64(8) || filter["upstreamCount"] != float64(4) || filter["matchedCount"] != float64(1) || filter["returnedCount"] != float64(1) {
+		t.Fatalf("unexpected actor filter metadata: %+v", filter)
+	}
+	notifications, _ := opsData["notifications"].([]any)
+	first, _ := notifications[0].(map[string]any)
+	actorRef, _ := first["actorRef"].(map[string]any)
+	if first["id"] != "n-ops" || actorRef["acct"] != "ops@example.com" {
+		t.Fatalf("expected Ops compact notification ref, got %+v", first)
+	}
+
+	actorURL := callSocialTool(t, env, app, authHeader, sessionID, 3, "notifications_read", map[string]any{
+		"actor": "https://remote.example/users/sentinel",
+		"limit": 2,
+		"view":  "compact",
+	})
+	if actorURL.Result.IsError {
+		t.Fatalf("notifications_read actor URL returned tool error: %+v", actorURL.Result.StructuredContent)
+	}
+	actorURLData, _ := actorURL.Result.StructuredContent["data"].(map[string]any)
+	actorURLNotifications, _ := actorURLData["notifications"].([]any)
+	actorURLFirst, _ := actorURLNotifications[0].(map[string]any)
+	if actorURLData["count"] != float64(1) || actorURLFirst["id"] != "n-sentinel" {
+		t.Fatalf("expected actor URL to match sentinel notification, got %+v", actorURLData)
+	}
+
+	comm := callSocialTool(t, env, app, authHeader, sessionID, 4, "notifications_read", map[string]any{
+		"actor": "medic@lessersoul.ai",
+		"limit": 2,
+		"view":  "compact",
+	})
+	if comm.Result.IsError {
+		t.Fatalf("notifications_read actor=medic email returned tool error: %+v", comm.Result.StructuredContent)
+	}
+	commData, _ := comm.Result.StructuredContent["data"].(map[string]any)
+	commNotifications, _ := commData["notifications"].([]any)
+	commFirst, _ := commNotifications[0].(map[string]any)
+	communication, _ := commFirst["communication"].(map[string]any)
+	from, _ := communication["from"].(map[string]any)
+	if commData["count"] != float64(1) || commFirst["id"] != "n-medic-email" || from["soulAgentId"] != "agent://medic" {
+		t.Fatalf("expected communication sender metadata match, got data=%+v first=%+v", commData, commFirst)
+	}
+
+	missing := callSocialTool(t, env, app, authHeader, sessionID, 5, "notifications_read", map[string]any{
+		"actor": "not-a-sender",
+		"limit": 2,
+		"view":  "compact",
+	})
+	if missing.Result.IsError {
+		t.Fatalf("notifications_read actor=no-match returned tool error: %+v", missing.Result.StructuredContent)
+	}
+	missingData, _ := missing.Result.StructuredContent["data"].(map[string]any)
+	missingFilter, _ := missingData["filter"].(map[string]any)
+	if missingData["count"] != float64(0) || missingFilter["matchedCount"] != float64(0) {
+		t.Fatalf("expected no-match actor filter metadata, got %+v", missingData)
+	}
+
+	tooLarge := callSocialTool(t, env, app, authHeader, sessionID, 6, "notifications_read", map[string]any{
+		"actor":            "ops",
+		"limit":            2,
+		"view":             "compact",
+		"max_output_bytes": 300,
+	})
+	if !tooLarge.Result.IsError {
+		t.Fatalf("expected actor-filtered compact response_too_large tool error, got %+v", tooLarge.Result)
+	}
+	errorPayload, _ := tooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["tool"] != "notifications_read" || details["maxOutputBytes"] != float64(300) {
+		t.Fatalf("unexpected too-large details: %+v", details)
 	}
 }
 

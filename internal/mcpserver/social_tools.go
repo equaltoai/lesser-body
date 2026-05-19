@@ -1417,6 +1417,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 
 	var in struct {
 		Types              []string `json:"types,omitempty"`
+		Actor              string   `json:"actor,omitempty"`
 		Since              *string  `json:"since"`
 		Cursor             string   `json:"cursor,omitempty"`
 		Limit              int      `json:"limit,omitempty"`
@@ -1440,6 +1441,11 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		})
 	}
 	limit := boundedNotificationReadLimit(in.Limit)
+	actorFilter := newNotificationActorFilter(in.Actor)
+	fetchLimit := limit
+	if actorFilter.Active {
+		fetchLimit = notificationActorFilterFetchLimit(limit)
+	}
 	explicitSince := in.Since != nil
 	requestedSince := trimDeref(in.Since)
 	effectiveSince := requestedSince
@@ -1460,7 +1466,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	}
 
 	apiStartedAt := time.Now()
-	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, limit, effectiveCursor)
+	list, nextCursor, err := readSocialNotifications(ctx, client, token, upstreamTypes, fetchLimit, effectiveCursor)
 	apiDuration := time.Since(apiStartedAt)
 	if err != nil {
 		return authToolResultFromError(err)
@@ -1477,6 +1483,11 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	}
 	if len(requestedTypes) > 0 {
 		notifications = filterSocialNotificationsByType(notifications, requestedTypes)
+	}
+	actorMatchedCount := 0
+	if actorFilter.Active {
+		notifications = filterSocialNotificationsByActor(notifications, actorFilter)
+		actorMatchedCount = len(notifications)
 	}
 	sortSocialNotificationsNewestFirst(notifications)
 	if len(notifications) > limit {
@@ -1511,6 +1522,9 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		"types":         requestedTypes,
 		"notifications": notifications,
 		"includeRaw":    includeRaw,
+	}
+	if actorFilter.Active {
+		payload["filter"] = notificationActorFilterMetadata(actorFilter, fetchLimit, limit, len(list), actorMatchedCount, len(notifications))
 	}
 	if in.IncludeDiagnostics {
 		attachNotificationReadDiagnostics(payload, notificationReadDiagnostics{
@@ -1639,6 +1653,9 @@ func socialCompactNotificationsResult(standardPayload map[string]any, notificati
 			"contentPreviewRunes": previewRunes,
 			"enforcement":         "response_too_large",
 		},
+	}
+	if filter, ok := standardPayload["filter"].(map[string]any); ok {
+		payload["filter"] = filter
 	}
 
 	diagnostics := map[string]any(nil)
@@ -2196,11 +2213,12 @@ func followingListDef() mcpruntime.ToolDef {
 func notificationsReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "notifications_read",
-		Description: "Read recent social notifications with normalized actor and target post data.",
+		Description: "Read recent social notifications with normalized actor/source and target post data. Optional actor filtering is MCP-side and bounded; use direct_messages_read as the primary DM retrieval path.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"types":{"type":"array","maxItems":8,"description":"Optional normalized notification types to return. Supported values include communication:inbound for host-backed inbound email/SMS/voice notifications; favorite is accepted as an alias for favourite. At most 8 values may be supplied; duplicates still count against the request budget.","items":{"type":"string","enum":["mention","reply","favourite","favorite","reblog","follow","follow_request","poll","status","update","admin.sign_up","admin.report","communication:inbound"]}},
+				"actor":{"type":"string","description":"Optional MCP-side actor/source filter. Matches normalized social actor id, username/local id, acct, or actor URL; communication notifications match available sender soul agent id, agent id, email/address, or identifier metadata. Body over-fetches bounded notification pages from Lesser and declares the strategy in the response."},
 				"since":{"type":"string"},
 				"cursor":{"type":"string"},
 				"limit":{"type":"integer","minimum":1,"maximum":80},
@@ -2794,6 +2812,171 @@ func filterSocialNotificationsByType(items []any, want []string) []any {
 	return out
 }
 
+type notificationActorFilter struct {
+	Raw        string
+	Active     bool
+	Candidates map[string]struct{}
+}
+
+func newNotificationActorFilter(raw string) notificationActorFilter {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return notificationActorFilter{}
+	}
+	candidates := notificationActorFilterCandidates(raw)
+	return notificationActorFilter{
+		Raw:        raw,
+		Active:     len(candidates) > 0,
+		Candidates: candidates,
+	}
+}
+
+func notificationActorFilterFetchLimit(limit int) int {
+	limit = boundedNotificationReadLimit(limit)
+	overFetch := limit * 4
+	if overFetch < limit {
+		overFetch = limit
+	}
+	return boundedNotificationReadLimit(overFetch)
+}
+
+func filterSocialNotificationsByActor(items []any, filter notificationActorFilter) []any {
+	if !filter.Active || len(items) == 0 {
+		return items
+	}
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		notification, _ := item.(map[string]any)
+		if notificationActorMatches(notification, filter) {
+			out = append(out, notification)
+		}
+	}
+	return out
+}
+
+func notificationActorFilterMetadata(filter notificationActorFilter, overFetchLimit int, requestedLimit int, upstreamCount int, matchedCount int, returnedCount int) map[string]any {
+	return map[string]any{
+		"actor":          filter.Raw,
+		"strategy":       "mcp_side_overfetch",
+		"requestedLimit": requestedLimit,
+		"overFetchLimit": overFetchLimit,
+		"upstreamCount":  upstreamCount,
+		"matchedCount":   matchedCount,
+		"returnedCount":  returnedCount,
+		"matchFields": []any{
+			"actor.id",
+			"actor.username",
+			"actor.acct",
+			"actor.url",
+			"targetPost.author.*",
+			"communication.from.soulAgentId",
+			"communication.from.agentId",
+			"communication.from.email",
+			"communication.from.address",
+			"communication.from.identifier",
+		},
+	}
+}
+
+func notificationActorMatches(notification map[string]any, filter notificationActorFilter) bool {
+	if notification == nil || !filter.Active {
+		return false
+	}
+	for _, actor := range []map[string]any{
+		firstMap(notification, "actor", "account"),
+		firstMap(firstMap(notification, "targetPost", "status", "post"), "author", "account", "actor"),
+		firstMap(firstMap(notification, "communication"), "from"),
+	} {
+		if notificationActorMapMatches(actor, filter.Candidates) {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationActorMapMatches(raw map[string]any, candidates map[string]struct{}) bool {
+	if raw == nil || len(candidates) == 0 {
+		return false
+	}
+	for _, key := range []string{
+		"id",
+		"username",
+		"acct",
+		"url",
+		"uri",
+		"actorUrl",
+		"actorURL",
+		"actor_url",
+		"soulAgentId",
+		"soul_agent_id",
+		"agentId",
+		"agentID",
+		"agent_id",
+		"email",
+		"address",
+		"identifier",
+		"name",
+	} {
+		if notificationActorValueMatches(firstNonEmptyStringMap(raw, key), candidates) {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationActorValueMatches(value string, candidates map[string]struct{}) bool {
+	for candidate := range notificationActorFilterCandidates(value) {
+		if _, ok := candidates[candidate]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationActorFilterCandidates(value string) map[string]struct{} {
+	out := map[string]struct{}{}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return out
+	}
+	add := func(candidate string) {
+		candidate = normalizeNotificationActorCandidate(candidate)
+		if candidate != "" {
+			out[candidate] = struct{}{}
+		}
+	}
+
+	add(value)
+	add(strings.TrimPrefix(value, "@"))
+
+	withoutAt := strings.TrimPrefix(strings.TrimSpace(value), "@")
+	if at := strings.Index(withoutAt, "@"); at > 0 {
+		add(withoutAt[:at])
+		add(withoutAt)
+	}
+
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		add(parsed.String())
+		add(parsed.Host + parsed.EscapedPath())
+		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+		if len(parts) > 0 {
+			add(strings.TrimPrefix(parts[len(parts)-1], "@"))
+		}
+	}
+
+	return out
+}
+
+func normalizeNotificationActorCandidate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "@")
+	value = strings.TrimRight(value, "/")
+	return strings.ToLower(value)
+}
+
 func filterSocialNotificationsAfter(items []any, since time.Time) []any {
 	if since.IsZero() {
 		return items
@@ -2963,7 +3146,7 @@ func normalizeSocialNotificationActor(raw map[string]any) map[string]any {
 	putIfNotEmpty(out, "username", firstNonEmptyStringMap(raw, "username"))
 	putIfNotEmpty(out, "acct", firstNonEmptyStringMap(raw, "acct"))
 	putIfNotEmpty(out, "displayName", firstNonEmptyStringMap(raw, "display_name", "displayName"))
-	putIfNotEmpty(out, "url", firstNonEmptyStringMap(raw, "url"))
+	putIfNotEmpty(out, "url", firstNonEmptyStringMap(raw, "url", "uri", "actorUrl", "actorURL", "actor_url"))
 	putIfNotEmpty(out, "avatar", firstNonEmptyStringMap(raw, "avatar", "avatar_static", "avatarStatic"))
 	if len(out) == 0 {
 		return nil

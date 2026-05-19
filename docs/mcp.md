@@ -360,7 +360,7 @@ Scope key:
 | `conversations_read` | Read | Read direct-message conversations; supports opt-in compact conversation refs. |
 | `conversation_get` | Read | Expand one direct-message conversation into bounded recent message previews; defaults to compact and requires explicit standard/full opt-in for message bodies/raw payloads. |
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
-| `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs. |
+| `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
@@ -431,6 +431,9 @@ index/ref pages and expand only the items they need:
   follow `targetPostRef.expand` through `post_get` only when that expansion is present. For remote/generated
   notification target snapshots where the target id is not a direct Lesser status lookup key, use the notification ref's
   `notification_get` expansion as the reliable snapshot path.
+- `notifications_read({"actor":"ops","limit":10,"view":"compact"})` is a secondary discovery aid for "things from
+  Ops". It filters the normalized notification actor/source after a bounded Lesser over-fetch and declares the strategy
+  under `structuredContent.data.filter`. Use `direct_messages_read(counterpart=...)` as the primary DM retrieval path.
 - `conversations_read({"limit":10,"view":"compact"})` returns conversation refs with bounded participant and last-post
   metadata. Use `conversation_get({"conversationId":"<conversation-id>","limit":20,"view":"compact"})` to expand one
   conversation into recent message previews. `lastPostRef` can still expand through `post_get` when Lesser supplies a
@@ -519,6 +522,14 @@ Notes:
   read requests cannot amplify one MCP call into an unbounded backend query set. The `communication:inbound` type is
   available only in the `souled` runtime profile; drone-profile callers receive a runtime-boundary tool error for
   explicit communication filters, and untyped drone reads omit communication rows.
+- `notifications_read.actor` is optional and additive. It filters MCP-side on normalized social actor metadata
+  (`actor.id`, `actor.username`, `actor.acct`, `actor.url`, plus target-post author metadata where present) and
+  host-backed communication sender metadata (`communication.from.soulAgentId`, `agentId`, `email`/`address`, and
+  `identifier` where Lesser/host include it). Because Lesser does not yet expose an upstream actor filter, body
+  over-fetches a bounded notification page (`min(limit*4, 80)`) and returns
+  `structuredContent.data.filter.strategy="mcp_side_overfetch"` with `requestedLimit`, `overFetchLimit`,
+  `upstreamCount`, `matchedCount`, and `returnedCount`. Actor-filtered compact reads still use the normal compact
+  budget and return `response_too_large` rather than silently dropping fields.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
