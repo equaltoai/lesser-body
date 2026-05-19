@@ -167,6 +167,37 @@ func conversationGetOutputSchema() json.RawMessage {
 	}`)
 }
 
+func directMessagesReadOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"counterpart":{"type":"string"},
+					"id":{"type":"string"},
+					"view":{"type":"string"},
+					"source":{"type":"string"},
+					"conversation":{"type":"object","additionalProperties":true},
+					"messages":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"},
+					"limit":{"type":"integer"},
+					"unread":{"type":"boolean"},
+					"unreadOnly":{"type":"boolean"},
+					"unreadOnlyMatched":{"type":"boolean"},
+					"nextCursor":{"type":"string"},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true}
+				},
+				"required":["counterpart","id","view","source","conversation","messages","count"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
