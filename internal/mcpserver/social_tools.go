@@ -102,6 +102,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: followingListDef(), Handler: handleFollowingList},
 		{Def: conversationsReadDef(), Handler: handleConversationsRead},
 		{Def: conversationGetDef(), Handler: handleConversationGet},
+		{Def: directMessagesReadDef(), Handler: handleDirectMessagesRead},
 		{Def: notificationsReadDef(), Handler: handleNotificationsRead},
 		{Def: notificationGetDef(), Handler: handleNotificationGet},
 		{Def: notificationDismissDef(), Handler: handleNotificationDismiss},
@@ -875,6 +876,98 @@ func handleConversationGet(ctx context.Context, args json.RawMessage) (*mcprunti
 	return socialConversationGetStructuredResult(payload, readParams)
 }
 
+func handleDirectMessagesRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	readParams, err := parseSharedReadParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	if readParams.View == "" {
+		readParams.View = readViewCompact
+	}
+	if err := validateConversationGetView(readParams.View); err != nil {
+		return nil, invalidParams(err.Error())
+	}
+
+	var in struct {
+		Counterpart string `json:"counterpart,omitempty"`
+		Limit       int    `json:"limit,omitempty"`
+		Cursor      string `json:"cursor,omitempty"`
+		UnreadOnly  bool   `json:"unreadOnly,omitempty"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	counterpart := strings.TrimSpace(in.Counterpart)
+	if counterpart == "" {
+		return nil, invalidParams("missing counterpart")
+	}
+	limit := boundedConversationGetLimit(in.Limit)
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := url.Values{}
+	query.Set("counterpart", counterpart)
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor := strings.TrimSpace(in.Cursor); cursor != "" {
+		query.Set("max_id", cursor)
+	}
+
+	out, headers, err := client.DoJSONWithHeaders(ctx, "GET", "/api/v1/conversations/lookup", query, token, nil)
+	if err != nil {
+		return directMessagesReadToolResultFromError(counterpart, err)
+	}
+	raw, err := conversationDetailFromAPI(out)
+	if err != nil {
+		return nil, err
+	}
+	includeRaw := readParams.View == readViewFull
+	conversation := normalizeSocialConversationDetail(raw, includeRaw)
+	if in.UnreadOnly {
+		if unread, ok := conversationUnreadFlag(conversation); !ok || !unread {
+			conversation = directMessagesConversationWithoutBodies(conversation)
+		}
+	}
+
+	payload := map[string]any{
+		"counterpart":  counterpart,
+		"id":           firstNonEmptyStringMap(conversation, "id"),
+		"view":         readParams.View,
+		"source":       "lesser-api",
+		"conversation": conversation,
+		"limit":        limit,
+		"unreadOnly":   in.UnreadOnly,
+	}
+	if nextCursor := nextNotificationCursorFromHeaders(headers); nextCursor != "" {
+		payload["nextCursor"] = nextCursor
+	}
+	if unread, ok := conversationUnreadFlag(conversation); ok {
+		payload["unread"] = unread
+	}
+	if messages := conversationMessagesFromMap(conversation); len(messages) > 0 {
+		payload["messages"] = messages
+		payload["count"] = len(messages)
+	} else {
+		payload["messages"] = []any{}
+		payload["count"] = 0
+	}
+	if in.UnreadOnly {
+		unread, ok := conversationUnreadFlag(conversation)
+		payload["unreadOnlyMatched"] = ok && unread
+	}
+
+	if readParams.View == readViewCompact {
+		return socialCompactDirectMessagesReadResult(payload, conversation, readParams)
+	}
+	return socialDirectMessagesReadStructuredResult(payload, readParams)
+}
+
 func validateConversationGetView(view string) error {
 	switch strings.ToLower(strings.TrimSpace(view)) {
 	case readViewStandard, readViewFull, readViewCompact:
@@ -940,6 +1033,77 @@ func socialCompactConversationGetResult(standardPayload map[string]any, conversa
 	return toolStructuredFirstResultWithBudget("conversation_get", fmt.Sprintf("conversation %s with %d compact message previews", id, messageCount), payload, text, nil, false, budget)
 }
 
+func socialDirectMessagesReadStructuredResult(payload map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	view := strings.ToLower(strings.TrimSpace(firstNonEmptyStringMap(payload, "view")))
+	if view == "" {
+		view = readViewStandard
+	}
+	budget := params.MaxOutputBytes
+	text := map[string]any{
+		"tool":        "direct_messages_read",
+		"view":        view,
+		"counterpart": firstNonEmptyStringMap(payload, "counterpart"),
+		"id":          firstNonEmptyStringMap(payload, "id"),
+		"count":       payload["count"],
+	}
+	return toolStructuredFirstResultWithBudget("direct_messages_read", "direct message conversation details", payload, text, nil, false, budget)
+}
+
+func socialCompactDirectMessagesReadResult(standardPayload map[string]any, conversation map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
+	previewRunes := conversationGetCompactPreviewRunes
+	if params.PreviewChars > 0 {
+		previewRunes = params.PreviewChars
+	}
+
+	ref := compactSocialConversationDetailRef(conversation, previewRunes)
+	if ref == nil {
+		ref = map[string]any{}
+	}
+	id := firstNonEmptyStringMap(ref, "id")
+	if id == "" {
+		id = firstNonEmptyStringMap(standardPayload, "id")
+		putIfNotEmpty(ref, "id", id)
+	}
+
+	messageRefs := []any{}
+	if refs, _ := ref["messageRefs"].([]any); len(refs) > 0 {
+		messageRefs = refs
+	}
+
+	budget := socialCompactOutputBudget(params, conversationGetCompactMaxOutputBytes)
+	payload := map[string]any{
+		"counterpart":  firstNonEmptyStringMap(standardPayload, "counterpart"),
+		"id":           id,
+		"view":         readViewCompact,
+		"source":       standardPayload["source"],
+		"conversation": ref,
+		"messages":     messageRefs,
+		"count":        len(messageRefs),
+		"limit":        standardPayload["limit"],
+		"includeRaw":   false,
+		"unreadOnly":   standardPayload["unreadOnly"],
+		"omitted":      compactDirectMessagesReadOmissions(),
+		"budget":       socialCompactBudgetMetadata(budget, previewRunes),
+	}
+	if unread, ok := standardPayload["unread"].(bool); ok {
+		payload["unread"] = unread
+	}
+	if matched, ok := standardPayload["unreadOnlyMatched"].(bool); ok {
+		payload["unreadOnlyMatched"] = matched
+	}
+	if nextCursor, _ := standardPayload["nextCursor"].(string); strings.TrimSpace(nextCursor) != "" {
+		payload["nextCursor"] = strings.TrimSpace(nextCursor)
+	}
+	text := map[string]any{
+		"tool":        "direct_messages_read",
+		"view":        readViewCompact,
+		"counterpart": payload["counterpart"],
+		"id":          id,
+		"count":       len(messageRefs),
+	}
+	return toolStructuredFirstResultWithBudget("direct_messages_read", fmt.Sprintf("direct messages with %s: %d compact message previews", payload["counterpart"], len(messageRefs)), payload, text, nil, false, budget)
+}
+
 func conversationGetToolResultFromError(conversationID string, err error) (*mcpruntime.ToolResult, error) {
 	if failure := mcpAuthFailureFromError(err); failure != nil {
 		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
@@ -950,6 +1114,26 @@ func conversationGetToolResultFromError(conversationID string, err error) (*mcpr
 			"conversationId": strings.TrimSpace(conversationID),
 			"source":         "lesser-api",
 			"upstreamCode":   apiErr.Status,
+		})
+	}
+	return authToolResultFromError(err)
+}
+
+func directMessagesReadToolResultFromError(counterpart string, err error) (*mcpruntime.ToolResult, error) {
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+		return toolErrorResult("not_found", "direct message conversation not found", http.StatusNotFound, map[string]any{
+			"counterpart":  strings.TrimSpace(counterpart),
+			"source":       "lesser-api",
+			"upstreamCode": apiErr.Status,
+			"suggestedFallbacks": []any{
+				"confirm the teammate local id, acct, or actor URL with identity_lookup",
+				"ask the teammate to start a direct-message thread",
+				"use email_search only as a fallback coordination path",
+			},
 		})
 	}
 	return authToolResultFromError(err)
@@ -1186,6 +1370,40 @@ func compactConversationGetOmissions() []any {
 			"expansion": "call conversation_get with view=full",
 		},
 	}
+}
+
+func compactDirectMessagesReadOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":   "conversation.participants",
+			"reason": "participant_ref_only",
+		},
+		map[string]any{
+			"path":      "messages[].content",
+			"reason":    "message_content_preview",
+			"expansion": "structuredContent.data.messages[].expand when messages[].id is present, or call conversation_get with view=standard/full",
+		},
+		map[string]any{
+			"path":      "conversation._raw",
+			"reason":    "debug_payload",
+			"expansion": "call direct_messages_read with view=full",
+		},
+	}
+}
+
+func conversationUnreadFlag(raw map[string]any) (bool, bool) {
+	if raw == nil {
+		return false, false
+	}
+	return firstBoolMap(raw, "unread", "is_unread", "isUnread")
+}
+
+func directMessagesConversationWithoutBodies(raw map[string]any) map[string]any {
+	out := cloneStringAnyMap(raw)
+	delete(out, "messages")
+	delete(out, "lastPost")
+	delete(out, "_raw")
+	return out
 }
 
 func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -2047,6 +2265,28 @@ func conversationGetDef() mcpruntime.ToolDef {
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
 			},
 			"required":["conversationId"]
+		}`),
+	}
+}
+
+func directMessagesReadDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "direct_messages_read",
+		Description:  "Read recent direct-message previews from a named counterpart using Lesser's one-to-one conversation lookup. Defaults to compact; returns explicit not_found rather than scanning unrelated surfaces.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: directMessagesReadOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"counterpart":{"type":"string","description":"Named counterpart to resolve via Lesser lookup. Accepts local username, acct, or actor URL where Lesser supports it."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum recent messages to return. Defaults to 20."},
+				"cursor":{"type":"string","description":"Optional pagination cursor; forwarded to Lesser as max_id."},
+				"unreadOnly":{"type":"boolean","description":"When true, return previews only if the matched one-to-one conversation is currently unread; read conversations return zero message previews."},
+				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+			},
+			"required":["counterpart"]
 		}`),
 	}
 }

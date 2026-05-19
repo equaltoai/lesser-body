@@ -80,6 +80,9 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if !have["conversation_get"] {
 		t.Fatalf("expected conversation_get now that the single-conversation expansion route is registered")
 	}
+	if !have["direct_messages_read"] {
+		t.Fatalf("expected direct_messages_read now that named-counterpart DM lookup is registered")
+	}
 
 	for _, name := range []string{
 		"profile_read",
@@ -90,6 +93,7 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 		"following_list",
 		"conversations_read",
 		"conversation_get",
+		"direct_messages_read",
 		"notifications_read",
 		"notification_get",
 		"notification_dismiss",
@@ -249,6 +253,39 @@ func TestM5_ToolsListContainsCoreTools(t *testing.T) {
 	if !containsString(conversationGetSchema.Required, "conversationId") {
 		t.Fatalf("conversation_get should require conversationId, got %+v", conversationGetSchema.Required)
 	}
+	var directMessagesReadSchema struct {
+		Properties map[string]map[string]any `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+	if err := json.Unmarshal(toolsByName["direct_messages_read"].InputSchema, &directMessagesReadSchema); err != nil {
+		t.Fatalf("unmarshal direct_messages_read schema: %v", err)
+	}
+	if propType, _ := directMessagesReadSchema.Properties["counterpart"]["type"].(string); propType != "string" {
+		t.Fatalf("direct_messages_read counterpart should be string, got %+v", directMessagesReadSchema.Properties["counterpart"])
+	}
+	viewProp = directMessagesReadSchema.Properties["view"]
+	enum, _ = viewProp["enum"].([]any)
+	if !reflect.DeepEqual(enum, []any{"compact", "standard", "full"}) {
+		t.Fatalf("direct_messages_read view enum = %+v", viewProp)
+	}
+	if propType, _ := directMessagesReadSchema.Properties["limit"]["type"].(string); propType != "integer" {
+		t.Fatalf("direct_messages_read limit should be integer, got %+v", directMessagesReadSchema.Properties["limit"])
+	}
+	if propType, _ := directMessagesReadSchema.Properties["cursor"]["type"].(string); propType != "string" {
+		t.Fatalf("direct_messages_read cursor should be string, got %+v", directMessagesReadSchema.Properties["cursor"])
+	}
+	if propType, _ := directMessagesReadSchema.Properties["unreadOnly"]["type"].(string); propType != "boolean" {
+		t.Fatalf("direct_messages_read unreadOnly should be boolean, got %+v", directMessagesReadSchema.Properties["unreadOnly"])
+	}
+	if propType, _ := directMessagesReadSchema.Properties["max_output_bytes"]["type"].(string); propType != "integer" {
+		t.Fatalf("direct_messages_read max_output_bytes should be integer, got %+v", directMessagesReadSchema.Properties["max_output_bytes"])
+	}
+	if propType, _ := directMessagesReadSchema.Properties["preview_chars"]["type"].(string); propType != "integer" {
+		t.Fatalf("direct_messages_read preview_chars should be integer, got %+v", directMessagesReadSchema.Properties["preview_chars"])
+	}
+	if !containsString(directMessagesReadSchema.Required, "counterpart") {
+		t.Fatalf("direct_messages_read should require counterpart, got %+v", directMessagesReadSchema.Required)
+	}
 }
 
 func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
@@ -358,6 +395,17 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 			failureCode: mcpruntime.CodeServerError,
 			wantRequests: []recorded{
 				{Method: "GET", Path: "/api/v1/conversations/conv-1", Query: "limit=2&max_id=cursor-1"},
+			},
+		},
+		{
+			name:        "direct_messages_read",
+			tool:        "direct_messages_read",
+			scope:       "read",
+			args:        map[string]any{"counterpart": "ops", "limit": 2, "cursor": "cursor-1"},
+			invalidArgs: map[string]any{"counterpart": ""},
+			failureCode: mcpruntime.CodeServerError,
+			wantRequests: []recorded{
+				{Method: "GET", Path: "/api/v1/conversations/lookup", Query: "counterpart=ops&limit=2&max_id=cursor-1"},
 			},
 		},
 		{
@@ -502,6 +550,8 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 					_, _ = w.Write([]byte(`[{"id":"conv1"}]`))
 				case "/api/v1/conversations/conv-1":
 					_, _ = w.Write([]byte(`{"id":"conv-1","messages":[{"id":"msg-1","content":"hello","account":{"id":"acct1","acct":"agent@example.com"},"visibility":"direct"}]}`))
+				case "/api/v1/conversations/lookup":
+					_, _ = w.Write([]byte(`{"id":"conv-ops","unread":true,"messages":[{"id":"msg-1","content":"hello","account":{"id":"acct-ops","acct":"ops@example.com"},"visibility":"direct"}]}`))
 				case "/api/v1/timelines/home":
 					_, _ = w.Write([]byte(`[{"id":"t1"}]`))
 				case "/api/v1/timelines/public":
@@ -1530,6 +1580,182 @@ func TestM5_ConversationGetExpandsConversationWithCompactBudgetedRefs(t *testing
 	})
 	if !expired.Result.IsError {
 		t.Fatalf("expected unauthorized conversation_get tool error, got %+v", expired.Result)
+	}
+	errorPayload, _ = expired.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "unauthorized" || errorPayload["status"] != float64(401) {
+		t.Fatalf("unexpected unauthorized payload: %+v", errorPayload)
+	}
+}
+
+func TestM5_DirectMessagesReadLooksUpNamedCounterpartWithCompactBudgetedRefs(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	const contentTail = "DIRECT_MESSAGES_READ_FULL_CONTENT_TAIL_SHOULD_NOT_APPEAR_IN_COMPACT"
+	const accountNote = "DIRECT_MESSAGES_READ_ACCOUNT_NOTE_SHOULD_NOT_APPEAR"
+	const debugPayload = "DIRECT_MESSAGES_READ_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
+
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/conversations/lookup" {
+			t.Fatalf("direct_messages_read should not scan unrelated surfaces; got path %s", r.URL.Path)
+		}
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("counterpart") {
+		case "ops":
+			w.Header().Set("Link", `<https://example.com/api/v1/conversations/lookup?counterpart=ops&max_id=cursor-next>; rel="next"`)
+			_, _ = w.Write([]byte(socialConversationDetailFixtureJSON("conv-ops", contentTail, accountNote, debugPayload)))
+		case "medic":
+			body := strings.Replace(socialConversationDetailFixtureJSON("conv-medic", contentTail, accountNote, debugPayload), `"unread":true`, `"unread":false`, 1)
+			_, _ = w.Write([]byte(body))
+		case "missing":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		case "expired":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"expired"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	app, env, sessionID, authHeader := newSocialToolTestSession(t)
+
+	compact := callSocialTool(t, env, app, authHeader, sessionID, 2, "direct_messages_read", map[string]any{
+		"counterpart":      "ops",
+		"limit":            2,
+		"view":             "compact",
+		"preview_chars":    24,
+		"max_output_bytes": 12000,
+	})
+	if compact.Result.IsError {
+		t.Fatalf("direct_messages_read compact returned tool error: %+v body=%s", compact.Result.StructuredContent, string(compact.ResponseBody))
+	}
+	if gotQueries[0] != "counterpart=ops&limit=2" {
+		t.Fatalf("expected direct_messages_read lookup query, got %q", gotQueries[0])
+	}
+	assertMCPPayloadBudget(t, "direct_messages_read compact fixture", len(compact.ResponseBody), 12000)
+	for _, forbidden := range []string{contentTail, accountNote, debugPayload, "account note ", "debug payload "} {
+		if strings.Contains(string(compact.ResponseBody), forbidden) {
+			t.Fatalf("compact direct_messages_read leaked %q: %s", forbidden, string(compact.ResponseBody))
+		}
+	}
+	compactData, _ := compact.Result.StructuredContent["data"].(map[string]any)
+	if compactData["counterpart"] != "ops" || compactData["id"] != "conv-ops" || compactData["view"] != "compact" || compactData["nextCursor"] != "cursor-next" {
+		t.Fatalf("unexpected compact direct_messages_read metadata: %+v", compactData)
+	}
+	if compactData["count"] != float64(2) || compactData["unread"] != true || compactData["unreadOnly"] != false {
+		t.Fatalf("unexpected compact direct_messages_read count/unread metadata: %+v", compactData)
+	}
+	conversation, _ := compactData["conversation"].(map[string]any)
+	if conversation["id"] != "conv-ops" || conversation["unread"] != true || conversation["read"] != false {
+		t.Fatalf("unexpected compact direct_messages_read conversation ref: %+v", conversation)
+	}
+	messages, _ := compactData["messages"].([]any)
+	messageRefs, _ := conversation["messageRefs"].([]any)
+	if len(messages) != 2 || len(messageRefs) != 2 || conversation["messageCount"] != float64(2) {
+		t.Fatalf("expected two compact message previews, messages=%+v conversation=%+v", messages, conversation)
+	}
+	firstMessage, _ := messages[0].(map[string]any)
+	if firstMessage["id"] != "msg-1" || firstMessage["visibility"] != "direct" || firstMessage["contentTruncated"] != true {
+		t.Fatalf("unexpected first direct message ref: %+v", firstMessage)
+	}
+	if preview, _ := firstMessage["contentPreview"].(string); preview == "" || len([]rune(preview)) > 24 || strings.Contains(preview, contentTail) {
+		t.Fatalf("expected bounded first direct message preview, got %q (%d runes)", preview, len([]rune(preview)))
+	}
+	expand, _ := firstMessage["expand"].(map[string]any)
+	expandArgs, _ := expand["arguments"].(map[string]any)
+	if expand["tool"] != "post_get" || expandArgs["id"] != "msg-1" || expandArgs["view"] != "standard" {
+		t.Fatalf("unexpected first message expansion: %+v", expand)
+	}
+	convExpand, _ := conversation["expand"].(map[string]any)
+	convArgs, _ := convExpand["arguments"].(map[string]any)
+	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-ops" || convArgs["view"] != "compact" {
+		t.Fatalf("unexpected conversation expansion: %+v", convExpand)
+	}
+
+	standard := callSocialTool(t, env, app, authHeader, sessionID, 3, "direct_messages_read", map[string]any{
+		"counterpart": "ops",
+		"view":        "standard",
+	})
+	if standard.Result.IsError {
+		t.Fatalf("direct_messages_read standard returned tool error: %+v", standard.Result.StructuredContent)
+	}
+	standardData, _ := standard.Result.StructuredContent["data"].(map[string]any)
+	standardMessages, _ := standardData["messages"].([]any)
+	standardFirst, _ := standardMessages[0].(map[string]any)
+	if content, _ := standardFirst["content"].(string); !strings.Contains(content, contentTail) {
+		t.Fatalf("view=standard should include normalized message content, got %+v", standardFirst)
+	}
+	if strings.Contains(string(standard.ResponseBody), debugPayload) {
+		t.Fatalf("view=standard should not expose upstream debug payloads")
+	}
+
+	unreadOnly := callSocialTool(t, env, app, authHeader, sessionID, 4, "direct_messages_read", map[string]any{
+		"counterpart": "medic",
+		"unreadOnly":  true,
+	})
+	if unreadOnly.Result.IsError {
+		t.Fatalf("direct_messages_read unreadOnly returned tool error: %+v", unreadOnly.Result.StructuredContent)
+	}
+	unreadOnlyData, _ := unreadOnly.Result.StructuredContent["data"].(map[string]any)
+	if unreadOnlyData["unreadOnlyMatched"] != false || unreadOnlyData["count"] != float64(0) {
+		t.Fatalf("expected read Medic conversation to return zero unread previews, got %+v", unreadOnlyData)
+	}
+	if strings.Contains(string(unreadOnly.ResponseBody), contentTail) || strings.Contains(string(unreadOnly.ResponseBody), debugPayload) {
+		t.Fatalf("unreadOnly read conversation should not include message bodies/raw payloads: %s", string(unreadOnly.ResponseBody))
+	}
+
+	tooLarge := callSocialTool(t, env, app, authHeader, sessionID, 5, "direct_messages_read", map[string]any{
+		"counterpart":      "ops",
+		"view":             "compact",
+		"max_output_bytes": 500,
+	})
+	if !tooLarge.Result.IsError {
+		t.Fatalf("expected response_too_large direct_messages_read tool error, got %+v", tooLarge.Result)
+	}
+	errorPayload, _ := tooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("unexpected too-large error payload: %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["tool"] != "direct_messages_read" || details["maxOutputBytes"] != float64(500) || details["measuredBytes"] == float64(0) {
+		t.Fatalf("unexpected too-large details: %+v", details)
+	}
+
+	missing := callSocialTool(t, env, app, authHeader, sessionID, 6, "direct_messages_read", map[string]any{
+		"counterpart": "missing",
+	})
+	if !missing.Result.IsError {
+		t.Fatalf("expected not_found direct_messages_read tool error, got %+v", missing.Result)
+	}
+	errorPayload, _ = missing.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "not_found" || errorPayload["status"] != float64(404) {
+		t.Fatalf("unexpected not-found payload: %+v", errorPayload)
+	}
+	details, _ = errorPayload["details"].(map[string]any)
+	if details["counterpart"] != "missing" {
+		t.Fatalf("not-found details should include counterpart, got %+v", details)
+	}
+	if fallbacks, _ := details["suggestedFallbacks"].([]any); len(fallbacks) == 0 {
+		t.Fatalf("not-found details should include suggested fallbacks, got %+v", details)
+	}
+
+	expired := callSocialTool(t, env, app, authHeader, sessionID, 7, "direct_messages_read", map[string]any{
+		"counterpart": "expired",
+	})
+	if !expired.Result.IsError {
+		t.Fatalf("expected unauthorized direct_messages_read tool error, got %+v", expired.Result)
 	}
 	errorPayload, _ = expired.Result.StructuredContent["error"].(map[string]any)
 	if errorPayload["code"] != "unauthorized" || errorPayload["status"] != float64(401) {
