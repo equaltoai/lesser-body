@@ -254,6 +254,32 @@ func articleDraftListOutputSchema() json.RawMessage {
 	}`)
 }
 
+func articleDraftPreviewOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"view":{"type":"string"},
+					"preview":{"type":"object","additionalProperties":true},
+					"previewRef":{"type":"object","additionalProperties":true},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true},
+					"policy":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","view","preview","previewRef","policy"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func articleSingleOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",

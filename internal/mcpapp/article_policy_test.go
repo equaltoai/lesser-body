@@ -21,6 +21,7 @@ var allArticleToolNames = []string{
 	"article_draft_update",
 	"article_draft_get",
 	"article_draft_list",
+	"article_draft_preview",
 	"article_draft_publish",
 	"article_update",
 	"article_get",
@@ -37,6 +38,7 @@ var articleWriteToolNames = []string{
 var articleReadToolNames = []string{
 	"article_draft_get",
 	"article_draft_list",
+	"article_draft_preview",
 	"article_get",
 	"article_list",
 }
@@ -141,6 +143,8 @@ func TestArticleToolScopesAtMCPBoundary(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","contentType":"ARTICLE","title":"Draft","content":"draft body","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyArticleDrafts":
 			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+		case "BodyArticleDraftPreview":
+			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<p>draft body</p>","sourceFormat":"MARKDOWN","sourceBytes":10,"renderedBytes":17,"errors":[]}}}`))
 		case "BodyPublishArticleDraft":
 			_, _ = w.Write([]byte(`{"data":{"publishDraft":{"id":"https://example.com/articles/draft","slug":"draft","title":"Draft","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":2,"publishedAt":"2026-05-20T00:02:00Z","createdAt":"2026-05-20T00:02:00Z","updatedAt":"2026-05-20T00:02:00Z"}}}`))
 		case "BodyUpdateArticle":
@@ -207,6 +211,8 @@ func articleToolArgs(name string) map[string]any {
 		return map[string]any{"id": "draft-1"}
 	case "article_draft_list":
 		return map[string]any{"limit": 1}
+	case "article_draft_preview":
+		return map[string]any{"id": "draft-1"}
 	case "article_draft_publish":
 		return map[string]any{"id": "draft-1"}
 	case "article_update":

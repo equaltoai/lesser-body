@@ -32,6 +32,18 @@ type Draft struct {
 	UpdatedAt       string  `json:"updatedAt,omitempty"`
 }
 
+// DraftPreview is Lesser's canonical ARTICLE draft preview contract. The HTML
+// is rendered and sanitized by Lesser; body never renders draft source locally.
+type DraftPreview struct {
+	DraftID       string   `json:"draftId"`
+	Success       bool     `json:"success"`
+	RenderedHTML  *string  `json:"renderedHtml,omitempty"`
+	SourceFormat  string   `json:"sourceFormat"`
+	SourceBytes   int      `json:"sourceBytes"`
+	RenderedBytes int      `json:"renderedBytes"`
+	Errors        []string `json:"errors"`
+}
+
 // CreateDraftInput is the draft-only subset of Lesser CreateDraftInput that
 // body exposes as Article authoring. contentType is forced to ARTICLE.
 type CreateDraftInput struct {
@@ -52,6 +64,10 @@ type UpdateDraftInput struct {
 
 type draftResponse struct {
 	Draft *Draft `json:"draft"`
+}
+
+type draftPreviewResponse struct {
+	DraftPreview *DraftPreview `json:"draftPreview"`
 }
 
 type createDraftResponse struct {
@@ -155,6 +171,32 @@ func (c *Client) GetArticleDraft(ctx context.Context, bearerToken string, id str
 		return nil, fmt.Errorf("draft %q not found", id)
 	}
 	return data.Draft, nil
+}
+
+// PreviewArticleDraft reads Lesser's canonical rendered/sanitized preview for a
+// single ARTICLE draft. Authorization and ownership are enforced by Lesser on
+// the same path as draft(id:).
+func (c *Client) PreviewArticleDraft(ctx context.Context, bearerToken string, id string) (*DraftPreview, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("draft id is required")
+	}
+	resp, err := c.Execute(ctx, bearerToken, Operation{
+		Query:         "query BodyArticleDraftPreview($id: ID!) { draftPreview(id: $id) { draftId success renderedHtml sourceFormat sourceBytes renderedBytes errors } }",
+		OperationName: "BodyArticleDraftPreview",
+		Variables:     map[string]any{"id": id},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var data draftPreviewResponse
+	if err := unmarshalData(resp, &data); err != nil {
+		return nil, err
+	}
+	if data.DraftPreview == nil {
+		return nil, fmt.Errorf("draftPreview returned no preview")
+	}
+	return data.DraftPreview, nil
 }
 
 // ListArticleDrafts reads the authenticated actor's ARTICLE drafts with status DRAFT.
