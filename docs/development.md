@@ -88,3 +88,24 @@ The canary checks `tools/list`, default/standard `email_read`, explicit `email_r
 `voicemail_read`, and a not-found error path. It never prints full message bodies, full recipient addresses, bearer
 tokens, or raw upstream error payloads; error logs keep only stable codes/status plus hashed payload summaries where
 details are needed.
+
+### Article MCP canary
+
+After the Lesser Article/CMS GraphQL contract is deployed for a lab or staging instance, validate the MCP Article
+workflow with an actor-scoped OAuth token that has write scope:
+
+```bash
+MCP_ENDPOINT="https://api.dev.example.com/mcp/<actor>" \
+MCP_BEARER_TOKEN="<oauth-access-token>" \
+ARTICLE_CANARY_CONFIRM_PUBLISH=true \
+scripts/canary_article_mcp.py
+```
+
+The canary intentionally creates and publishes a real canary Article for that actor. It calls
+`article_draft_create`, `article_draft_preview`, `article_draft_publish`, and `article_get` using compact views,
+proving the draft → Lesser-rendered preview → publish → canonical fetch path. It refuses authenticated redirects and
+prints only compact release-validation signals: ids/URLs, payload sizes, omission/expansion metadata, booleans, and
+hashes. It never prints bearer tokens, draft content, rendered HTML, full tool payloads, or raw upstream error payloads.
+Use `ARTICLE_CANARY_TITLE`, `ARTICLE_CANARY_SLUG`, `ARTICLE_CANARY_CONTENT`,
+`ARTICLE_CANARY_CONTENT_FORMAT`, `ARTICLE_CANARY_PREVIEW_CHARS`, and `ARTICLE_CANARY_MAX_OUTPUT_BYTES` only when a
+run needs deterministic inputs or tighter response budgets.
