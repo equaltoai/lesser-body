@@ -215,6 +215,21 @@ scripts/canary_host_mailbox_mcp.py
 Set `MAILBOX_MESSAGE_ID=<messageRef>` when the inbox has no recent email message but you have a known host mailbox
 reference to validate get/content/state paths.
 
+For Article/CMS release validation after the Lesser Article contract is deployed, run the Article canary with a
+write-scoped actor OAuth token. The canary creates and publishes a real canary Article, so the explicit confirmation
+environment variable is required:
+
+```bash
+MCP_ENDPOINT="https://api.<stageDomain>/mcp/<actor>" \
+MCP_BEARER_TOKEN="<oauth-access-token>" \
+ARTICLE_CANARY_CONFIRM_PUBLISH=true \
+scripts/canary_article_mcp.py
+```
+
+The output is compact for release notes and soak evidence: no credentials, draft content, rendered HTML, full tool
+payloads, or raw upstream errors are printed. Optional `ARTICLE_CANARY_*` inputs can pin a slug/content or tighten
+`preview_chars` / `max_output_bytes` for a particular stage run.
+
 For production clients, prefer OAuth connector registration rather than a static bearer token in client config.
 `docs/oauth-migration.md` includes the step-by-step migration sequence and compatibility notes.
 

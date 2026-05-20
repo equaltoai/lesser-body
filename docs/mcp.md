@@ -532,8 +532,9 @@ Notes:
   (`article_draft_publish`), and published Article read/update tools (`article_get`, `article_list`,
   `article_update`). These tools use Lesser `POST /api/graphql` via the internal CMS client boundary, keep draft
   creation/update from auto-publishing, return compact refs/previews by default, and rely on Lesser as the renderer
-  authority for draft preview. The end-to-end canary (`#267`) remains separate.
-  Long-form Article authoring must not be routed through Mastodon-compatible status APIs such as `post_create`.
+  authority for draft preview. The end-to-end canary (`scripts/canary_article_mcp.py`, #267) remains a separate
+  operator probe that creates/publishes an explicit canary Article and prints compact, redacted release-validation
+  output. Long-form Article authoring must not be routed through Mastodon-compatible status APIs such as `post_create`.
 - Social and Article tools require an **OAuth JWT** bearer token (not just an instance key) because they call the
   Lesser API on behalf of the authenticated agent.
 - M0 baseline read-tool policy: daily agent read paths should move toward compact, bounded defaults only after
