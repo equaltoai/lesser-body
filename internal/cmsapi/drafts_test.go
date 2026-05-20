@@ -85,4 +85,48 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	}
 }
 
+func TestArticleDraftPreviewOperationBuildsM45GraphQLContract(t *testing.T) {
+	var operations []Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		operations = append(operations, op)
+		if op.OperationName != "BodyArticleDraftPreview" {
+			t.Fatalf("operationName = %q", op.OperationName)
+		}
+		if op.Variables["id"] != "draft-1" {
+			t.Fatalf("variables = %+v", op.Variables)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<h1>Hello</h1>","sourceFormat":"MARKDOWN","sourceBytes":12,"renderedBytes":14,"errors":[]}}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	preview, err := client.PreviewArticleDraft(context.Background(), "token", " draft-1 ")
+	if err != nil {
+		t.Fatalf("PreviewArticleDraft: %v", err)
+	}
+	if preview.DraftID != "draft-1" || !preview.Success || preview.RenderedHTML == nil || *preview.RenderedHTML != "<h1>Hello</h1>" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.SourceFormat != ContentFormatMarkdown || preview.SourceBytes != 12 || preview.RenderedBytes != 14 || len(preview.Errors) != 0 {
+		t.Fatalf("preview metadata = %+v", preview)
+	}
+	if len(operations) != 1 {
+		t.Fatalf("operations = %d", len(operations))
+	}
+	query := operations[0].Query
+	for _, want := range []string{"draftPreview(id: $id)", "draftId", "success", "renderedHtml", "sourceFormat", "sourceBytes", "renderedBytes", "errors"} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("preview query missing %q: %s", want, query)
+		}
+	}
+	if strings.Contains(query, "draft(id:") {
+		t.Fatalf("preview query must use draftPreview contract, got %s", query)
+	}
+}
+
 func stringPtr(value string) *string { return &value }

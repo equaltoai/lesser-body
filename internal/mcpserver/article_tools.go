@@ -32,6 +32,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 		{Def: articleDraftUpdateDef(), Handler: handleArticleDraftUpdate},
 		{Def: articleDraftGetDef(), Handler: handleArticleDraftGet},
 		{Def: articleDraftListDef(), Handler: handleArticleDraftList},
+		{Def: articleDraftPreviewDef(), Handler: handleArticleDraftPreview},
 		{Def: articleDraftPublishDef(), Handler: handleArticleDraftPublish},
 		{Def: articleUpdateDef(), Handler: handleArticleUpdate},
 		{Def: articleGetDef(), Handler: handleArticleGet},
@@ -102,6 +103,25 @@ func articleDraftGetDef() mcpruntime.ToolDef {
 				"id":{"type":"string","description":"Lesser CMS draft id."},
 				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact. standard returns draft content."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
+			},
+			"required":["id"]
+		}`),
+	}
+}
+
+func articleDraftPreviewDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "article_draft_preview",
+		Description:  "Render one Article draft through Lesser's canonical publication renderer/sanitizer. Defaults compact and never returns raw draft content.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: articleDraftPreviewOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","description":"Lesser CMS draft id."},
+				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact. standard returns Lesser-rendered sanitized HTML when rendering succeeds."},
+				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact rendered-HTML preview character budget. Zero means the tool default."},
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
 			},
 			"required":["id"]
@@ -294,6 +314,38 @@ func handleArticleDraftList(ctx context.Context, args json.RawMessage) (*mcprunt
 	return articleDraftListResult(conn, limit, params)
 }
 
+func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	params, err := parseArticleDraftViewParams(args)
+	if err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	var in struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return nil, invalidParams("id is required")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := articleCMS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := client.PreviewArticleDraft(ctx, token, id)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_preview", err)
+	}
+
+	return articleDraftPreviewResult(preview, params)
+}
+
 func articleCMS(ctx context.Context) (*cmsapi.Client, error) {
 	_ = ctx
 	return cmsapi.Default()
@@ -417,11 +469,88 @@ func articleDraftListResult(conn *cmsapi.DraftConnection, limit int, params arti
 	return articleDraftStructuredResult("article_draft_list", params.View, fmt.Sprintf("%d Article draft refs", len(drafts)), payload, text, params.MaxOutputBytes)
 }
 
+func articleDraftPreviewResult(preview *cmsapi.DraftPreview, params articleDraftViewParams) (*mcpruntime.ToolResult, error) {
+	if preview == nil {
+		return nil, fmt.Errorf("article_draft_preview returned no preview")
+	}
+	shaped := shapeArticleDraftPreview(preview, params)
+	payload := map[string]any{
+		"tool":       "article_draft_preview",
+		"operation":  "preview",
+		"source":     "lesser_cms_graphql",
+		"view":       params.View,
+		"preview":    shaped,
+		"previewRef": compactArticleDraftPreview(preview, params),
+		"omitted":    articleDraftPreviewOmissions(preview, params.View),
+		"budget":     articleDraftPreviewBudget(params, preview),
+		"policy":     articleDraftPreviewPolicyMetadata(),
+	}
+	text := map[string]any{
+		"tool":    "article_draft_preview",
+		"draftId": strings.TrimSpace(preview.DraftID),
+		"success": preview.Success,
+		"view":    params.View,
+	}
+	if len(preview.Errors) > 0 {
+		text["errors"] = preview.Errors
+	}
+	summary := fmt.Sprintf("Article draft preview: %s", strings.TrimSpace(preview.DraftID))
+	if !preview.Success {
+		summary = fmt.Sprintf("Article draft preview render failed: %s", strings.TrimSpace(preview.DraftID))
+	}
+	return articleDraftStructuredResult("article_draft_preview", params.View, summary, payload, text, params.MaxOutputBytes)
+}
+
 func shapeArticleDraft(draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) map[string]any {
 	if params.View == readViewStandard {
 		return standardArticleDraft(draft)
 	}
 	return compactArticleDraftRef(draft, params, fallbackContent)
+}
+
+func shapeArticleDraftPreview(preview *cmsapi.DraftPreview, params articleDraftViewParams) map[string]any {
+	if params.View == readViewStandard {
+		return standardArticleDraftPreview(preview)
+	}
+	return compactArticleDraftPreview(preview, params)
+}
+
+func compactArticleDraftPreview(preview *cmsapi.DraftPreview, params articleDraftViewParams) map[string]any {
+	out := baseArticleDraftPreview(preview)
+	out["expand"] = map[string]any{
+		"tool":       "article_draft_preview",
+		"arguments":  map[string]any{"id": strings.TrimSpace(preview.DraftID), "view": readViewStandard},
+		"resultPath": "structuredContent.data.preview",
+	}
+	if preview.Success && preview.RenderedHTML != nil && strings.TrimSpace(*preview.RenderedHTML) != "" {
+		renderedPreview, truncated := compactStringWithTruncation(*preview.RenderedHTML, params.PreviewRunes)
+		putIfNotEmpty(out, "renderedHtmlPreview", renderedPreview)
+		out["renderedHtmlTruncated"] = truncated
+	}
+	return out
+}
+
+func standardArticleDraftPreview(preview *cmsapi.DraftPreview) map[string]any {
+	out := baseArticleDraftPreview(preview)
+	if preview.Success && preview.RenderedHTML != nil {
+		out["renderedHtml"] = *preview.RenderedHTML
+	}
+	return out
+}
+
+func baseArticleDraftPreview(preview *cmsapi.DraftPreview) map[string]any {
+	errorsList := append([]string(nil), preview.Errors...)
+	if errorsList == nil {
+		errorsList = []string{}
+	}
+	return map[string]any{
+		"draftId":       strings.TrimSpace(preview.DraftID),
+		"success":       preview.Success,
+		"sourceFormat":  strings.TrimSpace(preview.SourceFormat),
+		"sourceBytes":   preview.SourceBytes,
+		"renderedBytes": preview.RenderedBytes,
+		"errors":        errorsList,
+	}
 }
 
 func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) map[string]any {
@@ -496,12 +625,38 @@ func articleDraftOmissions(view string, list bool) []any {
 	}
 }
 
+func articleDraftPreviewOmissions(preview *cmsapi.DraftPreview, view string) []any {
+	if view == readViewStandard || preview == nil || !preview.Success || preview.RenderedHTML == nil {
+		return nil
+	}
+	return []any{
+		map[string]any{
+			"path":      "preview.renderedHtml",
+			"reason":    "compact_default",
+			"expansion": "call article_draft_preview with view=standard",
+		},
+	}
+}
+
 func articleDraftBudget(params articleDraftViewParams) map[string]any {
 	return map[string]any{
 		"view":                params.View,
 		"contentPreviewRunes": params.PreviewRunes,
 		"maxOutputBytes":      params.MaxOutputBytes,
 	}
+}
+
+func articleDraftPreviewBudget(params articleDraftViewParams, preview *cmsapi.DraftPreview) map[string]any {
+	out := map[string]any{
+		"view":                 params.View,
+		"renderedPreviewRunes": params.PreviewRunes,
+		"maxOutputBytes":       params.MaxOutputBytes,
+	}
+	if preview != nil {
+		out["sourceBytes"] = preview.SourceBytes
+		out["renderedBytes"] = preview.RenderedBytes
+	}
+	return out
 }
 
 func articleDraftPolicyMetadata() map[string]any {
@@ -511,6 +666,16 @@ func articleDraftPolicyMetadata() map[string]any {
 		"canonicalArticleId":   "not_promised_until_publish",
 		"publishToolAvailable": true,
 		"publishTool":          "article_draft_publish",
+	}
+}
+
+func articleDraftPreviewPolicyMetadata() map[string]any {
+	return map[string]any{
+		"renderAuthority":         "lesser_article_renderer_sanitizer",
+		"rendersLocally":          false,
+		"rawDraftContentReturned": false,
+		"rawDraftContentUsed":     false,
+		"graphqlOperation":        "draftPreview",
 	}
 }
 

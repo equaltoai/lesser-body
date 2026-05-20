@@ -108,6 +108,7 @@ func TestCommunicationAndWriteToolOutputSchemasAdvertised(t *testing.T) {
 		assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName[name]), "data", "object")
 	}
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_draft_publish"], "data"), "canonicalArticleUrl", "string")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_draft_preview"], "data"), "preview", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_update"], "data"), "article", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_get"], "data"), "articleRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_list"], "data"), "articles", "array")

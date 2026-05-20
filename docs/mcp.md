@@ -366,6 +366,7 @@ Scope key:
 | `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
 | `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
 | `article_draft_list` | Read | List the authenticated actor's unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
+| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer; defaults to bounded rendered-HTML preview and never returns raw draft content. |
 | `article_draft_publish` | Write | Publish an existing Article draft through Lesser CMS; returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
@@ -461,6 +462,11 @@ index/ref pages and expand only the items they need:
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
   draft id as a final published Article id.
+- `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
+  returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
+  byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
+  `preview.success=false` with deterministic `preview.errors`; body does not render Markdown/HTML locally and does
+  not return raw draft source as preview output.
 - `article_draft_publish({"id":"<draft-id>"})` is the explicit write-scoped transition from draft to published
   Article. Its response includes `canonicalArticleId` and `canonicalArticleUrl`; for new Lesser M1 Articles these are
   the canonical `https://<domain>/articles/<slug>` identity/URL. Compact responses omit Article content by default.
@@ -522,11 +528,11 @@ measured byte details rather than silently dropping fields.
 Notes:
 
 - Article authoring is exposed through draft tools (`article_draft_create`, `article_draft_update`,
-  `article_draft_get`, `article_draft_list`), explicit publish (`article_draft_publish`), and published Article
-  read/update tools (`article_get`, `article_list`, `article_update`). These tools use Lesser `POST /api/graphql`
-  via the internal CMS client boundary, keep draft creation/update from auto-publishing, and return compact refs by
-  default. Article preview (`#265`) remains gated on the Lesser renderer/sanitizer surface and the end-to-end canary
-  (`#267`) remains separate.
+  `article_draft_get`, `article_draft_list`, `article_draft_preview`), explicit publish
+  (`article_draft_publish`), and published Article read/update tools (`article_get`, `article_list`,
+  `article_update`). These tools use Lesser `POST /api/graphql` via the internal CMS client boundary, keep draft
+  creation/update from auto-publishing, return compact refs/previews by default, and rely on Lesser as the renderer
+  authority for draft preview. The end-to-end canary (`#267`) remains separate.
   Long-form Article authoring must not be routed through Mastodon-compatible status APIs such as `post_create`.
 - Social and Article tools require an **OAuth JWT** bearer token (not just an instance key) because they call the
   Lesser API on behalf of the authenticated agent.
@@ -688,11 +694,11 @@ Notes:
   search results. Neither tool silently flips defaults to compact.
 - Mailbox, memory, skills, and Article tools publish MCP annotations in `tools/list`: read-only hints for mailbox
   reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, `skill_bundle_get`,
-  `article_draft_get`, `article_draft_list`, `article_get`, and `article_list`; destructive hints for
-  send/reply/delete tools; non-destructive additive mutation hints for `article_draft_create`,
-  `article_draft_update`, `article_draft_publish`, and `article_update`; and idempotent hints for mailbox read-state
-  mutation tools. `memory_append` remains an additive write and is only idempotent when callers provide `event_id`,
-  so it is not advertised as unconditionally idempotent.
+  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, and `article_list`;
+  destructive hints for send/reply/delete tools; non-destructive additive mutation hints for
+  `article_draft_create`, `article_draft_update`, `article_draft_publish`, and `article_update`; and idempotent
+  hints for mailbox read-state mutation tools. `memory_append` remains an additive write and is only idempotent when
+  callers provide `event_id`, so it is not advertised as unconditionally idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
   `direction`, `threadId`, bounded `query`, `unreadOnly`/`read`, `includeArchived`/`archived`, and
   `includeDeleted`/`deleted`.

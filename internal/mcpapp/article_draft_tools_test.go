@@ -61,7 +61,7 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 		tools[tool.Name] = tool
 	}
 
-	for _, name := range []string{"article_draft_create", "article_draft_update", "article_draft_get", "article_draft_list", "article_draft_publish", "article_update", "article_get", "article_list"} {
+	for _, name := range []string{"article_draft_create", "article_draft_update", "article_draft_get", "article_draft_list", "article_draft_preview", "article_draft_publish", "article_update", "article_get", "article_list"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("expected %s in tools/list", name)
 		}
@@ -72,6 +72,7 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 	assertToolHint(t, tools["article_draft_update"], &falsehood, &falsehood, &falsehood)
 	assertToolHint(t, tools["article_draft_get"], &truth, nil, nil)
 	assertToolHint(t, tools["article_draft_list"], &truth, nil, nil)
+	assertToolHint(t, tools["article_draft_preview"], &truth, nil, nil)
 	assertToolHint(t, tools["article_draft_publish"], &falsehood, &falsehood, &falsehood)
 	assertToolHint(t, tools["article_update"], &falsehood, &falsehood, &falsehood)
 	assertToolHint(t, tools["article_get"], &truth, nil, nil)
@@ -97,6 +98,7 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_create"], "data"), "draft", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_get"], "data"), "draftRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_list"], "data"), "drafts", "array")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_preview"], "data"), "preview", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_publish"], "data"), "article", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_get"], "data"), "articleRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_list"], "data"), "articles", "array")
@@ -232,6 +234,133 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	}
 	if len(operations) != 4 {
 		t.Fatalf("expected 4 GraphQL operations, got %d", len(operations))
+	}
+}
+
+func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	renderedHTML := "<article><h1>Preview</h1><p>" + strings.Repeat("rendered ", 80) + "</p></article>"
+	var operations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
+			t.Fatalf("missing bearer auth: %q", got)
+		}
+		var op map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		operations = append(operations, op)
+		if op["operationName"] != "BodyArticleDraftPreview" {
+			t.Fatalf("unexpected operation %q", op["operationName"])
+		}
+		query, _ := op["query"].(string)
+		if !strings.Contains(query, "draftPreview(id: $id)") || strings.Contains(query, "draft(id:") {
+			t.Fatalf("preview tool must use Lesser draftPreview contract, got %s", query)
+		}
+
+		vars := op["variables"].(map[string]any)
+		id := vars["id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		preview := map[string]any{
+			"draftId":       id,
+			"success":       true,
+			"renderedHtml":  renderedHTML,
+			"sourceFormat":  "MARKDOWN",
+			"sourceBytes":   42,
+			"renderedBytes": len(renderedHTML),
+			"errors":        []string{},
+		}
+		if id == "bad-draft" {
+			preview = map[string]any{
+				"draftId":       id,
+				"success":       false,
+				"renderedHtml":  nil,
+				"sourceFormat":  "MARKDOWN",
+				"sourceBytes":   42,
+				"renderedBytes": 0,
+				"errors":        []string{"unsupported article content format: plaintext"},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draftPreview": preview}})
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	readAuth := "Bearer " + newTestToken(t, "test", "agent1", []string{"read"})
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {readAuth}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	compact := callArticleTool(t, env, app, readAuth, sessionID, 2, "article_draft_preview", map[string]any{"id": "draft-1", "preview_chars": 32})
+	compactData := toolData(t, compact)
+	compactPreview := compactData["preview"].(map[string]any)
+	if compactPreview["draftId"] != "draft-1" || compactPreview["success"] != true {
+		t.Fatalf("unexpected compact preview: %+v", compactPreview)
+	}
+	if _, hasFull := compactPreview["renderedHtml"]; hasFull {
+		t.Fatalf("compact preview must omit full renderedHtml: %+v", compactPreview)
+	}
+	if got, _ := compactPreview["renderedHtmlPreview"].(string); got == "" || len([]rune(got)) > 32 {
+		t.Fatalf("expected bounded renderedHtmlPreview, got %q", got)
+	}
+	if compactPreview["renderedHtmlTruncated"] != true || compactPreview["sourceBytes"] != float64(42) {
+		t.Fatalf("unexpected compact preview budget metadata: %+v", compactPreview)
+	}
+	policy := compactData["policy"].(map[string]any)
+	if policy["rendersLocally"] != false || policy["rawDraftContentReturned"] != false || policy["renderAuthority"] != "lesser_article_renderer_sanitizer" {
+		t.Fatalf("preview policy should keep Lesser as render authority, got %+v", policy)
+	}
+	omitted := compactData["omitted"].([]any)
+	if len(omitted) == 0 {
+		t.Fatalf("compact preview should include renderedHtml omission metadata")
+	}
+
+	standard := callArticleTool(t, env, app, readAuth, sessionID, 3, "article_draft_preview", map[string]any{"id": "draft-1", "view": "standard"})
+	standardPreview := toolData(t, standard)["preview"].(map[string]any)
+	if standardPreview["renderedHtml"] != renderedHTML {
+		t.Fatalf("standard preview should include Lesser-rendered HTML, got %+v", standardPreview)
+	}
+
+	renderFailure := callArticleTool(t, env, app, readAuth, sessionID, 4, "article_draft_preview", map[string]any{"id": "bad-draft"})
+	failedPreview := toolData(t, renderFailure)["preview"].(map[string]any)
+	if failedPreview["success"] != false {
+		t.Fatalf("render failure should be surfaced as success=false payload, got %+v", failedPreview)
+	}
+	if _, hasFull := failedPreview["renderedHtml"]; hasFull {
+		t.Fatalf("render failure must not include renderedHtml: %+v", failedPreview)
+	}
+	errorsList := failedPreview["errors"].([]any)
+	if len(errorsList) != 1 || !strings.Contains(errorsList[0].(string), "unsupported article content format") {
+		t.Fatalf("render failure errors = %+v", errorsList)
+	}
+
+	tooLarge := callToolAllowError(t, env, app, readAuth, sessionID, 5, "article_draft_preview", map[string]any{"id": "draft-1", "max_output_bytes": 256})
+	if !tooLarge.IsError {
+		t.Fatalf("expected response_too_large tool error, got %+v", tooLarge)
+	}
+	toolErr := tooLarge.StructuredContent["error"].(map[string]any)
+	if toolErr["code"] != "response_too_large" {
+		t.Fatalf("expected response_too_large tool error, got %+v", toolErr)
+	}
+
+	if len(operations) != 4 {
+		t.Fatalf("expected 4 draftPreview operations, got %d", len(operations))
 	}
 }
 

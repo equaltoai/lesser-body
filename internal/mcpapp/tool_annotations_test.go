@@ -100,7 +100,7 @@ func TestMCPToolAnnotationsForMailboxAndMemory(t *testing.T) {
 	truth := true
 	falsehood := false
 
-	for _, name := range []string{"email_read", "email_get", "email_get_content", "email_search", "sms_read", "voicemail_read", "memory_query", "soul_read", "skills_catalog", "skill_bundle_get", "conversation_get", "direct_messages_read", "article_get", "article_list"} {
+	for _, name := range []string{"email_read", "email_get", "email_get_content", "email_search", "sms_read", "voicemail_read", "memory_query", "soul_read", "skills_catalog", "skill_bundle_get", "conversation_get", "direct_messages_read", "article_draft_preview", "article_get", "article_list"} {
 		assertHint(name, &truth, nil, nil)
 	}
 	for _, name := range []string{"email_send", "email_reply", "email_delete", "sms_send"} {
