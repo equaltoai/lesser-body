@@ -61,7 +61,7 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 		tools[tool.Name] = tool
 	}
 
-	for _, name := range []string{"article_draft_create", "article_draft_update", "article_draft_get", "article_draft_list"} {
+	for _, name := range []string{"article_draft_create", "article_draft_update", "article_draft_get", "article_draft_list", "article_draft_publish", "article_update", "article_get", "article_list"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("expected %s in tools/list", name)
 		}
@@ -72,6 +72,10 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 	assertToolHint(t, tools["article_draft_update"], &falsehood, &falsehood, &falsehood)
 	assertToolHint(t, tools["article_draft_get"], &truth, nil, nil)
 	assertToolHint(t, tools["article_draft_list"], &truth, nil, nil)
+	assertToolHint(t, tools["article_draft_publish"], &falsehood, &falsehood, &falsehood)
+	assertToolHint(t, tools["article_update"], &falsehood, &falsehood, &falsehood)
+	assertToolHint(t, tools["article_get"], &truth, nil, nil)
+	assertToolHint(t, tools["article_list"], &truth, nil, nil)
 
 	var createSchema struct {
 		Properties map[string]map[string]any `json:"properties"`
@@ -93,6 +97,9 @@ func TestArticleDraftToolsRegisteredWithCompactSchemas(t *testing.T) {
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_create"], "data"), "draft", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_get"], "data"), "draftRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_list"], "data"), "drafts", "array")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_draft_publish"], "data"), "article", "object")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_get"], "data"), "articleRef", "object")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, tools["article_list"], "data"), "articles", "array")
 }
 
 func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
@@ -189,8 +196,8 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 		t.Fatalf("expected bounded compact create preview, got %q", preview)
 	}
 	policy := createData["policy"].(map[string]any)
-	if policy["autoPublishes"] != false || policy["publishToolAvailable"] != false {
-		t.Fatalf("draft policy should deny publish claims, got %+v", policy)
+	if policy["autoPublishes"] != false || policy["publishToolAvailable"] != true || policy["publishTool"] != "article_draft_publish" {
+		t.Fatalf("draft policy should deny auto-publish while advertising explicit publish tool, got %+v", policy)
 	}
 
 	update := callArticleTool(t, env, app, writeAuth, sessionID, 3, "article_draft_update", map[string]any{"id": "draft-1", "title": "Updated"})
@@ -220,6 +227,146 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	}
 	drafts := listData["drafts"].([]any)
 	first := drafts[0].(map[string]any)
+	if _, hasContent := first["content"]; hasContent {
+		t.Fatalf("compact list should omit content: %+v", first)
+	}
+	if len(operations) != 4 {
+		t.Fatalf("expected 4 GraphQL operations, got %d", len(operations))
+	}
+}
+
+func TestPublishedArticleToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	var operations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
+			t.Fatalf("missing bearer auth: %q", got)
+		}
+		var op map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		operations = append(operations, op)
+		query, _ := op["query"].(string)
+		if strings.Contains(query, "preview") || strings.Contains(query, "api/v1/statuses") {
+			t.Fatalf("published Article tools must not expose preview/status authoring query: %s", query)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch op["operationName"] {
+		case "BodyPublishArticleDraft":
+			vars := op["variables"].(map[string]any)
+			if vars["id"] != "draft-1" {
+				t.Fatalf("publish variables = %+v", vars)
+			}
+			if queryContainsArticleContentSelection(query) {
+				t.Fatalf("compact publish should not request GraphQL content field: %s", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"publishDraft":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","excerpt":"Short excerpt","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`))
+		case "BodyUpdateArticle":
+			vars := op["variables"].(map[string]any)
+			if vars["id"] != "https://example.com/articles/hello" {
+				t.Fatalf("update variables = %+v", vars)
+			}
+			input := vars["input"].(map[string]any)
+			if input["title"] != "Updated" || input["contentFormat"] != "HTML" {
+				t.Fatalf("update input = %+v", input)
+			}
+			if _, hasSlug := input["slug"]; hasSlug {
+				t.Fatalf("article_update must not expose slug mutation, got %+v", input)
+			}
+			if queryContainsArticleContentSelection(query) {
+				t.Fatalf("compact update should not request GraphQL content field: %s", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"updateArticle":{"id":"https://example.com/articles/hello","slug":"hello","title":"Updated","excerpt":"Updated excerpt","contentFormat":"HTML","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:01:00Z"}}}`))
+		case "BodyArticle":
+			if !queryContainsArticleContentSelection(query) {
+				t.Fatalf("article_get should request content so compact can produce a bounded preview: %s", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"article":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","excerpt":"Short excerpt","content":"` + strings.Repeat("published body ", 80) + `","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":160,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`))
+		case "BodyArticles":
+			vars := op["variables"].(map[string]any)
+			if vars["authorId"] != "agent1" {
+				t.Fatalf("article_list should default to authenticated actor authorId, got %+v", vars)
+			}
+			if queryContainsArticleContentSelection(query) {
+				t.Fatalf("compact list should not request GraphQL content field: %s", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"node":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","excerpt":"Short excerpt","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"},"cursor":"article-1"}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"article-1","endCursor":"article-1"},"totalCount":1}}}`))
+		default:
+			t.Fatalf("unexpected operation %q", op["operationName"])
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	writeAuth := "Bearer " + newTestToken(t, "test", "agent1", []string{"write"})
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {writeAuth}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	publish := callArticleTool(t, env, app, writeAuth, sessionID, 2, "article_draft_publish", map[string]any{"id": "draft-1"})
+	publishData := toolData(t, publish)
+	if publishData["canonicalArticleId"] != "https://example.com/articles/hello" || publishData["canonicalArticleUrl"] != "https://example.com/articles/hello" {
+		t.Fatalf("publish should expose canonical Article id/url, got %+v", publishData)
+	}
+	publishedArticle := publishData["article"].(map[string]any)
+	if _, hasContent := publishedArticle["content"]; hasContent {
+		t.Fatalf("compact publish should omit content: %+v", publishedArticle)
+	}
+
+	update := callArticleTool(t, env, app, writeAuth, sessionID, 3, "article_update", map[string]any{
+		"id":             "https://example.com/articles/hello",
+		"title":          "Updated",
+		"content":        strings.Repeat("updated body ", 20),
+		"content_format": "HTML",
+		"preview_chars":  24,
+	})
+	updateArticle := toolData(t, update)["article"].(map[string]any)
+	if updateArticle["title"] != "Updated" {
+		t.Fatalf("unexpected update article: %+v", updateArticle)
+	}
+	if preview, _ := updateArticle["contentPreview"].(string); preview == "" || len([]rune(preview)) > 24 {
+		t.Fatalf("expected bounded compact update preview, got %q", preview)
+	}
+
+	readAuth := "Bearer " + newTestToken(t, "test", "agent1", []string{"read"})
+	get := callArticleTool(t, env, app, readAuth, sessionID, 4, "article_get", map[string]any{"id": "https://example.com/articles/hello", "preview_chars": 32})
+	getArticle := toolData(t, get)["article"].(map[string]any)
+	if _, hasContent := getArticle["content"]; hasContent {
+		t.Fatalf("compact get should omit content: %+v", getArticle)
+	}
+	if preview, _ := getArticle["contentPreview"].(string); preview == "" || len([]rune(preview)) > 32 {
+		t.Fatalf("expected bounded compact get preview, got %q", preview)
+	}
+	expand := getArticle["expand"].(map[string]any)
+	if expand["tool"] != "article_get" {
+		t.Fatalf("expected article_get expansion, got %+v", expand)
+	}
+
+	list := callArticleTool(t, env, app, readAuth, sessionID, 5, "article_list", map[string]any{"limit": 1})
+	listData := toolData(t, list)
+	if listData["nextCursor"] != "article-1" || listData["count"] != float64(1) || listData["authorId"] != "agent1" {
+		t.Fatalf("unexpected list data: %+v", listData)
+	}
+	articles := listData["articles"].([]any)
+	first := articles[0].(map[string]any)
 	if _, hasContent := first["content"]; hasContent {
 		t.Fatalf("compact list should omit content: %+v", first)
 	}
@@ -261,6 +408,8 @@ func TestArticleDraftWriteToolsRequireWriteScope(t *testing.T) {
 	}{
 		{name: "article_draft_create", args: map[string]any{"content": "hello"}},
 		{name: "article_draft_update", args: map[string]any{"id": "draft-1", "title": "Hello"}},
+		{name: "article_draft_publish", args: map[string]any{"id": "draft-1"}},
+		{name: "article_update", args: map[string]any{"id": "https://example.com/articles/hello", "title": "Hello"}},
 	} {
 		callParams, _ := json.Marshal(map[string]any{"name": tc.name, "arguments": tc.args})
 		resp := invokeJSON(t, env, app, map[string][]string{
@@ -272,7 +421,7 @@ func TestArticleDraftWriteToolsRequireWriteScope(t *testing.T) {
 		}
 	}
 	if requests != 0 {
-		t.Fatalf("forbidden Article draft writes should not reach Lesser, got %d requests", requests)
+		t.Fatalf("forbidden Article writes should not reach Lesser, got %d requests", requests)
 	}
 }
 
@@ -337,4 +486,8 @@ func toolData(t testing.TB, result articleToolCallResult) map[string]any {
 
 func queryContainsDraftContentSelection(query string) bool {
 	return strings.Contains(query, " content ") || strings.Contains(query, " content}") || strings.Contains(query, " content\n")
+}
+
+func queryContainsArticleContentSelection(query string) bool {
+	return queryContainsDraftContentSelection(query)
 }

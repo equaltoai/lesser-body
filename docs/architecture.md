@@ -61,9 +61,9 @@ Notes:
 - `internal/cmsapi/`
   - wraps the Lesser API client for `POST /api/graphql`
   - forwards the caller's OAuth bearer token to Lesser and preserves Lesser HTTP errors through `lesserapi.APIError`
-  - preserves GraphQL `data`, `errors`, and `extensions` and layers typed draft-only Article operations for MCP tools
-  - powers `article_draft_create`, `article_draft_update`, `article_draft_get`, and `article_draft_list` without direct DynamoDB access
-  - keeps preview/publish Article workflows out of body until the Lesser renderer and publish contract stabilize, and avoids Mastodon status APIs for long-form authoring
+  - preserves GraphQL `data`, `errors`, and `extensions` and layers typed Article draft/publish/read/update operations for MCP tools
+  - powers `article_draft_create`, `article_draft_update`, `article_draft_get`, `article_draft_list`, `article_draft_publish`, `article_update`, `article_get`, and `article_list` without direct DynamoDB access
+  - keeps preview/canary workflows out of body until their Lesser surfaces stabilize, and avoids Mastodon status APIs for long-form authoring
 
 ### Communication tools (delegate to lesser-host)
 

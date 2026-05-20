@@ -107,6 +107,10 @@ func TestCommunicationAndWriteToolOutputSchemasAdvertised(t *testing.T) {
 	for _, name := range []string{"post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "notification_dismiss"} {
 		assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName[name]), "data", "object")
 	}
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_draft_publish"], "data"), "canonicalArticleUrl", "string")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_update"], "data"), "article", "object")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_get"], "data"), "articleRef", "object")
+	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["article_list"], "data"), "articles", "array")
 }
 
 func toolsListByNameForOutputSchemaTest(t testing.TB, env *testkit.Env, app *apptheory.App) map[string]mcpruntime.ToolDef {

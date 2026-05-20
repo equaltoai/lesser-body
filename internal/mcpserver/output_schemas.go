@@ -254,6 +254,65 @@ func articleDraftListOutputSchema() json.RawMessage {
 	}`)
 }
 
+func articleSingleOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"view":{"type":"string"},
+					"article":{"type":"object","additionalProperties":true},
+					"articleRef":{"type":"object","additionalProperties":true},
+					"canonicalArticleId":{"type":"string"},
+					"canonicalArticleUrl":{"type":"string"},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true},
+					"policy":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","view","article","articleRef","canonicalArticleId","canonicalArticleUrl","policy"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func articleListOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"view":{"type":"string"},
+					"authorId":{"type":"string"},
+					"articles":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"},
+					"limit":{"type":"integer"},
+					"nextCursor":{"type":"string"},
+					"pageInfo":{"type":"object","additionalProperties":true},
+					"totalCount":{"type":"integer"},
+					"omitted":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"budget":{"type":"object","additionalProperties":true},
+					"policy":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","view","authorId","articles","count","limit","policy"],
+				"additionalProperties":true
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
