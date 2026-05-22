@@ -390,7 +390,13 @@ func identityLookupOutputSchema() json.RawMessage {
 				"type":"object",
 				"properties":{
 					"query":{"type":"string"},
-					"matches":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"matches":{"type":"array","items":{"type":"object","properties":{
+						"agentId":{"type":"string"},
+						"domain":{"type":"string"},
+						"localId":{"type":"string"},
+						"status":{"type":"string"},
+						"email":{"type":"object","properties":{"address":{"type":"string"}},"additionalProperties":true}
+					},"additionalProperties":true}},
 					"count":{"type":"integer"}
 				},
 				"required":["query","matches","count"],

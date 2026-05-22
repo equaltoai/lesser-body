@@ -395,7 +395,7 @@ Scope key:
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
 | `identity_whoami` | Read | Return the current soul agent identity, channels, and contact preferences. |
 | `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
-| `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary only. |
+| `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary plus the current managed `lessersoul.ai` email address when Host publishes one. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
 
 ### Shared read-tool shaping parameters
@@ -766,8 +766,14 @@ Notes:
   `reason:"sender_identifier_not_authoritatively_bound"` unless Host supplies explicit authoritative sender-identifier
   binding provenance. Sender display/address fields alone are never trusted for a positive verification.
 - `identity_lookup` intentionally returns only public identity summary fields (`agentId`, `domain`, `localId`,
-  `status`). It does not expose arbitrary agents' private `channels` or `contactPreferences`; use
-  `identity_whoami` or `agent://channels` only for the authenticated agent's own channel data.
+  `status`) plus `email.address` when Host's published registration marks a current managed
+  `<agent-local-id>.<instance-slug>@lessersoul.ai` channel. The dotted local-part is treated as an opaque email string:
+  body does not derive an agent or instance identity from it, does not resolve legacy aliases, and does not construct
+  canonical addresses locally. It does not expose arbitrary agents' private `channels` or `contactPreferences`; use
+  `identity_whoami` or `agent://channels` only for the authenticated agent's own full channel data.
+- Existing bare `<agent-local-id>@lessersoul.ai` addresses are legacy inbound-only aliases for migrated agents. They are
+  not current public channels and should not appear as `identity_lookup.email.address` or `identity_whoami.channels.email.address`
+  after Host has republished the current registration.
 - Bare `user@domain` inputs are ambiguous with private managed email reachability and fail closed. Use the explicit
   ActivityPub handle form `@user@domain` when the input is meant to be a public actor handle.
 - When a query is only a local ID, lesser-body resolves it against the authenticated actor's current instance domain.

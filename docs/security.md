@@ -106,7 +106,10 @@ Lesser -> lesser-host with managed instance trust
 MCP caller bearer only to Lesser's self-scope routes. It does **not** call lesser-host directly, does **not** use
 `LESSER_HOST_INSTANCE_KEY`, and does **not** pass MCP caller bearer tokens to lesser-host control-plane auth.
 When callers request `include_raw=true`, raw public Host/Soul endpoint payloads are sanitized before they are returned;
-private reachability fields such as email/phone channels and contact preferences remain redacted.
+private reachability fields such as phone channels, contact preferences, and arbitrary non-managed email channels
+remain redacted. The one public email projection is Host's current managed `lessersoul.ai` channel, when Host publishes
+it as `<agent-local-id>.<instance-slug>@lessersoul.ai`; legacy bare `<agent-local-id>@lessersoul.ai` aliases are
+inbound-only and are not current public channels.
 
 The rejected unsafe pattern is direct MCP bearer forwarding to lesser-host. MCP bearers are issued by Lesser for an
 actor-scoped MCP resource; lesser-host control-plane auth cannot derive the local account, current instance domain, or

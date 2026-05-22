@@ -277,12 +277,58 @@ func agentPublicIdentityPayload(ctx context.Context, client *soulapi.Client, age
 	agentEnvelope, _ := agentAny.(map[string]any)
 	agent, _ := agentEnvelope["agent"].(map[string]any)
 
-	return map[string]any{
+	out := map[string]any{
 		"agentId": agentID,
 		"domain":  stringFromMap(agent, "domain"),
 		"localId": stringFromMap(agent, "local_id"),
 		"status":  stringFromMap(agent, "status"),
-	}, nil
+	}
+	if email := publicManagedEmailPayload(ctx, client, agentID, stringFromMap(agent, "local_id")); len(email) > 0 {
+		out["email"] = email
+	}
+	return out, nil
+}
+
+func publicManagedEmailPayload(ctx context.Context, client *soulapi.Client, agentID string, localID string) map[string]any {
+	regAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/agents/"+url.PathEscape(agentID)+"/registration", nil, "", nil)
+	if err != nil {
+		return nil
+	}
+	reg, _ := regAny.(map[string]any)
+	reg = normalizeSoulReadRegistrationEnvelope(reg)
+	channels, _ := reg["channels"].(map[string]any)
+	email, _ := channels["email"].(map[string]any)
+	address := strings.TrimSpace(stringFromMap(email, "address"))
+	if !isCurrentManagedSoulEmailAddress(address, localID) {
+		return nil
+	}
+	return map[string]any{"address": address}
+}
+
+func isCurrentManagedSoulEmailAddress(address string, localID string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.Contains(address, " ") {
+		return false
+	}
+	localPart, domain, ok := strings.Cut(address, "@")
+	if !ok || strings.TrimSpace(localPart) == "" || !strings.EqualFold(strings.TrimSpace(domain), "lessersoul.ai") {
+		return false
+	}
+	// Legacy bare aliases use <agent-local-id>@lessersoul.ai. They are inbound-only
+	// aliases after Project 37 and must not be advertised as the current lookup channel.
+	if normalizedLocalID := normalizeLookupLocalIDOrEmpty(localID); normalizedLocalID != "" &&
+		strings.EqualFold(strings.TrimSpace(localPart), normalizedLocalID) {
+		return false
+	}
+	return true
+}
+
+func normalizeLookupLocalIDOrEmpty(raw string) string {
+	localID, ok := normalizeLookupLocalID(raw)
+	if !ok {
+		return ""
+	}
+	return localID
 }
 
 func agentChannelsPayload(ctx context.Context, client *soulapi.Client, agentID string) (map[string]any, error) {

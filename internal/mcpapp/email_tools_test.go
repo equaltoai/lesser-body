@@ -36,6 +36,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 
 	const agentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	const tokenUser = "agent1"
+	const canonicalEmail = "agent-bob.simulacrum@lessersoul.ai"
 
 	var gotAuth string
 	var gotContactabilityAuth string
@@ -50,7 +51,7 @@ func TestLBM2_EmailSendAndReply_TalkToCommAPI(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-bob","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"capabilities":["email-send","email-read","email-manage"]}},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"` + canonicalEmail + `","capabilities":["email-send","email-read","email-manage"]}},"contactPreferences":{},"boundaries":[{"id":"b1","category":"communication_policy","channel":"email","statement":"no unsolicited"}]}`))
 		case r.URL.Path == "/api/v1/soul/comm/contactability/"+agentID:
 			gotContactabilityAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{` + hostedBoundSoulPolicyJSON("not_entitled", false, false) + `,"channels":[{"channelType":"email","sendAllowed":true,"receiveAllowed":true}]}`))

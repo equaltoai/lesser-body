@@ -80,14 +80,18 @@ After lesser-host Soul Comm Mailbox v1 is deployed for a lab instance, validate 
 ```bash
 MCP_ENDPOINT="https://api.dev.example.com/mcp/<actor>" \
 MCP_BEARER_TOKEN="<oauth-access-token>" \
+EXPECTED_IDENTITY_EMAIL="<agent-local-id>.<instance-slug>@lessersoul.ai" \
+LEGACY_ALIAS_EMAIL="<agent-local-id>@lessersoul.ai" \
 scripts/canary_host_mailbox_mcp.py
 ```
 
-The canary checks `tools/list`, default/standard `email_read`, explicit `email_read(view=compact)` expansion refs,
-`email_get`, `email_get_content`, `email_search`, `email_mark_read`, `email_mark_unread`, `sms_read`,
-`voicemail_read`, and a not-found error path. It never prints full message bodies, full recipient addresses, bearer
-tokens, or raw upstream error payloads; error logs keep only stable codes/status plus hashed payload summaries where
-details are needed.
+The canary checks `tools/list`, `identity_whoami`, `identity_lookup`, default/standard `email_read`, explicit
+`email_read(view=compact)` expansion refs, `email_get`, `email_get_content`, `email_search`, `email_mark_read`,
+`email_mark_unread`, `sms_read`, `voicemail_read`, and a not-found error path. Optional `email_send` / `email_reply`
+checks require `MAILBOX_CONFIRM_MUTATIONS=true` plus the relevant `CANARY_*` variables because they queue real
+messages through lesser-host. It never prints full message bodies, full recipient addresses, bearer tokens, or raw
+upstream error payloads; error logs keep only stable codes/status plus hashed payload summaries where details are
+needed.
 
 ### Article MCP canary
 

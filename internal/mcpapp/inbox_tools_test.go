@@ -28,6 +28,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	soulapi.ResetForTests()
 
 	const agentID = "0x1111111111111111111111111111111111111111111111111111111111111111"
+	const canonicalEmail = "agent-alice.simulacrum@lessersoul.ai"
 	var gotAuth []string
 	var listQueries []string
 	var statePaths []string
@@ -42,7 +43,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"capabilities":["email-read","email-manage"]},"phone":{"capabilities":["sms-read","voice-receive"],"entitlement":{"state":"provisioned"}}},"contactPreferences":{},"boundaries":[],` + boundBodyPolicyJSON("communication.email.read", "communication.email.manage", "communication.sms.read", "communication.voice.read") + `}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"` + canonicalEmail + `","capabilities":["email-read","email-manage"]},"phone":{"capabilities":["sms-read","voice-receive"],"entitlement":{"state":"provisioned"}}},"contactPreferences":{},"boundaries":[],` + boundBodyPolicyJSON("communication.email.read", "communication.email.manage", "communication.sms.read", "communication.voice.read") + `}`))
 		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages" && r.Method == http.MethodGet:
 			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
 			listQueries = append(listQueries, r.URL.RawQuery)
@@ -54,7 +55,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 					_, _ = w.Write([]byte(`{"messages":[],"count":0,"hasMore":false}`))
 					return
 				}
-				_, _ = w.Write([]byte(mailboxEmailListFixture(agentID, 10)))
+				_, _ = w.Write([]byte(mailboxEmailListFixture(agentID, canonicalEmail, 10)))
 			case "sms":
 				_, _ = w.Write([]byte(`{"messages":[{"messageRef":"comm-delivery-sms","deliveryId":"comm-delivery-sms","messageId":"comm-msg-sms","threadId":"comm-thread-sms","direction":"inbound","channelType":"sms","status":"delivered","from":{"number":"+15550142"},"preview":"sms preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:05:00Z"}],"count":1,"hasMore":false}`))
 			case "voice":
@@ -64,7 +65,7 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 			}
 		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email" && r.Method == http.MethodGet:
 			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
-			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","deliveryId":"comm-delivery-email","messageId":"comm-msg-email","threadId":"comm-thread-email","direction":"inbound","channelType":"email","status":"delivered","from":{"address":"alice@example.com"},"to":{"address":"agent@example.com"},"subject":"Hi","preview":"Hello preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:00:00Z"}}`))
+			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","deliveryId":"comm-delivery-email","messageId":"comm-msg-email","threadId":"comm-thread-email","direction":"inbound","channelType":"email","status":"delivered","from":{"address":"alice@example.com"},"to":{"address":"` + canonicalEmail + `"},"subject":"Hi","preview":"Hello preview","content":{"available":true},"state":{"read":false,"archived":false,"deleted":false},"createdAt":"2026-03-04T12:00:00Z"}}`))
 		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email/content" && r.Method == http.MethodGet:
 			gotAuth = append(gotAuth, r.Header.Get("Authorization"))
 			contentPathCalls++
@@ -139,6 +140,9 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	msg, _ := messages[0].(map[string]any)
 	if msg["messageId"] != "comm-delivery-email-00" || msg["hostMessageId"] != "comm-msg-email-00" || msg["body"] != "Hello preview 00" || msg["bodyIsPreview"] != true {
 		t.Fatalf("unexpected email message: %+v", msg)
+	}
+	if to, _ := msg["to"].(map[string]any); to["address"] != canonicalEmail {
+		t.Fatalf("mailbox list should preserve canonical instance-scoped recipient as opaque email string, got %+v", to)
 	}
 	for _, alias := range []string{"messageId", "messageRef", "deliveryId", "hostMessageId"} {
 		if value, _ := msg[alias].(string); value == "" {
@@ -289,6 +293,10 @@ func TestLBM3_InboxToolsUseHostMailbox(t *testing.T) {
 	if _, ok := emailGet["message"].(map[string]any); !ok {
 		t.Fatalf("expected email_get message, got %+v", emailGet)
 	}
+	emailGetMessage, _ := emailGet["message"].(map[string]any)
+	if to, _ := emailGetMessage["to"].(map[string]any); to["address"] != canonicalEmail {
+		t.Fatalf("email_get should preserve canonical instance-scoped recipient as opaque email string, got %+v", to)
+	}
 	emailGetRaw := callTool(23, "email_get", map[string]any{"messageId": "comm-delivery-email", "include_raw": true})
 	emailGetRawMessage, _ := emailGetRaw["message"].(map[string]any)
 	if _, ok := emailGetRawMessage["_raw"].(map[string]any); !ok {
@@ -365,7 +373,7 @@ func callToolAllowError(t *testing.T, env *testkit.Env, app *apptheory.App, auth
 	return out
 }
 
-func mailboxEmailListFixture(agentID string, count int) string {
+func mailboxEmailListFixture(agentID string, toAddress string, count int) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, `{"instanceSlug":"inst1","agentId":%q,"messages":[`, agentID)
 	for i := range count {
@@ -382,7 +390,7 @@ func mailboxEmailListFixture(agentID string, count int) string {
 			"channelType":"email",
 			"status":"delivered",
 			"from":{"address":"alice-%s@example.com","displayName":"Alice %s"},
-			"to":{"address":"agent@example.com"},
+			"to":{"address":%q},
 			"subject":"Hi %s",
 			"preview":"Hello preview %s",
 			"body":"FULL_MAILBOX_BODY_SHOULD_NOT_APPEAR %s %s",
@@ -390,7 +398,7 @@ func mailboxEmailListFixture(agentID string, count int) string {
 			"state":{"read":false,"archived":false,"deleted":false},
 			"createdAt":"2026-03-04T12:00:00Z",
 			"debugPayload":{"large":"%s"}
-		}`, suffix, suffix, suffix, suffix, suffix, suffix, suffix, suffix, strings.Repeat("full mailbox body ", 120), suffix, strings.Repeat("mailbox-debug ", 80))
+		}`, suffix, suffix, suffix, suffix, suffix, toAddress, suffix, suffix, suffix, strings.Repeat("full mailbox body ", 120), suffix, strings.Repeat("mailbox-debug ", 80))
 	}
 	_, _ = fmt.Fprintf(&b, `],"count":%d,"hasMore":true,"nextCursor":"cursor-2"}`, count)
 	return b.String()

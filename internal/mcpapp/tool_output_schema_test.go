@@ -32,7 +32,14 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["skill_bundle_get"], "data"), "verification", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["soul_read"], "data"), "souls", "array")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["identity_whoami"], "data"), "channels", "object")
-	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["identity_lookup"], "data"), "matches", "array")
+	identityLookupDataSchema := nestedOutputSchemaObject(t, toolsByName["identity_lookup"], "data")
+	assertSchemaPropertyType(t, identityLookupDataSchema, "matches", "array")
+	matchesSchema := schemaPropertyObject(t, identityLookupDataSchema, "matches")
+	matchItemSchema, _ := matchesSchema["items"].(map[string]any)
+	if matchItemSchema == nil {
+		t.Fatalf("identity_lookup matches schema missing item object: %+v", matchesSchema)
+	}
+	assertSchemaPropertyType(t, matchItemSchema, "email", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["identity_verify"], "data"), "verified", "boolean")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["post_get"], "data"), "statusRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["notification_get"], "data"), "notificationRef", "object")
