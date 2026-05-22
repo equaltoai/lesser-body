@@ -1951,7 +1951,7 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 				"created_at":"2026-05-18T10:00:00Z",
 				"channel":"email",
 				"messageId":"comm-medic",
-				"from":{"name":"Medic","address":"medic@lessersoul.ai","email":"medic@lessersoul.ai","soulAgentId":"agent://medic","identifier":"medic"},
+				"from":{"name":"Medic","address":"medic.simulacrum@lessersoul.ai","email":"medic.simulacrum@lessersoul.ai","soulAgentId":"agent://medic","identifier":"medic"},
 				"subject":"Medic check-in",
 				"body":"` + strings.Repeat("medic body ", 40) + contentTail + `"
 			},
@@ -2046,7 +2046,7 @@ func TestM5_NotificationsReadActorFilterOverfetchesAndMatchesSources(t *testing.
 	}
 
 	comm := callSocialTool(t, env, app, authHeader, sessionID, 4, "notifications_read", map[string]any{
-		"actor": "medic@lessersoul.ai",
+		"actor": "medic.simulacrum@lessersoul.ai",
 		"limit": 2,
 		"view":  "compact",
 	})

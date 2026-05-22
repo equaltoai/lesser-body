@@ -9,6 +9,14 @@ Optional environment:
   MAILBOX_MESSAGE_ID Message ref to use for get/content/state checks. If omitted, the
                      first email_read message is used.
   MAILBOX_QUERY      Bounded metadata/preview query for email_search (default: subject/from preview from message, else "canary")
+  EXPECTED_IDENTITY_EMAIL Canonical managed soul email, for example agent.instance@lessersoul.ai.
+  LEGACY_ALIAS_EMAIL Legacy bare alias that must not be exposed as the current identity email.
+  IDENTITY_LOOKUP_QUERY identity_lookup query to verify; defaults to identity_whoami localId when available.
+  MAILBOX_CONFIRM_MUTATIONS Set true before running optional email_send/email_reply checks.
+  CANARY_SEND_EMAIL_TO Recipient for optional email_send check.
+  CANARY_CONFIRM_EMAIL_REPLY Set true before running optional email_reply against the selected mailbox message.
+  CANARY_REPLY_MESSAGE_ID Optional mailbox messageRef for email_reply; defaults to MAILBOX_MESSAGE_ID/first message.
+  LEGACY_ALIAS_INBOUND_CONFIRMED Set true when separate Host/provider evidence confirmed legacy alias inbound delivery.
 
 The script intentionally redacts bearer tokens and never prints message bodies, raw upstream payloads, or full recipient
 addresses. Compact-view checks print only payload sizes, opaque message refs, state booleans, and content hashes.
@@ -47,8 +55,16 @@ def env_required(name: str) -> str:
     return value
 
 
+def env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def env_bool(name: str) -> bool:
+    return env(name).lower() in ("1", "true", "yes", "on")
+
+
 ENDPOINT = env_required("MCP_ENDPOINT")
-AUTHORIZATION = os.environ.get("MCP_AUTHORIZATION", "").strip()
+AUTHORIZATION = env("MCP_AUTHORIZATION")
 if not AUTHORIZATION:
     token = env_required("MCP_BEARER_TOKEN")
     AUTHORIZATION = token if token.lower().startswith("bearer ") else f"Bearer {token}"
@@ -270,6 +286,23 @@ def first_message(data: dict[str, Any]) -> dict[str, Any] | None:
     return first if isinstance(first, dict) else None
 
 
+def email_address_from_identity(value: dict[str, Any]) -> str:
+    email = value.get("email") if isinstance(value.get("email"), dict) else {}
+    address = str(email.get("address") or "").strip()
+    if address:
+        return address
+    channels = value.get("channels") if isinstance(value.get("channels"), dict) else {}
+    channel_email = channels.get("email") if isinstance(channels.get("email"), dict) else {}
+    return str(channel_email.get("address") or "").strip()
+
+
+def require_expected_identity_email(label: str, address: str, expected: str, legacy: str) -> None:
+    if expected and address.lower() != expected.lower():
+        raise CanaryError(f"{label} email mismatch: got_present={bool(address)} expected={expected}")
+    if legacy and address.lower() == legacy.lower():
+        raise CanaryError(f"{label} exposed legacy bare alias as current identity email")
+
+
 def require_standard_message_shape(message: dict[str, Any], context: str) -> None:
     if not message:
         return
@@ -325,6 +358,8 @@ def main() -> int:
     tools_result = post_rpc("tools/list")
     tool_names = {tool.get("name") for tool in tools_result.get("tools", []) if isinstance(tool, dict)}
     required_tools = {
+        "identity_whoami",
+        "identity_lookup",
         "email_read",
         "email_get",
         "email_get_content",
@@ -339,7 +374,54 @@ def main() -> int:
         raise CanaryError(f"tools/list missing host mailbox tools: {missing}")
     log("ok tools/list host mailbox tools present")
 
+    body_mcp_evidence: dict[str, Any] = {
+        "identity_whoami": False,
+        "identity_lookup": False,
+        "email_send": False,
+        "email_reply": False,
+        "email_read": False,
+        "email_get": False,
+        "email_get_content": False,
+        "email_search": False,
+        "legacy_alias_inbound": env_bool("LEGACY_ALIAS_INBOUND_CONFIRMED"),
+    }
+    expected_identity_email = env("EXPECTED_IDENTITY_EMAIL")
+    legacy_alias_email = env("LEGACY_ALIAS_EMAIL")
+
+    whoami = tool_call("identity_whoami", {})
+    whoami_email = email_address_from_identity(whoami)
+    require_expected_identity_email("identity_whoami", whoami_email, expected_identity_email, legacy_alias_email)
+    body_mcp_evidence["identity_whoami"] = True
+    if whoami_email:
+        body_mcp_evidence["identity_whoami_email"] = whoami_email
+    log(f"ok identity_whoami email_present={bool(whoami_email)}")
+
+    identity_lookup_query = env("IDENTITY_LOOKUP_QUERY") or str(whoami.get("localId") or "").strip()
+    if identity_lookup_query:
+        lookup = tool_call("identity_lookup", {"query": identity_lookup_query})
+        matches = lookup.get("matches") if isinstance(lookup.get("matches"), list) else []
+        lookup_email = ""
+        for match in matches:
+            if isinstance(match, dict):
+                lookup_email = email_address_from_identity(match)
+                if lookup_email:
+                    break
+        require_expected_identity_email("identity_lookup", lookup_email, expected_identity_email, legacy_alias_email)
+        body_mcp_evidence["identity_lookup"] = True
+        if lookup_email:
+            body_mcp_evidence["identity_lookup_email"] = lookup_email
+        log(
+            "ok identity_lookup "
+            f"query_sha256_12={hashlib.sha256(identity_lookup_query.encode('utf-8')).hexdigest()[:12]} "
+            f"matches={len(matches)} email_present={bool(lookup_email)}"
+        )
+    elif expected_identity_email:
+        raise CanaryError("IDENTITY_LOOKUP_QUERY is required when EXPECTED_IDENTITY_EMAIL is set and identity_whoami lacks localId")
+    else:
+        log("skip identity_lookup IDENTITY_LOOKUP_QUERY unavailable")
+
     email_list = tool_call("email_read", {"folder": "inbox", "limit": 5, "includeArchived": False})
+    body_mcp_evidence["email_read"] = True
     default_payload_bytes = last_response_bytes
     messages = email_list.get("messages") if isinstance(email_list.get("messages"), list) else []
     default_message = first_message(email_list)
@@ -377,11 +459,13 @@ def main() -> int:
         message_ref = str(message.get("messageId") or message.get("messageRef") or "").strip()
     if compact_ref:
         compact_get_data = tool_call("email_get", {"messageId": compact_ref})
+        body_mcp_evidence["email_get"] = True
         compact_got_message = compact_get_data.get("message") if isinstance(compact_get_data.get("message"), dict) else {}
         log(f"ok compact expansion email_get {summarize_message(compact_got_message)}")
         compact_content = compact_got_message.get("content") if isinstance(compact_got_message.get("content"), dict) else {}
         if compact_content.get("available") is not False:
             compact_content_data = tool_call("email_get_content", {"messageId": compact_ref})
+            body_mcp_evidence["email_get_content"] = True
             compact_body = str(compact_content_data.get("body") or "")
             log(
                 "ok compact expansion email_get_content "
@@ -395,6 +479,7 @@ def main() -> int:
     log(f"using mailbox message {summarize_message(message or {'messageId': message_ref})}")
 
     get_data = tool_call("email_get", {"messageId": message_ref})
+    body_mcp_evidence["email_get"] = True
     got_message = get_data.get("message") if isinstance(get_data.get("message"), dict) else {}
     log(f"ok email_get {summarize_message(got_message)}")
 
@@ -404,6 +489,7 @@ def main() -> int:
         content_available = False
     if content_available:
         content_data = tool_call("email_get_content", {"messageId": message_ref})
+        body_mcp_evidence["email_get_content"] = True
         body = str(content_data.get("body") or "")
         log(
             "ok email_get_content "
@@ -413,12 +499,50 @@ def main() -> int:
     else:
         log("skip email_get_content content.available=false")
 
-    search_query = os.environ.get("MAILBOX_QUERY", "").strip()
+    search_query = env("MAILBOX_QUERY")
     if not search_query:
         search_query = str(got_message.get("subject") or "").strip()[:64] or "canary"
     search_data = tool_call("email_search", {"query": search_query, "folder": "inbox", "limit": 5})
+    body_mcp_evidence["email_search"] = True
     search_messages = search_data.get("messages") if isinstance(search_data.get("messages"), list) else []
     log(f"ok email_search query_sha256_12={hashlib.sha256(search_query.encode('utf-8')).hexdigest()[:12]} count={len(search_messages)}")
+
+    if env("CANARY_SEND_EMAIL_TO"):
+        if not env_bool("MAILBOX_CONFIRM_MUTATIONS"):
+            raise CanaryError("MAILBOX_CONFIRM_MUTATIONS=true is required before CANARY_SEND_EMAIL_TO")
+        send_to = env("CANARY_SEND_EMAIL_TO")
+        send_data = tool_call(
+            "email_send",
+            {
+                "to": send_to,
+                "subject": "Project 37 body MCP canary",
+                "body": "Project 37 body MCP email_send canary.",
+                "idempotencyKey": f"project37-body-email-send-{int(time.time())}",
+            },
+        )
+        body_mcp_evidence["email_send"] = True
+        log(f"ok email_send messageRef_present={bool(send_data.get('messageId') or send_data.get('messageRef'))} status={send_data.get('status', 'n/a')}")
+    else:
+        log("skip email_send CANARY_SEND_EMAIL_TO not set")
+
+    if env_bool("CANARY_CONFIRM_EMAIL_REPLY"):
+        if not env_bool("MAILBOX_CONFIRM_MUTATIONS"):
+            raise CanaryError("MAILBOX_CONFIRM_MUTATIONS=true is required before CANARY_CONFIRM_EMAIL_REPLY")
+        reply_ref = env("CANARY_REPLY_MESSAGE_ID") or message_ref
+        if not reply_ref:
+            raise CanaryError("CANARY_REPLY_MESSAGE_ID or a readable mailbox message is required for email_reply")
+        reply_data = tool_call(
+            "email_reply",
+            {
+                "messageId": reply_ref,
+                "body": "Project 37 body MCP email_reply canary.",
+                "idempotencyKey": f"project37-body-email-reply-{int(time.time())}",
+            },
+        )
+        body_mcp_evidence["email_reply"] = True
+        log(f"ok email_reply messageRef_present={bool(reply_data.get('messageId') or reply_data.get('messageRef'))} status={reply_data.get('status', 'n/a')}")
+    else:
+        log("skip email_reply CANARY_CONFIRM_EMAIL_REPLY not true")
 
     read_data = tool_call("email_mark_read", {"messageId": message_ref})
     read_state = read_data.get("state") if isinstance(read_data.get("state"), dict) else {}
@@ -439,6 +563,7 @@ def main() -> int:
     missing_ref = f"canary-missing-{int(time.time())}"
     tool_call("email_get", {"messageId": missing_ref}, expect_error=True)
 
+    log("body_mcp_evidence=" + json.dumps(body_mcp_evidence, sort_keys=True))
     log("canary passed")
     return 0
 

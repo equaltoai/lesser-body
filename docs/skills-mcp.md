@@ -353,7 +353,7 @@ Abbreviated response:
           ],
           "approval_id": "approval-1",
           "approval_authority_type": "pilot",
-          "approval_authority_id": "pilot@lessersoul.ai",
+          "approval_authority_id": "pilot.simulacrum@lessersoul.ai",
           "approved_by": "Pilot",
           "principal_id": "principal-1",
           "principal_approval_id": "pa-1"

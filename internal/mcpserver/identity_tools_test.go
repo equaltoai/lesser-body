@@ -114,6 +114,73 @@ func setStructFields(dest any, values map[string]string) {
 	}
 }
 
+func TestCurrentManagedSoulEmailAddressDetection(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		localID string
+		want    bool
+	}{
+		{
+			name:    "instance scoped managed address is current",
+			address: "agent-alice.simulacrum@lessersoul.ai",
+			localID: "agent-alice",
+			want:    true,
+		},
+		{
+			name:    "dotted local id remains opaque",
+			address: "ops.v2.simulacrum@lessersoul.ai",
+			localID: "ops.v2",
+			want:    true,
+		},
+		{
+			name:    "legacy bare managed address is inbound-only",
+			address: "agent-alice@lessersoul.ai",
+			localID: "agent-alice",
+			want:    false,
+		},
+		{
+			name:    "legacy bare managed address fails closed without local id",
+			address: "agent-alice@lessersoul.ai",
+			localID: "",
+			want:    false,
+		},
+		{
+			name:    "legacy bare managed address fails closed with invalid local id",
+			address: "agent-alice@lessersoul.ai",
+			localID: "agent/alice",
+			want:    false,
+		},
+		{
+			name:    "external private email is not a public managed channel",
+			address: "agent-alice@example.com",
+			localID: "agent-alice",
+			want:    false,
+		},
+		{
+			name:    "missing local id fails closed",
+			address: "agent-alice.simulacrum@lessersoul.ai",
+			localID: "",
+			want:    false,
+		},
+		{
+			name:    "invalid local id fails closed",
+			address: "agent-alice.simulacrum@lessersoul.ai",
+			localID: "agent/alice",
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isCurrentManagedSoulEmailAddress(tc.address, tc.localID); got != tc.want {
+				t.Fatalf("isCurrentManagedSoulEmailAddress(%q, %q) = %v, want %v", tc.address, tc.localID, got, tc.want)
+			}
+		})
+	}
+}
+
 func installSoulBindingLookup(t *testing.T, username string, agentID string) {
 	t.Helper()
 	t.Setenv("LESSER_TABLE_NAME", "test-main-table")

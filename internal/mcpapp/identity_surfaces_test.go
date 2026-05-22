@@ -33,6 +33,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer soulbinding.ResetForTests()
 
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const canonicalEmail = "agent-alice.simulacrum@lessersoul.ai"
 	const tokenUser = "Agent1"
 
 	var gotBindingPK string
@@ -81,7 +82,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 				"version":"3",
 				"channels":{
 					"ens":{"name":"agent-alice.lessersoul.eth"},
-					"email":{"address":"agent-alice@lessersoul.ai","capabilities":["receive","send"],"verified":true},
+					"email":{"address":"agent-alice.simulacrum@lessersoul.ai","capabilities":["receive","send"],"verified":true},
 					"phone":{"number":"+15550142","capabilities":["sms-receive"],"verified":false}
 				},
 				"contactPreferences":{
@@ -98,14 +99,14 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 				"agentId":"` + agentID + `",
 				"channels":{
 					"ens":{"name":"agent-alice.lessersoul.eth"},
-					"email":{"address":"agent-alice@lessersoul.ai","capabilities":["receive","send"],"verified":true},
+					"email":{"address":"agent-alice.simulacrum@lessersoul.ai","capabilities":["receive","send"],"verified":true},
 					"phone":{"number":"+15550142","capabilities":["sms-receive"],"verified":false}
 				},
 				"contactPreferences":{"preferred":"email"},
 				"updatedAt":"2026-03-09T12:00:00Z"
 			}`))
-		case r.URL.Path == "/api/v1/soul/resolve/email/agent-alice@lessersoul.ai":
-			emailResolveQueries = append(emailResolveQueries, "agent-alice@lessersoul.ai")
+		case r.URL.Path == "/api/v1/soul/resolve/email/agent-alice.simulacrum@lessersoul.ai":
+			emailResolveQueries = append(emailResolveQueries, "agent-alice.simulacrum@lessersoul.ai")
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/resolve/email/steward@remote.example":
 			emailResolveQueries = append(emailResolveQueries, "steward@remote.example")
@@ -126,7 +127,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"deliveryId":"comm-delivery-email",
 					"channelType":"email",
 					"direction":"inbound",
-					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"from":{"address":"agent-alice.simulacrum@lessersoul.ai","soulAgentId":"` + agentID + `"},
 					"to":[{"address":"agent1@test.example.com"}],
 					"subject":"Host email",
 					"preview":"Hello from host",
@@ -153,7 +154,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"deliveryId":"comm-delivery-ens",
 					"channelType":"email",
 					"direction":"inbound",
-					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"from":{"address":"agent-alice.simulacrum@lessersoul.ai","soulAgentId":"` + agentID + `"},
 					"subject":"ENS host email",
 					"preview":"ENS verified",
 					"createdAt":"2026-05-10T12:02:00Z"
@@ -166,7 +167,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"deliveryId":"comm-delivery-spoof",
 					"channelType":"email",
 					"direction":"inbound",
-					"from":{"name":"agent-alice@lessersoul.ai","address":"agent-alice@lessersoul.ai"},
+					"from":{"name":"agent-alice.simulacrum@lessersoul.ai","address":"agent-alice.simulacrum@lessersoul.ai"},
 					"subject":"Spoof",
 					"preview":"No authoritative sender provenance",
 					"createdAt":"2026-05-10T12:03:00Z"
@@ -179,7 +180,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"deliveryId":"comm-delivery-wrong-agent",
 					"channelType":"email",
 					"direction":"inbound",
-					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+					"from":{"address":"agent-alice.simulacrum@lessersoul.ai","soulAgentId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 					"subject":"Wrong agent",
 					"preview":"Wrong provenance",
 					"createdAt":"2026-05-10T12:04:00Z"
@@ -195,7 +196,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"type":"communication:inbound",
 					"channel":"email",
 					"messageId":"comm-msg-001",
-					"from":{"address":"agent-alice@lessersoul.ai","soulAgentId":"` + agentID + `"},
+					"from":{"address":"agent-alice.simulacrum@lessersoul.ai","soulAgentId":"` + agentID + `"},
 					"subject":"Hi",
 					"body":"Hello there",
 					"receivedAt":"2026-03-09T12:00:00Z"
@@ -205,7 +206,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 					"type":"communication:inbound",
 					"channel":"email",
 					"messageId":"comm-msg-spoof",
-					"from":{"name":"agent-alice@lessersoul.ai","address":"attacker@example.net"},
+					"from":{"name":"agent-alice.simulacrum@lessersoul.ai","address":"attacker@example.net"},
 					"subject":"Spoof",
 					"body":"Pretending",
 					"receivedAt":"2026-03-09T12:01:00Z"
@@ -250,6 +251,16 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		}
 		if _, ok := match["contactPreferences"]; ok {
 			t.Fatalf("%s: identity_lookup must not expose contactPreferences in public matches: %+v", label, match)
+		}
+	}
+	assertPublicLookupEmail := func(label string, match map[string]any) {
+		t.Helper()
+		email, _ := match["email"].(map[string]any)
+		if email["address"] != canonicalEmail {
+			t.Fatalf("%s: identity_lookup email address should reflect host current managed channel %q, got %+v", label, canonicalEmail, match["email"])
+		}
+		if strings.Contains(mustJSON(t, match), "agent-alice@lessersoul.ai") {
+			t.Fatalf("%s: identity_lookup must not expose legacy bare lessersoul alias as current email: %+v", label, match)
 		}
 	}
 	assertToolErrorPayload := func(label string, body []byte, wantCode string) map[string]any {
@@ -315,7 +326,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("expected channels object")
 		}
 		email, _ := ch["email"].(map[string]any)
-		if email["address"] != "agent-alice@lessersoul.ai" {
+		if email["address"] != "agent-alice.simulacrum@lessersoul.ai" {
 			t.Fatalf("unexpected email channel: %+v", email)
 		}
 		prefs, _ := data["contactPreferences"].(map[string]any)
@@ -358,6 +369,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): agentId want %s got %v", q, agentID, match["agentId"])
 		}
 		assertPublicLookupMatch(q, match)
+		assertPublicLookupEmail(q, match)
 	}
 	if len(searchQueries) != 0 {
 		t.Fatalf("identity_lookup for ENS should resolve directly, got search queries %+v", searchQueries)
@@ -375,7 +387,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 
 	// identity_lookup should fail closed for private reachability identifiers until
 	// lesser-host exposes a body-facing instance-authenticated resolver.
-	for _, q := range []string{"agent-alice@lessersoul.ai", "+15550142"} {
+	for _, q := range []string{"agent-alice.simulacrum@lessersoul.ai", "+15550142"} {
 		callParams, _ := json.Marshal(map[string]any{
 			"name":      "identity_lookup",
 			"arguments": map[string]any{"query": q},
@@ -437,6 +449,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
 		}
 		assertPublicLookupMatch(q, match)
+		assertPublicLookupEmail(q, match)
 	}
 	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2"}) {
 		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
@@ -505,6 +518,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("%s identity_lookup(%q): agentId want %s got %v", tc.name, tc.query, agentID, match["agentId"])
 		}
 		assertPublicLookupMatch(tc.name, match)
+		assertPublicLookupEmail(tc.name, match)
 		if !reflect.DeepEqual(searchQueries, []string{tc.wantSearchQ}) {
 			t.Fatalf("%s identity_lookup(%q): search q want [%s] got %+v", tc.name, tc.query, tc.wantSearchQ, searchQueries)
 		}
@@ -646,7 +660,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 		channel    string
 		identifier string
 	}{
-		{channel: "email", identifier: "agent-alice@lessersoul.ai"},
+		{channel: "email", identifier: "agent-alice.simulacrum@lessersoul.ai"},
 		{channel: "phone", identifier: "+15550142"},
 	} {
 		channelResolveQueries = nil
@@ -711,7 +725,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	// Host mailbox messageRefs are the canonical provenance source for message-scoped identity_verify.
 	{
 		emailResolveQueries = nil
-		data := callIdentityVerify(60, "email", "agent-alice@lessersoul.ai", "comm-delivery-email")
+		data := callIdentityVerify(60, "email", "agent-alice.simulacrum@lessersoul.ai", "comm-delivery-email")
 		if data["verified"] != false || data["reason"] != "sender_identifier_not_authoritatively_bound" {
 			t.Fatalf("expected host email message verification to fail closed without authoritative identifier binding, got %+v", data)
 		}
@@ -736,7 +750,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("expected host ENS message verification to succeed, got %+v", data)
 		}
 
-		data = callIdentityVerify(63, "email", "agent-alice@lessersoul.ai", "comm-delivery-spoof")
+		data = callIdentityVerify(63, "email", "agent-alice.simulacrum@lessersoul.ai", "comm-delivery-spoof")
 		if data["verified"] != false || data["reason"] != "message_lacks_authoritative_sender_provenance" {
 			t.Fatalf("expected spoofed host sender to fail missing provenance, got %+v", data)
 		}
@@ -859,7 +873,7 @@ func TestIdentityVerifyHostMessageRequiresMailboxReadPolicy(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice@lessersoul.ai"}},"contactPreferences":{},` + boundBodyPolicyJSON("identity.self.read", "communication.channels.read") + `}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice.simulacrum@lessersoul.ai"}},"contactPreferences":{},` + boundBodyPolicyJSON("identity.self.read", "communication.channels.read") + `}`))
 		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-email":
 			hostMailboxCalled = true
 			_, _ = w.Write([]byte(`{"message":{"messageRef":"comm-delivery-email","channelType":"email"}}`))
@@ -893,7 +907,7 @@ func TestIdentityVerifyHostMessageRequiresMailboxReadPolicy(t *testing.T) {
 		"name": "identity_verify",
 		"arguments": map[string]any{
 			"channel":    "email",
-			"identifier": "agent-alice@lessersoul.ai",
+			"identifier": "agent-alice.simulacrum@lessersoul.ai",
 			"messageId":  "comm-delivery-email",
 		},
 	})
@@ -952,7 +966,7 @@ func TestIdentityVerifyHostMessageRejectsCrossChannelSummary(t *testing.T) {
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID:
 			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"agent-alice","status":"active"}}`))
 		case r.URL.Path == "/api/v1/soul/agents/"+agentID+"/registration":
-			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice@lessersoul.ai"},"phone":{"number":"+15550142"}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.email.read") + `}`))
+			_, _ = w.Write([]byte(`{"version":"3","channels":{"email":{"address":"agent-alice.simulacrum@lessersoul.ai"},"phone":{"number":"+15550142"}},"contactPreferences":{},` + boundBodyPolicyJSON("communication.email.read") + `}`))
 		case r.URL.Path == "/api/v1/soul/comm/mailbox/"+agentID+"/messages/comm-delivery-sms":
 			hostMailboxCalled = true
 			if got := r.Header.Get("Authorization"); got != "Bearer instance-key-123" {
@@ -999,7 +1013,7 @@ func TestIdentityVerifyHostMessageRejectsCrossChannelSummary(t *testing.T) {
 		"name": "identity_verify",
 		"arguments": map[string]any{
 			"channel":    "email",
-			"identifier": "agent-alice@lessersoul.ai",
+			"identifier": "agent-alice.simulacrum@lessersoul.ai",
 			"messageId":  "comm-delivery-sms",
 		},
 	})

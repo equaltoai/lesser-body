@@ -203,17 +203,21 @@ Expected headers include:
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
 
 For host-backed communication validation in lab, run the mailbox canary with an actor-scoped OAuth token. The script
-checks default/standard mailbox compatibility plus explicit `email_read(view=compact)` expansion refs. It redacts
-credentials and prints hashes/lengths instead of message bodies:
+checks `identity_whoami`, `identity_lookup`, default/standard mailbox compatibility, and explicit
+`email_read(view=compact)` expansion refs. It redacts credentials and prints hashes/lengths instead of message bodies:
 
 ```bash
 MCP_ENDPOINT="https://api.<stageDomain>/mcp/<actor>" \
 MCP_BEARER_TOKEN="<oauth-access-token>" \
+EXPECTED_IDENTITY_EMAIL="<agent-local-id>.<instance-slug>@lessersoul.ai" \
+LEGACY_ALIAS_EMAIL="<agent-local-id>@lessersoul.ai" \
 scripts/canary_host_mailbox_mcp.py
 ```
 
 Set `MAILBOX_MESSAGE_ID=<messageRef>` when the inbox has no recent email message but you have a known host mailbox
 reference to validate get/content/state paths.
+Set `MAILBOX_CONFIRM_MUTATIONS=true`, `CANARY_SEND_EMAIL_TO=<recipient>`, and `CANARY_CONFIRM_EMAIL_REPLY=true` only
+when you explicitly want the canary to queue real `email_send` / `email_reply` messages through lesser-host.
 
 For Article/CMS release validation after the Lesser Article contract is deployed, run the Article canary with a
 write-scoped actor OAuth token. The canary creates and publishes a real canary Article, so the explicit confirmation
