@@ -314,10 +314,13 @@ func isCurrentManagedSoulEmailAddress(address string, localID string) bool {
 	if !ok || strings.TrimSpace(localPart) == "" || !strings.EqualFold(strings.TrimSpace(domain), "lessersoul.ai") {
 		return false
 	}
+	normalizedLocalID := normalizeLookupLocalIDOrEmpty(localID)
+	if normalizedLocalID == "" {
+		return false
+	}
 	// Legacy bare aliases use <agent-local-id>@lessersoul.ai. They are inbound-only
 	// aliases after Project 37 and must not be advertised as the current lookup channel.
-	if normalizedLocalID := normalizeLookupLocalIDOrEmpty(localID); normalizedLocalID != "" &&
-		strings.EqualFold(strings.TrimSpace(localPart), normalizedLocalID) {
+	if strings.EqualFold(strings.TrimSpace(localPart), normalizedLocalID) {
 		return false
 	}
 	return true

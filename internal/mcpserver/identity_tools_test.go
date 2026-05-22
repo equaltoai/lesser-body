@@ -140,16 +140,34 @@ func TestCurrentManagedSoulEmailAddressDetection(t *testing.T) {
 			want:    false,
 		},
 		{
+			name:    "legacy bare managed address fails closed without local id",
+			address: "agent-alice@lessersoul.ai",
+			localID: "",
+			want:    false,
+		},
+		{
+			name:    "legacy bare managed address fails closed with invalid local id",
+			address: "agent-alice@lessersoul.ai",
+			localID: "agent/alice",
+			want:    false,
+		},
+		{
 			name:    "external private email is not a public managed channel",
 			address: "agent-alice@example.com",
 			localID: "agent-alice",
 			want:    false,
 		},
 		{
-			name:    "missing local id does not parse dotted local part semantics",
+			name:    "missing local id fails closed",
 			address: "agent-alice.simulacrum@lessersoul.ai",
 			localID: "",
-			want:    true,
+			want:    false,
+		},
+		{
+			name:    "invalid local id fails closed",
+			address: "agent-alice.simulacrum@lessersoul.ai",
+			localID: "agent/alice",
+			want:    false,
 		},
 	}
 
