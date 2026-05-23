@@ -18,6 +18,7 @@ const (
 // It intentionally models only the fields needed for the draft-only MCP slice.
 type Draft struct {
 	ID              string  `json:"id"`
+	AuthorID        string  `json:"authorId,omitempty"`
 	ContentType     string  `json:"contentType,omitempty"`
 	Title           *string `json:"title,omitempty"`
 	Slug            *string `json:"slug,omitempty"`
@@ -274,7 +275,7 @@ func normalizeContentFormat(value string) string {
 }
 
 func draftFields(includeContent bool) string {
-	fields := "id contentType title slug contentFormat status scheduledAt objectId autosaveVersion lastSavedAt createdAt updatedAt"
+	fields := "id authorId contentType title slug contentFormat status scheduledAt objectId autosaveVersion lastSavedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}

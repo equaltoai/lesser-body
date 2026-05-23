@@ -116,6 +116,17 @@ func handleArticleDraftPublish(ctx context.Context, args json.RawMessage) (*mcpr
 	if err != nil {
 		return nil, err
 	}
+	// CSR-010: Verify the draft being published belongs to the
+	// authenticated actor BEFORE executing the publish mutation.
+	// The ownership check must gate the side effect, not trail it.
+	draft, err := client.GetArticleDraft(ctx, token, id, false)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_publish", err)
+	}
+	if !draftOwnedByAuthenticatedActor(ctx, draft) {
+		return articleDraftOwnershipDenied("article_draft_publish", draft.ID)
+	}
+
 	article, err := client.PublishArticleDraft(ctx, token, id, params.View == readViewStandard)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_publish", err)
@@ -402,8 +413,10 @@ func standardArticle(article *cmsapi.Article) map[string]any {
 	putIfNotEmpty(out, "seoTitle", stringPtrValue(article.SEOTitle))
 	putIfNotEmpty(out, "seoDescription", stringPtrValue(article.SEODescription))
 	putIfNotEmpty(out, "ogImage", stringPtrValue(article.OGImage))
-	putIfNotEmpty(out, "editorNotes", stringPtrValue(article.EditorNotes))
-	putIfNotEmpty(out, "reviewStatus", stringPtrValue(article.ReviewStatus))
+	// CSR-009: editorNotes and reviewStatus are internal CMS editorial
+	// metadata fields. They are not exposed through MCP article tools.
+	// The Article struct retains these fields for the CMS API layer
+	// but the MCP output shaping strips them.
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)

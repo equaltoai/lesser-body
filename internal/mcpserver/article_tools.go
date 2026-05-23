@@ -242,6 +242,9 @@ func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpru
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_update", err)
 	}
+	if !draftOwnedByAuthenticatedActor(ctx, draft) {
+		return articleDraftOwnershipDenied("article_draft_update", draft.ID)
+	}
 
 	return articleDraftSingleResult("article_draft_update", "updated", draft, params, in.Content)
 }
@@ -273,6 +276,9 @@ func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcprunti
 	draft, err := client.GetArticleDraft(ctx, token, id, true)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_get", err)
+	}
+	if !draftOwnedByAuthenticatedActor(ctx, draft) {
+		return articleDraftOwnershipDenied("article_draft_get", draft.ID)
 	}
 
 	return articleDraftSingleResult("article_draft_get", "read", draft, params, nil)
@@ -341,6 +347,17 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 	preview, err := client.PreviewArticleDraft(ctx, token, id)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_preview", err)
+	}
+	// CSR-010: Ownership is verified through the draft contract. Preview
+	// returns the draft ID and success flag; if Lesser enforces ownership
+	// on the draftPreview resolver the preview will already be denied.
+	// For defense-in-depth, fetch the draft to verify ownership.
+	draft, err := client.GetArticleDraft(ctx, token, id, false)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_preview", err)
+	}
+	if !draftOwnedByAuthenticatedActor(ctx, draft) {
+		return articleDraftOwnershipDenied("article_draft_preview", draft.ID)
 	}
 
 	return articleDraftPreviewResult(preview, params)
@@ -733,4 +750,32 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 		})
 	}
 	return nil, err
+}
+
+// draftOwnedByAuthenticatedActor returns true when the draft's authorId
+// matches the authenticated actor identity. An empty AuthorID is treated
+// as a failed ownership check (defense-in-depth: if the CMS did not
+// populate authorId, do not proceed).
+func draftOwnedByAuthenticatedActor(ctx context.Context, draft *cmsapi.Draft) bool {
+	if draft == nil {
+		return false
+	}
+	authorID := strings.TrimSpace(draft.AuthorID)
+	if authorID == "" {
+		return false
+	}
+	return authorID == authenticatedArticleAuthorID(ctx)
+}
+
+// articleDraftOwnershipDenied returns a toolErrorResult for a
+// draft-ownership rejection (CSR-010 defense-in-depth). The error is
+// shaped as a generic "not_found" to the caller, matching the behavior
+// Lesser CMS returns for unauthorized draft access, so ownership checks
+// are not distinguishable from legitimate not-found.
+func articleDraftOwnershipDenied(toolName string, draftID string) (*mcpruntime.ToolResult, error) {
+	return toolErrorResult("not_found", toolName+" draft not found or not authorized", 404, map[string]any{
+		"source":  "lesser_cms_graphql",
+		"tool":    toolName,
+		"draftId": draftID,
+	})
 }
