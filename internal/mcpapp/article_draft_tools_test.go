@@ -495,6 +495,25 @@ func TestPublishedArticleToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 		t.Fatalf("compact publish should omit content: %+v", publishedArticle)
 	}
 
+	// CSR-010: Verify ownership check (BodyArticleDraft) happens BEFORE the
+	// publish mutation (BodyPublishArticleDraft). The test must fail if the
+	// side-effecting publish happens before the ownership gating lookup.
+	var draftIdx, publishIdx int = -1, -1
+	for i, op := range operations {
+		if op["operationName"] == "BodyArticleDraft" {
+			draftIdx = i
+		}
+		if op["operationName"] == "BodyPublishArticleDraft" {
+			publishIdx = i
+		}
+	}
+	if draftIdx < 0 || publishIdx < 0 {
+		t.Fatalf("expected both BodyArticleDraft and BodyPublishArticleDraft, got draftIdx=%d publishIdx=%d ops=%d", draftIdx, publishIdx, len(operations))
+	}
+	if draftIdx >= publishIdx {
+		t.Fatalf("BodyArticleDraft (ownership check) must occur before BodyPublishArticleDraft (side effect), got draftIdx=%d publishIdx=%d", draftIdx, publishIdx)
+	}
+
 	update := callArticleTool(t, env, app, writeAuth, sessionID, 3, "article_update", map[string]any{
 		"id":             "https://example.com/articles/hello",
 		"title":          "Updated",
@@ -537,6 +556,93 @@ func TestPublishedArticleToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	// CSR-010: publish now also fetches the draft for ownership verification.
 	if len(operations) != 5 {
 		t.Fatalf("expected 5 GraphQL operations (1 draft + 4 article), got %d", len(operations))
+	}
+}
+
+func TestArticleDraftPublishRejectsWrongAuthor(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("JWT_SECRET", "test")
+	auth.ResetForTests()
+
+	publishDraftCalled := false
+	var ops []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var op map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		ops = append(ops, op)
+
+		w.Header().Set("Content-Type", "application/json")
+		switch op["operationName"] {
+		case "BodyArticleDraft":
+			// Return a draft owned by a DIFFERENT actor — not the caller.
+			vars := op["variables"].(map[string]any)
+			id := vars["id"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draft": map[string]any{
+				"id":              id,
+				"authorId":        "other-agent",
+				"contentType":     "ARTICLE",
+				"title":           "Not Yours",
+				"contentFormat":   "MARKDOWN",
+				"status":          "DRAFT",
+				"autosaveVersion": 1,
+			}}})
+		case "BodyPublishArticleDraft":
+			// CSR-010: publishDraft must never be invoked when ownership
+			// verification fails. Track this so the test can assert it.
+			publishDraftCalled = true
+			_, _ = w.Write([]byte(`{"data":{"publishDraft":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`))
+		default:
+			t.Fatalf("unexpected operation %q", op["operationName"])
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+
+	app, err := mcpapp.New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	writeAuth := "Bearer " + newTestToken(t, "test", "agent1", []string{"write"})
+	initResp := invokeJSON(t, env, app, map[string][]string{"authorization": {writeAuth}}, &mcpruntime.Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if initResp.Status != 200 {
+		t.Fatalf("initialize: status=%d body=%s", initResp.Status, string(initResp.Body))
+	}
+	sessionID := initResp.Headers["mcp-session-id"][0]
+
+	result := callToolAllowError(t, env, app, writeAuth, sessionID, 2, "article_draft_publish", map[string]any{"id": "draft-1"})
+	if !result.IsError {
+		t.Fatalf("expected tool error for wrong-author publish, got success: %+v", result.StructuredContent)
+	}
+	errData, _ := result.StructuredContent["error"].(map[string]any)
+	if errData == nil {
+		t.Fatalf("expected structured error in tool result: %+v", result.StructuredContent)
+	}
+	if errData["code"] != "not_found" {
+		t.Fatalf("expected not_found error code, got %q: %+v", errData["code"], errData)
+	}
+
+	// CSR-010 regression: the publish mutation must never fire when ownership
+	// verification fails. If publishDraftCalled is true, the ownership gate
+	// did not stop the side effect.
+	if publishDraftCalled {
+		t.Fatalf("BodyPublishArticleDraft must not be invoked when draft ownership check fails")
+	}
+
+	// Only the ownership-checking draft lookup should have been made.
+	if len(ops) != 1 {
+		t.Fatalf("expected exactly 1 operation (BodyArticleDraft ownership check), got %d: %+v", len(ops), ops)
+	}
+	if ops[0]["operationName"] != "BodyArticleDraft" {
+		t.Fatalf("expected BodyArticleDraft as only operation, got %q", ops[0]["operationName"])
 	}
 }
 

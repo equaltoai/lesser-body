@@ -116,19 +116,20 @@ func handleArticleDraftPublish(ctx context.Context, args json.RawMessage) (*mcpr
 	if err != nil {
 		return nil, err
 	}
-	article, err := client.PublishArticleDraft(ctx, token, id, params.View == readViewStandard)
-	if err != nil {
-		return articleDraftToolResultFromError("article_draft_publish", err)
-	}
 	// CSR-010: Verify the draft being published belongs to the
-	// authenticated actor. Fetch the draft (compact, no content) and
-	// check ownership before returning the published article.
+	// authenticated actor BEFORE executing the publish mutation.
+	// The ownership check must gate the side effect, not trail it.
 	draft, err := client.GetArticleDraft(ctx, token, id, false)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_publish", err)
 	}
 	if !draftOwnedByAuthenticatedActor(ctx, draft) {
 		return articleDraftOwnershipDenied("article_draft_publish", draft.ID)
+	}
+
+	article, err := client.PublishArticleDraft(ctx, token, id, params.View == readViewStandard)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_publish", err)
 	}
 
 	return articleSingleResult("article_draft_publish", "published", article, params, nil)
