@@ -136,13 +136,13 @@ func TestArticleToolScopesAtMCPBoundary(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch op["operationName"] {
 		case "BodyCreateArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyUpdateArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Draft updated","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":2,"lastSavedAt":"2026-05-20T00:01:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:01:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft updated","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":2,"lastSavedAt":"2026-05-20T00:01:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:01:00Z"}}}`))
 		case "BodyArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","contentType":"ARTICLE","title":"Draft","content":"draft body","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft","content":"draft body","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyArticleDrafts":
-			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
 		case "BodyArticleDraftPreview":
 			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<p>draft body</p>","sourceFormat":"MARKDOWN","sourceBytes":10,"renderedBytes":17,"errors":[]}}}`))
 		case "BodyPublishArticleDraft":

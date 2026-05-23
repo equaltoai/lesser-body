@@ -138,12 +138,12 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact create should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		case "BodyArticleDraft":
 			if !queryContainsDraftContentSelection(query) {
 				t.Fatalf("draft get should request content so compact can produce a bounded preview: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","slug":"hello","content":"` + strings.Repeat("body ", 80) + `","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","content":"` + strings.Repeat("body ", 80) + `","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		case "BodyUpdateArticleDraft":
 			vars := op["variables"].(map[string]any)
 			if vars["id"] != "draft-1" {
@@ -156,12 +156,12 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact update should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Updated","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":2,"lastSavedAt":"2026-05-19T21:01:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:01:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Updated","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":2,"lastSavedAt":"2026-05-19T21:01:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:01:00Z"}}}`))
 		case "BodyArticleDrafts":
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact list should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"draft-1","endCursor":"draft-1"},"totalCount":1}}}`))
+			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"draft-1","endCursor":"draft-1"},"totalCount":1}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op["operationName"])
 		}
@@ -256,6 +256,23 @@ func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing
 			t.Fatalf("decode operation: %v", err)
 		}
 		operations = append(operations, op)
+		if op["operationName"] == "BodyArticleDraft" {
+			// CSR-010: preview now verifies draft ownership by fetching the
+			// draft first. Return a compact draft (no content).
+			vars := op["variables"].(map[string]any)
+			id := vars["id"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draft": map[string]any{
+				"id":              id,
+				"authorId":        "agent1",
+				"contentType":     "ARTICLE",
+				"title":           "Test",
+				"contentFormat":   "MARKDOWN",
+				"status":          "DRAFT",
+				"autosaveVersion": 1,
+			}}})
+			return
+		}
 		if op["operationName"] != "BodyArticleDraftPreview" {
 			t.Fatalf("unexpected operation %q", op["operationName"])
 		}
@@ -359,8 +376,10 @@ func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing
 		t.Fatalf("expected response_too_large tool error, got %+v", toolErr)
 	}
 
-	if len(operations) != 4 {
-		t.Fatalf("expected 4 draftPreview operations, got %d", len(operations))
+	// CSR-010: each preview call now also fetches the draft for ownership
+	// verification, doubling the operation count (4 previews + 4 draft gets).
+	if len(operations) != 8 {
+		t.Fatalf("expected 8 draftPreview+draft operations (4 previews + 4 ownership checks), got %d", len(operations))
 	}
 }
 
@@ -389,6 +408,22 @@ func TestPublishedArticleToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		switch op["operationName"] {
+		case "BodyArticleDraft":
+			// CSR-010: publish now verifies draft ownership by fetching the
+			// draft first. Return a compact draft (no content).
+			vars := op["variables"].(map[string]any)
+			id := vars["id"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draft": map[string]any{
+				"id":              id,
+				"authorId":        "agent1",
+				"contentType":     "ARTICLE",
+				"title":           "Test",
+				"contentFormat":   "MARKDOWN",
+				"status":          "DRAFT",
+				"autosaveVersion": 1,
+			}}})
+			return
 		case "BodyPublishArticleDraft":
 			vars := op["variables"].(map[string]any)
 			if vars["id"] != "draft-1" {
@@ -499,8 +534,9 @@ func TestPublishedArticleToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	if _, hasContent := first["content"]; hasContent {
 		t.Fatalf("compact list should omit content: %+v", first)
 	}
-	if len(operations) != 4 {
-		t.Fatalf("expected 4 GraphQL operations, got %d", len(operations))
+	// CSR-010: publish now also fetches the draft for ownership verification.
+	if len(operations) != 5 {
+		t.Fatalf("expected 5 GraphQL operations (1 draft + 4 article), got %d", len(operations))
 	}
 }
 
