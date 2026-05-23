@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Provenance"
+  short_description: "Track body steward GitHub provenance"
+  default_prompt: "Use $github-provenance to handle lesser-body GitHub work with routed mcp__body_lab__ provenance-aware tools first."
