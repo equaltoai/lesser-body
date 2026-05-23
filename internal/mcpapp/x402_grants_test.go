@@ -66,12 +66,12 @@ func TestX402Grant_AllowsScopedToolCallWithoutOAuthSession(t *testing.T) {
 		t.Fatalf("marshal consume request: %v", err)
 	}
 	wire := string(wireReq)
-	for _, forbidden := range []string{"grantId", "actor", "paymentEvidenceHash"} {
+	for _, forbidden := range []string{"grantId", "actor"} {
 		if strings.Contains(wire, forbidden) {
 			t.Fatalf("consume request body should match accepted Host shape and omit %s: %s", forbidden, wire)
 		}
 	}
-	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey"} {
+	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey", "paymentEvidenceHash"} {
 		if !strings.Contains(wire, required) {
 			t.Fatalf("consume request body missing accepted Host field %s: %s", required, wire)
 		}
@@ -99,7 +99,7 @@ func TestX402Grant_DefaultConsumerCallsAcceptedHostConsumeContract(t *testing.T)
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode consume request: %v", err)
 		}
-		forbidden := []string{"grantId", "actor", "paymentEvidenceHash"}
+		forbidden := []string{"grantId", "actor"}
 		for _, key := range forbidden {
 			if _, ok := gotBody[key]; ok {
 				t.Fatalf("consume request body must omit %s: %+v", key, gotBody)
@@ -148,7 +148,7 @@ func TestX402Grant_DefaultConsumerCallsAcceptedHostConsumeContract(t *testing.T)
 	if gotAuth != "Bearer instance-key-123" {
 		t.Fatalf("expected instance-key bearer auth, got %q", gotAuth)
 	}
-	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey"} {
+	for _, required := range []string{"grantToken", "agentId", "capability", "tool", "resource", "requestHash", "idempotencyKey", "paymentEvidenceHash"} {
 		value, _ := gotBody[required].(string)
 		if strings.TrimSpace(value) == "" {
 			t.Fatalf("consume request body missing %s: %+v", required, gotBody)
@@ -156,6 +156,12 @@ func TestX402Grant_DefaultConsumerCallsAcceptedHostConsumeContract(t *testing.T)
 	}
 	if gotBody["grantToken"] != "grant-token" || gotBody["capability"] != "tools.invoke" || gotBody["tool"] != "echo" {
 		t.Fatalf("unexpected consume request body: %+v", gotBody)
+	}
+	// CSR-011: paymentEvidenceHash must be present in the wire body (hashed, not raw)
+	// so host can verify it against the grant's recorded evidence BEFORE consuming.
+	peh, _ := gotBody["paymentEvidenceHash"].(string)
+	if peh == "" || peh == "payment-signature-value" || strings.Contains(peh, "payment-signature-value") {
+		t.Fatalf("paymentEvidenceHash must be present and hashed in wire body, got %q", peh)
 	}
 }
 
@@ -344,6 +350,25 @@ func TestX402Grant_RejectsRequestResourceBindingMismatch(t *testing.T) {
 			assertX402FailureReason(t, resp, 403, scenario.reason)
 		})
 	}
+}
+
+// TestX402Grant_RejectsPaymentEvidenceMismatch is a targeted regression test for CSR-011.
+// It proves that when the host response carries a payment evidence hash that differs from
+// what body computed from the caller payment-signature header, body rejects the grant.
+// This is body second-line verification; the first line (sending paymentEvidenceHash in
+// the wire request) enables host to verify BEFORE consuming the grant (see lesser-host#361).
+func TestX402Grant_RejectsPaymentEvidenceMismatch(t *testing.T) {
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		// Simulate host returning a grant whose recorded payment evidence hash differs
+		// from the caller evidence -- the host should have caught this pre-consume.
+		resp.Grant.Payment.EvidenceHash = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		return resp
+	})
+	defer restore()
+
+	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "echo", map[string]any{"message": "hi"})
+	assertX402FailureReason(t, resp, 403, "x402_payment_evidence_mismatch")
 }
 
 func setupX402GrantTest(t *testing.T, response func(mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests) func() {

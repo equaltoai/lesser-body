@@ -35,6 +35,12 @@ const (
 	x402MaxEvidenceHeaderLength = 64 << 10
 )
 
+// x402GrantConsumeRequest is the request body dispatched to lesser-host's
+// x402 grant consume endpoint. The PaymentEvidenceHash field is sent to host
+// so host can verify the caller's payment evidence matches the grant's
+// recorded evidence BEFORE consuming (decrementing) the grant's usage count.
+// This prevents burning a grant use on a mismatched payment evidence hash.
+// Depends on lesser-host#361 for verified-host-side pre-consume verification.
 type x402GrantConsumeRequest struct {
 	GrantID             string `json:"-"`
 	GrantToken          string `json:"grantToken"`
@@ -45,7 +51,7 @@ type x402GrantConsumeRequest struct {
 	Resource            string `json:"resource"`
 	RequestHash         string `json:"requestHash"`
 	IdempotencyKey      string `json:"idempotencyKey"`
-	PaymentEvidenceHash string `json:"-"`
+	PaymentEvidenceHash string `json:"paymentEvidenceHash"`
 }
 
 type x402GrantConsumeResponse struct {
