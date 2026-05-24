@@ -33,7 +33,6 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 	defer soulbinding.ResetForTests()
 
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	const canonicalEmail = "agent-alice.simulacrum@lessersoul.ai"
 	const tokenUser = "Agent1"
 
 	var gotBindingPK string
@@ -253,14 +252,13 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("%s: identity_lookup must not expose contactPreferences in public matches: %+v", label, match)
 		}
 	}
-	assertPublicLookupEmail := func(label string, match map[string]any) {
+	// CSR-007: identity_lookup no longer exposes managed soul email
+	// addresses. Per-channel contact details remain behind the self-service
+	// whoami / agent://channels resource with bound-operation policy enforcement.
+	assertNoPublicEmail := func(label string, match map[string]any) {
 		t.Helper()
-		email, _ := match["email"].(map[string]any)
-		if email["address"] != canonicalEmail {
-			t.Fatalf("%s: identity_lookup email address should reflect host current managed channel %q, got %+v", label, canonicalEmail, match["email"])
-		}
-		if strings.Contains(mustJSON(t, match), "agent-alice@lessersoul.ai") {
-			t.Fatalf("%s: identity_lookup must not expose legacy bare lessersoul alias as current email: %+v", label, match)
+		if email, ok := match["email"]; ok {
+			t.Fatalf("%s: CSR-007: identity_lookup must not expose email in public matches, got %+v", label, email)
 		}
 	}
 	assertToolErrorPayload := func(label string, body []byte, wantCode string) map[string]any {
@@ -369,7 +367,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): agentId want %s got %v", q, agentID, match["agentId"])
 		}
 		assertPublicLookupMatch(q, match)
-		assertPublicLookupEmail(q, match)
+		assertNoPublicEmail(q, match)
 	}
 	if len(searchQueries) != 0 {
 		t.Fatalf("identity_lookup for ENS should resolve directly, got search queries %+v", searchQueries)
@@ -449,7 +447,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("identity_lookup(%q): localId want agent-alice got %v", q, match["localId"])
 		}
 		assertPublicLookupMatch(q, match)
-		assertPublicLookupEmail(q, match)
+		assertNoPublicEmail(q, match)
 	}
 	if !reflect.DeepEqual(searchQueries, []string{"agent-alice", "agent-alice", "ops.v2"}) {
 		t.Fatalf("identity_lookup should normalize local ID queries before search, got %+v", searchQueries)
@@ -518,7 +516,7 @@ func TestLBM1_IdentityToolsAndChannelResources(t *testing.T) {
 			t.Fatalf("%s identity_lookup(%q): agentId want %s got %v", tc.name, tc.query, agentID, match["agentId"])
 		}
 		assertPublicLookupMatch(tc.name, match)
-		assertPublicLookupEmail(tc.name, match)
+		assertNoPublicEmail(tc.name, match)
 		if !reflect.DeepEqual(searchQueries, []string{tc.wantSearchQ}) {
 			t.Fatalf("%s identity_lookup(%q): search q want [%s] got %+v", tc.name, tc.query, tc.wantSearchQ, searchQueries)
 		}

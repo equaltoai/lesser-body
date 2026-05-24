@@ -283,9 +283,11 @@ func agentPublicIdentityPayload(ctx context.Context, client *soulapi.Client, age
 		"localId": stringFromMap(agent, "local_id"),
 		"status":  stringFromMap(agent, "status"),
 	}
-	if email := publicManagedEmailPayload(ctx, client, agentID, stringFromMap(agent, "local_id")); len(email) > 0 {
-		out["email"] = email
-	}
+	// CSR-007: managed soul email addresses are not exposed through the
+	// public identity lookup path. The identity_lookup tool resolves agent
+	// identity metadata only; per-channel contact details remain behind the
+	// self-service whoami / agent://channels resource with bound-operation
+	// policy enforcement.
 	return out, nil
 }
 
