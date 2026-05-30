@@ -233,6 +233,13 @@ func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpru
 	if err != nil {
 		return nil, err
 	}
+	existing, err := client.GetArticleDraft(ctx, token, id, false)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_update", err)
+	}
+	if !draftOwnedByAuthenticatedActor(ctx, existing) || !draftIsArticleDraft(existing) {
+		return articleDraftNotFoundDenied("article_draft_update", existing.ID)
+	}
 	draft, err := client.UpdateArticleDraft(ctx, token, id, cmsapi.UpdateDraftInput{
 		Title:         trimOptionalString(in.Title),
 		Slug:          trimOptionalString(in.Slug),
@@ -242,8 +249,8 @@ func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpru
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_update", err)
 	}
-	if !draftOwnedByAuthenticatedActor(ctx, draft) {
-		return articleDraftOwnershipDenied("article_draft_update", draft.ID)
+	if !draftOwnedByAuthenticatedActor(ctx, draft) || !draftIsArticleDraft(draft) {
+		return articleDraftNotFoundDenied("article_draft_update", draft.ID)
 	}
 
 	return articleDraftSingleResult("article_draft_update", "updated", draft, params, in.Content)
@@ -277,8 +284,8 @@ func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcprunti
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_get", err)
 	}
-	if !draftOwnedByAuthenticatedActor(ctx, draft) {
-		return articleDraftOwnershipDenied("article_draft_get", draft.ID)
+	if !draftOwnedByAuthenticatedActor(ctx, draft) || !draftIsArticleDraft(draft) {
+		return articleDraftNotFoundDenied("article_draft_get", draft.ID)
 	}
 
 	return articleDraftSingleResult("article_draft_get", "read", draft, params, nil)
@@ -344,20 +351,20 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 	if err != nil {
 		return nil, err
 	}
-	preview, err := client.PreviewArticleDraft(ctx, token, id)
-	if err != nil {
-		return articleDraftToolResultFromError("article_draft_preview", err)
-	}
-	// CSR-010: Ownership is verified through the draft contract. Preview
-	// returns the draft ID and success flag; if Lesser enforces ownership
-	// on the draftPreview resolver the preview will already be denied.
-	// For defense-in-depth, fetch the draft to verify ownership.
+	// CSR-010/LB-01: Fetch the draft before preview so ownership and
+	// Article-draft boundary checks gate the renderer call. The preview
+	// response does not carry contentType/status, so it cannot be validated
+	// safely after rendering.
 	draft, err := client.GetArticleDraft(ctx, token, id, false)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_preview", err)
 	}
-	if !draftOwnedByAuthenticatedActor(ctx, draft) {
-		return articleDraftOwnershipDenied("article_draft_preview", draft.ID)
+	if !draftOwnedByAuthenticatedActor(ctx, draft) || !draftIsArticleDraft(draft) {
+		return articleDraftNotFoundDenied("article_draft_preview", draft.ID)
+	}
+	preview, err := client.PreviewArticleDraft(ctx, token, id)
+	if err != nil {
+		return articleDraftToolResultFromError("article_draft_preview", err)
 	}
 
 	return articleDraftPreviewResult(preview, params)
@@ -767,12 +774,32 @@ func draftOwnedByAuthenticatedActor(ctx context.Context, draft *cmsapi.Draft) bo
 	return authorID == authenticatedArticleAuthorID(ctx)
 }
 
+// draftIsArticleDraft returns true only for the ARTICLE + DRAFT subset that
+// the article_draft_* MCP tools are allowed to expose. Empty contentType/status
+// values fail closed because Lesser's generic draft(id:) response includes both
+// fields; missing metadata must not widen Article-only tool access.
+func draftIsArticleDraft(draft *cmsapi.Draft) bool {
+	if draft == nil {
+		return false
+	}
+	return strings.TrimSpace(draft.ContentType) == cmsapi.ObjectTypeArticle &&
+		strings.TrimSpace(draft.Status) == cmsapi.DraftStatusDraft
+}
+
 // articleDraftOwnershipDenied returns a toolErrorResult for a
 // draft-ownership rejection (CSR-010 defense-in-depth). The error is
 // shaped as a generic "not_found" to the caller, matching the behavior
 // Lesser CMS returns for unauthorized draft access, so ownership checks
 // are not distinguishable from legitimate not-found.
 func articleDraftOwnershipDenied(toolName string, draftID string) (*mcpruntime.ToolResult, error) {
+	return articleDraftNotFoundDenied(toolName, draftID)
+}
+
+// articleDraftNotFoundDenied returns the shared not_found shape for private
+// draft boundary rejections, including ownership failures and non-ARTICLE or
+// non-DRAFT records. The caller must not be able to distinguish those cases
+// from a legitimate missing draft id.
+func articleDraftNotFoundDenied(toolName string, draftID string) (*mcpruntime.ToolResult, error) {
 	return toolErrorResult("not_found", toolName+" draft not found or not authorized", 404, map[string]any{
 		"source":  "lesser_cms_graphql",
 		"tool":    toolName,
