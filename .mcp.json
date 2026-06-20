@@ -1,11 +1,8 @@
 {
   "mcpServers": {
-    "body_lab": {
+    "theorymcp": {
       "type": "http",
-      "url": "https://lab.theorymcp.ai/equaltoai/agents/body/mcp",
-      "oauth": {
-        "scopes": "mcp:tools ai.kb.query memory.append"
-      }
+      "url": "https://theorymcp.ai/equaltoai/agents/body/mcp"
     }
   }
 }
