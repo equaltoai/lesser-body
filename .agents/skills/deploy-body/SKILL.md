@@ -5,13 +5,13 @@ description: Use to walk a merged change through per-stage CDK deploy — `lab`/
 
 # Deploy body to a stage
 
-After `implement-milestone` lands a PR to `main`, the change is ready to reach deployed instances. This skill is the discipline for walking a change through stages for a given `(<app>, <stage>)`, respecting the three-step deploy order with lesser (for first-time deploys), publishing SSM exports correctly, and handling release-artifact publication when applicable.
+After a feature → `staging` git-branch milestone is promoted to `main` by the operator, the change is ready to reach deployed instances. The `staging` git branch is not the deploy-stage `staging`; this skill walks deploy stages for a given `(<app>, <stage>)`, respecting the three-step deploy order with lesser (for first-time deploys), publishing SSM exports correctly, and handling release-artifact publication when applicable.
 
 ## When this skill runs
 
 Invoke when:
 
-- A change has merged to `main` and is ready for rollout
+- A change has been promoted from the `staging` git branch to `main` and is ready for rollout
 - An operational change needs to propagate across stages
 - A security / authorization fix is ready for compressed-cadence rollout (compression authorized separately)
 - A rollback to a prior Lambda version or CDK stack state is required
@@ -19,9 +19,9 @@ Invoke when:
 
 ## Preconditions
 
-- **The change is merged to `main`.**
+- **The change is on `main`.** Per-stage deploys run after the operator-owned promotion from the `staging` git branch. The `staging` git branch is distinct from the deploy-stage `staging`.
 - **The deployment is identified** — `(<app>, <stage>)` matching a lesser deployment.
-- **The stage sequence is planned** — typically `lab/dev → staging → live` or `lab/dev → live`.
+- **The deploy-stage sequence is planned** — typically `lab/dev → staging → live` or `lab/dev → live`. This deploy-stage `staging` is not the `staging` git branch.
 - **The roadmap's soak criteria are documented.**
 - **MCP tools healthy**, `memory_recent` first.
 - **For compressed cadence**, the compression is authorized and recorded.
@@ -36,8 +36,8 @@ For a given `(<app>, <stage>)`:
 
 1. **Lab / dev** — deploy body's CDK stack.
 2. **Lab soak** — evidence meets criteria.
-3. **Staging** (where used) — deploy.
-4. **Staging soak** — evidence meets criteria.
+3. **Deploy-stage staging** (where used) — deploy. This is not the `staging` git branch.
+4. **Deploy-stage staging soak** — evidence meets criteria.
 5. **Live** — deploy with operator authorization.
 6. **Post-deploy monitoring** — active watch per declared plan.
 
@@ -102,19 +102,19 @@ After `cdk deploy` to lab / dev completes:
 - **For session persistence changes** (if enabled), invoke tools across multiple calls and confirm session state retains.
 - **Soak duration** per roadmap. Non-trivial: hours to a day. MCP-contract / scope / profile changes: longer.
 
-Do not promote to staging until lab / dev soak criteria are met.
+Do not promote to deploy-stage `staging` until lab / dev soak criteria are met; this deploy-stage is separate from the `staging` git branch.
 
-## Staging soak (where used)
+## Deploy-stage staging soak (where used)
 
-After `cdk deploy` to staging completes:
+After `cdk deploy` to deploy-stage `staging` completes (distinct from the `staging` git branch):
 
 - **Verify deploy success.**
-- **Integration partners exercise real MCP flows** against the staging MCP endpoint.
+- **Integration partners exercise real MCP flows** against the deploy-stage `staging` MCP endpoint.
 - **Watch for client-compatibility signals** via operator / client-maintainer channels.
-- **Claude / AgentCore test configurations** connect to staging if arranged.
+- **Claude / AgentCore test configurations** connect to deploy-stage `staging` if arranged.
 - **Soak duration** typically multiple days for non-trivial changes; longer for MCP-contract / scope / profile / lesser-integration changes.
 
-Do not promote to live until staging soak criteria are met.
+Do not promote to live until deploy-stage `staging` soak criteria are met.
 
 ## Live deploy
 
@@ -153,7 +153,7 @@ Managed consumers (lesser-host's provisioning worker) verify checksums before de
 - **Diagnose quickly** — narrow or broad?
 - **Decide rollback scope**:
   - **Full rollback**: revert the commit on `main`, redeploy via CDK with prior commit.
-  - **Per-stage rollback**: roll back live while keeping staging / dev on the new commit.
+  - **Per-stage rollback**: roll back live while keeping deploy-stage staging / dev on the new commit.
   - **Lambda-version alias rollback** (emergency): point alias at prior Lambda version directly.
 - **Coordinate with operators through the user.**
 - **For SSM export regressions**: rollback re-publishes prior export values. Low risk because lesser reads SSM at deploy time, not continuously.
@@ -187,8 +187,8 @@ Managed consumers (lesser-host's provisioning worker) verify checksums before de
 - Soak duration: <...>
 - Issues observed: <none / described>
 
-### Staging (if used)
-- Command: `cdk deploy -c app=... -c stage=staging ...`
+### Deploy-stage staging (if used)
+- Command: `cdk deploy -c app=... -c stage=staging ...` (deploy-stage `staging`, not the `staging` git branch)
 - Timestamp: <...>
 - Lambda version: <...>
 - Soak criteria met: <...>
@@ -228,7 +228,7 @@ Managed consumers (lesser-host's provisioning worker) verify checksums before de
 - **"Skip publishing the SSM exports this deploy; they haven't changed."** Refuse. SSM exports publish on every deploy so the values reflect the current Lambda version and session table.
 - **"Run the live deploy without operator authorization."** Refuse.
 - **"Skip lab / dev soak; the change is small."** Refuse.
-- **"Deploy to live without a staging soak" (where staging is used).** Refuse without explicit authorization.
+- **"Deploy to live without a deploy-stage staging soak" (where deploy-stage `staging` is used).** Refuse without explicit authorization.
 - **"Delete this Lambda function version; we're past it."** Refuse. Rollback target.
 - **"Delete the old SSM exports under `/v1/`; they're cluttering."** Refuse. lesser reads them.
 - **"Deploy body before lesser for a first-time deploy."** Refuse. Unsouled lesser first, then body, then soul-enabled lesser.

@@ -1,6 +1,6 @@
 # Release Process
 
-<!-- AI Training: Release artifacts and versioning for lesser-body -->
+<!-- AI Training: Release artifacts and versioning for lesser-body. The staging git branch is distinct from deploy-stage staging. -->
 
 This repo publishes both the runtime Lambda zip and the managed deploy assets for `lesser-body`.
 
@@ -8,6 +8,16 @@ This repo publishes both the runtime Lambda zip and the managed deploy assets fo
 
 - Release tags use the `v*` convention (for example: `v1.0.0`).
 - The Lambda can be configured with `SERVICE_VERSION` (commonly set to the release version).
+
+## Release branch model
+
+`lesser-body` uses `feature branch -> staging git branch -> main -> manual v* release tag`. The `staging` git branch is the source-control integration branch for feature PRs; it is **not** the deploy-stage `staging` used by CDK, managed templates, or rollout language such as `lab`/`dev` → deploy-stage `staging` → `live`.
+
+- Feature → `staging` git branch PRs require the existing `ci / verify` job. That job already runs on all pull requests and is the staging gate.
+- `main` is operator-owned and accepts promotion PRs from the `staging` git branch only. Do not require `ci / verify` on staging → main promotion; main uses default GitHub checks plus branch rules only.
+- Releases are manual `v*` tags cut from `main`. The release workflow verifies that the release tag commit is an ancestor of `origin/main` before publishing assets for both tag-push and workflow_dispatch paths.
+
+See `docs/release-branching.md` for the branch-protection specs and operator apply commands.
 
 ## Build release assets (local)
 
@@ -101,6 +111,8 @@ grants.
 The workflow `.github/workflows/release.yml`:
 
 - runs on tag push `v*` (or manual dispatch)
+- keeps workflow_dispatch restricted to the `main` branch
+- asserts the release tag commit is an ancestor of `origin/main` before publishing assets
 - builds release assets
 - verifies the release assets from the produced release directory
 - rejects managed templates with non-string CloudFormation parameter defaults before publish

@@ -1,0 +1,57 @@
+{
+  "schema_version": "lesser-body.branch_protection_spec.v1",
+  "repository": "equaltoai/lesser-body",
+  "branch": "staging",
+  "intent": "Integration branch for feature -> staging PRs. The staging git branch is not the CDK/release deploy-stage staging. The existing GitHub Actions ci / verify job is the required staging gate and requires branches to be up to date before merge.",
+  "policy": {
+    "release_model": "feature -> staging -> main",
+    "staging_git_branch_is_not_deploy_stage_staging": true,
+    "allowed_pr_sources": [
+      "short-lived feature branches: aron/*, chore/*, codex/*, feat/*, fix/*, milestone/*"
+    ],
+    "required_status_checks": [
+      "ci / verify"
+    ],
+    "api_required_status_contexts": [
+      "verify"
+    ],
+    "require_branches_up_to_date": true,
+    "direct_pushes": "blocked by required pull request rule with enforce_admins=true",
+    "force_pushes": "blocked",
+    "deletions": "blocked",
+    "merge_owner": "factory may merge feature -> staging PRs only under a per-session grant after ci / verify is green"
+  },
+  "github_branch_protection": {
+    "method": "PUT",
+    "endpoint": "/repos/equaltoai/lesser-body/branches/staging/protection",
+    "payload": {
+      "required_status_checks": {
+        "strict": true,
+        "contexts": [
+          "verify"
+        ]
+      },
+      "enforce_admins": true,
+      "required_pull_request_reviews": {
+        "dismissal_restrictions": {},
+        "dismiss_stale_reviews": false,
+        "require_code_owner_reviews": false,
+        "required_approving_review_count": 0,
+        "require_last_push_approval": false,
+        "bypass_pull_request_allowances": {
+          "users": [],
+          "teams": [],
+          "apps": []
+        }
+      },
+      "restrictions": null,
+      "required_linear_history": false,
+      "allow_force_pushes": false,
+      "allow_deletions": false,
+      "block_creations": false,
+      "required_conversation_resolution": false,
+      "lock_branch": false,
+      "allow_fork_syncing": false
+    }
+  }
+}
