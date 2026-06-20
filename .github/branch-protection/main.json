@@ -1,0 +1,58 @@
+{
+  "schema_version": "lesser-body.branch_protection_spec.v1",
+  "repository": "equaltoai/lesser-body",
+  "branch": "main",
+  "intent": "Operator-owned canonical branch. Main promotion accepts PRs from the staging git branch only, blocks direct pushes and force-pushes, and intentionally does not require ci / verify on staging -> main promotion. The staging git branch is not the CDK/release deploy-stage staging.",
+  "policy": {
+    "release_model": "feature -> staging -> main",
+    "staging_git_branch_is_not_deploy_stage_staging": true,
+    "allowed_pr_sources": [
+      "staging"
+    ],
+    "required_status_checks": [],
+    "default_checks_only": true,
+    "require_ci_verify_on_main": false,
+    "direct_pushes": "blocked by required pull request rule with enforce_admins=true and operator-only push restrictions",
+    "force_pushes": "blocked",
+    "deletions": "blocked",
+    "merge_owner": "operator only",
+    "operator_push_users": [
+      "aron23"
+    ],
+    "operator_note": "Operator should review/adjust operator_push_users or replace them with teams/apps before applying if governance ownership changes. GitHub classic branch protection does not expose a machine-enforced PR head-branch allowlist; the staging-only source rule is encoded here as the operator merge policy, while the API payload enforces PR-only, operator-owned updates, no direct pushes, and no force-pushes. Do not add ci / verify to main protection. The staging git branch is source-control only and is not the deploy-stage staging."
+  },
+  "github_branch_protection": {
+    "method": "PUT",
+    "endpoint": "/repos/equaltoai/lesser-body/branches/main/protection",
+    "payload": {
+      "required_status_checks": null,
+      "enforce_admins": true,
+      "required_pull_request_reviews": {
+        "dismissal_restrictions": {},
+        "dismiss_stale_reviews": true,
+        "require_code_owner_reviews": false,
+        "required_approving_review_count": 1,
+        "require_last_push_approval": true,
+        "bypass_pull_request_allowances": {
+          "users": [],
+          "teams": [],
+          "apps": []
+        }
+      },
+      "restrictions": {
+        "users": [
+          "aron23"
+        ],
+        "teams": [],
+        "apps": []
+      },
+      "required_linear_history": false,
+      "allow_force_pushes": false,
+      "allow_deletions": false,
+      "block_creations": false,
+      "required_conversation_resolution": false,
+      "lock_branch": false,
+      "allow_fork_syncing": false
+    }
+  }
+}

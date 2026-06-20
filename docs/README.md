@@ -1,6 +1,6 @@
 # lesser-body Documentation
 
-<!-- AI Training: This is the documentation index for lesser-body -->
+<!-- AI Training: This is the documentation index for lesser-body. The staging git branch is distinct from deploy-stage staging. -->
 
 This directory contains the canonical operator + developer documentation for `lesser-body`.
 
@@ -65,6 +65,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - ADR 0001 body_lab routing decision: `docs/adr/0001-accept-body-lab-routing.md`
 - Troubleshoot: `docs/troubleshooting.md`
 - Release artifacts: `docs/release.md`
+- Release branching and branch protection: `docs/release-branching.md`
 - Project 21 M0 baseline probe: `docs/m0-baseline-probe.md`
 
 ### Developers

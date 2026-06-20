@@ -1,6 +1,6 @@
 # Configuration Reference
 
-<!-- AI Training: Runtime + infrastructure configuration for lesser-body -->
+<!-- AI Training: Runtime + infrastructure configuration for lesser-body. The staging git branch is distinct from deploy-stage staging. -->
 
 `lesser-body` configuration comes from:
 
@@ -9,15 +9,17 @@
 
 This doc focuses on the implemented configuration surface.
 
-## Stages
+## Deploy stages
 
-`lesser-body` follows Lesser’s stage convention:
+`lesser-body` follows Lesser’s deploy-stage convention:
 
 - `dev`
 - `staging`
 - `live`
 
-Stage is used in:
+The deploy-stage `staging` above is **not** the long-lived `staging` git branch used for feature → staging → main source-control integration. Do not rename or re-point deploy-stage tooling when changing branch protection or PR flow.
+
+Deploy stage is used in:
 
 - SSM parameter names
 - resource naming
