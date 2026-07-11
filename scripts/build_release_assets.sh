@@ -12,8 +12,6 @@ OUT_DIR="${2:-dist/release}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
-
 if [[ -z "${VERSION}" ]]; then
   echo "version is required" >&2
   exit 1
@@ -59,11 +57,17 @@ cp -f dist/lesser-body.zip "${OUT_DIR}/lesser-body.zip"
 cp -f scripts/deploy-lesser-body-from-release.sh "${OUT_DIR}/deploy-lesser-body-from-release.sh"
 chmod +x "${OUT_DIR}/deploy-lesser-body-from-release.sh"
 
+(
+  cd "${ROOT_DIR}/cdk"
+  npm ci
+  npm run build
+)
+
 for stage in dev staging live; do
   stage_outdir="${ASSEMBLY_DIR}/${stage}"
   (
     cd "${ROOT_DIR}/cdk"
-    go run ./cmd/release-template --version "${VERSION}" --stage "${stage}" --outdir "${stage_outdir}"
+    node dist/bin/release-template.js --version "${VERSION}" --stage "${stage}" --outdir "${stage_outdir}"
   )
 done
 

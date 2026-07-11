@@ -27,10 +27,14 @@ Run unit tests:
 go test ./...
 ```
 
-Build the Lambda artifact:
+Build the Lambda artifact and synthesize/test CDK:
 
 ```bash
 bash scripts/build.sh
+cd cdk
+npm ci
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 ```
 
 Local dev guide: `docs/development.md`
@@ -86,4 +90,4 @@ Protocol + tool catalog: `docs/mcp.md`
 It is implemented as a Go Lambda using:
 
 - AppTheory runtime + MCP server: `github.com/theory-cloud/apptheory/runtime` and `.../runtime/mcp`
-- TableTheory (DynamoDB access): `github.com/theory-cloud/tabletheory`
+- TableTheory (DynamoDB access): `github.com/theory-cloud/tabletheory/v2`

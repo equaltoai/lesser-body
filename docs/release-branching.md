@@ -10,7 +10,7 @@ feature branch -> staging git branch -> main -> manual v* release tag
 
 The `staging` git branch is a source-control integration branch. It is **not** the deploy-stage `staging` used by CDK,
 managed release templates, or rollout language such as `lab`/`dev` → deploy-stage `staging` → `live`. Do not rename or
-re-point deploy-stage tooling (`cdk synth -c stage=...`, `cmd/release-template`, or the dev/staging/live managed
+re-point deploy-stage tooling (`npm run synth -- -c stage=...`, the TypeScript managed-template generator, or the dev/staging/live managed
 templates) when changing the git branch model.
 
 ## Branch roles
@@ -19,7 +19,7 @@ templates) when changing the git branch model.
   open PRs to the `staging` git branch.
 - **`staging` git branch** is the integration branch. Feature → staging PRs require the existing GitHub Actions
   `ci / verify` job, which runs `go test ./...`, release-asset build/verification, regression harnesses,
-  `cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com`, and the discovery-route check. The staging
+  `npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com`, and the discovery-route check. The staging
   protection spec requires branches to be up to date before merge.
 - **`main`** is canonical, always deployable, protected, and operator-owned. Main promotion accepts PRs from the
   `staging` git branch only. Do not require `ci / verify` on `main`; staging → main promotion intentionally uses default

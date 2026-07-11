@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
 )
 
 func TestResolveAgentID_NormalizesUsernameBeforeLookup(t *testing.T) {
@@ -63,11 +63,10 @@ func (f *fakeBindingDB) Model(any) tablecore.Query {
 	}
 }
 
-func (f *fakeBindingDB) Transaction(func(tx *tablecore.Tx) error) error { return nil }
-func (f *fakeBindingDB) Migrate() error                                 { return nil }
-func (f *fakeBindingDB) AutoMigrate(...any) error                       { return nil }
-func (f *fakeBindingDB) Close() error                                   { return nil }
-func (f *fakeBindingDB) WithContext(context.Context) tablecore.DB       { return f }
+func (f *fakeBindingDB) Migrate() error                           { return nil }
+func (f *fakeBindingDB) AutoMigrate(...any) error                 { return nil }
+func (f *fakeBindingDB) Close() error                             { return nil }
+func (f *fakeBindingDB) WithContext(context.Context) tablecore.DB { return f }
 
 type fakeBindingQuery struct {
 	where   map[string]any

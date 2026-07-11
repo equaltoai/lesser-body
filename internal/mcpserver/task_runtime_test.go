@@ -14,7 +14,7 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
 )
 
 func TestTaskRuntimeEnvEnablesSkillBundleGetTaskExecution(t *testing.T) {

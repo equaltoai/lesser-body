@@ -10,7 +10,7 @@ MCP-contract, tool-surface metadata, operational-reliability, test-coverage, dep
 
 ## Surfaces affected
 
-- `go.mod`, `go.sum`, `cdk/go.mod`, `cdk/go.sum`, npm CDK lockfiles
+- `go.mod`, `go.sum`, npm CDK lockfiles
 - `app-theory/app.json`, `app-theory/init.md`
 - `internal/mcpserver/`
 - `internal/mcpapp/`

@@ -26,7 +26,8 @@ export CDK_DEFAULT_REGION="us-east-1"
 
 cd cdk
 npm ci
-npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 ```
 
 ## Before opening a PR
@@ -45,7 +46,8 @@ If you changed infrastructure:
 ```bash
 cd cdk
 npm ci
-npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 ```
 
 ## Repo conventions
