@@ -11,7 +11,7 @@ import (
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"

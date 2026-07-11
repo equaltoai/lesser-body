@@ -86,4 +86,4 @@ Protocol + tool catalog: `docs/mcp.md`
 It is implemented as a Go Lambda using:
 
 - AppTheory runtime + MCP server: `github.com/theory-cloud/apptheory/runtime` and `.../runtime/mcp`
-- TableTheory (DynamoDB access): `github.com/theory-cloud/tabletheory`
+- TableTheory (DynamoDB access): `github.com/theory-cloud/tabletheory/v2`

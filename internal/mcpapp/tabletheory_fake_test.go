@@ -12,8 +12,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
 )
 
 type fakeTableTheoryDB struct {
@@ -27,11 +27,10 @@ func (f *fakeTableTheoryDB) Model(any) tablecore.Query {
 	}
 }
 
-func (f *fakeTableTheoryDB) Transaction(func(tx *tablecore.Tx) error) error { return nil }
-func (f *fakeTableTheoryDB) Migrate() error                                 { return nil }
-func (f *fakeTableTheoryDB) AutoMigrate(...any) error                       { return nil }
-func (f *fakeTableTheoryDB) Close() error                                   { return nil }
-func (f *fakeTableTheoryDB) WithContext(context.Context) tablecore.DB       { return f }
+func (f *fakeTableTheoryDB) Migrate() error                           { return nil }
+func (f *fakeTableTheoryDB) AutoMigrate(...any) error                 { return nil }
+func (f *fakeTableTheoryDB) Close() error                             { return nil }
+func (f *fakeTableTheoryDB) WithContext(context.Context) tablecore.DB { return f }
 
 type fakeTableTheoryQuery struct {
 	where   map[string]any

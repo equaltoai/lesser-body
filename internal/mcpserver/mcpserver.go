@@ -9,9 +9,9 @@ import (
 	"time"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
-	"github.com/theory-cloud/tabletheory"
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
-	"github.com/theory-cloud/tabletheory/pkg/session"
+	"github.com/theory-cloud/tabletheory/v2"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	"github.com/theory-cloud/tabletheory/v2/pkg/session"
 )
 
 const (
