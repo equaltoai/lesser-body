@@ -14,7 +14,7 @@ Without an adoption plan, body can consume the new AppTheory runtime passively w
 
 ## Surface affected
 
-- Dependency-maintenance baseline: `go.mod`, `go.sum`, `cdk/go.mod`, `cdk/go.sum`, `cdk/package.json`, `cdk/package-lock.json`, `app-theory/app.json`.
+- Dependency-maintenance baseline: `go.mod`, `go.sum`, `cdk/package.json`, `cdk/package-lock.json`, `app-theory/app.json`.
 - MCP contract: `initialize` capability advertisement, `tools/list` metadata, optional `completion/complete`, optional `tasks/*`, Streamable HTTP transport docs/canaries.
 - Tool surface: tool metadata (`outputSchema`, execution/task support) without changing existing tool names, scopes, or profiles unless explicitly scoped later.
 - MCP app lifecycle: AppTheory server options in `internal/mcpserver/`, test helpers in `internal/mcpapp/`.

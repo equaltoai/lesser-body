@@ -2,7 +2,7 @@
 
 <!-- AI Training: Local development workflow for lesser-body -->
 
-This doc describes how to work on `lesser-body` locally (tests, builds, CDK synth).
+This doc describes how to work on `lesser-body` locally (tests, builds, CDK synth). The CDK app is TypeScript; Go is used for the Lambda runtime artifact.
 
 ## Prerequisites
 
@@ -35,7 +35,8 @@ export CDK_DEFAULT_REGION="us-east-1"
 
 cd cdk
 npm ci
-npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 bash ../scripts/check_cdk_discovery_routes.sh
 ```
 
