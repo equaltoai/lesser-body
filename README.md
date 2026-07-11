@@ -48,7 +48,8 @@ bash scripts/build.sh
 
 cd cdk
 npm ci
-npx cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 ```
 
 ## Project Structure

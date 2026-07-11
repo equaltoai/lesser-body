@@ -3,12 +3,25 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "synth": "cdk synth",
-    "deploy": "cdk deploy --all",
-    "destroy": "cdk destroy --all"
+    "build": "tsc",
+    "test": "npm run build && node --test --test-isolation=none dist/test/**/*.test.js",
+    "synth": "npm run build && cdk synth",
+    "deploy": "npm run build && cdk deploy --all",
+    "destroy": "npm run build && cdk destroy --all",
+    "release-template": "npm run build && node dist/bin/release-template.js"
+  },
+  "dependencies": {
+    "@theory-cloud/apptheory-cdk": "https://github.com/theory-cloud/AppTheory/releases/download/v1.17.0/theory-cloud-apptheory-cdk-1.17.0.tgz",
+    "aws-cdk-lib": "2.261.0",
+    "constructs": "10.6.0"
   },
   "devDependencies": {
-    "aws-cdk": "2.1130.0"
+    "@types/node": "25.5.0",
+    "aws-cdk": "2.1130.0",
+    "typescript": "5.9.3"
   }
 }

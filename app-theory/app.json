@@ -24,7 +24,7 @@
   },
   "cdk": {
     "dir": "cdk",
-    "up": "AWS_PROFILE={{AWS_PROFILE}} npm ci && npx cdk deploy --all -c stage={{STAGE}}",
-    "down": "AWS_PROFILE={{AWS_PROFILE}} npm ci && npx cdk destroy --all -c stage={{STAGE}}"
+    "up": "AWS_PROFILE={{AWS_PROFILE}} npm ci && AWS_PROFILE={{AWS_PROFILE}} npm run deploy -- -c stage={{STAGE}}",
+    "down": "AWS_PROFILE={{AWS_PROFILE}} npm ci && AWS_PROFILE={{AWS_PROFILE}} npm run destroy -- -c stage={{STAGE}}"
   }
 }

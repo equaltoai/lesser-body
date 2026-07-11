@@ -21,6 +21,7 @@ This section defines the **pinned destination frameworks**. These values are **c
 ### AppTheory (pinned)
 - Go module: `github.com/theory-cloud/apptheory@v1.17.0`
 - Go runtime import: `github.com/theory-cloud/apptheory/runtime`
+- TypeScript CDK package: `@theory-cloud/apptheory-cdk` release tarball `theory-cloud-apptheory-cdk-1.17.0.tgz`
 - Docs entrypoints (for tag `v1.17.0`):
   - `docs/getting-started.md`
   - `docs/integrations/agentcore-mcp.md`
@@ -82,6 +83,7 @@ The goal is to produce a repository that:
 1) Create (or choose) the repo-relative CDK directory specified in `app-theory/app.json`:
    - Contract default: `cdk/`
 2) Initialize the CDK project in that directory.
+   - This repository uses TypeScript CDK and the released `@theory-cloud/apptheory-cdk` tarball; it does not use the Go CDK binding.
    - Keep dependency installation deterministic:
      - prefer `npm ci` (requires a committed lockfile, e.g. `package-lock.json`)
 3) Implement deploy/destroy entrypoints that match the deployment contract commands:

@@ -1,7 +1,6 @@
 {
-  "app": "../scripts/build.sh && go mod download && go run main.go",
+  "app": "node dist/bin/lesser-body.js",
   "context": {
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true
   }
 }
-

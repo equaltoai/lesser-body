@@ -28,9 +28,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: |
-            go.sum
-            cdk/go.sum
+          cache-dependency-path: go.sum
 
       - name: Go test
         env:
@@ -59,17 +57,13 @@ jobs:
       - name: Regression check for managed auxiliary assets
         run: bash scripts/check_managed_auxiliary_asset_regression.sh v0.0.0-test dist/release-test
 
-      - name: Install CDK dependencies
+      - name: CDK tests
         working-directory: cdk
-        run: npm ci
+        run: npm test
 
       - name: CDK synth
         working-directory: cdk
-        env:
-          GOTOOLCHAIN: auto
-        run: ./node_modules/.bin/cdk synth -c app=lesser -c stage=dev -c baseDomain=example.com
+        run: npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 
       - name: Verify discovery routes
-        env:
-          GOTOOLCHAIN: auto
         run: bash scripts/check_cdk_discovery_routes.sh

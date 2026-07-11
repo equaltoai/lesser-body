@@ -27,10 +27,14 @@ Run unit tests:
 go test ./...
 ```
 
-Build the Lambda artifact:
+Build the Lambda artifact and synthesize/test CDK:
 
 ```bash
 bash scripts/build.sh
+cd cdk
+npm ci
+npm test
+npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
 ```
 
 Local dev guide: `docs/development.md`

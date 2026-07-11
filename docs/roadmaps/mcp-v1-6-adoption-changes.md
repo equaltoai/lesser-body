@@ -2,7 +2,7 @@
 
 ### 1. Bump AppTheory, TableTheory, and CDK pins
 
-- **Paths**: `go.mod`, `go.sum`, `cdk/go.mod`, `cdk/go.sum`, `cdk/package.json`, `cdk/package-lock.json`, `app-theory/app.json`, `app-theory/init.md`
+- **Paths**: `go.mod`, `go.sum`, `cdk/package.json`, `cdk/package-lock.json`, `app-theory/app.json`, `app-theory/init.md`
 - **Surface**: deps, cdk, docs
 - **Classification**: dependency-maintenance, framework-consumption
 - **Scope / profile impact**: none
@@ -10,7 +10,7 @@
 - **Lesser integration impact**: none
 - **Framework consumption**: idiomatic AppTheory v1.6.0 / TableTheory v1.8.3 consumption
 - **Acceptance**: root and CDK modules pin AppTheory v1.6.0 and TableTheory v1.8.3 where applicable; npm CDK CLI is current; no direct/transitive FaceTheory pin exists in body.
-- **Validation**: `go test ./...`, `cd cdk && go test . ./stacks`, `go vet ./...`, `cd cdk && go vet . ./stacks`, `govulncheck ./...`, `cd cdk && govulncheck . ./stacks`, `cd cdk && npm audit`, `scripts/build.sh`
+- **Validation**: `go test ./...`, `cd cdk && npm test`, `go vet ./...`, `govulncheck ./...`, `cd cdk && npm audit`, `scripts/build.sh`
 - **Conventional Commit subject**: `chore(deps): update theory framework pins`
 
 ### 2. Align MCP transport docs, probes, and tests with strict Streamable HTTP
@@ -101,7 +101,7 @@
 - **Lesser integration impact**: possible additive SSM export or managed-deploy artifact impact; coordinate before landing if export shape changes
 - **Framework consumption**: idiomatic use of AppTheory task table/storage constructs; no local framework patch
 - **Acceptance**: task storage can be provisioned and configured without advertising `tasks`; managed-release verification covers any new asset/export shape.
-- **Validation**: `cd cdk && go test . ./stacks`, representative CDK synth, release verifier tests if touched, `go test ./...`, `scripts/build.sh`
+- **Validation**: `cd cdk && npm test`, representative CDK synth, release verifier tests if touched, `go test ./...`, `scripts/build.sh`
 - **Conventional Commit subject**: `feat(cdk): prepare mcp task storage`
 
 ### 9. Pilot task-backed execution for one read-only long-running tool
