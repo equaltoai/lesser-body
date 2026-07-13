@@ -185,8 +185,13 @@ func (c *Client) ListArticles(ctx context.Context, bearerToken string, first int
 	if authorID = strings.TrimSpace(authorID); authorID != "" {
 		variables["authorId"] = authorID
 	}
+	// Lesser's agent/CLI GraphQL profile currently enforces max depth 3. A
+	// connection selection with edges.node reaches depth 4, so list stays on
+	// edge cursors plus pageInfo until Lesser exposes a depth-safe Article list
+	// item contract (tracked in equaltoai/lesser#1221).
+	_ = includeContent
 	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyArticles($authorId: ID, $first: Int, $after: Cursor) { articles(authorId: $authorId, first: $first, after: $after) { edges { node { " + articleFields(includeContent) + " } cursor } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } totalCount } }",
+		Query:         "query BodyArticles($authorId: ID, $first: Int, $after: Cursor) { articles(authorId: $authorId, first: $first, after: $after) { edges { cursor } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } totalCount } }",
 		OperationName: "BodyArticles",
 		Variables:     variables,
 	})

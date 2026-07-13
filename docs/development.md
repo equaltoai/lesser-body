@@ -102,15 +102,17 @@ workflow with an actor-scoped OAuth token that has write scope:
 ```bash
 MCP_ENDPOINT="https://api.dev.example.com/mcp/<actor>" \
 MCP_BEARER_TOKEN="<oauth-access-token>" \
-ARTICLE_CANARY_CONFIRM_PUBLISH=true \
+ARTICLE_CANARY_CONFIRM_DRAFT_CREATE=true \
 scripts/canary_article_mcp.py
 ```
 
-The canary intentionally creates and publishes a real canary Article for that actor. It calls
-`article_draft_create`, `article_draft_preview`, `article_draft_publish`, and `article_get` using compact views,
-proving the draft → Lesser-rendered preview → publish → canonical fetch path. It refuses authenticated redirects and
-prints only compact release-validation signals: ids/URLs, payload sizes, omission/expansion metadata, booleans, and
-hashes. It never prints bearer tokens, draft content, rendered HTML, full tool payloads, or raw upstream error payloads.
-Use `ARTICLE_CANARY_TITLE`, `ARTICLE_CANARY_SLUG`, `ARTICLE_CANARY_CONTENT`,
-`ARTICLE_CANARY_CONTENT_FORMAT`, `ARTICLE_CANARY_PREVIEW_CHARS`, and `ARTICLE_CANARY_MAX_OUTPUT_BYTES` only when a
-run needs deterministic inputs or tighter response budgets.
+The canary is a no-public-side-effects probe. It calls `article_draft_list`, `article_list`,
+`article_draft_create`, and `article_draft_preview` using compact views, proving the depth-safe list contracts and the
+unpublished draft → Lesser-rendered preview path. It refuses `ARTICLE_CANARY_CONFIRM_PUBLISH=true` because Article
+publishing requires a separate, explicitly authorized manual validation path. The probe never publishes Articles, creates
+public/unlisted posts, follows, boosts, favorites, dismisses notifications, deploys, signs, or mutates cloud/on-chain
+state. It refuses authenticated redirects and prints only compact validation signals: ids/cursors, payload sizes,
+omission/expansion metadata, booleans, and hashes. It never prints bearer tokens, draft content, rendered HTML, full tool
+payloads, or raw upstream error payloads. Use `ARTICLE_CANARY_TITLE`, `ARTICLE_CANARY_SLUG`, `ARTICLE_CANARY_CONTENT`,
+`ARTICLE_CANARY_CONTENT_FORMAT`, `ARTICLE_CANARY_PREVIEW_CHARS`, and `ARTICLE_CANARY_MAX_OUTPUT_BYTES` only when a run
+needs deterministic inputs or tighter response budgets.

@@ -223,3 +223,22 @@ func assertArticleDraftNotFound(t *testing.T, res *mcpruntime.ToolResult, err er
 		t.Fatalf("error status = %#v, want 404; payload = %#v", errPayload["status"], errPayload)
 	}
 }
+
+func TestDraftOwnershipAcceptsLesserAuthorActor(t *testing.T) {
+	draft := &cmsapi.Draft{
+		ID: "draft-author-actor",
+		Author: &cmsapi.Actor{
+			ID:       "https://example.com/users/alice",
+			Username: "alice",
+		},
+		ContentType: cmsapi.ObjectTypeArticle,
+		Status:      cmsapi.DraftStatusDraft,
+	}
+	if !draftOwnedByAuthenticatedActor(articleDraftTestContext(), draft) {
+		t.Fatalf("expected Lesser Draft.author username/id to satisfy ownership check")
+	}
+	draft.Author.Username = ""
+	if !draftOwnedByAuthenticatedActor(articleDraftTestContext(), draft) {
+		t.Fatalf("expected local actor id segment to satisfy ownership check")
+	}
+}
