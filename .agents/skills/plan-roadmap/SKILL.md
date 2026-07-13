@@ -5,6 +5,11 @@ description: Use after enumerate-changes. Takes a flat enumerated change list an
 
 # Plan a roadmap
 
+## PROG-M1 branch profile override
+
+Active git branch profile: **feature → staging → main**. Feature branches target git branch `staging`; feature→staging PRs require required review and the existing **`ci / verify`** check (`go test ./...` plus release-asset build/verify and `cdk synth`). `main` accepts PRs only from `staging`, uses default GitHub checks and branch rules only, and does not rerun the staging verify gate. Release is manual, operator-owned, tag-driven off `main`. Git branch `staging` is distinct from the deploy-stage `staging` in lab/dev → staging → live rollout language.
+
+
 A flat enumerated list answers "what changes." A roadmap answers "in what order, with what risks, through which stages, with what coordination outside this repo." This skill is the bridge.
 
 body's roadmaps are simpler than lesser's (one Lambda, CDK with SSM exports) but demand attention on the **lesser↔body integration coordination axis** — SSM export changes, JWT secret rotation, DynamoDB schema evolution from lesser's side, and the three-step first-deploy order.
@@ -45,7 +50,7 @@ Every roadmap answers: **how does this reach `live` safely, for connected MCP cl
 
 Default rollout:
 
-1. **Feature branch work completes.** Tests pass. Required review. Merge to `main`.
+1. **Feature branch work completes.** Required review and the repo's existing staging gate pass; merge to git branch `staging`. Operator-owned promotion from `staging` to `main` follows after evidence review.
 2. **Deploy to `lab` / `dev`** via CDK. Observe MCP endpoint responds correctly, discovery metadata current, OAuth flow works, tool invocations succeed with correct scope / profile gating.
 3. **Soak in `lab`.** Evidence that MCP clients (test accounts) can connect, discover, authenticate, and invoke tools. Communication-tool delegation to lesser-host works. Session persistence retains across invocations (if enabled).
 4. **Deploy to `staging`** if used. Integration partners exercise real MCP flows.

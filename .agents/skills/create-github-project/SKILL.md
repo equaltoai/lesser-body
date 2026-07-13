@@ -5,6 +5,11 @@ description: Use after plan-roadmap is approved, if the roadmap warrants a track
 
 # Create a GitHub Project
 
+## PROG-M1 branch profile override
+
+Active git branch profile: **feature → staging → main**. Feature branches target git branch `staging`; feature→staging PRs require required review and the existing **`ci / verify`** check (`go test ./...` plus release-asset build/verify and `cdk synth`). `main` accepts PRs only from `staging`, uses default GitHub checks and branch rules only, and does not rerun the staging verify gate. Release is manual, operator-owned, tag-driven off `main`. Git branch `staging` is distinct from the deploy-stage `staging` in lab/dev → staging → live rollout language.
+
+
 equaltoai tracks initiative-level work in **GitHub Projects v2** at the org level (`github.com/orgs/equaltoai/projects/<N>`), cross-repo by default. body's roadmaps often span multiple equaltoai repos (body for the tool surface, lesser for soul-enabled wiring, host for comm-API contract, sim for client-side validation).
 
 This skill turns an approved roadmap into a project board with a clear README, status-kanban, and issues in the right repos.
@@ -147,7 +152,7 @@ Issue body template:
 <go test ./..., scripts/build.sh, cdk synth -c app=... -c stage=... -c baseDomain=...>
 
 ## Stage rollout checkpoints
-- [ ] Merged to main
+- [ ] Merged to staging
 - [ ] Deployed to lab / dev
 - [ ] Lab soak complete
 - [ ] Deployed to staging (if used)
