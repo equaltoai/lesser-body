@@ -4,7 +4,8 @@
 Required environment:
   MCP_ENDPOINT                    Actor-scoped MCP endpoint, for example https://api.dev.example.com/mcp/agent
   MCP_BEARER_TOKEN                OAuth access token for that actor (or set MCP_AUTHORIZATION="Bearer ...")
-  ARTICLE_CANARY_CONFIRM_PUBLISH  Must be "true" so publishing a canary Article is explicit.
+  ARTICLE_CANARY_CONFIRM_DRAFT_CREATE  Must be "true" so creating an unpublished canary draft is explicit.
+  ARTICLE_CANARY_CONFIRM_PUBLISH       Must be unset/false; this no-public-side-effects probe refuses publishing.
 
 Optional environment:
   ARTICLE_CANARY_TITLE            Canary Article title (default: generated unique canary title)
@@ -14,9 +15,11 @@ Optional environment:
   ARTICLE_CANARY_PREVIEW_CHARS    Compact preview rune budget for Article tool calls (default: 80)
   ARTICLE_CANARY_MAX_OUTPUT_BYTES MCP response budget passed to Article tool calls (default: 12000)
 
-The canary creates and publishes a real Article for the authenticated actor. It intentionally uses compact MCP views,
-redacts bearer tokens, refuses authenticated redirects, and prints only ids/URLs, payload sizes, booleans, and hashes.
-It never prints draft content, rendered HTML, full tool payloads, or raw upstream error payloads.
+The canary creates an unpublished private Article draft for the authenticated actor, previews it through Lesser, and
+checks depth-safe list/read surfaces. It intentionally does not publish, post, follow, boost, favorite, dismiss
+notifications, deploy, sign, or mutate cloud/on-chain state. It uses compact MCP views, redacts bearer tokens, refuses
+authenticated redirects, and prints only ids/cursors, payload sizes, booleans, and hashes. It never prints draft content,
+rendered HTML, full tool payloads, or raw upstream error payloads.
 """
 
 from __future__ import annotations
@@ -323,6 +326,7 @@ def article_ref(data: dict[str, Any], *, context: str) -> dict[str, Any]:
     return ref
 
 
+CONFIRM_DRAFT_CREATE = env_bool("ARTICLE_CANARY_CONFIRM_DRAFT_CREATE")
 CONFIRM_PUBLISH = env_bool("ARTICLE_CANARY_CONFIRM_PUBLISH")
 PREVIEW_CHARS = env_int("ARTICLE_CANARY_PREVIEW_CHARS", default=80, minimum=1, maximum=2000)
 MAX_OUTPUT_BYTES = env_int("ARTICLE_CANARY_MAX_OUTPUT_BYTES", default=12000, minimum=1024, maximum=262144)
@@ -344,9 +348,14 @@ if not CONTENT:
 
 
 def main() -> int:
-    if not CONFIRM_PUBLISH:
+    if CONFIRM_PUBLISH:
         raise CanaryError(
-            "ARTICLE_CANARY_CONFIRM_PUBLISH=true is required because this canary creates and publishes a real Article"
+            "ARTICLE_CANARY_CONFIRM_PUBLISH is no longer supported by this no-public-side-effects canary; "
+            "article publishes require a separate, explicitly authorized manual validation path"
+        )
+    if not CONFIRM_DRAFT_CREATE:
+        raise CanaryError(
+            "ARTICLE_CANARY_CONFIRM_DRAFT_CREATE=true is required because this probe creates an unpublished private draft"
         )
 
     log(f"MCP endpoint: {ENDPOINT}")
@@ -355,7 +364,8 @@ def main() -> int:
         "canary input "
         f"slug={safe_identifier(SLUG)} title_sha256_12={sha12(TITLE)} "
         f"content_format={CONTENT_FORMAT} content_bytes={len(CONTENT.encode('utf-8'))} "
-        f"content_sha256_12={sha12(CONTENT)} preview_chars={PREVIEW_CHARS} max_output_bytes={MAX_OUTPUT_BYTES}"
+        f"content_sha256_12={sha12(CONTENT)} preview_chars={PREVIEW_CHARS} max_output_bytes={MAX_OUTPUT_BYTES} "
+        "public_side_effects=disabled"
     )
 
     post_rpc("initialize")
@@ -365,11 +375,36 @@ def main() -> int:
 
     tools_result = post_rpc("tools/list")
     tool_names = {tool.get("name") for tool in tools_result.get("tools", []) if isinstance(tool, dict)}
-    required_tools = {"article_draft_create", "article_draft_preview", "article_draft_publish", "article_get"}
+    required_tools = {"article_draft_list", "article_draft_create", "article_draft_preview", "article_list"}
     missing = sorted(required_tools - tool_names)
     if missing:
         raise CanaryError(f"tools/list missing Article tools: {missing}")
-    log("ok tools/list Article tools present")
+    forbidden_tools_used = {"article_draft_publish", "post_create", "post_boost", "post_favorite", "follow", "notification_dismiss"}
+    log("ok tools/list no-public-side-effects Article probe tools present")
+
+    draft_list = tool_call("article_draft_list", article_tool_args({"limit": 1}))
+    require_no_forbidden_content(draft_list, context="article_draft_list")
+    draft_list_policy = draft_list.get("policy") if isinstance(draft_list.get("policy"), dict) else {}
+    if draft_list_policy.get("graphqlDepthSafe") is not True:
+        raise CanaryError("article_draft_list did not advertise graphqlDepthSafe policy")
+    log(
+        "ok article_draft_list depth_safe "
+        f"count={draft_list.get('count')} totalCount={draft_list.get('totalCount')} "
+        f"nextCursor={safe_identifier(draft_list.get('nextCursor'))} payloadB={last_response_bytes}"
+    )
+
+    article_list = tool_call("article_list", article_tool_args({"limit": 1}))
+    require_no_forbidden_content(article_list, context="article_list")
+    article_list_policy = article_list.get("policy") if isinstance(article_list.get("policy"), dict) else {}
+    if article_list_policy.get("graphqlDepthSafe") is not True:
+        raise CanaryError("article_list did not advertise graphqlDepthSafe policy")
+    if not article_list_policy.get("conditionalHandoff"):
+        raise CanaryError("article_list missing Lesser #1221 conditional handoff note")
+    log(
+        "ok article_list depth_safe_conditional "
+        f"count={article_list.get('count')} totalCount={article_list.get('totalCount')} "
+        f"nextCursor={safe_identifier(article_list.get('nextCursor'))} payloadB={last_response_bytes}"
+    )
 
     created = tool_call(
         "article_draft_create",
@@ -390,10 +425,14 @@ def main() -> int:
     policy = created.get("policy") if isinstance(created.get("policy"), dict) else {}
     if policy.get("autoPublishes") is not False:
         raise CanaryError("article_draft_create policy did not preserve autoPublishes=false")
+    create_expansion_tools = expansion_tool_names(created)
+    forbidden_expansions = sorted(create_expansion_tools & forbidden_tools_used)
+    if forbidden_expansions:
+        raise CanaryError(f"article_draft_create exposed forbidden expansion tools: {forbidden_expansions}")
     log(
-        "ok article_draft_create "
+        "ok article_draft_create unpublished "
         f"draft_id={safe_identifier(draft_id)} status={safe_identifier(draft.get('status'))} "
-        f"omitted={omitted_count(created)} expansionTools={sorted(expansion_tool_names(created))} "
+        f"omitted={omitted_count(created)} expansionTools={sorted(create_expansion_tools)} "
         f"payloadB={create_payload_bytes}"
     )
 
@@ -415,56 +454,19 @@ def main() -> int:
     preview_policy = preview.get("policy") if isinstance(preview.get("policy"), dict) else {}
     if preview_policy.get("rendersLocally") is not False or preview_policy.get("rawDraftContentReturned") is not False:
         raise CanaryError("article_draft_preview policy did not preserve renderer/raw-content constraints")
+    preview_expansion_tools = expansion_tool_names(preview)
+    forbidden_expansions = sorted(preview_expansion_tools & forbidden_tools_used)
+    if forbidden_expansions:
+        raise CanaryError(f"article_draft_preview exposed forbidden expansion tools: {forbidden_expansions}")
     log(
-        "ok article_draft_preview "
+        "ok article_draft_preview no_publish "
         f"draft_id={safe_identifier(preview_id)} renderedBytes={preview_data.get('renderedBytes')} "
         f"sourceBytes={preview_data.get('sourceBytes')} omitted={omitted_count(preview)} "
-        f"expansionTools={sorted(expansion_tool_names(preview))} payloadB={preview_payload_bytes}"
+        f"expansionTools={sorted(preview_expansion_tools)} payloadB={preview_payload_bytes}"
     )
 
-    published = tool_call(
-        "article_draft_publish",
-        article_tool_args({"id": draft_id}),
-    )
-    publish_payload_bytes = last_response_bytes
-    require_no_forbidden_content(published, context="article_draft_publish")
-    article_id = required_string(published.get("canonicalArticleId"), context="article_draft_publish canonicalArticleId")
-    canonical_url = required_string(published.get("canonicalArticleUrl"), context="article_draft_publish canonicalArticleUrl")
-    published_ref = article_ref(published, context="article_draft_publish")
-    if required_string(published_ref.get("id"), context="article_draft_publish articleRef id") != article_id:
-        raise CanaryError("article_draft_publish articleRef id did not match canonicalArticleId")
-    article_slug = str(published_ref.get("slug") or "").strip()
-    log(
-        "ok article_draft_publish "
-        f"article_id={safe_identifier(article_id)} canonical_url={safe_identifier(canonical_url)} "
-        f"slug={safe_identifier(article_slug)} omitted={omitted_count(published)} payloadB={publish_payload_bytes}"
-    )
-
-    fetched = tool_call(
-        "article_get",
-        article_tool_args({"id": article_id}),
-    )
-    fetch_payload_bytes = last_response_bytes
-    require_no_forbidden_content(fetched, context="article_get")
-    fetched_id = required_string(fetched.get("canonicalArticleId"), context="article_get canonicalArticleId")
-    fetched_url = required_string(fetched.get("canonicalArticleUrl"), context="article_get canonicalArticleUrl")
-    if fetched_id != article_id:
-        raise CanaryError("article_get canonicalArticleId did not match published Article id")
-    if fetched_url != canonical_url:
-        raise CanaryError("article_get canonicalArticleUrl did not match published Article URL")
-    fetched_ref = article_ref(fetched, context="article_get")
-    if required_string(fetched_ref.get("id"), context="article_get articleRef id") != article_id:
-        raise CanaryError("article_get articleRef id did not match canonicalArticleId")
-    log(
-        "ok article_get canonical_fetch "
-        f"article_id={safe_identifier(fetched_id)} canonical_url={safe_identifier(fetched_url)} "
-        f"omitted={omitted_count(fetched)} expansionTools={sorted(expansion_tool_names(fetched))} "
-        f"payloadB={fetch_payload_bytes}"
-    )
-
-    log("canary passed")
+    log("canary passed (no public side effects; draft remains unpublished; Lesser #1221 still owns published Article list-item contract)")
     return 0
-
 
 if __name__ == "__main__":
     try:

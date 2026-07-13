@@ -24,7 +24,7 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			if input["contentType"] != ObjectTypeArticle || input["contentFormat"] != ContentFormatMarkdown {
 				t.Fatalf("create input = %+v", input)
 			}
-			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
 		case "BodyUpdateArticleDraft":
 			if op.Variables["id"] != "draft-1" {
 				t.Fatalf("update variables = %+v", op.Variables)
@@ -33,11 +33,11 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			if input["contentFormat"] != ContentFormatHTML {
 				t.Fatalf("update input = %+v", input)
 			}
-			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","content":"<p>Hello</p>","contentFormat":"HTML","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"<p>Hello</p>","contentFormat":"HTML","status":"DRAFT"}}}`))
 		case "BodyArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","content":"body","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"body","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
 		case "BodyArticleDrafts":
-			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -49,7 +49,7 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateArticleDraft: %v", err)
 	}
-	if created.ID != "draft-1" || created.Content != "" {
+	if created.ID != "draft-1" || created.Content != "" || created.Author == nil || created.Author.Username != "alice" {
 		t.Fatalf("compact create should decode draft metadata without content, got %+v", created)
 	}
 	updated, err := client.UpdateArticleDraft(context.Background(), "token", " draft-1 ", UpdateDraftInput{ContentFormat: stringPtr(ContentFormatHTML)}, true)
@@ -67,8 +67,8 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListArticleDrafts: %v", err)
 	}
-	if len(listed.Edges) != 1 || listed.Edges[0].Node.Content != "" {
-		t.Fatalf("compact list = %+v", listed.Edges)
+	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "draft-1" || listed.Edges[0].Node != nil {
+		t.Fatalf("compact list should decode depth-safe cursors without nodes, got %+v", listed.Edges)
 	}
 
 	if len(operations) != 4 {
@@ -77,11 +77,17 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	if !strings.Contains(operations[0].Query, "createDraft") || strings.Contains(operations[0].Query, " content ") {
 		t.Fatalf("compact create query = %s", operations[0].Query)
 	}
+	if strings.Contains(operations[0].Query, "authorId") || !strings.Contains(operations[0].Query, "author { id username }") {
+		t.Fatalf("compact create query must consume Lesser Draft.author, got %s", operations[0].Query)
+	}
 	if !strings.Contains(operations[1].Query, "updateDraft") || !strings.Contains(operations[1].Query, " content") {
 		t.Fatalf("standard update query = %s", operations[1].Query)
 	}
-	if !strings.Contains(operations[3].Query, "myDrafts(contentType: ARTICLE, status: DRAFT") || strings.Contains(operations[3].Query, " content ") {
+	if !strings.Contains(operations[3].Query, "myDrafts(contentType: ARTICLE, status: DRAFT") || !strings.Contains(operations[3].Query, "edges { cursor }") {
 		t.Fatalf("compact list query = %s", operations[3].Query)
+	}
+	if strings.Contains(operations[3].Query, "node {") || strings.Contains(operations[3].Query, "authorId") || strings.Contains(operations[3].Query, " content ") {
+		t.Fatalf("list query must stay within Lesser agent depth-3 and avoid legacy authorId, got %s", operations[3].Query)
 	}
 }
 
