@@ -310,12 +310,17 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 	}
 	articles := make([]map[string]any, 0, len(conn.Edges))
 	for _, edge := range conn.Edges {
+		cursor := strings.TrimSpace(edge.Cursor)
 		if edge.Node == nil {
+			if cursor == "" {
+				continue
+			}
+			articles = append(articles, compactArticleCursorRef(cursor))
 			continue
 		}
 		item := shapeArticle(edge.Node, params, nil)
-		if strings.TrimSpace(edge.Cursor) != "" {
-			item["cursor"] = strings.TrimSpace(edge.Cursor)
+		if cursor != "" {
+			item["cursor"] = cursor
 		}
 		articles = append(articles, item)
 	}
@@ -335,9 +340,9 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 		"nextCursor": nextCursor,
 		"pageInfo":   conn.PageInfo,
 		"totalCount": conn.TotalCount,
-		"omitted":    articleOmissions(params.View, true),
+		"omitted":    articleListOmissions(),
 		"budget":     articleDraftBudget(params),
-		"policy":     articlePolicyMetadata(),
+		"policy":     articleListPolicyMetadata(),
 	}
 	text := map[string]any{
 		"tool":     "article_list",
@@ -349,6 +354,15 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 		text["nextCursor"] = nextCursor
 	}
 	return articleDraftStructuredResult("article_list", params.View, fmt.Sprintf("%d Article refs", len(articles)), payload, text, params.MaxOutputBytes)
+}
+
+func compactArticleCursorRef(cursor string) map[string]any {
+	cursor = strings.TrimSpace(cursor)
+	return map[string]any{
+		"cursor":       cursor,
+		"depthSafeRef": true,
+		"contractNote": "Lesser #1221 must expose a depth-safe Article list item before article IDs/slugs can be returned from article_list under the agent depth-3 profile.",
+	}
 }
 
 func shapeArticle(article *cmsapi.Article, params articleDraftViewParams, fallbackContent *string) map[string]any {
@@ -440,6 +454,23 @@ func articleOmissions(view string, list bool) []any {
 	}
 }
 
+func articleListOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":      "articles[].id",
+			"reason":    "graphql_depth_budget",
+			"handoff":   "equaltoai/lesser#1221",
+			"expansion": "pending Lesser depth-safe Article list item contract",
+		},
+		map[string]any{
+			"path":      "articles[].content",
+			"reason":    "graphql_depth_budget",
+			"handoff":   "equaltoai/lesser#1221",
+			"expansion": "pending Lesser depth-safe Article list item contract",
+		},
+	}
+}
+
 func articlePolicyMetadata() map[string]any {
 	return map[string]any{
 		"draftOnly":                false,
@@ -448,6 +479,14 @@ func articlePolicyMetadata() map[string]any {
 		"canonicalSlugMutable":     false,
 		"previewToolAvailable":     false,
 	}
+}
+
+func articleListPolicyMetadata() map[string]any {
+	out := articlePolicyMetadata()
+	out["graphqlDepthSafe"] = true
+	out["listSelection"] = "edges.cursor"
+	out["conditionalHandoff"] = "equaltoai/lesser#1221 must provide a depth-safe Article list-item contract for IDs/slugs/content refs."
+	return out
 }
 
 func canonicalArticleID(article *cmsapi.Article) string {

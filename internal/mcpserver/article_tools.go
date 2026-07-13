@@ -454,12 +454,17 @@ func articleDraftListResult(conn *cmsapi.DraftConnection, limit int, params arti
 	}
 	drafts := make([]map[string]any, 0, len(conn.Edges))
 	for _, edge := range conn.Edges {
+		cursor := strings.TrimSpace(edge.Cursor)
 		if edge.Node == nil {
+			if cursor == "" {
+				continue
+			}
+			drafts = append(drafts, compactArticleDraftCursorRef(cursor))
 			continue
 		}
 		item := shapeArticleDraft(edge.Node, params, nil)
-		if strings.TrimSpace(edge.Cursor) != "" {
-			item["cursor"] = strings.TrimSpace(edge.Cursor)
+		if cursor != "" {
+			item["cursor"] = cursor
 		}
 		drafts = append(drafts, item)
 	}
@@ -478,9 +483,9 @@ func articleDraftListResult(conn *cmsapi.DraftConnection, limit int, params arti
 		"nextCursor": nextCursor,
 		"pageInfo":   conn.PageInfo,
 		"totalCount": conn.TotalCount,
-		"omitted":    articleDraftOmissions(params.View, true),
+		"omitted":    articleDraftListOmissions(),
 		"budget":     articleDraftBudget(params),
-		"policy":     articleDraftPolicyMetadata(),
+		"policy":     articleDraftListPolicyMetadata(),
 	}
 	text := map[string]any{
 		"tool":  "article_draft_list",
@@ -577,6 +582,22 @@ func baseArticleDraftPreview(preview *cmsapi.DraftPreview) map[string]any {
 	}
 }
 
+func compactArticleDraftCursorRef(draftID string) map[string]any {
+	draftID = strings.TrimSpace(draftID)
+	return map[string]any{
+		"id":           draftID,
+		"cursor":       draftID,
+		"contentType":  cmsapi.ObjectTypeArticle,
+		"status":       cmsapi.DraftStatusDraft,
+		"depthSafeRef": true,
+		"expand": map[string]any{
+			"tool":       "article_draft_get",
+			"arguments":  map[string]any{"id": draftID, "view": readViewStandard},
+			"resultPath": "structuredContent.data.draft",
+		},
+	}
+}
+
 func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, fallbackContent *string) map[string]any {
 	out := map[string]any{
 		"id":            strings.TrimSpace(draft.ID),
@@ -649,6 +670,21 @@ func articleDraftOmissions(view string, list bool) []any {
 	}
 }
 
+func articleDraftListOmissions() []any {
+	return []any{
+		map[string]any{
+			"path":      "drafts[].metadata",
+			"reason":    "graphql_depth_budget",
+			"expansion": "call article_draft_get with view=standard for each draft id",
+		},
+		map[string]any{
+			"path":      "drafts[].content",
+			"reason":    "graphql_depth_budget",
+			"expansion": "call article_draft_get with view=standard for each draft id",
+		},
+	}
+}
+
 func articleDraftPreviewOmissions(preview *cmsapi.DraftPreview, view string) []any {
 	if view == readViewStandard || preview == nil || !preview.Success || preview.RenderedHTML == nil {
 		return nil
@@ -691,6 +727,14 @@ func articleDraftPolicyMetadata() map[string]any {
 		"publishToolAvailable": true,
 		"publishTool":          "article_draft_publish",
 	}
+}
+
+func articleDraftListPolicyMetadata() map[string]any {
+	out := articleDraftPolicyMetadata()
+	out["graphqlDepthSafe"] = true
+	out["listSelection"] = "edges.cursor"
+	out["expansion"] = "call article_draft_get per draft id for full metadata/content"
+	return out
 }
 
 func articleDraftPreviewPolicyMetadata() map[string]any {
@@ -767,11 +811,51 @@ func draftOwnedByAuthenticatedActor(ctx context.Context, draft *cmsapi.Draft) bo
 	if draft == nil {
 		return false
 	}
-	authorID := strings.TrimSpace(draft.AuthorID)
-	if authorID == "" {
+	authenticated := authenticatedArticleAuthorID(ctx)
+	if authenticated == "" {
 		return false
 	}
-	return authorID == authenticatedArticleAuthorID(ctx)
+	for _, candidate := range draftAuthorCandidates(draft) {
+		if strings.EqualFold(candidate, authenticated) {
+			return true
+		}
+	}
+	return false
+}
+
+func draftAuthorCandidates(draft *cmsapi.Draft) []string {
+	if draft == nil {
+		return nil
+	}
+	candidates := []string{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			candidates = append(candidates, value)
+		}
+	}
+	add(draft.AuthorID)
+	if draft.Author != nil {
+		add(draft.Author.Username)
+		add(draft.Author.ID)
+		if local := localActorIDSegment(draft.Author.ID); local != "" {
+			add(local)
+		}
+	}
+	return candidates
+}
+
+func localActorIDSegment(actorID string) string {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return ""
+	}
+	actorID = strings.TrimRight(actorID, "/")
+	idx := strings.LastIndex(actorID, "/")
+	if idx < 0 || idx == len(actorID)-1 {
+		return ""
+	}
+	return strings.TrimSpace(actorID[idx+1:])
 }
 
 // draftIsArticleDraft returns true only for the ARTICLE + DRAFT subset that

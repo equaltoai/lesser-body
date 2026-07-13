@@ -47,7 +47,7 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 			if op.Variables["authorId"] != "agent1" || op.Variables["after"] != "cursor-1" {
 				t.Fatalf("list variables = %+v", op.Variables)
 			}
-			_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"node":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"},"cursor":"article-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+			_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -84,8 +84,8 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListArticles: %v", err)
 	}
-	if len(listed.Edges) != 1 || listed.Edges[0].Node.Content != "" {
-		t.Fatalf("compact list = %+v", listed.Edges)
+	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "article-cursor-1" || listed.Edges[0].Node != nil {
+		t.Fatalf("compact list should decode depth-safe cursors without nodes, got %+v", listed.Edges)
 	}
 
 	if len(operations) != 5 {
@@ -97,7 +97,10 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 	if !strings.Contains(operations[1].Query, "updateArticle") || !strings.Contains(operations[1].Query, " content") {
 		t.Fatalf("standard update query = %s", operations[1].Query)
 	}
-	if !strings.Contains(operations[4].Query, "articles(authorId: $authorId") || strings.Contains(operations[4].Query, " content ") {
+	if !strings.Contains(operations[4].Query, "articles(authorId: $authorId") || !strings.Contains(operations[4].Query, "edges { cursor }") {
 		t.Fatalf("compact list query = %s", operations[4].Query)
+	}
+	if strings.Contains(operations[4].Query, "node {") || strings.Contains(operations[4].Query, " content ") {
+		t.Fatalf("list query must stay within Lesser agent depth-3 by avoiding edge nodes/content, got %s", operations[4].Query)
 	}
 }

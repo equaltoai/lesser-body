@@ -2139,12 +2139,73 @@ func handleProfileUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 		// Lesser’s JSON surface expects `avatar` (string) for non-multipart updates.
 		body["avatar"] = in.AvatarURL
 	}
+	// Lesser #1221 confirms the canonical profile PATCH contract treats
+	// locked/bot/discoverable as optional patch fields and preserves existing
+	// flags when they are omitted. Body intentionally forwards only the fields
+	// represented in this tool schema rather than inventing local profile state.
 
 	out, err := client.DoJSON(ctx, "PATCH", "/api/v1/accounts/update_credentials", nil, token, body)
 	if err != nil {
-		return authToolResultFromError(err)
+		return profileUpdateToolResultFromError("profile_update", err)
 	}
 	return toolJSONResult(out, nil)
+}
+
+func profileUpdateAPIErrorSummary(body []byte) (string, map[string]any) {
+	raw := strings.TrimSpace(string(body))
+	if raw == "" {
+		return "Lesser profile update request failed", nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return "Lesser profile update request failed", map[string]any{"bodyBytes": len([]byte(raw))}
+	}
+	safe := map[string]any{}
+	for _, key := range []string{"error", "error_description", "message", "code"} {
+		if value := extractString(parsed, key); value != "" {
+			safe[key] = value
+		}
+	}
+	if status, ok := parsed["status"].(float64); ok {
+		safe["status"] = status
+	}
+	message := extractString(parsed, "error_description")
+	if message == "" {
+		message = extractString(parsed, "message")
+	}
+	if message == "" {
+		message = extractString(parsed, "error")
+	}
+	if message == "" {
+		message = "Lesser profile update request failed"
+	}
+	return message, safe
+}
+
+func profileUpdateToolResultFromError(stage string, err error) (*mcpruntime.ToolResult, error) {
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) {
+		message, safeAPIError := profileUpdateAPIErrorSummary(apiErr.Body)
+		if strings.TrimSpace(message) == "" {
+			message = "Lesser profile update request failed"
+		}
+		details := map[string]any{
+			"source":       "lesser_profile_update",
+			"stage":        strings.TrimSpace(stage),
+			"upstreamCode": apiErr.Status,
+		}
+		if len(safeAPIError) > 0 {
+			details["apiError"] = safeAPIError
+		}
+		return toolErrorResult("lesser_profile_update_http_error", message, apiErr.Status, details)
+	}
+	return toolErrorResult("lesser_profile_update_error", "Lesser profile update request failed", 0, map[string]any{
+		"source": "lesser_profile_update",
+		"stage":  strings.TrimSpace(stage),
+	})
 }
 
 func profileReadDef() mcpruntime.ToolDef {

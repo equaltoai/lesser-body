@@ -14,11 +14,19 @@ const (
 	DraftStatusDraft      = "DRAFT"
 )
 
+// Actor is the bounded Lesser GraphQL Actor projection needed by the CMS
+// draft adapters. The full Actor shape remains Lesser-owned.
+type Actor struct {
+	ID       string `json:"id"`
+	Username string `json:"username,omitempty"`
+}
+
 // Draft is Lesser's CMS Draft type as consumed by body's Article draft tools.
 // It intentionally models only the fields needed for the draft-only MCP slice.
 type Draft struct {
 	ID              string  `json:"id"`
-	AuthorID        string  `json:"authorId,omitempty"`
+	AuthorID        string  `json:"authorId,omitempty"` // legacy fallback; current Lesser exposes Author.
+	Author          *Actor  `json:"author,omitempty"`
 	ContentType     string  `json:"contentType,omitempty"`
 	Title           *string `json:"title,omitempty"`
 	Slug            *string `json:"slug,omitempty"`
@@ -209,8 +217,13 @@ func (c *Client) ListArticleDrafts(ctx context.Context, bearerToken string, firs
 	if after = strings.TrimSpace(after); after != "" {
 		variables["after"] = after
 	}
+	// Lesser's agent/CLI GraphQL profile currently enforces max depth 3. A
+	// connection selection with edges.node reaches depth 4, so list stays on
+	// edge cursors plus pageInfo and callers expand individual drafts with
+	// article_draft_get when they need full draft metadata/content.
+	_ = includeContent
 	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyArticleDrafts($first: Int, $after: Cursor) { myDrafts(contentType: ARTICLE, status: DRAFT, first: $first, after: $after) { edges { node { " + draftFields(includeContent) + " } cursor } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } totalCount } }",
+		Query:         "query BodyArticleDrafts($first: Int, $after: Cursor) { myDrafts(contentType: ARTICLE, status: DRAFT, first: $first, after: $after) { edges { cursor } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } totalCount } }",
 		OperationName: "BodyArticleDrafts",
 		Variables:     variables,
 	})
@@ -275,7 +288,7 @@ func normalizeContentFormat(value string) string {
 }
 
 func draftFields(includeContent bool) string {
-	fields := "id authorId contentType title slug contentFormat status scheduledAt objectId autosaveVersion lastSavedAt createdAt updatedAt"
+	fields := "id author { id username } contentType title slug contentFormat status scheduledAt objectId autosaveVersion lastSavedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}
