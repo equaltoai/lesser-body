@@ -1,20 +1,20 @@
 ---
 name: implement-milestone
-description: Use to execute a single milestone (or GitHub Project phase) of work — feature branch off main, commits per enumerated task, PR review, and feature → staging integration. Runs one milestone at a time. Main promotion and deploys are operator-owned follow-ons through deploy-body.
+description: Use to execute a single milestone (or GitHub Project phase) of work — feature branch off staging, commits per enumerated task, PR review with existing ci / verify, merge to staging. Runs one milestone at a time. Deploys themselves go through deploy-body.
 ---
 
 # Implement a milestone
 
-This skill moves body work through code, review, and feature → `staging` integration. body uses a feature → staging → main source-control model: feature branches PR to the `staging` git branch and are gated by the existing `ci / verify` job (`go test ./...`, release-asset verification, regression harnesses, CDK synth, and discovery-route checks). The `staging` git branch is not the deploy-stage `staging`; staging → main promotion is operator-owned, accepts PRs only from `staging`, and intentionally does not re-run `ci / verify`.
+This skill moves body work through code, review, and merge to git branch `staging`. body uses feature → staging → main: feature PRs target `staging` and require the existing `ci / verify` check; `main` accepts PRs only from `staging` and does not rerun the verify gate. Git branch `staging` is distinct from deploy-stage `staging`.
 
 ## Hard preconditions
 
 Do not start without all of the following:
 
 - **A specific milestone named**, from `plan-roadmap` or a GitHub Project phase.
-- **Clean working tree on current `main`** at a known-green commit, with the `staging` git branch refreshed from `main` before protection/rules change milestones when required. The `staging` git branch is distinct from the deploy-stage `staging`.
+- **Clean working tree on `staging`** at a known-green commit.
 - **MCP tools healthy.** Call `memory_recent` first.
-- **`go test ./...` passes** on `main`.
+- **`go test ./...` passes** on `staging`.
 - **`go vet ./...` passes.**
 - **`gofmt -l .`** returns empty.
 - **`scripts/build.sh`** succeeds.
@@ -30,8 +30,8 @@ If any precondition fails, stop and surface it.
 One feature branch per milestone. One PR per milestone. One commit per task.
 
 - **Branch name**: descriptive, scoped. Observed patterns: `aron/issue-<N>-<topic>`, `codex/<topic>`, `chore/<dep-or-toolchain>`, `feat/<feature>`, `fix/<symptom>`.
-- **Branched from**: `main` at a known-green commit.
-- **PR target**: `staging` for feature/milestone work. The `staging` git branch is the source-control integration branch, not the deploy-stage `staging`; only operator-owned promotion PRs target `main`, and those must use `staging` as the source branch.
+- **Branched from**: `staging` at a known-green commit.
+- **PR target**: `staging`.
 - **PR title**: clear. Conventional Commits style welcome (`fix(auth): tighten JWT validation for expired tokens`); lowercase present-tense also welcome.
 - **Open the PR as a draft** with milestone goal and an unchecked task list.
 
@@ -70,12 +70,11 @@ PR description template:
 - Targeted: <specific go test ./internal/...>
 
 ## Stage rollout plan (handoff to deploy-body)
-- [ ] Merged to `staging` git branch (not the deploy-stage `staging`)
-- [ ] Promoted from `staging` git branch to `main` by operator
+- [ ] Merged to staging
 - [ ] Deployed to lab / dev
 - [ ] Lab soak complete
-- [ ] Deployed to deploy-stage `staging` (if used; distinct from the `staging` git branch)
-- [ ] Deploy-stage `staging` soak complete
+- [ ] Deployed to staging (if used)
+- [ ] Staging soak complete
 - [ ] Deployed to live
 
 ## Cross-repo coordination
@@ -145,19 +144,19 @@ When all tasks are committed and pushed:
 7. Request required review.
 8. **Leave merging to a reviewer.**
 
-The milestone PR merges to the `staging` git branch after the required `ci / verify` check is green. The `staging` git branch is not the deploy-stage `staging`. Staging → main promotion is operator-owned; after that promotion lands on `main`, hand off to `deploy-body` for per-stage rollout.
+The PR merges to git branch `staging`. Main promotion is operator-owned and PR-only from `staging`; do not deploy or release from this skill.
 
 ## Hand off to deploy-body
 
-Once promoted from the `staging` git branch to `main`, `deploy-body` owns:
+After operator-owned promotion to `main`, `deploy-body` owns:
 
-- CDK deploys per stage (`lab / dev → deploy-stage staging → live`; distinct from the `staging` git branch)
+- CDK deploys per stage (`lab / dev → staging → live`)
 - Soak criteria verification
 - SSM-export publication confirmation
 - Post-deploy monitoring
 - Release artifact production (if managed-consumer release is part of this milestone)
 
-`implement-milestone` does not run deploy commands. Its output is a merged PR on the `staging` git branch plus promotion evidence for the operator; deploy handoff begins only after the operator-owned staging → main promotion.
+`implement-milestone` does not run deploy commands. Its output is a merged PR on `staging` + handoff.
 
 ## What this skill will not do
 

@@ -5,6 +5,11 @@ description: Use after scope-need and relevant specialist skills approve work. T
 
 # Enumerate changes
 
+## PROG-M1 branch profile override
+
+Active git branch profile: **feature → staging → main**. Feature branches target git branch `staging`; feature→staging PRs require required review and the existing **`ci / verify`** check (`go test ./...` plus release-asset build/verify and `cdk synth`). `main` accepts PRs only from `staging`, uses default GitHub checks and branch rules only, and does not rerun the staging verify gate. Release is manual, operator-owned, tag-driven off `main`. Git branch `staging` is distinct from the deploy-stage `staging` in lab/dev → staging → live rollout language.
+
+
 A scoped need describes *what* is being delivered. An enumerated change list describes *what must move in the repo*. This skill is the transformation.
 
 body's change lists are typically smaller than lesser's because the service has a tighter surface: one Lambda, one optional table, CDK stack with SSM exports, and 13 docs files. A narrow bug fix might be two to three commits; a tool addition with contract regeneration might be five to eight; an MCP-contract-evolving change with client-coordination might be more. The single-commit rule holds regardless of total count.
