@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/mcpserver"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -167,15 +168,12 @@ func requiredScopesForMCPRequest(req *mcpruntime.Request) []string {
 	}
 }
 
+// requiredScopesForTool defers to the explicit, exhaustive classification declared
+// alongside tool registration. A registered tool with no classification resolves to
+// the strictest scope rather than read, so a new side-effecting tool cannot inherit
+// read scope by omission.
 func requiredScopesForTool(toolName string) []string {
-	switch toolName {
-	case "post_create", "post_boost", "post_favorite", "follow", "unfollow", "profile_update", "memory_append", "notification_dismiss",
-		"article_draft_create", "article_draft_update", "article_draft_publish", "article_update",
-		"email_send", "email_reply", "email_delete", "email_mark_read", "email_mark_unread", "sms_send":
-		return []string{"write"}
-	default:
-		return []string{"read"}
-	}
+	return mcpserver.RequiredScopesForTool(toolName)
 }
 
 func hasAnyScope(scopes []string, want ...string) bool {
