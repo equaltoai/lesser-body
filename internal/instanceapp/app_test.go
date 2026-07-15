@@ -44,7 +44,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +121,18 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				listDef := listBody.Result.Tools[3]
 				if listDef.Name != "agent_list" || listDef.Annotations == nil || listDef.Annotations.ReadOnlyHint == nil || !*listDef.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_list annotations not read-only: %+v", listDef)
+				}
+				soulGetDef := listBody.Result.Tools[4]
+				if soulGetDef.Name != "agent_soul_get" || soulGetDef.Annotations == nil || soulGetDef.Annotations.ReadOnlyHint == nil || !*soulGetDef.Annotations.ReadOnlyHint || !strings.Contains(soulGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
+					t.Fatalf("agent_soul_get annotations/description invalid: %+v", soulGetDef)
+				}
+				soulUpsertDef := listBody.Result.Tools[5]
+				if soulUpsertDef.Name != "agent_soul_upsert" || soulUpsertDef.Annotations == nil || soulUpsertDef.Annotations.ReadOnlyHint == nil || *soulUpsertDef.Annotations.ReadOnlyHint || soulUpsertDef.Annotations.IdempotentHint == nil || *soulUpsertDef.Annotations.IdempotentHint {
+					t.Fatalf("agent_soul_upsert annotations invalid: %+v", soulUpsertDef)
+				}
+				soulArchiveDef := listBody.Result.Tools[6]
+				if soulArchiveDef.Name != "agent_soul_archive" || soulArchiveDef.Annotations == nil || soulArchiveDef.Annotations.ReadOnlyHint == nil || *soulArchiveDef.Annotations.ReadOnlyHint || soulArchiveDef.Annotations.IdempotentHint == nil || !*soulArchiveDef.Annotations.IdempotentHint {
+					t.Fatalf("agent_soul_archive annotations invalid: %+v", soulArchiveDef)
 				}
 			}
 		})

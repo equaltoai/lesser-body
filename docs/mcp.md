@@ -433,6 +433,9 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 | `agent_create` | Write | Delegate runtime credentials for an existing Lesser local agent account and create a Body/Ptah account-scoped registry entry. |
 | `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor. |
 | `agent_list` | Read | List Body/Ptah account-scoped registry entries with cursor pagination. |
+| `agent_soul_get` | Read | Read the current account-scoped Ptah `agent_soul` draft/archived record. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
+| `agent_soul_upsert` | Write | Create or update account-scoped Ptah `agent_soul` draft content through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
+| `agent_soul_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_soul` record through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
 
 `agent_get` input:
 
@@ -497,6 +500,74 @@ metadata:
 ```
 
 Invalid `limit` or `cursor` values return `invalid_request`. Registry failures return `agent_registry_error`.
+
+`agent_soul_get` input:
+
+- Required: `agent_id`.
+- Derived: the account scope is always the authenticated account-holder OAuth principal. Callers cannot supply an
+  account override. Optional `actor_username`, when supplied, must match the authenticated principal after normalization
+  or the tool fails closed.
+
+`agent_soul_get` requires an account-holder OAuth principal with read-capable scope. It calls only the Body-owned
+`internal/agentcontent.Store.Get` path with content type `agent_soul`; it does not call Lesser, read `LESSER_TABLE_NAME`,
+or accept cross-account selectors. Missing records and cross-account lookups return structured tool error code
+`not_found` without account/agent detail leakage.
+
+Successful output has `structuredContent.data.agent_soul`:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "agent_id": "<agent id>",
+  "type": "agent_soul",
+  "content": "<draft soul content>",
+  "content_bytes": 123,
+  "version": 1,
+  "lifecycle_state": "draft",
+  "created_at": "<RFC3339 timestamp>",
+  "updated_at": "<RFC3339 timestamp>",
+  "updated_by_subject_id": "<authenticated JWT subject>"
+}
+```
+
+The result also includes `structuredContent.data.schema` with status `provisional` and marker
+`provisional_agent_soul_schema_pending_lesser_soul_s1`. This marker must remain until the lesser-soul S1/Panonomous
+contract is governance-unblocked and a follow-up commit finalizes the schema. The text content stays concise and points
+to `structuredContent.data.agent_soul.content` instead of duplicating the draft body.
+
+`agent_soul_upsert` input:
+
+- Required: `agent_id`, `content`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_soul_upsert` requires write scope. It stores draft soul content through `internal/agentcontent.Store.Upsert` with
+content type `agent_soul`, so the TableTheory-backed instance content store owns version increments, lifecycle state, and
+size bounds. It does not introduce a separate persistence layer, DynamoDB client, or Lesser-table write. Successful
+upserts return the same `agent_soul` record shape with `lifecycle_state:"draft"` and the incremented `version`.
+
+`agent_soul_archive` input:
+
+- Required: `agent_id`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_soul_archive` requires write scope. It archives through `internal/agentcontent.Store.Archive`, preserves the
+store's idempotent archive behavior, and reports:
+
+```json
+{
+  "already_archived": false,
+  "idempotent": true
+}
+```
+
+`already_archived` is true when the current account-scoped record was already archived before the archive call. The
+returned `agent_soul` record keeps the store-owned version and has `lifecycle_state:"archived"`.
+
+For all `agent_soul_*` tools, malformed input returns `invalid_request`; agent-delegated or mismatched principals return
+`forbidden`; missing content records return `not_found`; optimistic write races return `conflict`; and unexpected
+content-store failures return `internal` with sanitized `source:"agent_content"` details.
 
 `agent_create` input:
 
