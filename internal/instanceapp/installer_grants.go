@@ -5,15 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/equaltoai/lesser-body/internal/agentcontent"
+	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
+	"github.com/equaltoai/lesser-body/internal/installpack"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 const (
 	installerGrantPathPattern = "/instance/downloads/installer-grants/{grantId}"
-	installerGrantBoundRoute  = "/instance/ba/mcp"
+	installerGrantBoundRoute  = baserver.InstallerGrantBoundRoute
 
 	// AWS Lambda's synchronous response payload ceiling is 6 MB. Keep the
 	// installer-pack body below that ceiling before the Lambda adapters serialize
@@ -29,9 +33,8 @@ type DownloadGrantStore interface {
 }
 
 // InstallerPackProvider is the minimal pack-rendering seam for the grant route.
-// The real install-pack renderer lands in #356; this route consumes grants and
-// returns the ZIP bytes supplied by this seam without implementing renderer
-// layout, manifest, or client-specific pack generation here.
+// The default provider re-renders deterministic Ba install packs from the
+// consumed grant binding and current account-scoped agentcontent records.
 type InstallerPackProvider interface {
 	BuildInstallerPack(context.Context, InstallerPackRequest) (*InstallerPack, error)
 }
@@ -53,6 +56,10 @@ type downloadGrantStoreFactory func() (DownloadGrantStore, error)
 type options struct {
 	downloadGrantStoreFactory downloadGrantStoreFactory
 	installerPackProvider     InstallerPackProvider
+	baToolOptions             []baserver.Option
+	baContentStoreFactory     func() (baserver.AgentContentStore, error)
+	baInstanceEndpoint        string
+	baNamespace               string
 }
 
 // Option customizes the instance-plane app composition.
@@ -71,6 +78,9 @@ func WithDownloadGrantStore(store DownloadGrantStore) Option {
 			}
 			return store, nil
 		}
+		if issuer, ok := store.(baserver.DownloadGrantIssuer); ok {
+			opts.baToolOptions = append(opts.baToolOptions, baserver.WithDownloadGrantIssuer(issuer))
+		}
 	}
 }
 
@@ -86,7 +96,7 @@ func WithDownloadGrantStoreFactory(factory func() (DownloadGrantStore, error)) O
 }
 
 // WithInstallerPackProvider injects the install-pack ZIP provider used after a
-// grant is consumed. The #356 renderer will provide the production implementation.
+// grant is consumed. Production uses the Ba installpack-backed default provider.
 func WithInstallerPackProvider(provider InstallerPackProvider) Option {
 	return func(opts *options) {
 		if opts == nil {
@@ -96,11 +106,67 @@ func WithInstallerPackProvider(provider InstallerPackProvider) Option {
 	}
 }
 
+// WithBaContentStore injects the account-scoped content store used by the Ba
+// plan tool and the default grant redemption provider.
+func WithBaContentStore(store baserver.AgentContentStore) Option {
+	return func(opts *options) {
+		if opts == nil {
+			return
+		}
+		opts.baContentStoreFactory = func() (baserver.AgentContentStore, error) {
+			if store == nil {
+				return nil, fmt.Errorf("agent content store is required")
+			}
+			return store, nil
+		}
+		opts.baToolOptions = append(opts.baToolOptions, baserver.WithAgentContentStore(store))
+	}
+}
+
+// WithBaInstanceEndpoint injects the canonical CDK-derived instance endpoint
+// template used to derive pack stage domains and grant download URLs.
+func WithBaInstanceEndpoint(endpoint string) Option {
+	return func(opts *options) {
+		if opts == nil {
+			return
+		}
+		opts.baInstanceEndpoint = strings.TrimSpace(endpoint)
+		opts.baToolOptions = append(opts.baToolOptions, baserver.WithInstanceEndpoint(endpoint))
+	}
+}
+
+// WithBaNamespace injects the namespace used in Ba plan metadata and grant bindings.
+func WithBaNamespace(namespace string) Option {
+	return func(opts *options) {
+		if opts == nil {
+			return
+		}
+		opts.baNamespace = strings.TrimSpace(namespace)
+		opts.baToolOptions = append(opts.baToolOptions, baserver.WithNamespace(namespace))
+	}
+}
+
+// WithBaToolOptions injects additional baserver options, for example a test
+// rate limiter.
+func WithBaToolOptions(toolOpts ...baserver.Option) Option {
+	return func(opts *options) {
+		if opts == nil {
+			return
+		}
+		opts.baToolOptions = append(opts.baToolOptions, toolOpts...)
+	}
+}
+
 func defaultOptions() options {
 	return options{
 		downloadGrantStoreFactory: func() (DownloadGrantStore, error) {
 			return downloadgrant.Default()
 		},
+		baContentStoreFactory: func() (baserver.AgentContentStore, error) {
+			return agentcontent.Default()
+		},
+		baInstanceEndpoint: strings.TrimSpace(os.Getenv(baserver.EnvInstanceMCPEndpoint)),
+		baNamespace:        baserver.DefaultNamespace,
 	}
 }
 
@@ -111,7 +177,87 @@ func applyOptions(custom []Option) options {
 			opt(&opts)
 		}
 	}
+	if opts.installerPackProvider == nil {
+		opts.installerPackProvider = &baInstallerPackProvider{
+			contentStoreFactory: opts.baContentStoreFactory,
+			instanceEndpoint:    opts.baInstanceEndpoint,
+			namespace:           opts.baNamespace,
+			renderer:            installpack.NewRenderer(),
+		}
+	}
 	return opts
+}
+
+type baInstallerPackProvider struct {
+	contentStoreFactory func() (baserver.AgentContentStore, error)
+	instanceEndpoint    string
+	namespace           string
+	renderer            baserver.Renderer
+}
+
+// NewBaInstallerPackProvider builds the default Ba grant redemption provider
+// around an injected content store. It is intended for tests and narrow
+// composition paths; production uses the lazy default provider from New.
+func NewBaInstallerPackProvider(store baserver.AgentContentStore, instanceEndpoint string, namespace string) InstallerPackProvider {
+	return &baInstallerPackProvider{
+		contentStoreFactory: func() (baserver.AgentContentStore, error) {
+			if store == nil {
+				return nil, fmt.Errorf("agent content store is required")
+			}
+			return store, nil
+		},
+		instanceEndpoint: strings.TrimSpace(instanceEndpoint),
+		namespace:        strings.TrimSpace(namespace),
+		renderer:         installpack.NewRenderer(),
+	}
+}
+
+func (p *baInstallerPackProvider) BuildInstallerPack(ctx context.Context, req InstallerPackRequest) (*InstallerPack, error) {
+	if p == nil {
+		return nil, fmt.Errorf("installer pack provider is nil")
+	}
+	if p.contentStoreFactory == nil {
+		return nil, fmt.Errorf("agent content store is not configured")
+	}
+	store, err := p.contentStoreFactory()
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := baserver.AgentIDFromPackID(req.Binding.PackID)
+	if err != nil {
+		return nil, err
+	}
+	namespace := strings.TrimSpace(req.Binding.Namespace)
+	if namespace == "" {
+		namespace = p.namespace
+	}
+	renderer := p.renderer
+	if renderer == nil {
+		renderer = installpack.NewRenderer()
+	}
+	packInput, err := baserver.BuildPackInput(ctx, baserver.PackInputRequest{
+		ContentStore:     store,
+		InstanceEndpoint: p.instanceEndpoint,
+		Namespace:        namespace,
+		Account:          req.Binding.Account,
+		AgentID:          agentID,
+		Actor:            req.Binding.Actor,
+		Client:           req.Binding.Client,
+		Profile:          installpack.Profile(req.Binding.Profile),
+		PackID:           req.Binding.PackID,
+		PackDigest:       req.Binding.PackDigest,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pack, err := renderer.Render(ctx, packInput.RenderRequest)
+	if err != nil {
+		return nil, err
+	}
+	if pack == nil || len(pack.ZIPBytes) == 0 {
+		return nil, fmt.Errorf("installer pack render returned empty zip")
+	}
+	return &InstallerPack{ZIPBytes: pack.ZIPBytes}, nil
 }
 
 func installerGrantHandler(opts options) apptheory.Handler {
