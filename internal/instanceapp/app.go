@@ -22,7 +22,9 @@ const (
 // New builds the instance-plane Lambda app. Ptah and Ba are intentionally
 // separate AppTheory MCP server instances so each plane can grow its own static
 // registry without affecting Ka's actor-scoped /mcp/{actor} runtime.
-func New(name, version string) (*apptheory.App, error) {
+func New(name, version string, custom ...Option) (*apptheory.App, error) {
+	opts := applyOptions(custom)
+
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "lesser-body-instance"
@@ -40,6 +42,7 @@ func New(name, version string) (*apptheory.App, error) {
 
 	app.Post("/instance/ptah/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ptah.Handler()))), apptheory.RequireAuth())
 	app.Post("/instance/ba/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ba.Handler()))), apptheory.RequireAuth())
+	app.Get(installerGrantPathPattern, installerGrantHandler(opts))
 	app.Get("/.well-known/oauth-protected-resource/instance/ptah/mcp", wellKnownStubHandler(SurfacePtah))
 	app.Get("/.well-known/oauth-protected-resource/instance/ba/mcp", wellKnownStubHandler(SurfaceBa))
 
