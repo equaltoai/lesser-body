@@ -107,6 +107,10 @@ func (c *Client) DoRawJSON(ctx context.Context, method string, path string, quer
 }
 
 func (c *Client) DoRawJSONWithHeaders(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) ([]byte, http.Header, error) {
+	return c.doRawJSONWithRequestHeaders(ctx, method, path, query, bearerToken, body, nil)
+}
+
+func (c *Client) doRawJSONWithRequestHeaders(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any, requestHeaders http.Header) ([]byte, http.Header, error) {
 	if c == nil || c.baseURL == nil || c.http == nil {
 		return nil, nil, fmt.Errorf("lesser api client not initialized")
 	}
@@ -142,6 +146,19 @@ func (c *Client) DoRawJSONWithHeaders(ctx context.Context, method string, path s
 	}
 	if strings.TrimSpace(bearerToken) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
+	}
+	for name, values := range requestHeaders {
+		name = http.CanonicalHeaderKey(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		req.Header.Del(name)
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				req.Header.Add(name, value)
+			}
+		}
 	}
 
 	resp, err := c.http.Do(req)
