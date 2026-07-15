@@ -1,0 +1,11 @@
+$ bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test
+lesser-body.zip: OK
+lesser-body-deploy.json: OK
+lesser-body-managed-dev.template.json: OK
+lesser-body-managed-staging.template.json: OK
+lesser-body-managed-live.template.json: OK
+deploy-lesser-body-from-release.sh: OK
+lesser-body-release.json: OK
+apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
+cdk-file-asset-7ef1093632ae95ca.zip: OK
+Verified release assets in dist/release-test

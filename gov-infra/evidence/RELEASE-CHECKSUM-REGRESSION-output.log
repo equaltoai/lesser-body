@@ -1,0 +1,2 @@
+$ bash scripts/check_release_asset_checksum_regression.sh v0.0.0-test dist/release-test
+Regression confirmed: verifier rejects missing checksum coverage and bad checksum descriptors for lesser-body-release.json

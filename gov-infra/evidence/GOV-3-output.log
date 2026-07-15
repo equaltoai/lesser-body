@@ -1,0 +1,27 @@
+base=0be6ed9142cd8afe7da7a2e1d67f133f08c6ea29
+changed paths:
+ - .github/workflows/ci.yml
+ - gov-infra/README.md
+ - gov-infra/evidence/CDK-SYNTH-output.log
+ - gov-infra/evidence/CDK-TEST-output.log
+ - gov-infra/evidence/GO-BUILD-output.log
+ - gov-infra/evidence/GO-TEST-output.log
+ - gov-infra/evidence/GO-VET-output.log
+ - gov-infra/evidence/GOFMT-output.log
+ - gov-infra/evidence/GOV-1-output.log
+ - gov-infra/evidence/GOV-2-output.log
+ - gov-infra/evidence/GOV-3-output.log
+ - gov-infra/evidence/GOV-4-output.log
+ - gov-infra/evidence/GOV-README-output.log
+ - gov-infra/evidence/MANAGED-AUXILIARY-ASSETS-output.log
+ - gov-infra/evidence/MANAGED-TEMPLATE-DEFAULTS-output.log
+ - gov-infra/evidence/MANAGED-TEMPLATE-NAMED-RESOURCES-output.log
+ - gov-infra/evidence/MCP-DISCOVERY-ROUTES-output.log
+ - gov-infra/evidence/RELEASE-ASSETS-output.log
+ - gov-infra/evidence/RELEASE-CHECKSUM-REGRESSION-output.log
+ - gov-infra/evidence/SOURCE-BUILD-output.log
+ - gov-infra/evidence/gov-rubric-report.json
+ - gov-infra/pack.json
+ - gov-infra/verifiers/gov-verify-rubric.sh
+ - gov-infra/evidence/.gov-rubric-results.jsonl
+governance-only scope PASS
