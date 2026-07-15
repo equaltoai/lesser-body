@@ -8,10 +8,19 @@
     "factory/products/progenitor/docs/agent-designs/2026-07-05-rubric-gate-skills.md",
     "factory/products/progenitor/docs/patterns/parent-stages-genome-child-applies.md"
   ],
-  "generated_at": "2026-07-15T15:33:32.957356Z",
+  "evidence_freshness": {
+    "attestation_ref": "git.head",
+    "attestation_ref_meaning": "commit checked out when gov-verify-rubric.sh generated this report",
+    "ci_head_recheck": ".github/workflows/ci.yml reruns bash gov-infra/verifiers/gov-verify-rubric.sh at PR head",
+    "committed_artifact_self_reference": "A committed report cannot truthfully embed its own final commit SHA without a git self-reference loop.",
+    "machine_check": "git merge-base --is-ancestor <report.git.head> <review-head>",
+    "reject_relationship": "abandoned_sibling_or_non_ancestor",
+    "required_relationship_to_review_head": "ancestor_or_equal"
+  },
+  "generated_at": "2026-07-15T15:55:16.256385Z",
   "git": {
-    "head": "13d944a846ccb630e86ed1da8664d995f120a996",
-    "head_tree": "2a4ddf3382e3c29019cc36224ba2616b1edd68ac",
+    "head": "5764b2904591ca82b909f3859c7159277c87a4f8",
+    "head_tree": "ad6d3b0e36025b9e2caf22e62d0dec8a05181691",
     "merge_base_origin_staging": "0be6ed9142cd8afe7da7a2e1d67f133f08c6ea29",
     "ref": "project48-body-gov-rubric-materialization",
     "working_tree_after_run": "3 changed paths after verifier run"
