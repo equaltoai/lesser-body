@@ -33,19 +33,74 @@ This doc describes the implemented security posture of `lesser-body`.
 JWT callers are authorized by scope on `tools/call`, `resources/read`, `prompts/get`, `completion/complete`, and
 MCP task methods:
 
-- `admin`: all tools and task methods
-- `write`: write tools + read tools + task methods
-- `read`: read tools and task methods only
+- `read`: read tools and read-scoped MCP methods only
+- `write`: write tools plus everything `read` can do
+- `admin`: every `write` and `read` surface
 
-Data-bearing resources, prompts, completions, and task methods require at least `read` scope. Tool-specific write
-operations require `write` scope (or `admin`). `tasks/cancel` remains read-scoped because the Phase 6 task pilot only
-cancels session-scoped execution of the read-only `skill_bundle_get` tool.
+The hierarchy is `read` ⊂ `write` ⊂ `admin`: a `write` token satisfies read requirements, and an `admin` token
+satisfies both read and write requirements. Data-bearing resources, prompts, completions, and task methods require at
+least `read` scope. Tool-specific write operations require `write` scope (or `admin`). `tasks/cancel` remains
+read-scoped because the Phase 6 task pilot only cancels session-scoped execution of the read-only `skill_bundle_get`
+tool.
+
+The authoritative per-tool classification is `internal/mcpserver/tool_scopes.go` (`toolScopes` and
+`RequiredScopesForTool`). Documentation tables are descriptive; the code classifier is the gate. The classifier is
+fail-closed:
+
+- every registered tool must have an explicit classification;
+- a registered tool that has no classification resolves to `admin` (`StrictestToolScope`), not `read`;
+- if the registered tool surface cannot be derived, the classifier also resolves to `admin`; and
+- an unregistered tool name has no handler, carries no scope requirement, and is left to the MCP runtime's normal
+  tool-not-found path.
+
+The M0.1 regression locks are `internal/mcpserver/tool_scopes_test.go` and
+`internal/mcpapp/scope_classification_test.go`. They assert classification exhaustiveness, no stale entries, known
+scope values, annotation consistency where annotations exist, a pinned write-tool set, fail-closed default behavior,
+and read-token rejection for write tools before downstream calls.
 
 Write tools include:
 
 - `post_create`, `post_boost`, `post_favorite`, `follow`, `unfollow`, `profile_update`, `memory_append`
+- `notification_dismiss`
 - `article_draft_create`, `article_draft_update`, `article_draft_publish`, `article_update`
 - `email_send`, `email_reply`, `email_delete`, `email_mark_read`, `email_mark_unread`, `sms_send`
+
+The Body scope gate runs before AppTheory MCP tool dispatch. For `memory_append` and host-backed communication write
+tools, this is the single scope gate before the local memory write or lesser-host delegation; there is no later Lesser
+server-side scope re-check for those side effects. For social write tools, Body still gates first and then calls
+Lesser's REST API with the caller's bearer token, so Lesser can apply its normal server-side authorization as a second
+check. Body must not bypass Lesser's authorizer for social actions.
+
+Scoped public x402 invocation grants use the same per-tool classifier. `grant.scope` is normalized as `read`, `write`,
+or `admin` and must authorize the requested tool's required scope under the same hierarchy. Missing, unknown, or
+insufficient `grant.scope` fails closed with `x402_grant_scope_mismatch` before MCP tool dispatch. The M0.2 regression
+locks live in `internal/mcpapp/x402_grants_test.go`.
+
+`internal/mcpapp/audit.go` uses AppTheory's MCP JSON-RPC parser for scope authorization before dispatch. Parser
+failures intentionally fall through to the AppTheory runtime and remain safe only because the runtime uses the same
+parser and fails before tool dispatch. The M0.3 regression locks in `internal/mcpapp/parser_equivalence_test.go` assert
+parser-equivalence for single requests, batches, notification-form `tools/call`, malformed payloads, and empty tool
+names. `internal/mcpapp/no_side_effect_403_test.go` asserts read-scoped 403s make zero lesser-host calls for
+communication writes and zero memory writes for `memory_append`.
+
+The managed instance key compatibility path bypasses scope checks (treat as `admin`) only when
+`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`. Keep that path rollback-only and migrate inbound clients to OAuth; see the
+[OAuth migration guide](oauth-migration.md).
+
+### Project 48 M0 scope-enforcement notes
+
+- M0.1: [#368](https://github.com/equaltoai/lesser-body/issues/368) /
+  [PR #389](https://github.com/equaltoai/lesser-body/pull/389) moved tool classification to the exhaustive
+  `toolScopes` map, changed the unclassified registered-tool default from read to `admin`, and recorded that
+  `phone_call` remains unregistered and therefore tool-not-found rather than dispatchable.
+- M0.2: [#369](https://github.com/equaltoai/lesser-body/issues/369) /
+  [PR #390](https://github.com/equaltoai/lesser-body/pull/390) enforced Host consumed-grant `grant.scope` against the
+  same `RequiredScopesForTool` classifier.
+- M0.3: [#370](https://github.com/equaltoai/lesser-body/issues/370) /
+  [PR #391](https://github.com/equaltoai/lesser-body/pull/391) added parser-equivalence and no-side-effect-on-403
+  regression coverage for the authorization gate.
+- M0.4: [#371](https://github.com/equaltoai/lesser-body/issues/371) is this docs truth-up, preserving the verified
+  scope-enforcement model in the operator and MCP documentation.
 
 ## Bound-body operation authorization
 
@@ -70,7 +125,8 @@ private reachability, provider details, payment evidence, tenant data, wallet ma
 security details. Policy denial happens before lesser-host communication endpoints are invoked.
 
 The managed instance key compatibility path bypasses scope checks (treat as `admin`), which is why it should not
-remain the long-term inbound client auth model.
+remain the long-term inbound client auth model; the [OAuth migration guide](oauth-migration.md) treats it as a
+time-boxed rollback bridge only.
 
 ## Secrets handling
 

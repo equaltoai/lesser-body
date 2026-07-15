@@ -328,18 +328,30 @@ Use a distinct MCP URL per agent so OAuth tokens stay isolated per client cache 
 
 JWT-based callers are authorized by scopes inside the JWT claims:
 
-- `admin`: can call any tool
-- `write`: can call write tools and read tools
-- `read`: can call read tools only
+- `read`: can call read tools and read-scoped MCP methods only
+- `write`: can call write tools plus everything `read` can call
+- `admin`: can call every `write` and `read` surface
+
+The hierarchy is `read` ⊂ `write` ⊂ `admin`: `write` satisfies read requirements, and `admin` satisfies both read and
+write requirements. The authoritative per-tool classification is `internal/mcpserver/tool_scopes.go`
+(`toolScopes`/`RequiredScopesForTool`); this documentation table is a client-facing description of that classifier, not
+the runtime source of truth. A registered tool without an explicit classification fails closed to `admin` rather than
+defaulting to `read`, and exhaustiveness tests fail when the registered tool surface and `toolScopes` drift.
 
 The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
 being deprecated for inbound MCP traffic. That bypass only remains available when
-`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
+`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`; migrate clients through the [OAuth migration guide](oauth-migration.md).
 
 Scoped x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the single
-`tools/call` request bound into the grant. Body rejects wrong actor-resolved agent, wrong capability/tool, wrong resource/request
-hash, expired grants, replay/usage rejection, missing payment evidence, unsupported scoped-invocation authority/status,
-and missing or unsupported policy versions before tool dispatch.
+`tools/call` request bound into the grant. Body also enforces Host consumed-grant `grant.scope` against the requested
+tool's `RequiredScopesForTool` classification using the same `read` ⊂ `write` ⊂ `admin` hierarchy; missing, unknown,
+or insufficient grant scope fails closed as `x402_grant_scope_mismatch`. Body rejects wrong actor-resolved agent, wrong
+capability/tool, wrong resource/request hash, expired grants, replay/usage rejection, missing payment evidence,
+unsupported scoped-invocation authority/status, and missing or unsupported policy versions before tool dispatch.
+
+Body's scope gate runs before AppTheory tool dispatch. For `memory_append` and host-backed communication writes, this
+is the single scope gate before the memory write or lesser-host delegation. For social writes, Body gates first and then
+calls Lesser's REST API with the caller bearer so Lesser can apply its server-side authorization checks as well.
 
 ## Tools
 
@@ -362,6 +374,7 @@ Scope key:
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
+| `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
 | `article_draft_create` | Write | Create an unpublished Article draft through Lesser CMS; defaults to a compact draft ref and never auto-publishes. |
 | `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
 | `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
