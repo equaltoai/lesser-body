@@ -44,7 +44,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,6 +113,14 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				createDef := listBody.Result.Tools[1]
 				if createDef.Name != "agent_create" || createDef.Annotations == nil || createDef.Annotations.ReadOnlyHint == nil || *createDef.Annotations.ReadOnlyHint || createDef.Annotations.DestructiveHint == nil || *createDef.Annotations.DestructiveHint {
 					t.Fatalf("agent_create annotations not write/additive: %+v", createDef)
+				}
+				getDef := listBody.Result.Tools[2]
+				if getDef.Name != "agent_get" || getDef.Annotations == nil || getDef.Annotations.ReadOnlyHint == nil || !*getDef.Annotations.ReadOnlyHint {
+					t.Fatalf("agent_get annotations not read-only: %+v", getDef)
+				}
+				listDef := listBody.Result.Tools[3]
+				if listDef.Name != "agent_list" || listDef.Annotations == nil || listDef.Annotations.ReadOnlyHint == nil || !*listDef.Annotations.ReadOnlyHint {
+					t.Fatalf("agent_list annotations not read-only: %+v", listDef)
 				}
 			}
 		})
@@ -342,6 +350,108 @@ func TestInstancePlaneMCP_AgentCreateDelegatesWithCallerBearerAndRegistry(t *tes
 	}
 	if len(out.Result.Content) == 0 || strings.Contains(out.Result.Content[0].Text, "mock-access-token") || strings.Contains(out.Result.Content[0].Text, "mock-refresh-token") {
 		t.Fatalf("text content leaked delegated credentials: %+v", out.Result.Content)
+	}
+}
+
+func TestInstancePlaneMCP_AgentGetAndListReadRegistry(t *testing.T) {
+	registryStore := newInstanceAgentRegistryStore(t)
+	for _, in := range []agentregistry.CreateInput{
+		{Account: "agent1", AgentID: "agent-001"},
+		{Account: "agent1", AgentID: "agent-002"},
+		{Account: "agent2", AgentID: "agent-000"},
+	} {
+		if _, err := registryStore.Create(context.Background(), in); err != nil {
+			t.Fatalf("Create(%+v): %v", in, err)
+		}
+	}
+	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
+		return registryStore, nil
+	})
+	t.Cleanup(resetRegistry)
+
+	t.Setenv("JWT_SECRET", "test-secret")
+	auth.ResetForTests()
+
+	app, err := instanceapp.New("lesser-body-instance", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	userToken := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"read"}, audienceForPath("/instance/ptah/mcp"))
+	headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", userToken)
+
+	getOut := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_get", map[string]any{
+		"agent_id": "agent-001",
+	})
+	if getOut.Result == nil || getOut.Result.IsError {
+		t.Fatalf("agent_get result = %+v error = %+v", getOut.Result, getOut.Error)
+	}
+	getData := toolResultData(t, getOut.Result)
+	registrySummary, _ := getData["registry"].(map[string]any)
+	if registrySummary["account"] != "agent1" || registrySummary["agent_id"] != "agent-001" {
+		t.Fatalf("agent_get registry summary = %+v", registrySummary)
+	}
+	contentVersion, _ := getData["content_version"].(map[string]any)
+	if contentVersion["status"] != "not_available" {
+		t.Fatalf("content_version = %+v, want not_available", contentVersion)
+	}
+
+	missingOut := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_get", map[string]any{
+		"agent_id": "agent-000",
+	})
+	if missingOut.Result == nil || !missingOut.Result.IsError {
+		t.Fatalf("cross-account agent_get result = %+v error = %+v", missingOut.Result, missingOut.Error)
+	}
+	missingErr := toolResultError(t, missingOut.Result)
+	if missingErr["code"] != "not_found" || missingErr["status"] != float64(404) {
+		t.Fatalf("cross-account error = %+v, want not_found", missingErr)
+	}
+	if encoded, _ := json.Marshal(missingErr); strings.Contains(string(encoded), "agent-000") || strings.Contains(string(encoded), "agent2") {
+		t.Fatalf("cross-account not_found leaked registry detail: %s", string(encoded))
+	}
+
+	firstPage := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_list", map[string]any{
+		"limit": 1,
+	})
+	if firstPage.Result == nil || firstPage.Result.IsError {
+		t.Fatalf("first agent_list result = %+v error = %+v", firstPage.Result, firstPage.Error)
+	}
+	firstData := toolResultData(t, firstPage.Result)
+	firstAgents, _ := firstData["agents"].([]any)
+	if len(firstAgents) != 1 {
+		t.Fatalf("first agents = %+v, want one", firstData["agents"])
+	}
+	firstItem, _ := firstAgents[0].(map[string]any)
+	firstRegistry, _ := firstItem["registry"].(map[string]any)
+	if firstRegistry["agent_id"] != "agent-001" || firstRegistry["account"] != "agent1" {
+		t.Fatalf("first registry = %+v, want agent-001/agent1", firstRegistry)
+	}
+	firstPagination, _ := firstData["pagination"].(map[string]any)
+	nextCursor, _ := firstPagination["next_cursor"].(string)
+	if nextCursor == "" || firstPagination["has_more"] != true || firstPagination["count"] != float64(1) {
+		t.Fatalf("first pagination = %+v, want cursor/has_more/count", firstPagination)
+	}
+
+	secondPage := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_list", map[string]any{
+		"limit":  10,
+		"cursor": nextCursor,
+	})
+	if secondPage.Result == nil || secondPage.Result.IsError {
+		t.Fatalf("second agent_list result = %+v error = %+v", secondPage.Result, secondPage.Error)
+	}
+	secondData := toolResultData(t, secondPage.Result)
+	secondAgents, _ := secondData["agents"].([]any)
+	if len(secondAgents) != 1 {
+		t.Fatalf("second agents = %+v, want one", secondData["agents"])
+	}
+	secondItem, _ := secondAgents[0].(map[string]any)
+	secondRegistry, _ := secondItem["registry"].(map[string]any)
+	if secondRegistry["agent_id"] != "agent-002" || secondRegistry["account"] != "agent1" {
+		t.Fatalf("second registry = %+v, want agent-002/agent1", secondRegistry)
+	}
+	secondPagination, _ := secondData["pagination"].(map[string]any)
+	if secondPagination["has_more"] != false || secondPagination["next_cursor"] != "" || secondPagination["count"] != float64(1) {
+		t.Fatalf("second pagination = %+v, want terminal page", secondPagination)
 	}
 }
 

@@ -24,6 +24,12 @@ const (
 
 	accountPKPrefix = "ACCOUNT#"
 	agentSKPrefix   = "AGENT#"
+
+	// DefaultListLimit is the page size used when callers do not request one.
+	DefaultListLimit = 25
+
+	// MaxListLimit is the largest page size accepted by the registry list API.
+	MaxListLimit = 100
 )
 
 var (
@@ -35,6 +41,14 @@ var (
 	// supplied account scope and agent id. Cross-account reads intentionally map
 	// here rather than disclosing that the agent id exists under another account.
 	ErrAgentNotFound = errors.New("agent not found")
+
+	// ErrInvalidCursor is returned when a pagination cursor cannot be decoded by
+	// TableTheory for this account-scoped registry query.
+	ErrInvalidCursor = errors.New("invalid cursor")
+
+	// ErrInvalidLimit is returned when callers request a nonsensical or
+	// unsupported registry list page size.
+	ErrInvalidLimit = errors.New("invalid limit")
 )
 
 // Agent is the account-scoped registry projection for a Ptah-created agent.
@@ -49,6 +63,21 @@ type Agent struct {
 type CreateInput struct {
 	Account string
 	AgentID string
+}
+
+// ListInput describes an account-scoped registry list request.
+type ListInput struct {
+	Account string
+	Cursor  string
+	Limit   int
+}
+
+// ListResult is a single account-scoped registry page.
+type ListResult struct {
+	Agents     []*Agent `json:"agents"`
+	NextCursor string   `json:"next_cursor"`
+	HasMore    bool     `json:"has_more"`
+	Count      int      `json:"count"`
 }
 
 // Store persists Ptah-created agent registry entries in a body-owned table.
@@ -154,6 +183,65 @@ func (s *Store) Get(ctx context.Context, account string, agentID string) (*Agent
 	}
 }
 
+// List returns a paginated page of registry records for one account partition.
+// It uses TableTheory query pagination over ACCOUNT#<account> and never scans or
+// accepts a caller-supplied account override outside this store API.
+func (s *Store) List(ctx context.Context, in ListInput) (*ListResult, error) {
+	if s == nil {
+		return nil, fmt.Errorf("agent registry store is nil")
+	}
+	account := normalizeAccount(in.Account)
+	if account == "" {
+		return nil, fmt.Errorf("account is required")
+	}
+	limit, err := normalizeListLimit(in.Limit)
+	if err != nil {
+		return nil, err
+	}
+	cursor := strings.TrimSpace(in.Cursor)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var records []agentRecord
+	query := s.db.Model(s.emptyRecord()).
+		WithContext(ctx).
+		Where("PK", "=", accountPartitionKey(account)).
+		Where("SK", "begins_with", agentSKPrefix).
+		Limit(limit)
+	if cursor != "" {
+		if err := query.SetCursor(cursor); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+		}
+	}
+
+	page, err := query.AllPaginated(&records)
+	if err != nil {
+		if cursor != "" && strings.Contains(strings.ToLower(err.Error()), "invalid cursor") {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+		}
+		return nil, fmt.Errorf("list agent registry records: %w", err)
+	}
+
+	agents := make([]*Agent, 0, len(records))
+	for i := range records {
+		agents = append(agents, records[i].toAgent())
+	}
+
+	result := &ListResult{
+		Agents: agents,
+		Count:  len(agents),
+	}
+	if page != nil {
+		result.NextCursor = page.NextCursor
+		result.HasMore = page.HasMore
+		if page.Count > 0 || len(agents) == 0 {
+			result.Count = page.Count
+		}
+	}
+	return result, nil
+}
+
 func (s *Store) emptyRecord() *agentRecord {
 	return &agentRecord{tableName: s.tableName}
 }
@@ -221,4 +309,17 @@ func normalizeAccount(account string) string {
 
 func normalizeAgentID(agentID string) string {
 	return strings.TrimSpace(agentID)
+}
+
+func normalizeListLimit(limit int) (int, error) {
+	switch {
+	case limit == 0:
+		return DefaultListLimit, nil
+	case limit < 0:
+		return 0, fmt.Errorf("%w: limit must be positive", ErrInvalidLimit)
+	case limit > MaxListLimit:
+		return 0, fmt.Errorf("%w: limit must be <= %d", ErrInvalidLimit, MaxListLimit)
+	default:
+		return limit, nil
+	}
 }

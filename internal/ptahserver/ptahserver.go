@@ -28,6 +28,8 @@ const (
 
 	toolAgentBindSoul = "agent_bind_soul"
 	toolAgentCreate   = "agent_create"
+	toolAgentGet      = "agent_get"
+	toolAgentList     = "agent_list"
 )
 
 type soulBindingClient interface {
@@ -38,11 +40,13 @@ type agentDelegateClient interface {
 	DelegateAgent(ctx context.Context, bearerToken string, req lesserapi.AgentDelegationRequest) (*lesserapi.AgentDelegationResponse, error)
 }
 
-// AgentRegistry is the body-owned Ptah registry dependency used by
-// agent_create. It is exported so instance-plane integration tests can inject a
-// TableTheory-backed fake store without changing instanceapp behavior.
+// AgentRegistry is the body-owned Ptah registry dependency used by Ptah agent
+// registry tools. It is exported so instance-plane integration tests can inject
+// a TableTheory-backed fake store without changing instanceapp behavior.
 type AgentRegistry interface {
 	Create(ctx context.Context, in agentregistry.CreateInput) (*agentregistry.Agent, error)
+	Get(ctx context.Context, account string, agentID string) (*agentregistry.Agent, error)
+	List(ctx context.Context, in agentregistry.ListInput) (*agentregistry.ListResult, error)
 }
 
 type config struct {
@@ -79,7 +83,7 @@ func WithAgentDelegateClient(client agentDelegateClient) Option {
 }
 
 // WithAgentRegistryStore injects the body-owned agent registry store used by
-// agent_create.
+// Ptah agent registry tools.
 func WithAgentRegistryStore(store AgentRegistry) Option {
 	return func(cfg *config) {
 		cfg.agentRegistry = store
@@ -133,7 +137,13 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentBindSoulDef(), cfg.handleAgentBindSoul); err != nil {
 		return err
 	}
-	return r.RegisterTool(agentCreateDef(), cfg.handleAgentCreate)
+	if err := r.RegisterTool(agentCreateDef(), cfg.handleAgentCreate); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGetDef(), cfg.handleAgentGet); err != nil {
+		return err
+	}
+	return r.RegisterTool(agentListDef(), cfg.handleAgentList)
 }
 
 func defaultConfig() config {
@@ -227,6 +237,55 @@ func agentCreateDef() mcpruntime.ToolDef {
 	}
 }
 
+func agentGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentGet,
+		Title:       "Get registered agent",
+		Description: "Read a Body/Ptah account-scoped agent registry entry for the authenticated account-holder principal. Requires read scope.",
+		Annotations: readOnlyToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Agent id to read from the authenticated account-holder's Ptah registry partition."},
+				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+			},
+			"required":["agent_id"],
+			"additionalProperties":false
+		}`),
+		OutputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"data":{"type":"object","description":"Account-scoped registry summary plus source-truth content-version/content-summary availability placeholders."},
+				"error":{"type":"object","description":"Structured tool error when isError=true."}
+			}
+		}`),
+	}
+}
+
+func agentListDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentList,
+		Title:       "List registered agents",
+		Description: "List Body/Ptah account-scoped agent registry entries for the authenticated account-holder principal. Requires read scope.",
+		Annotations: readOnlyToolAnnotations(),
+		InputSchema: json.RawMessage(fmt.Sprintf(`{
+			"type":"object",
+			"properties":{
+				"limit":{"type":"integer","minimum":1,"maximum":%d,"description":"Optional page size. Defaults to %d."},
+				"cursor":{"type":"string","description":"Optional opaque pagination cursor returned by a prior agent_list call."}
+			},
+			"additionalProperties":false
+		}`, agentregistry.MaxListLimit, agentregistry.DefaultListLimit)),
+		OutputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"data":{"type":"object","description":"Account-scoped registry entries and pagination metadata."},
+				"error":{"type":"object","description":"Structured tool error when isError=true."}
+			}
+		}`),
+	}
+}
+
 type agentBindSoulInput struct {
 	SoulAgentID        string                  `json:"soul_agent_id"`
 	IdempotencyKey     string                  `json:"idempotency_key"`
@@ -253,6 +312,16 @@ type agentCreateInput struct {
 	DeviceLabel   string   `json:"device_label"`
 	AgentInfo     any      `json:"agent_info"`
 	ActorUsername string   `json:"actor_username"`
+}
+
+type agentGetInput struct {
+	AgentID       string `json:"agent_id"`
+	ActorUsername string `json:"actor_username"`
+}
+
+type agentListInput struct {
+	Limit  *int   `json:"limit"`
+	Cursor string `json:"cursor"`
 }
 
 func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -439,6 +508,121 @@ func (cfg config) handleAgentCreate(ctx context.Context, args json.RawMessage) (
 	return agentCreateSuccessResult(actorUsername, resp, created)
 }
 
+func (cfg config) handleAgentGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentGet)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasReadScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_get requires read scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"read"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+
+	in, errResult, err := parseAgentGetInput(args, actorUsername)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	registry, err := cfg.registry()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+		})
+	}
+
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentGet,
+		"actor_username", actorUsername,
+	)
+
+	agent, err := registry.Get(ctx, actorUsername, in.AgentID)
+	if err != nil {
+		if errors.Is(err, agentregistry.ErrAgentNotFound) {
+			return toolErrorResult("not_found", "agent not found in this account-scoped Ptah registry", http.StatusNotFound, map[string]any{
+				"source": "agent_registry",
+			})
+		}
+		slog.WarnContext(ctx, "ptah agent_get registry read failed",
+			"tool", toolAgentGet,
+			"actor_username", actorUsername,
+			"error", err.Error(),
+		)
+		return toolErrorResult("agent_registry_error", "Body failed to read the Ptah registry entry", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+		})
+	}
+	return agentGetSuccessResult(actorUsername, agent)
+}
+
+func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentList)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasReadScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_list requires read scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"read"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+
+	in, errResult, err := parseAgentListInput(args)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	registry, err := cfg.registry()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+		})
+	}
+
+	limit := agentregistry.DefaultListLimit
+	if in.Limit != nil {
+		limit = *in.Limit
+	}
+
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentList,
+		"actor_username", actorUsername,
+		"limit", limit,
+		"cursor_present", strings.TrimSpace(in.Cursor) != "",
+	)
+
+	page, err := registry.List(ctx, agentregistry.ListInput{
+		Account: actorUsername,
+		Limit:   limit,
+		Cursor:  in.Cursor,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, agentregistry.ErrInvalidCursor):
+			return toolErrorResult("invalid_request", "cursor is invalid", http.StatusBadRequest, map[string]any{
+				"source": "agent_registry",
+			})
+		case errors.Is(err, agentregistry.ErrInvalidLimit):
+			return toolErrorResult("invalid_request", "limit is invalid", http.StatusBadRequest, map[string]any{
+				"source": "agent_registry",
+			})
+		default:
+			slog.WarnContext(ctx, "ptah agent_list registry list failed",
+				"tool", toolAgentList,
+				"actor_username", actorUsername,
+				"error", err.Error(),
+			)
+			return toolErrorResult("agent_registry_error", "Body failed to list Ptah registry entries", http.StatusInternalServerError, map[string]any{
+				"source": "agent_registry",
+			})
+		}
+	}
+	return agentListSuccessResult(actorUsername, limit, page)
+}
+
 func authenticatedAccountHolderActor(principal *auth.Principal, toolName string) (string, *mcpruntime.ToolResult, error) {
 	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || principal.Claims == nil || principal.Claims.IsAgent {
 		return "", mustToolErrorResult("forbidden", toolName+" requires an account-holder OAuth principal", http.StatusForbidden, map[string]any{
@@ -527,6 +711,56 @@ func parseAgentCreateInput(args json.RawMessage, actorUsername string) (agentCre
 		return agentCreateInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
 			"source": "lesser_body_ptah",
 		}), nil
+	}
+	return in, nil, nil
+}
+
+func parseAgentGetInput(args json.RawMessage, actorUsername string) (agentGetInput, *mcpruntime.ToolResult, error) {
+	raw := strings.TrimSpace(string(args))
+	if raw == "" || raw == "null" {
+		raw = "{}"
+	}
+
+	var in agentGetInput
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return agentGetInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
+	}
+	in.AgentID = strings.TrimSpace(in.AgentID)
+	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
+
+	if in.AgentID == "" {
+		return agentGetInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	}
+	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
+		return agentGetInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
+			"source": "lesser_body_ptah",
+		}), nil
+	}
+	return in, nil, nil
+}
+
+func parseAgentListInput(args json.RawMessage) (agentListInput, *mcpruntime.ToolResult, error) {
+	raw := strings.TrimSpace(string(args))
+	if raw == "" || raw == "null" {
+		raw = "{}"
+	}
+
+	var in agentListInput
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return agentListInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
+	}
+	in.Cursor = strings.TrimSpace(in.Cursor)
+	if in.Limit != nil {
+		switch limit := *in.Limit; {
+		case limit <= 0:
+			return agentListInput{}, mustToolErrorResult("invalid_request", "limit must be positive", http.StatusBadRequest, nil), nil
+		case limit > agentregistry.MaxListLimit:
+			return agentListInput{}, mustToolErrorResult("invalid_request", fmt.Sprintf("limit must be <= %d", agentregistry.MaxListLimit), http.StatusBadRequest, nil), nil
+		}
 	}
 	return in, nil, nil
 }
@@ -693,6 +927,69 @@ func agentCreateSuccessResult(actorUsername string, resp *lesserapi.AgentDelegat
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
 
+func agentGetSuccessResult(actorUsername string, agent *agentregistry.Agent) (*mcpruntime.ToolResult, error) {
+	registrySummary := registryAgentSummary(agent)
+	contentVersion := unavailableContentVersion()
+	contentSummary := unavailableContentSummary()
+	data := map[string]any{
+		"actor_username":  actorUsername,
+		"registry":        registrySummary,
+		"content_version": contentVersion,
+		"content_summary": contentSummary,
+	}
+
+	text := map[string]any{
+		"summary":         "Ptah registry entry read",
+		"registry":        registrySummary,
+		"content_version": contentVersion,
+		"content_summary": contentSummary,
+		"data":            map[string]any{"location": "structuredContent.data"},
+	}
+	return toolJSONTextResult(text, map[string]any{"data": data})
+}
+
+func agentListSuccessResult(actorUsername string, limit int, page *agentregistry.ListResult) (*mcpruntime.ToolResult, error) {
+	agents := []*agentregistry.Agent(nil)
+	nextCursor := ""
+	hasMore := false
+	count := 0
+	if page != nil {
+		agents = page.Agents
+		nextCursor = page.NextCursor
+		hasMore = page.HasMore
+		count = page.Count
+	}
+	items := make([]map[string]any, 0, len(agents))
+	for _, agent := range agents {
+		items = append(items, map[string]any{
+			"registry":        registryAgentSummary(agent),
+			"content_version": unavailableContentVersion(),
+			"content_summary": unavailableContentSummary(),
+		})
+	}
+
+	pagination := map[string]any{
+		"limit":       limit,
+		"next_cursor": nextCursor,
+		"has_more":    hasMore,
+		"count":       count,
+	}
+	data := map[string]any{
+		"actor_username": actorUsername,
+		"agents":         items,
+		"pagination":     pagination,
+	}
+
+	text := map[string]any{
+		"summary":    "Ptah registry entries listed",
+		"count":      count,
+		"has_more":   hasMore,
+		"pagination": pagination,
+		"data":       map[string]any{"location": "structuredContent.data"},
+	}
+	return toolJSONTextResult(text, map[string]any{"data": data})
+}
+
 func soulBindingToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	if err == nil {
 		return nil, nil
@@ -818,6 +1115,14 @@ func toolErrorResultPayload(payload map[string]any) (*mcpruntime.ToolResult, err
 	}, nil
 }
 
+func readOnlyToolAnnotations() *mcpruntime.ToolAnnotations {
+	return &mcpruntime.ToolAnnotations{
+		ReadOnlyHint:    boolHint(true),
+		DestructiveHint: boolHint(false),
+		IdempotentHint:  boolHint(true),
+	}
+}
+
 func additiveMutationToolAnnotations() *mcpruntime.ToolAnnotations {
 	return &mcpruntime.ToolAnnotations{
 		ReadOnlyHint:    boolHint(false),
@@ -828,6 +1133,19 @@ func additiveMutationToolAnnotations() *mcpruntime.ToolAnnotations {
 
 func boolHint(value bool) *bool {
 	return &value
+}
+
+func principalHasReadScope(principal *auth.Principal) bool {
+	if principal == nil || principal.Claims == nil {
+		return false
+	}
+	for _, scope := range principal.Claims.Scopes {
+		switch strings.ToLower(strings.TrimSpace(scope)) {
+		case "read", "write", "admin":
+			return true
+		}
+	}
+	return false
 }
 
 func principalHasWriteScope(principal *auth.Principal) bool {
@@ -871,6 +1189,34 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func registryAgentSummary(agent *agentregistry.Agent) map[string]any {
+	if agent == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"account":    agent.Account,
+		"agent_id":   agent.AgentID,
+		"created_at": formatTime(agent.CreatedAt),
+		"updated_at": formatTime(agent.UpdatedAt),
+	}
+}
+
+func unavailableContentVersion() map[string]any {
+	return map[string]any{
+		"status": "not_available",
+		"source": "agentregistry",
+		"reason": "Body/Ptah registry records do not currently store source-backed content version metadata.",
+	}
+}
+
+func unavailableContentSummary() map[string]any {
+	return map[string]any{
+		"status": "not_available",
+		"source": "agentregistry",
+		"reason": "Body/Ptah registry records do not currently store source-backed content summary metadata.",
+	}
 }
 
 func delegatedAgentID(resp *lesserapi.AgentDelegationResponse) string {

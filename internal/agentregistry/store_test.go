@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/theory-cloud/tabletheory/v2"
@@ -67,6 +68,66 @@ func TestCrossAccountGetReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestListReturnsAccountScopedPaginatedAgents(t *testing.T) {
+	store, _ := newTestStore(t)
+	for _, in := range []CreateInput{
+		{Account: "account-a", AgentID: "agent-001"},
+		{Account: "account-a", AgentID: "agent-002"},
+		{Account: "account-a", AgentID: "agent-003"},
+		{Account: "account-b", AgentID: "agent-000"},
+	} {
+		if _, err := store.Create(context.Background(), in); err != nil {
+			t.Fatalf("Create(%+v) error = %v", in, err)
+		}
+	}
+
+	first, err := store.List(context.Background(), ListInput{Account: " ACCOUNT-A ", Limit: 2})
+	if err != nil {
+		t.Fatalf("first List() error = %v", err)
+	}
+	if got, want := agentIDs(first.Agents), []string{"agent-001", "agent-002"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first page agent ids = %v, want %v", got, want)
+	}
+	if first.Count != 2 || !first.HasMore || first.NextCursor == "" {
+		t.Fatalf("first page metadata = %+v, want count=2 has_more cursor", first)
+	}
+
+	second, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("second List() error = %v", err)
+	}
+	if got, want := agentIDs(second.Agents), []string{"agent-003"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second page agent ids = %v, want %v", got, want)
+	}
+	if second.Count != 1 || second.HasMore || second.NextCursor != "" {
+		t.Fatalf("second page metadata = %+v, want final page count=1", second)
+	}
+}
+
+func TestListEmptyAccountReturnsEmptyPage(t *testing.T) {
+	store, _ := newTestStore(t)
+	page, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: 10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(page.Agents) != 0 || page.Count != 0 || page.HasMore || page.NextCursor != "" {
+		t.Fatalf("empty page = %+v, want empty terminal page", page)
+	}
+}
+
+func TestListRejectsInvalidCursorAndLimit(t *testing.T) {
+	store, _ := newTestStore(t)
+	if _, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: -1}); !errors.Is(err, ErrInvalidLimit) {
+		t.Fatalf("negative limit error = %v, want ErrInvalidLimit", err)
+	}
+	if _, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: MaxListLimit + 1}); !errors.Is(err, ErrInvalidLimit) {
+		t.Fatalf("too-large limit error = %v, want ErrInvalidLimit", err)
+	}
+	if _, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: 10, Cursor: "not-a-valid-cursor"}); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("invalid cursor error = %v, want ErrInvalidCursor", err)
+	}
+}
+
 func TestCreateUsesInstanceRegistryTableNotLesserTable(t *testing.T) {
 	store, fake := newTestStore(t)
 	if _, err := store.Create(context.Background(), CreateInput{Account: "account-a", AgentID: "agent-123"}); err != nil {
@@ -80,6 +141,29 @@ func TestCreateUsesInstanceRegistryTableNotLesserTable(t *testing.T) {
 	lesserItems := fake.Items(os.Getenv("LESSER_TABLE_NAME"))
 	if len(lesserItems) != 0 {
 		t.Fatalf("LESSER_TABLE_NAME items = %d, want 0", len(lesserItems))
+	}
+}
+
+func TestListUsesInstanceRegistryTableNotLesserTable(t *testing.T) {
+	store, fake := newTestStore(t)
+	for _, in := range []CreateInput{
+		{Account: "account-a", AgentID: "agent-001"},
+		{Account: "account-a", AgentID: "agent-002"},
+	} {
+		if _, err := store.Create(context.Background(), in); err != nil {
+			t.Fatalf("Create(%+v) error = %v", in, err)
+		}
+	}
+
+	page, err := store.List(context.Background(), ListInput{Account: "account-a", Limit: 10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if got, want := agentIDs(page.Agents), []string{"agent-001", "agent-002"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agent ids = %v, want %v", got, want)
+	}
+	if len(fake.Items(os.Getenv("LESSER_TABLE_NAME"))) != 0 {
+		t.Fatalf("List/Create used LESSER_TABLE_NAME items: %+v", fake.Items(os.Getenv("LESSER_TABLE_NAME")))
 	}
 }
 
@@ -101,4 +185,16 @@ func newTestStore(t *testing.T) (*Store, *fakedb.Fake) {
 		t.Fatalf("CreateTable() error = %v", err)
 	}
 	return store, fake
+}
+
+func agentIDs(agents []*Agent) []string {
+	out := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		if agent == nil {
+			out = append(out, "<nil>")
+			continue
+		}
+		out = append(out, agent.AgentID)
+	}
+	return out
 }
