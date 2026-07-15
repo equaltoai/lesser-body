@@ -54,6 +54,21 @@ Variables:
   - Do not remove this just because inbound MCP clients migrate to OAuth; host-backed communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 
+### Instance-plane storage
+
+Ptah/Ba instance-plane state uses body-owned DynamoDB tables provisioned by this repo's CDK stack. These tables
+are separate from Lesser's actor data table (`LESSER_TABLE_NAME`).
+
+- `INSTANCE_CONTENT_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane content state.
+- `INSTANCE_REGISTRY_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for Ptah-created account-scoped agent registry records keyed by `(account, agentID)`.
+    Internal stores must use this table rather than `LESSER_TABLE_NAME`.
+- `INSTANCE_GRANT_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane grant state.
+- `INSTANCE_SESSION_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane session state; CDK configures `expiresAt` as its TTL attribute.
+
 ### MCP session and stream persistence
 
 - `MCP_SESSION_TABLE` (string, optional)
