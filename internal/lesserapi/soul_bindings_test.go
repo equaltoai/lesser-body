@@ -47,7 +47,7 @@ func TestCreateSoulBindingSendsContractAndDecodesSuccess(t *testing.T) {
 		if body.BodyActorID != "body://ptah/drone-ada" || body.HostRegistrationID != "hreg_01JZPTHOSTREG" || body.HostConversationID != "hconv_01JZPTHOSTCONV" {
 			t.Fatalf("host/body fields = %+v", body)
 		}
-		if body.AuthorityModel != "instance_trust" || body.AnchorState != "hosted_offchain" || body.OperationalBinding != "hosted_bound" {
+		if body.AuthorityModel != SoulAuthorityModelInstanceTrust || body.AnchorState != SoulAnchorStateHostedOffchain || body.OperationalBinding != SoulOperationalBindingHostedBound {
 			t.Fatalf("binding hints = %+v", body)
 		}
 		if body.PrincipalAddress != "0x2222222222222222222222222222222222222222" {
@@ -69,9 +69,9 @@ func TestCreateSoulBindingSendsContractAndDecodesSuccess(t *testing.T) {
 		BodyActorID:        "body://ptah/drone-ada",
 		HostRegistrationID: "hreg_01JZPTHOSTREG",
 		HostConversationID: "hconv_01JZPTHOSTCONV",
-		AuthorityModel:     "instance_trust",
-		AnchorState:        "hosted_offchain",
-		OperationalBinding: "hosted_bound",
+		AuthorityModel:     SoulAuthorityModelInstanceTrust,
+		AnchorState:        SoulAnchorStateHostedOffchain,
+		OperationalBinding: SoulOperationalBindingHostedBound,
 		PrincipalAddress:   "0x2222222222222222222222222222222222222222",
 		Evidence: SoulBindingEvidence{
 			Source:          "ptah",
@@ -268,9 +268,9 @@ func successSoulBindingResponse(replayed bool) string {
 			"agent_id":"%s",
 			"domain":"example.com",
 			"local_id":"drone-ada",
-			"authority_model":"instance_trust",
-			"anchor_state":"hosted_offchain",
-			"operational_binding":"hosted_bound",
+			"authority_model":"%s",
+			"anchor_state":"%s",
+			"operational_binding":"%s",
 			"lifecycle_status":"active",
 			"published_version":3
 		},
@@ -286,7 +286,7 @@ func successSoulBindingResponse(replayed bool) string {
 			"payload_hash":"sha256:handler-payload"
 		},
 		"links":{"status":"/api/v1/souls/bindings/%s"}
-	}`, testSoulAgentID, replayed, testSoulAgentID)
+		}`, testSoulAgentID, SoulAuthorityModelInstanceTrust, SoulAnchorStateHostedOffchain, SoulOperationalBindingHostedBound, replayed, testSoulAgentID)
 }
 
 func statusSoulBindingResponse() string {
@@ -298,9 +298,9 @@ func statusSoulBindingResponse() string {
 			"agent_id":"%s",
 			"domain":"example.com",
 			"local_id":"drone-ada",
-			"authority_model":"instance_trust",
-			"anchor_state":"hosted_offchain",
-			"operational_binding":"hosted_bound",
+			"authority_model":"%s",
+			"anchor_state":"%s",
+			"operational_binding":"%s",
 			"lifecycle_status":"active",
 			"published_version":3
 		},
@@ -310,7 +310,7 @@ func statusSoulBindingResponse() string {
 			"bound_at":"2026-07-14T16:20:02Z",
 			"updated_at":"2026-07-14T16:20:02Z"
 		}
-	}`, testSoulAgentID)
+		}`, testSoulAgentID, SoulAuthorityModelInstanceTrust, SoulAnchorStateHostedOffchain, SoulOperationalBindingHostedBound)
 }
 
 func assertSoulBindingSuccess(t *testing.T, resp *SoulBindingResponse) {
@@ -324,7 +324,7 @@ func assertSoulBindingSuccess(t *testing.T, resp *SoulBindingResponse) {
 	if resp.Agent.AgentID != testSoulAgentID || resp.Agent.Domain != "example.com" || resp.Agent.LocalID != "drone-ada" {
 		t.Fatalf("agent = %+v", resp.Agent)
 	}
-	if resp.Agent.AuthorityModel != "instance_trust" || resp.Agent.AnchorState != "hosted_offchain" || resp.Agent.OperationalBinding != "hosted_bound" || resp.Agent.LifecycleStatus != "active" || resp.Agent.PublishedVersion != 3 {
+	if resp.Agent.AuthorityModel != SoulAuthorityModelInstanceTrust || resp.Agent.AnchorState != SoulAnchorStateHostedOffchain || resp.Agent.OperationalBinding != SoulOperationalBindingHostedBound || resp.Agent.LifecycleStatus != "active" || resp.Agent.PublishedVersion != 3 {
 		t.Fatalf("agent binding metadata = %+v", resp.Agent)
 	}
 	if resp.Binding.AgentUsername != "drone-ada" || resp.Binding.PrincipalAddress != "0x1111111111111111111111111111111111111111" {

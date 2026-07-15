@@ -12,6 +12,15 @@ import (
 
 const soulBindingsPath = "/api/v1/souls/bindings"
 
+const (
+	// SoulAuthorityModelInstanceTrust is Lesser/Host's managed instance-key authority model hint.
+	SoulAuthorityModelInstanceTrust = "instance_trust"
+	// SoulAnchorStateHostedOffchain is Lesser/Host's hosted/off-chain anchor state hint.
+	SoulAnchorStateHostedOffchain = "hosted_offchain"
+	// SoulOperationalBindingHostedBound is Lesser/Host's hosted-bound operational binding hint.
+	SoulOperationalBindingHostedBound = "hosted_bound_soul"
+)
+
 // SoulBindingEvidence carries body/Ptah correlation evidence for Lesser's
 // hosted soul/body binding ceremony. Lesser treats this as a hint; Lesser and
 // Host remain the authority for binding state.
