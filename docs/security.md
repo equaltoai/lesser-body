@@ -76,6 +76,14 @@ or `admin` and must authorize the requested tool's required scope under the same
 insufficient `grant.scope` fails closed with `x402_grant_scope_mismatch` before MCP tool dispatch. The M0.2 regression
 locks live in `internal/mcpapp/x402_grants_test.go`.
 
+Instance-plane x402 capability grants are a separate Host-authored contract for OAuth-authenticated minting tools.
+`agent_create` consumes `capabilityVersion="instance-capability/v1"` / `capability="instance:agent_create"`;
+`agent_local_install_plan` consumes `capabilityVersion="instance-capability/v1"` /
+`capability="instance:install_plan"`. Body hashes payment evidence before Host consume, rejects actor/scoped grants
+(`scoped-invocation/v1`, `tools.invoke`, and mismatched tool/resource bindings), and performs no instance tool side
+effect until Host accepts the grant. Explicit operator OAuth authority is exempt; ordinary OAuth connector sessions are
+not.
+
 `internal/mcpapp/audit.go` uses AppTheory's MCP JSON-RPC parser for scope authorization before dispatch. Parser
 failures intentionally fall through to the AppTheory runtime and remain safe only because the runtime uses the same
 parser and fails before tool dispatch. The M0.3 regression locks in `internal/mcpapp/parser_equivalence_test.go` assert
@@ -112,12 +120,14 @@ presence or channel `capabilities` alone do not grant private operation authorit
 validated scoped x402 invocation grant plus explicit caller-access/payment policy allowance and never receives
 principal/operator authority.
 
-Scoped x402 grant consume/verification is independent from OAuth principal sessions. Requests carrying a Host grant are
-rejected if they also carry OAuth `Authorization`, if the Host grant id or capability is missing, if payment evidence is
-missing, or if the Host consume response does not bind the actor-resolved agent, capability/tool, MCP resource URL, request hash,
-payment evidence hash, caller subject hash, expiry, scoped-invocation authority, issued status, usage limit, and
-supported policy version. Logs and error payloads include only sanitized grant/payment hashes and policy-safe denial
-reasons.
+Scoped public x402 grant consume/verification is independent from OAuth principal sessions on `/mcp/{actor}`. Public
+actor-scoped requests carrying a Host grant are rejected if they also carry OAuth `Authorization`, if the Host grant id
+or capability is missing, if payment evidence is missing, or if the Host consume response does not bind the
+actor-resolved agent, capability/tool, MCP resource URL, request hash, payment evidence hash, caller subject hash,
+expiry, scoped-invocation authority, issued status, usage limit, and supported policy version. Logs and error payloads
+include only sanitized grant/payment hashes and policy-safe denial reasons. Instance-plane capability grants are the
+exception to the mixed-auth rule: they require OAuth plus Host instance capability evidence and never grant actor-scoped
+public invocation authority.
 
 Denied operation-policy checks fail closed with a sanitized `operation_not_allowed` result. The details include only
 policy-safe fields such as `reason`, `operation`, `callerClass`, and optional `policyVersion`; they must not include

@@ -15,6 +15,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
+	"github.com/equaltoai/lesser-body/internal/instancex402"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
@@ -329,7 +330,13 @@ func TestInstancePlaneMCP_AgentCreateDelegatesWithCallerBearerAndRegistry(t *tes
 		t.Fatalf("new app: %v", err)
 	}
 	env := testkit.New()
-	userToken := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
+	resetConsumer := instancex402.SetConsumerForTests(func(context.Context, instancex402.ConsumeRequestForTests) (instancex402.ConsumeResponseForTests, error) {
+		t.Fatalf("operator-exempt agent_create must not consume an x402 grant")
+		return instancex402.ConsumeResponseForTests{}, nil
+	})
+	t.Cleanup(resetConsumer)
+
+	userToken := newOperatorTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
 	headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", userToken)
 
 	out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_create", map[string]any{
@@ -695,33 +702,53 @@ func TestInstancePlaneMCP_RejectsMissingHostForAudienceCheck(t *testing.T) {
 	}
 }
 
-func TestInstancePlaneMCP_RejectsX402EvenWithOAuth(t *testing.T) {
+func TestInstancePlaneMCP_RejectsActorScopedX402GrantForInstanceTools(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
 	auth.ResetForTests()
+
+	resetConsumer := instancex402.SetConsumerForTests(func(context.Context, instancex402.ConsumeRequestForTests) (instancex402.ConsumeResponseForTests, error) {
+		t.Fatalf("actor-scoped x402 grant must be rejected before Host consume")
+		return instancex402.ConsumeResponseForTests{}, nil
+	})
+	t.Cleanup(resetConsumer)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
 	env := testkit.New()
-	token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"read"}, audienceForPath("/instance/ptah/mcp"))
 
-	headers := bearerHeaders(token)
-	headers["lesser-x402-grant-id"] = []string{"grant-123"}
-	headers["lesser-x402-grant"] = []string{"grant-token"}
-	headers["lesser-x402-capability"] = []string{"ptah.instance"}
-	headers["payment-signature"] = []string{"payment"}
-	resp := invokeMCP(t, env, app, "/instance/ptah/mcp", headers, &mcpruntime.Request{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
+	t.Run("agent_create", func(t *testing.T) {
+		token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
+		headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", token)
+		addInstanceX402Headers(headers, "scoped-grant-agent-create", "raw-scoped-grant-token", "tools.invoke", "raw-scoped-payment")
+
+		out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_create", map[string]any{
+			"agent_username": "ptah_agent",
+			"actor_username": "agent1",
+			"scopes":         []string{"read"},
+		})
+		if reason := toolResultErrorReason(t, out.Result); reason != "x402_grant_capability_mismatch" {
+			t.Fatalf("agent_create x402 reason = %q, want capability mismatch", reason)
+		}
+		assertNoRawX402Leak(t, out.Result, "raw-scoped-grant-token", "raw-scoped-payment", "host-instance-key-secret")
 	})
-	if resp.Status != 400 {
-		t.Fatalf("status = %d, want 400; body = %s", resp.Status, string(resp.Body))
-	}
-	if !strings.Contains(string(resp.Body), "x402_not_supported") {
-		t.Fatalf("response did not include x402_not_supported: %s", string(resp.Body))
-	}
+
+	t.Run("agent_local_install_plan", func(t *testing.T) {
+		token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ba/mcp"))
+		headers := initializedMCPHeaders(t, env, app, "/instance/ba/mcp", token)
+		addInstanceX402Headers(headers, "scoped-grant-install", "raw-scoped-install-token", "tools.invoke", "raw-scoped-install-payment")
+
+		out := callMCPTool(t, env, app, "/instance/ba/mcp", headers, baserver.ToolAgentLocalInstallPlan, map[string]any{
+			"agent_id":       "agent-one",
+			"client":         "codex",
+			"actor_username": "agent1",
+		})
+		if reason := toolResultErrorReason(t, out.Result); reason != "x402_grant_capability_mismatch" {
+			t.Fatalf("agent_local_install_plan x402 reason = %q, want capability mismatch", reason)
+		}
+		assertNoRawX402Leak(t, out.Result, "raw-scoped-install-token", "raw-scoped-install-payment", "host-instance-key-secret")
+	})
 }
 
 func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
@@ -1084,6 +1111,26 @@ func newTestTokenWithAudienceAndAgent(t testing.TB, secret string, username stri
 		Scopes:   scopes,
 		ClientID: "test-client",
 		IsAgent:  isAgent,
+	})
+}
+
+func newOperatorTestTokenWithAudience(t testing.TB, secret string, username string, scopes []string, audience []string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	return newTestTokenWithClaims(t, secret, &auth.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   username,
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			ID:        "jti_operator_test",
+			Audience:  jwt.ClaimStrings(audience),
+		},
+		Username:    username,
+		Scopes:      scopes,
+		ClientID:    "operator-test-client",
+		ClientClass: "operator",
 	})
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/installpack"
+	"github.com/equaltoai/lesser-body/internal/instancex402"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
@@ -208,6 +209,13 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 	in, errResult, err := parseAgentLocalInstallPlanInput(args, account)
 	if errResult != nil || err != nil {
 		return errResult, err
+	}
+	if gateResult, err := instancex402.RequireGrant(ctx, instancex402.Requirement{
+		Tool:       ToolAgentLocalInstallPlan,
+		Capability: instancex402.CapabilityInstallPlan,
+		Account:    account,
+	}); gateResult != nil || err != nil {
+		return gateResult, err
 	}
 
 	decision := cfg.rateLimit(account)

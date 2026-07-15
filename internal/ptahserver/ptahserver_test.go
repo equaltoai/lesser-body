@@ -385,7 +385,7 @@ func TestAgentCreateDelegatesWithCallerBearerAndCreatesRegistry(t *testing.T) {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("Drone-Ada", []string{"read", "write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{
+	result, err := registry.Call(operatorToolContext("Drone-Ada", []string{"read", "write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{
 		"agent_username":"ptah_agent",
 		"actor_username":"drone-ada",
 		"display_name":"Ptah Agent",
@@ -451,7 +451,7 @@ func TestAgentCreateMapsDuplicateRegistryConflictWithoutLeakingCrossAccountState
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
+	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestAgentCreatePreservesLesserAPIErrorStatusAndDetails(t *testing.T) {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
+	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -574,7 +574,7 @@ func TestAgentCreateDocumentsPartialFailureWhenRegistryCreateFails(t *testing.T)
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
+	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -1537,6 +1537,15 @@ func (f *versionedFakeAgentContentStore) Archive(_ context.Context, in agentcont
 	archived.UpdatedAt = archived.UpdatedAt.Add(time.Minute)
 	f.records[key] = cloneAgentContentRecord(archived)
 	return archived, nil
+}
+
+func operatorToolContext(username string, scopes []string, bearer string) context.Context {
+	ctx := toolContext(username, scopes, bearer)
+	principal := auth.PrincipalFromToolContext(ctx)
+	if principal != nil && principal.Claims != nil {
+		principal.Claims.ClientClass = "operator"
+	}
+	return ctx
 }
 
 func toolContext(username string, scopes []string, bearer string) context.Context {
