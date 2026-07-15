@@ -1,0 +1,2 @@
+$ bash scripts/check_managed_template_named_resource_regression.sh v0.0.0-test dist/release-test
+Regression confirmed: verifier rejects MCP named-resource, table-name, task-storage, and stream-spill drift

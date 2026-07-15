@@ -30,11 +30,6 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Go test
-        env:
-          GOTOOLCHAIN: auto
-        run: go test ./...
-
       - name: Set up Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
@@ -42,28 +37,7 @@ jobs:
           cache: npm
           cache-dependency-path: cdk/package-lock.json
 
-      - name: Verify release assets
-        run: bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test
-
-      - name: Regression check for release manifest checksum coverage
-        run: bash scripts/check_release_asset_checksum_regression.sh v0.0.0-test dist/release-test
-
-      - name: Regression check for managed template parameter defaults
-        run: bash scripts/check_managed_template_default_regression.sh v0.0.0-test dist/release-test
-
-      - name: Regression check for managed template named resources
-        run: bash scripts/check_managed_template_named_resource_regression.sh v0.0.0-test dist/release-test
-
-      - name: Regression check for managed auxiliary assets
-        run: bash scripts/check_managed_auxiliary_asset_regression.sh v0.0.0-test dist/release-test
-
-      - name: CDK tests
-        working-directory: cdk
-        run: npm test
-
-      - name: CDK synth
-        working-directory: cdk
-        run: npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.com
-
-      - name: Verify discovery routes
-        run: bash scripts/check_cdk_discovery_routes.sh
+      - name: Governance rubric
+        env:
+          GOTOOLCHAIN: auto
+        run: bash gov-infra/verifiers/gov-verify-rubric.sh

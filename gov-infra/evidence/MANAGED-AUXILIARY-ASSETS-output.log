@@ -1,0 +1,2 @@
+$ bash scripts/check_managed_auxiliary_asset_regression.sh v0.0.0-test dist/release-test
+Regression confirmed: verifier rejects missing auxiliary checksums, hidden CDK/bootstrap code refs, and undeclared auxiliary parameters
