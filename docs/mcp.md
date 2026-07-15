@@ -12,6 +12,10 @@
   - `GET /mcp/{actor}` and `DELETE /mcp/{actor}` are also supported for MCP Streamable HTTP compatibility.
 - Shared compatibility endpoint: `GET|POST|DELETE /mcp`
   - Returns HTTP `410 Gone` with migration guidance. It no longer serves MCP traffic.
+- Instance-plane Ptah MCP (authenticated): `POST /instance/ptah/mcp`
+  - Uses a separate AppTheory MCP server instance for account-holder orchestration tools.
+- Instance-plane Ba MCP (authenticated): `POST /instance/ba/mcp`
+  - Uses a separate AppTheory MCP server instance. The foundation surface currently has no registered tools.
 
 Canonical base URL for a Lesser stage:
 
@@ -73,6 +77,12 @@ Deprecated compatibility path:
 
 Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
 `docs/oauth-migration.md` for exact registration and config examples.
+
+Instance-plane MCP endpoints (`/instance/ptah/mcp` and `/instance/ba/mcp`) also require Lesser OAuth JWT bearer
+authentication, but they are not actor-delegated Ka surfaces. They fail closed unless the authenticated principal is an
+account-holder OAuth token, not an agent-delegated token and not the legacy managed instance key. The token audience
+must match the exact instance MCP resource URL, for example `https://api.<stageDomain>/instance/ptah/mcp`. Ptah write
+tools still enforce their own write-scope requirement before invoking downstream Lesser integration APIs.
 
 Scoped public x402 invocation grants:
 
@@ -410,6 +420,35 @@ Scope key:
 | `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary plus the current managed `lessersoul.ai` email address when Host publishes one. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
+
+### Instance-plane Ptah tools
+
+Ptah tools are served only from `POST /instance/ptah/mcp` and are not registered on Ka's actor-scoped `/mcp/{actor}`
+surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authenticated Ptah `tools/list` request after
+`initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract.
+
+| Tool | Scope | Description |
+|------|-------|-------------|
+| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
+
+`agent_bind_soul` input:
+
+- Required: `soul_agent_id`, `idempotency_key`.
+- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
+  must match that principal after normalization or the tool fails closed.
+- Optional correlation/evidence: `body_actor_id` (defaults to `body://ptah/{actor_username}`), `host_registration_id`,
+  `host_conversation_id`, `principal_address`, and nested `evidence.host_request_id`,
+  `evidence.declaration_hash`, `evidence.issued_at`.
+
+The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API (`POST /api/v1/souls/bindings`) through
+`internal/lesserapi` using the dedicated `LESSER_SOUL_BINDING_INTEGRATION_BEARER` configuration value and the supplied
+non-empty idempotency key. It never forwards the caller's OAuth token to that server-to-server surface. Body supplies
+Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`, `hosted_bound_soul`) and returns
+structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent summary.
+
+Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
+`SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor
+as `souled` through the existing `internal/soulbinding` read path.
 
 ### Shared read-tool shaping parameters
 
