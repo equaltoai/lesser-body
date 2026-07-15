@@ -2,6 +2,7 @@ package instanceapp
 
 import (
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
@@ -30,8 +31,8 @@ func New(name, version string) (*apptheory.App, error) {
 		apptheory.WithAuthHook(auth.Hook(slog.Default())),
 	)
 
-	app.Post("/instance/ptah/mcp", rejectX402Headers(ptah.Handler()), apptheory.RequireAuth())
-	app.Post("/instance/ba/mcp", rejectX402Headers(ba.Handler()), apptheory.RequireAuth())
+	app.Post("/instance/ptah/mcp", rejectX402Headers(requireInstancePrincipal(ptah.Handler())), apptheory.RequireAuth())
+	app.Post("/instance/ba/mcp", rejectX402Headers(requireInstancePrincipal(ba.Handler())), apptheory.RequireAuth())
 	app.Get("/.well-known/oauth-protected-resource/instance/ptah/mcp", wellKnownStubHandler(SurfacePtah))
 	app.Get("/.well-known/oauth-protected-resource/instance/ba/mcp", wellKnownStubHandler(SurfaceBa))
 
@@ -46,6 +47,73 @@ func newPlaneServer(appName, version, surface string) *mcpruntime.Server {
 			Tools: true,
 		}),
 	)
+}
+
+func requireInstancePrincipal(next apptheory.Handler) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		if !instancePrincipalAllowed(ctx) {
+			return instancePrincipalForbiddenResponse(), nil
+		}
+		return next(ctx)
+	}
+}
+
+func instancePrincipalAllowed(ctx *apptheory.Context) bool {
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || principal.Claims == nil {
+		return false
+	}
+	if principal.Claims.IsAgent {
+		return false
+	}
+	if strings.TrimSpace(principal.Claims.GetUsername()) == "" {
+		return false
+	}
+
+	expectedAudience := instanceAudienceForRequest(ctx)
+	if expectedAudience == "" {
+		return false
+	}
+	return auth.ValidateTokenAudience(principal.Claims, expectedAudience) == nil
+}
+
+func instancePrincipalForbiddenResponse() *apptheory.Response {
+	return apptheory.MustJSON(403, map[string]any{
+		"error": map[string]any{
+			"code":    "instance_principal_not_allowed",
+			"message": "instance-plane MCP requires an account-holder OAuth token for this instance resource",
+		},
+	})
+}
+
+func instanceAudienceForRequest(ctx *apptheory.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
+	host := strings.ToLower(strings.TrimSpace(firstHeaderValue(ctx, "host")))
+	if host == "" {
+		return ""
+	}
+
+	proto := strings.ToLower(strings.TrimSpace(firstCommaSeparatedHeaderValue(ctx, "x-forwarded-proto")))
+	if proto == "" {
+		proto = "https"
+	}
+	if proto != "https" {
+		return ""
+	}
+
+	path := strings.TrimSpace(ctx.Request.Path)
+	if path == "" || !strings.HasPrefix(path, "/") {
+		return ""
+	}
+
+	return (&url.URL{
+		Scheme: proto,
+		Host:   host,
+		Path:   path,
+	}).String()
 }
 
 func wellKnownStubHandler(surface string) apptheory.Handler {
@@ -75,6 +143,32 @@ func rejectX402Headers(next apptheory.Handler) apptheory.Handler {
 		}
 		return next(ctx)
 	}
+}
+
+func firstHeaderValue(ctx *apptheory.Context, name string) string {
+	if ctx == nil {
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	for key, values := range ctx.Request.Headers {
+		if !strings.EqualFold(strings.TrimSpace(key), name) {
+			continue
+		}
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func firstCommaSeparatedHeaderValue(ctx *apptheory.Context, name string) string {
+	value := firstHeaderValue(ctx, name)
+	if before, _, ok := strings.Cut(value, ","); ok {
+		return strings.TrimSpace(before)
+	}
+	return value
 }
 
 var x402HeaderNames = []string{
