@@ -36,3 +36,22 @@ bash gov-infra/verifiers/gov-verify-rubric.sh
 The verifier writes per-check logs and the machine-readable report to
 `gov-infra/evidence/`. A missing command or required file is BLOCKED/FAIL, never
 simulated as green.
+
+## Evidence freshness invariant
+
+`gov-infra/evidence/gov-rubric-report.json` records `git.head` as the
+commit checked out when `bash gov-infra/verifiers/gov-verify-rubric.sh`
+generated the report. A committed report cannot truthfully embed the final
+commit that contains itself without a Git object self-reference loop.
+
+Factory freshness review should therefore reject reports that point at an
+abandoned sibling and accept only a report whose `git.head` is equal to or an
+ancestor of the PR head under review:
+
+```bash
+git merge-base --is-ancestor <report.git.head> <review-head>
+```
+
+The CI workflow also reruns the verifier at PR head, so the committed artifact
+provides repo-local evidence from the live branch lineage while CI proves the
+same verifier still passes at the exact checked head.

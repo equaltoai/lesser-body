@@ -339,6 +339,15 @@ report = {
         "head_tree": git_tree,
         "working_tree_after_run": git_status,
     },
+    "evidence_freshness": {
+        "attestation_ref": "git.head",
+        "attestation_ref_meaning": "commit checked out when gov-verify-rubric.sh generated this report",
+        "committed_artifact_self_reference": "A committed report cannot truthfully embed its own final commit SHA without a git self-reference loop.",
+        "required_relationship_to_review_head": "ancestor_or_equal",
+        "machine_check": "git merge-base --is-ancestor <report.git.head> <review-head>",
+        "reject_relationship": "abandoned_sibling_or_non_ancestor",
+        "ci_head_recheck": ".github/workflows/ci.yml reruns bash gov-infra/verifiers/gov-verify-rubric.sh at PR head",
+    },
     "summary": {
         "status": status,
         "pass": int(passed),
