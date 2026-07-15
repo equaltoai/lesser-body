@@ -1,11 +1,15 @@
 package instanceapp
 
 import (
+	"context"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"strings"
+	"unsafe"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/ptahserver"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -25,14 +29,17 @@ func New(name, version string) (*apptheory.App, error) {
 	}
 
 	ptah := newPlaneServer(name, version, SurfacePtah)
+	if err := ptahserver.RegisterTools(ptah.Registry()); err != nil {
+		return nil, err
+	}
 	ba := newPlaneServer(name, version, SurfaceBa)
 
 	app := apptheory.New(
 		apptheory.WithAuthHook(auth.Hook(slog.Default())),
 	)
 
-	app.Post("/instance/ptah/mcp", rejectX402Headers(requireInstancePrincipal(ptah.Handler())), apptheory.RequireAuth())
-	app.Post("/instance/ba/mcp", rejectX402Headers(requireInstancePrincipal(ba.Handler())), apptheory.RequireAuth())
+	app.Post("/instance/ptah/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ptah.Handler()))), apptheory.RequireAuth())
+	app.Post("/instance/ba/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ba.Handler()))), apptheory.RequireAuth())
 	app.Get("/.well-known/oauth-protected-resource/instance/ptah/mcp", wellKnownStubHandler(SurfacePtah))
 	app.Get("/.well-known/oauth-protected-resource/instance/ba/mcp", wellKnownStubHandler(SurfaceBa))
 
@@ -47,6 +54,70 @@ func newPlaneServer(appName, version, surface string) *mcpruntime.Server {
 			Tools: true,
 		}),
 	)
+}
+
+func withToolContext(next apptheory.Handler) apptheory.Handler {
+	if next == nil {
+		return nil
+	}
+
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		if ctx != nil {
+			principal := auth.PrincipalFromContext(ctx)
+			token := bearerTokenFromHeaders(ctx.Request.Headers)
+			requestID := strings.TrimSpace(ctx.RequestID)
+			if principal != nil || token != "" || requestID != "" {
+				toolCtx := auth.InjectToolContext(ctx.Context(), principal, token)
+				toolCtx = auth.WithToolRequestID(toolCtx, requestID)
+				setRequestContext(ctx, toolCtx)
+			}
+		}
+		return next(ctx)
+	}
+}
+
+func bearerTokenFromHeaders(headers map[string][]string) string {
+	for key, values := range headers {
+		if !strings.EqualFold(strings.TrimSpace(key), "authorization") {
+			continue
+		}
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			parts := strings.Fields(value)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+				return ""
+			}
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	return ""
+}
+
+// setRequestContext overrides apptheory.Context's internal request context so
+// AppTheory's MCP server passes the authenticated principal into tool handlers.
+func setRequestContext(c *apptheory.Context, ctx context.Context) {
+	if c == nil {
+		return
+	}
+
+	v := reflect.ValueOf(c)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return
+	}
+	elem := v.Elem()
+	if elem.Kind() != reflect.Struct {
+		return
+	}
+	field := elem.FieldByName("ctx")
+	if !field.IsValid() || !field.CanAddr() {
+		return
+	}
+
+	ptr := unsafe.Pointer(field.UnsafeAddr())
+	reflect.NewAt(field.Type(), ptr).Elem().Set(reflect.ValueOf(ctx))
 }
 
 func requireInstancePrincipal(next apptheory.Handler) apptheory.Handler {
