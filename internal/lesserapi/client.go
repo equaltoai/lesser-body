@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,8 @@ var defaultClient struct {
 	c    *Client
 	err  error
 }
+
+var apiErrorTokenFieldPattern = regexp.MustCompile(`(?i)("(?:access|refresh)_token"\s*:\s*)"[^"]*"`)
 
 func Default() (*Client, error) {
 	defaultClient.once.Do(func() {
@@ -73,10 +76,15 @@ func (e *APIError) Error() string {
 	if msg == "" {
 		return fmt.Sprintf("lesser api error (status=%d)", e.Status)
 	}
+	msg = redactAPIErrorTokenFields(msg)
 	if len(msg) > 512 {
 		msg = msg[:512] + "…"
 	}
 	return fmt.Sprintf("lesser api error (status=%d): %s", e.Status, msg)
+}
+
+func redactAPIErrorTokenFields(msg string) string {
+	return apiErrorTokenFieldPattern.ReplaceAllString(msg, `${1}"<redacted>"`)
 }
 
 func (c *Client) DoJSON(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, error) {
