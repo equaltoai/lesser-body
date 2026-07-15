@@ -27,6 +27,11 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 export CDK_DEFAULT_ACCOUNT="${CDK_DEFAULT_ACCOUNT:-000000000000}"
 export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-us-east-1}"
 
+# Keep Go validation scoped to the repo-owned Go modules. Local dependency
+# material such as cdk/node_modules may contain generated Go templates that are
+# intentionally not Go packages and must not affect source validation.
+GO_PACKAGE_PATTERNS="./cmd/... ./internal/..."
+
 PASS_COUNT=0
 FAIL_COUNT=0
 BLOCKED_COUNT=0
@@ -82,41 +87,6 @@ run_check() {
   fi
 }
 
-
-run_go_check() {
-  local id="$1"
-  local category="$2"
-  local command="$3"
-  local evidence_path="${EVIDENCE_DIR}/${id}-output.log"
-  local hidden_node_modules=""
-
-  echo "=== ${id} ${category}: ${command} ==="
-  printf '$ %s\n' "${command}" >"${evidence_path}"
-
-  if [[ -d "${REPO_ROOT}/cdk/node_modules" ]]; then
-    hidden_node_modules="${REPO_ROOT}/cdk/.node_modules.gov-verify"
-    rm -rf "${hidden_node_modules}"
-    mv "${REPO_ROOT}/cdk/node_modules" "${hidden_node_modules}"
-  fi
-
-  if bash -lc "${command}" >>"${evidence_path}" 2>&1; then
-    local rc=0
-  else
-    local rc=$?
-  fi
-
-  if [[ -n "${hidden_node_modules}" && -d "${hidden_node_modules}" ]]; then
-    mv "${hidden_node_modules}" "${REPO_ROOT}/cdk/node_modules"
-  fi
-
-  if [[ ${rc} -eq 0 ]]; then
-    append_result "${id}" "${category}" "PASS" "Command succeeded" "${evidence_path#${REPO_ROOT}/}"
-    echo "${id}: PASS"
-  else
-    append_result "${id}" "${category}" "FAIL" "Command failed with exit ${rc}" "${evidence_path#${REPO_ROOT}/}"
-    echo "${id}: FAIL (exit ${rc})"
-  fi
-}
 
 run_blocking_file_check() {
   local id="$1"
@@ -268,10 +238,10 @@ run_blocking_file_check "GOV-README" "Governance" "gov-infra/README.md"
 run_no_runtime_diff_check
 run_report_shape_self_check
 
-run_go_check "GO-BUILD" "Completeness" "go build ./..."
-run_go_check "GO-TEST" "Quality" "go test ./..."
-run_go_check "GO-VET" "Consistency" "go vet ./..."
-run_check "GOFMT" "Consistency" "test -z \"\$(gofmt -l .)\""
+run_check "GO-BUILD" "Completeness" "go build ${GO_PACKAGE_PATTERNS}"
+run_check "GO-TEST" "Quality" "go test ${GO_PACKAGE_PATTERNS}"
+run_check "GO-VET" "Consistency" "go vet ${GO_PACKAGE_PATTERNS}"
+run_check "GOFMT" "Consistency" "test -z \"\$(git ls-files -z '*.go' | xargs -0 gofmt -l)\""
 run_check "SOURCE-BUILD" "Completeness" "bash scripts/build.sh"
 run_check "RELEASE-ASSETS" "Completeness" "bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test"
 run_check "RELEASE-CHECKSUM-REGRESSION" "Quality" "bash scripts/check_release_asset_checksum_regression.sh v0.0.0-test dist/release-test"
