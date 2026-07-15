@@ -25,7 +25,7 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 
 	tools := registry.List()
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
 	def := tools[0]
@@ -185,6 +185,70 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 	if _, ok := soulArchiveSchema.Props["actor_username"]; !ok {
 		t.Fatalf("agent_soul_archive schema should advertise optional actor_username mismatch guard")
+	}
+
+	instructionsGetDef := tools[7]
+	if instructionsGetDef.Name != toolAgentInstructionsGet {
+		t.Fatalf("eighth tool name = %q, want %q", instructionsGetDef.Name, toolAgentInstructionsGet)
+	}
+	assertReadOnlyToolDef(t, instructionsGetDef)
+	assertNotContains(t, instructionsGetDef.Description, agentSoulProvisionalMarker)
+	var instructionsGetSchema struct {
+		Required []string       `json:"required"`
+		Props    map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(instructionsGetDef.InputSchema, &instructionsGetSchema); err != nil {
+		t.Fatalf("agent_instructions_get input schema invalid json: %v", err)
+	}
+	if !contains(instructionsGetSchema.Required, "agent_id") {
+		t.Fatalf("agent_instructions_get required = %v, missing agent_id", instructionsGetSchema.Required)
+	}
+	if _, ok := instructionsGetSchema.Props["actor_username"]; !ok {
+		t.Fatalf("agent_instructions_get schema should advertise optional actor_username mismatch guard")
+	}
+
+	instructionsUpsertDef := tools[8]
+	if instructionsUpsertDef.Name != toolAgentInstructionsUpsert {
+		t.Fatalf("ninth tool name = %q, want %q", instructionsUpsertDef.Name, toolAgentInstructionsUpsert)
+	}
+	assertMutationToolDef(t, instructionsUpsertDef, false)
+	assertNotContains(t, instructionsUpsertDef.Description, agentSoulProvisionalMarker)
+	var instructionsUpsertSchema struct {
+		Required []string       `json:"required"`
+		Props    map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(instructionsUpsertDef.InputSchema, &instructionsUpsertSchema); err != nil {
+		t.Fatalf("agent_instructions_upsert input schema invalid json: %v", err)
+	}
+	for _, required := range []string{"agent_id", "content"} {
+		if !contains(instructionsUpsertSchema.Required, required) {
+			t.Fatalf("agent_instructions_upsert required = %v, missing %s", instructionsUpsertSchema.Required, required)
+		}
+	}
+	for _, prop := range []string{"actor_username", "content"} {
+		if _, ok := instructionsUpsertSchema.Props[prop]; !ok {
+			t.Fatalf("agent_instructions_upsert schema missing %s", prop)
+		}
+	}
+
+	instructionsArchiveDef := tools[9]
+	if instructionsArchiveDef.Name != toolAgentInstructionsArchive {
+		t.Fatalf("tenth tool name = %q, want %q", instructionsArchiveDef.Name, toolAgentInstructionsArchive)
+	}
+	assertMutationToolDef(t, instructionsArchiveDef, true)
+	assertNotContains(t, instructionsArchiveDef.Description, agentSoulProvisionalMarker)
+	var instructionsArchiveSchema struct {
+		Required []string       `json:"required"`
+		Props    map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(instructionsArchiveDef.InputSchema, &instructionsArchiveSchema); err != nil {
+		t.Fatalf("agent_instructions_archive input schema invalid json: %v", err)
+	}
+	if !contains(instructionsArchiveSchema.Required, "agent_id") {
+		t.Fatalf("agent_instructions_archive required = %v, missing agent_id", instructionsArchiveSchema.Required)
+	}
+	if _, ok := instructionsArchiveSchema.Props["actor_username"]; !ok {
+		t.Fatalf("agent_instructions_archive schema should advertise optional actor_username mismatch guard")
 	}
 }
 
@@ -1044,6 +1108,241 @@ func TestAgentSoulMapsContentStoreErrorsWithoutLeakingScopeDetails(t *testing.T)
 	}
 }
 
+func TestAgentInstructionsGetReadsAccountScopedContentWithReadCapableScopes(t *testing.T) {
+	for _, scope := range []string{"read", "write", "admin"} {
+		t.Run(scope, func(t *testing.T) {
+			store := &fakeAgentContentStore{getRecord: agentInstructionsRecord("drone-ada", "agent-123", "follow the operator", 2, agentcontent.LifecycleStateDraft, "subject-prev")}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(toolContextWithSubject("Drone-Ada", []string{scope}, "owner-oauth-token", "subject-reader"), toolAgentInstructionsGet, json.RawMessage(`{"agent_id":" agent-123 ","actor_username":"drone-ada"}`))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("result = %+v", result)
+			}
+			if store.getCalls != 1 || store.getAccount != "drone-ada" || store.getAgentID != "agent-123" || store.getType != agentcontent.ContentTypeAgentInstructions {
+				t.Fatalf("content Get calls/account/id/type = %d/%q/%q/%q, want account-scoped agent_instructions", store.getCalls, store.getAccount, store.getAgentID, store.getType)
+			}
+			data := structuredData(t, result)
+			record, _ := data["agent_instructions"].(map[string]any)
+			if record["account"] != "drone-ada" || record["agent_id"] != "agent-123" || record["type"] != string(agentcontent.ContentTypeAgentInstructions) || record["content"] != "follow the operator" || record["version"] != int64(2) {
+				t.Fatalf("agent_instructions record = %+v", record)
+			}
+			if _, ok := data["schema"]; ok {
+				t.Fatalf("agent_instructions should not carry agent_soul provisional schema marker: %+v", data["schema"])
+			}
+		})
+	}
+}
+
+func TestAgentInstructionsUpsertUsesAgentContentStoreWithSubject(t *testing.T) {
+	store := &fakeAgentContentStore{upsertRecord: agentInstructionsRecord("drone-ada", "agent-123", "instructions v1", 1, agentcontent.LifecycleStateDraft, "subject-writer")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContextWithSubject("Drone-Ada", []string{"write"}, "owner-oauth-token", "subject-writer"), toolAgentInstructionsUpsert, json.RawMessage(`{
+		"agent_id":" agent-123 ",
+		"actor_username":"drone-ada",
+		"content":"instructions v1"
+	}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.upsertCalls != 1 {
+		t.Fatalf("Upsert calls = %d, want 1", store.upsertCalls)
+	}
+	if store.upsertIn.Account != "drone-ada" || store.upsertIn.AgentID != "agent-123" || store.upsertIn.Type != agentcontent.ContentTypeAgentInstructions || store.upsertIn.Content != "instructions v1" || store.upsertIn.UpdatedBySubjectID != "subject-writer" {
+		t.Fatalf("Upsert input = %+v, want account-scoped agent_instructions with subject", store.upsertIn)
+	}
+	data := structuredData(t, result)
+	record, _ := data["agent_instructions"].(map[string]any)
+	if record["updated_by_subject_id"] != "subject-writer" || record["content"] != "instructions v1" {
+		t.Fatalf("agent_instructions record = %+v", record)
+	}
+	if strings.Contains(result.Content[0].Text, "instructions v1") {
+		t.Fatalf("text content duplicated instructions content: %s", result.Content[0].Text)
+	}
+}
+
+func TestAgentInstructionsArchiveUsesStoreAndReportsIdempotentReplay(t *testing.T) {
+	store := &fakeAgentContentStore{
+		getRecord:     agentInstructionsRecord("drone-ada", "agent-123", "instructions", 4, agentcontent.LifecycleStateArchived, "subject-prev"),
+		archiveRecord: agentInstructionsRecord("drone-ada", "agent-123", "instructions", 4, agentcontent.LifecycleStateArchived, "subject-archive"),
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContextWithSubject("Drone-Ada", []string{"write"}, "owner-oauth-token", "subject-archive"), toolAgentInstructionsArchive, json.RawMessage(`{"agent_id":"agent-123","actor_username":"drone-ada"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.getCalls != 1 || store.archiveCalls != 1 {
+		t.Fatalf("Get/Archive calls = %d/%d, want 1/1", store.getCalls, store.archiveCalls)
+	}
+	if store.archiveIn.Account != "drone-ada" || store.archiveIn.AgentID != "agent-123" || store.archiveIn.Type != agentcontent.ContentTypeAgentInstructions || store.archiveIn.UpdatedBySubjectID != "subject-archive" {
+		t.Fatalf("Archive input = %+v, want account-scoped agent_instructions with subject", store.archiveIn)
+	}
+	data := structuredData(t, result)
+	if data["already_archived"] != true || data["idempotent"] != true {
+		t.Fatalf("archive idempotency metadata = %+v", data)
+	}
+	record, _ := data["agent_instructions"].(map[string]any)
+	if record["lifecycle_state"] != string(agentcontent.LifecycleStateArchived) || record["version"] != int64(4) {
+		t.Fatalf("archived record = %+v", record)
+	}
+}
+
+func TestAgentInstructionsRejectsInvalidInputAndPrincipalsBeforeContentStoreWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tool      string
+		ctx       context.Context
+		args      string
+		wantCode  string
+		wantState int
+	}{
+		{
+			name:      "get insufficient scope",
+			tool:      toolAgentInstructionsGet,
+			ctx:       toolContextWithSubject("drone-ada", []string{"follow"}, "owner-oauth-token", "subject-reader"),
+			args:      `{"agent_id":"agent-123"}`,
+			wantCode:  "insufficient_scope",
+			wantState: 403,
+		},
+		{
+			name:      "upsert insufficient scope",
+			tool:      toolAgentInstructionsUpsert,
+			ctx:       toolContextWithSubject("drone-ada", []string{"read"}, "owner-oauth-token", "subject-writer"),
+			args:      `{"agent_id":"agent-123","content":"instructions"}`,
+			wantCode:  "insufficient_scope",
+			wantState: 403,
+		},
+		{
+			name:      "upsert agent principal",
+			tool:      toolAgentInstructionsUpsert,
+			ctx:       toolContextWithAgent("drone-ada", []string{"write"}, "agent-runtime-token", true),
+			args:      `{"agent_id":"agent-123","content":"instructions"}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+		{
+			name:      "upsert missing subject",
+			tool:      toolAgentInstructionsUpsert,
+			ctx:       toolContextWithSubject("drone-ada", []string{"write"}, "owner-oauth-token", ""),
+			args:      `{"agent_id":"agent-123","content":"instructions"}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+		{
+			name:      "get caller-supplied account rejected",
+			tool:      toolAgentInstructionsGet,
+			ctx:       toolContextWithSubject("drone-ada", []string{"read"}, "owner-oauth-token", "subject-reader"),
+			args:      `{"agent_id":"agent-123","account":"other"}`,
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "archive mismatched actor username",
+			tool:      toolAgentInstructionsArchive,
+			ctx:       toolContextWithSubject("drone-ada", []string{"write"}, "owner-oauth-token", "subject-writer"),
+			args:      `{"agent_id":"agent-123","actor_username":"other"}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAgentContentStore{getRecord: agentInstructionsRecord("drone-ada", "agent-123", "instructions", 1, agentcontent.LifecycleStateDraft, "subject")}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(tc.ctx, tc.tool, json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, tc.wantCode, tc.wantState)
+			if store.getCalls != 0 || store.upsertCalls != 0 || store.archiveCalls != 0 {
+				t.Fatalf("content store side effects occurred before rejection: get=%d upsert=%d archive=%d", store.getCalls, store.upsertCalls, store.archiveCalls)
+			}
+		})
+	}
+}
+
+func TestAgentInstructionsMapsContentStoreErrorsWithoutLeakingScopeDetails(t *testing.T) {
+	store := &fakeAgentContentStore{getErr: fmt.Errorf("%w: hidden account agent-elsewhere", agentcontent.ErrContentNotFound)}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContextWithSubject("drone-ada", []string{"read"}, "owner-oauth-token", "subject-reader"), toolAgentInstructionsGet, json.RawMessage(`{"agent_id":"agent-elsewhere"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "not_found", 404)
+	details, _ := payload["details"].(map[string]any)
+	if details["content_type"] != string(agentcontent.ContentTypeAgentInstructions) {
+		t.Fatalf("content error details = %+v, want agent_instructions content_type", details)
+	}
+	encoded, _ := json.Marshal(payload)
+	for _, term := range []string{"hidden account", "agent-elsewhere", "drone-ada"} {
+		if strings.Contains(string(encoded), term) {
+			t.Fatalf("error payload leaked %q: %s", term, string(encoded))
+		}
+	}
+}
+
+func TestAgentInstructionsAndSoulUseIndependentContentTypeCounters(t *testing.T) {
+	store := newVersionedFakeAgentContentStore()
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := toolContextWithSubject("Drone-Ada", []string{"read", "write"}, "owner-oauth-token", "subject-writer")
+
+	soulV1 := callToolData(t, registry, ctx, toolAgentSoulUpsert, `{"agent_id":"agent-123","content":"soul v1"}`)
+	instructionsV1 := callToolData(t, registry, ctx, toolAgentInstructionsUpsert, `{"agent_id":"agent-123","content":"instructions v1"}`)
+	soulV2 := callToolData(t, registry, ctx, toolAgentSoulUpsert, `{"agent_id":"agent-123","content":"soul v2"}`)
+	instructionsGot := callToolData(t, registry, ctx, toolAgentInstructionsGet, `{"agent_id":"agent-123"}`)
+
+	if got := soulV1["agent_soul"].(map[string]any)["version"]; got != int64(1) {
+		t.Fatalf("soul v1 version = %v, want 1", got)
+	}
+	if got := instructionsV1["agent_instructions"].(map[string]any)["version"]; got != int64(1) {
+		t.Fatalf("instructions v1 version = %v, want 1", got)
+	}
+	if got := soulV2["agent_soul"].(map[string]any)["version"]; got != int64(2) {
+		t.Fatalf("soul v2 version = %v, want 2", got)
+	}
+	instructionsRecord := instructionsGot["agent_instructions"].(map[string]any)
+	if instructionsRecord["version"] != int64(1) || instructionsRecord["content"] != "instructions v1" {
+		t.Fatalf("instructions after soul update = %+v, want unchanged independent version 1", instructionsRecord)
+	}
+	if len(store.records) != 2 {
+		t.Fatalf("fake store records = %d, want separate agent_soul and agent_instructions records", len(store.records))
+	}
+	for _, typ := range []agentcontent.ContentType{agentcontent.ContentTypeAgentSoul, agentcontent.ContentTypeAgentInstructions} {
+		if _, ok := store.records[agentContentTestKey{account: "drone-ada", agentID: "agent-123", typ: typ}]; !ok {
+			t.Fatalf("missing fake store record for content type %s; records = %+v", typ, store.records)
+		}
+	}
+}
+
 type fakeSoulBindingClient struct {
 	calls             int
 	integrationBearer string
@@ -1173,7 +1472,7 @@ func (f *fakeAgentContentStore) Upsert(_ context.Context, in agentcontent.Upsert
 	if f.upsertRecord != nil {
 		return f.upsertRecord, nil
 	}
-	return agentSoulRecord(in.Account, in.AgentID, in.Content, 1, agentcontent.LifecycleStateDraft, in.UpdatedBySubjectID), nil
+	return agentContentRecord(in.Type, in.Account, in.AgentID, in.Content, 1, agentcontent.LifecycleStateDraft, in.UpdatedBySubjectID), nil
 }
 
 func (f *fakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {
@@ -1185,7 +1484,59 @@ func (f *fakeAgentContentStore) Archive(_ context.Context, in agentcontent.Archi
 	if f.archiveRecord != nil {
 		return f.archiveRecord, nil
 	}
-	return agentSoulRecord(in.Account, in.AgentID, "", 1, agentcontent.LifecycleStateArchived, in.UpdatedBySubjectID), nil
+	return agentContentRecord(in.Type, in.Account, in.AgentID, "", 1, agentcontent.LifecycleStateArchived, in.UpdatedBySubjectID), nil
+}
+
+type agentContentTestKey struct {
+	account string
+	agentID string
+	typ     agentcontent.ContentType
+}
+
+type versionedFakeAgentContentStore struct {
+	records map[agentContentTestKey]*agentcontent.Record
+}
+
+func newVersionedFakeAgentContentStore() *versionedFakeAgentContentStore {
+	return &versionedFakeAgentContentStore{records: map[agentContentTestKey]*agentcontent.Record{}}
+}
+
+func (f *versionedFakeAgentContentStore) Get(_ context.Context, account string, agentID string, contentType agentcontent.ContentType) (*agentcontent.Record, error) {
+	key := agentContentTestKey{account: account, agentID: agentID, typ: contentType}
+	record := f.records[key]
+	if record == nil {
+		return nil, agentcontent.ErrContentNotFound
+	}
+	return cloneAgentContentRecord(record), nil
+}
+
+func (f *versionedFakeAgentContentStore) Upsert(_ context.Context, in agentcontent.UpsertInput) (*agentcontent.Record, error) {
+	key := agentContentTestKey{account: in.Account, agentID: in.AgentID, typ: in.Type}
+	version := int64(1)
+	createdAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	if existing := f.records[key]; existing != nil {
+		version = existing.Version + 1
+		createdAt = existing.CreatedAt
+	}
+	record := agentContentRecord(in.Type, in.Account, in.AgentID, in.Content, version, agentcontent.LifecycleStateDraft, in.UpdatedBySubjectID)
+	record.CreatedAt = createdAt
+	record.UpdatedAt = createdAt.Add(time.Duration(version) * time.Minute)
+	f.records[key] = cloneAgentContentRecord(record)
+	return record, nil
+}
+
+func (f *versionedFakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {
+	key := agentContentTestKey{account: in.Account, agentID: in.AgentID, typ: in.Type}
+	record := f.records[key]
+	if record == nil {
+		return nil, agentcontent.ErrContentNotFound
+	}
+	archived := cloneAgentContentRecord(record)
+	archived.LifecycleState = agentcontent.LifecycleStateArchived
+	archived.UpdatedBySubjectID = in.UpdatedBySubjectID
+	archived.UpdatedAt = archived.UpdatedAt.Add(time.Minute)
+	f.records[key] = cloneAgentContentRecord(archived)
+	return archived, nil
 }
 
 func toolContext(username string, scopes []string, bearer string) context.Context {
@@ -1218,10 +1569,18 @@ func toolContextWithSubjectAndAgent(username string, scopes []string, bearer str
 }
 
 func agentSoulRecord(account, agentID, content string, version int64, state agentcontent.LifecycleState, updatedBySubjectID string) *agentcontent.Record {
+	return agentContentRecord(agentcontent.ContentTypeAgentSoul, account, agentID, content, version, state, updatedBySubjectID)
+}
+
+func agentInstructionsRecord(account, agentID, content string, version int64, state agentcontent.LifecycleState, updatedBySubjectID string) *agentcontent.Record {
+	return agentContentRecord(agentcontent.ContentTypeAgentInstructions, account, agentID, content, version, state, updatedBySubjectID)
+}
+
+func agentContentRecord(contentType agentcontent.ContentType, account, agentID, content string, version int64, state agentcontent.LifecycleState, updatedBySubjectID string) *agentcontent.Record {
 	return &agentcontent.Record{
 		Account:            account,
 		AgentID:            agentID,
-		Type:               agentcontent.ContentTypeAgentSoul,
+		Type:               contentType,
 		Content:            content,
 		Version:            version,
 		LifecycleState:     state,
@@ -1229,6 +1588,14 @@ func agentSoulRecord(account, agentID, content string, version int64, state agen
 		UpdatedAt:          time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC),
 		UpdatedBySubjectID: updatedBySubjectID,
 	}
+}
+
+func cloneAgentContentRecord(record *agentcontent.Record) *agentcontent.Record {
+	if record == nil {
+		return nil
+	}
+	clone := *record
+	return &clone
 }
 
 func successfulBindingResponse(replayed bool) *lesserapi.SoulBindingResponse {
@@ -1293,6 +1660,18 @@ func structuredData(t *testing.T, result *mcpruntime.ToolResult) map[string]any 
 		t.Fatalf("structuredContent.data missing: %+v", result.StructuredContent)
 	}
 	return data
+}
+
+func callToolData(t *testing.T, registry *mcpruntime.ToolRegistry, ctx context.Context, toolName string, args string) map[string]any {
+	t.Helper()
+	result, err := registry.Call(ctx, toolName, json.RawMessage(args))
+	if err != nil {
+		t.Fatalf("%s Call: %v", toolName, err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("%s result = %+v", toolName, result)
+	}
+	return structuredData(t, result)
 }
 
 func assertToolError(t *testing.T, result *mcpruntime.ToolResult, wantCode string, wantStatus int) map[string]any {
@@ -1363,5 +1742,12 @@ func assertContains(t testing.TB, got string, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected %q to contain %q", got, want)
+	}
+}
+
+func assertNotContains(t testing.TB, got string, forbidden string) {
+	t.Helper()
+	if strings.Contains(got, forbidden) {
+		t.Fatalf("expected %q not to contain %q", got, forbidden)
 	}
 }

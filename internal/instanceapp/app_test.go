@@ -44,7 +44,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,6 +133,18 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				soulArchiveDef := listBody.Result.Tools[6]
 				if soulArchiveDef.Name != "agent_soul_archive" || soulArchiveDef.Annotations == nil || soulArchiveDef.Annotations.ReadOnlyHint == nil || *soulArchiveDef.Annotations.ReadOnlyHint || soulArchiveDef.Annotations.IdempotentHint == nil || !*soulArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_soul_archive annotations invalid: %+v", soulArchiveDef)
+				}
+				instructionsGetDef := listBody.Result.Tools[7]
+				if instructionsGetDef.Name != "agent_instructions_get" || instructionsGetDef.Annotations == nil || instructionsGetDef.Annotations.ReadOnlyHint == nil || !*instructionsGetDef.Annotations.ReadOnlyHint || strings.Contains(instructionsGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
+					t.Fatalf("agent_instructions_get annotations/description invalid: %+v", instructionsGetDef)
+				}
+				instructionsUpsertDef := listBody.Result.Tools[8]
+				if instructionsUpsertDef.Name != "agent_instructions_upsert" || instructionsUpsertDef.Annotations == nil || instructionsUpsertDef.Annotations.ReadOnlyHint == nil || *instructionsUpsertDef.Annotations.ReadOnlyHint || instructionsUpsertDef.Annotations.IdempotentHint == nil || *instructionsUpsertDef.Annotations.IdempotentHint {
+					t.Fatalf("agent_instructions_upsert annotations invalid: %+v", instructionsUpsertDef)
+				}
+				instructionsArchiveDef := listBody.Result.Tools[9]
+				if instructionsArchiveDef.Name != "agent_instructions_archive" || instructionsArchiveDef.Annotations == nil || instructionsArchiveDef.Annotations.ReadOnlyHint == nil || *instructionsArchiveDef.Annotations.ReadOnlyHint || instructionsArchiveDef.Annotations.IdempotentHint == nil || !*instructionsArchiveDef.Annotations.IdempotentHint {
+					t.Fatalf("agent_instructions_archive annotations invalid: %+v", instructionsArchiveDef)
 				}
 			}
 		})

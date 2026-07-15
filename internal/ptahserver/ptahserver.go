@@ -36,6 +36,10 @@ const (
 	toolAgentSoulUpsert  = "agent_soul_upsert"
 	toolAgentSoulArchive = "agent_soul_archive"
 
+	toolAgentInstructionsGet     = "agent_instructions_get"
+	toolAgentInstructionsUpsert  = "agent_instructions_upsert"
+	toolAgentInstructionsArchive = "agent_instructions_archive"
+
 	agentSoulProvisionalMarker = "provisional_agent_soul_schema_pending_lesser_soul_s1"
 	agentSoulProvisionalText   = "Provisional schema marker " + agentSoulProvisionalMarker + ": agent_soul content is an opaque Ptah-authored draft string pending lesser-soul S1 governance-policy unblock; clients must not treat it as the final Panonomous soul contract."
 )
@@ -180,7 +184,16 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentSoulUpsertDef(), cfg.handleAgentSoulUpsert); err != nil {
 		return err
 	}
-	return r.RegisterTool(agentSoulArchiveDef(), cfg.handleAgentSoulArchive)
+	if err := r.RegisterTool(agentSoulArchiveDef(), cfg.handleAgentSoulArchive); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentInstructionsGetDef(), cfg.handleAgentInstructionsGet); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentInstructionsUpsertDef(), cfg.handleAgentInstructionsUpsert); err != nil {
+		return err
+	}
+	return r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive)
 }
 
 func defaultConfig() config {
@@ -394,6 +407,74 @@ func agentSoulOutputSchema() json.RawMessage {
 	}`)
 }
 
+func agentInstructionsGetDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentInstructionsGet,
+		Title:       "Get draft agent instructions",
+		Description: "Read the current account-scoped Ptah agent_instructions draft/archived record for the authenticated account-holder principal. Requires read scope.",
+		Annotations: readOnlyToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Agent id whose agent_instructions content is read from the authenticated account-holder's Ptah content partition."},
+				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+			},
+			"required":["agent_id"],
+			"additionalProperties":false
+		}`),
+		OutputSchema: agentInstructionsOutputSchema(),
+	}
+}
+
+func agentInstructionsUpsertDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentInstructionsUpsert,
+		Title:       "Upsert draft agent instructions",
+		Description: "Create or update an account-scoped Ptah agent_instructions draft through the canonical internal/agentcontent Store. Requires write scope and increments the per-content version via the store.",
+		Annotations: additiveMutationToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Agent id whose agent_instructions draft is written in the authenticated account-holder's Ptah content partition."},
+				"content":{"type":"string","description":"Agent instructions draft payload. Maximum 65536 bytes."},
+				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+			},
+			"required":["agent_id","content"],
+			"additionalProperties":false
+		}`),
+		OutputSchema: agentInstructionsOutputSchema(),
+	}
+}
+
+func agentInstructionsArchiveDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentInstructionsArchive,
+		Title:       "Archive draft agent instructions",
+		Description: "Idempotently archive the current account-scoped Ptah agent_instructions record through the canonical internal/agentcontent Store. Requires write scope.",
+		Annotations: idempotentMutationToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Agent id whose agent_instructions record is archived in the authenticated account-holder's Ptah content partition."},
+				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+			},
+			"required":["agent_id"],
+			"additionalProperties":false
+		}`),
+		OutputSchema: agentInstructionsOutputSchema(),
+	}
+}
+
+func agentInstructionsOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{"type":"object","description":"Structured account-scoped agent_instructions record and archive idempotency metadata when applicable."},
+			"error":{"type":"object","description":"Structured tool error when isError=true."}
+		}
+	}`)
+}
+
 type agentBindSoulInput struct {
 	SoulAgentID        string                  `json:"soul_agent_id"`
 	IdempotencyKey     string                  `json:"idempotency_key"`
@@ -444,6 +525,22 @@ type agentSoulUpsertInput struct {
 }
 
 type agentSoulArchiveInput struct {
+	AgentID       string `json:"agent_id"`
+	ActorUsername string `json:"actor_username"`
+}
+
+type agentInstructionsGetInput struct {
+	AgentID       string `json:"agent_id"`
+	ActorUsername string `json:"actor_username"`
+}
+
+type agentInstructionsUpsertInput struct {
+	AgentID       string  `json:"agent_id"`
+	Content       *string `json:"content"`
+	ActorUsername string  `json:"actor_username"`
+}
+
+type agentInstructionsArchiveInput struct {
 	AgentID       string `json:"agent_id"`
 	ActorUsername string `json:"actor_username"`
 }
@@ -779,7 +876,7 @@ func (cfg config) handleAgentSoulGet(ctx context.Context, args json.RawMessage) 
 
 	record, err := store.Get(ctx, actorUsername, in.AgentID, agentcontent.ContentTypeAgentSoul)
 	if err != nil {
-		return agentContentToolResultFromError(err)
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	return agentSoulSuccessResult("Ptah agent_soul record read", actorUsername, record, nil)
 }
@@ -831,7 +928,7 @@ func (cfg config) handleAgentSoulUpsert(ctx context.Context, args json.RawMessag
 		UpdatedBySubjectID: subjectID,
 	})
 	if err != nil {
-		return agentContentToolResultFromError(err)
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	return agentSoulSuccessResult("Ptah agent_soul draft upserted", actorUsername, record, nil)
 }
@@ -872,7 +969,7 @@ func (cfg config) handleAgentSoulArchive(ctx context.Context, args json.RawMessa
 
 	current, err := store.Get(ctx, actorUsername, in.AgentID, agentcontent.ContentTypeAgentSoul)
 	if err != nil {
-		return agentContentToolResultFromError(err)
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	alreadyArchived := current != nil && current.LifecycleState == agentcontent.LifecycleStateArchived
 	record, err := store.Archive(ctx, agentcontent.ArchiveInput{
@@ -882,9 +979,152 @@ func (cfg config) handleAgentSoulArchive(ctx context.Context, args json.RawMessa
 		UpdatedBySubjectID: subjectID,
 	})
 	if err != nil {
-		return agentContentToolResultFromError(err)
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	return agentSoulSuccessResult("Ptah agent_soul record archived", actorUsername, record, map[string]any{
+		"already_archived": alreadyArchived,
+		"idempotent":       true,
+	})
+}
+
+func (cfg config) handleAgentInstructionsGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentInstructionsGet)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasReadScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_instructions_get requires read scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"read"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+
+	in, errResult, err := parseAgentInstructionsGetInput(args, actorUsername)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	store, err := cfg.content()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+		})
+	}
+
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentInstructionsGet,
+		"actor_username", actorUsername,
+	)
+
+	record, err := store.Get(ctx, actorUsername, in.AgentID, agentcontent.ContentTypeAgentInstructions)
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentInstructions)
+	}
+	return agentInstructionsSuccessResult("Ptah agent_instructions record read", actorUsername, record, nil)
+}
+
+func (cfg config) handleAgentInstructionsUpsert(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentInstructionsUpsert)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasWriteScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_instructions_upsert requires write scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"write"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+	subjectID, errResult := authenticatedSubjectID(principal, toolAgentInstructionsUpsert)
+	if errResult != nil {
+		return errResult, nil
+	}
+
+	in, errResult, err := parseAgentInstructionsUpsertInput(args, actorUsername)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	store, err := cfg.content()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+		})
+	}
+
+	content := ""
+	if in.Content != nil {
+		content = *in.Content
+	}
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentInstructionsUpsert,
+		"actor_username", actorUsername,
+		"content_bytes", len([]byte(content)),
+	)
+
+	record, err := store.Upsert(ctx, agentcontent.UpsertInput{
+		Account:            actorUsername,
+		AgentID:            in.AgentID,
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            content,
+		UpdatedBySubjectID: subjectID,
+	})
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentInstructions)
+	}
+	return agentInstructionsSuccessResult("Ptah agent_instructions draft upserted", actorUsername, record, nil)
+}
+
+func (cfg config) handleAgentInstructionsArchive(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentInstructionsArchive)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasWriteScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_instructions_archive requires write scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"write"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+	subjectID, errResult := authenticatedSubjectID(principal, toolAgentInstructionsArchive)
+	if errResult != nil {
+		return errResult, nil
+	}
+
+	in, errResult, err := parseAgentInstructionsArchiveInput(args, actorUsername)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	store, err := cfg.content()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+		})
+	}
+
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentInstructionsArchive,
+		"actor_username", actorUsername,
+	)
+
+	current, err := store.Get(ctx, actorUsername, in.AgentID, agentcontent.ContentTypeAgentInstructions)
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentInstructions)
+	}
+	alreadyArchived := current != nil && current.LifecycleState == agentcontent.LifecycleStateArchived
+	record, err := store.Archive(ctx, agentcontent.ArchiveInput{
+		Account:            actorUsername,
+		AgentID:            in.AgentID,
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		UpdatedBySubjectID: subjectID,
+	})
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentInstructions)
+	}
+	return agentInstructionsSuccessResult("Ptah agent_instructions record archived", actorUsername, record, map[string]any{
 		"already_archived": alreadyArchived,
 		"idempotent":       true,
 	})
@@ -1117,6 +1357,84 @@ func parseAgentSoulArchiveInput(args json.RawMessage, actorUsername string) (age
 	}
 	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
 		return agentSoulArchiveInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
+			"source": "lesser_body_ptah",
+		}), nil
+	}
+	return in, nil, nil
+}
+
+func parseAgentInstructionsGetInput(args json.RawMessage, actorUsername string) (agentInstructionsGetInput, *mcpruntime.ToolResult, error) {
+	raw := strings.TrimSpace(string(args))
+	if raw == "" || raw == "null" {
+		raw = "{}"
+	}
+
+	var in agentInstructionsGetInput
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return agentInstructionsGetInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
+	}
+	in.AgentID = strings.TrimSpace(in.AgentID)
+	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
+	if in.AgentID == "" {
+		return agentInstructionsGetInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	}
+	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
+		return agentInstructionsGetInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
+			"source": "lesser_body_ptah",
+		}), nil
+	}
+	return in, nil, nil
+}
+
+func parseAgentInstructionsUpsertInput(args json.RawMessage, actorUsername string) (agentInstructionsUpsertInput, *mcpruntime.ToolResult, error) {
+	raw := strings.TrimSpace(string(args))
+	if raw == "" || raw == "null" {
+		raw = "{}"
+	}
+
+	var in agentInstructionsUpsertInput
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return agentInstructionsUpsertInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
+	}
+	in.AgentID = strings.TrimSpace(in.AgentID)
+	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
+	if in.AgentID == "" {
+		return agentInstructionsUpsertInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	}
+	if in.Content == nil {
+		return agentInstructionsUpsertInput{}, mustToolErrorResult("invalid_request", "content is required", http.StatusBadRequest, nil), nil
+	}
+	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
+		return agentInstructionsUpsertInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
+			"source": "lesser_body_ptah",
+		}), nil
+	}
+	return in, nil, nil
+}
+
+func parseAgentInstructionsArchiveInput(args json.RawMessage, actorUsername string) (agentInstructionsArchiveInput, *mcpruntime.ToolResult, error) {
+	raw := strings.TrimSpace(string(args))
+	if raw == "" || raw == "null" {
+		raw = "{}"
+	}
+
+	var in agentInstructionsArchiveInput
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return agentInstructionsArchiveInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
+	}
+	in.AgentID = strings.TrimSpace(in.AgentID)
+	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
+	if in.AgentID == "" {
+		return agentInstructionsArchiveInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	}
+	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
+		return agentInstructionsArchiveInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
 			"source": "lesser_body_ptah",
 		}), nil
 	}
@@ -1359,7 +1677,7 @@ func agentListSuccessResult(actorUsername string, limit int, page *agentregistry
 }
 
 func agentSoulSuccessResult(summary string, actorUsername string, record *agentcontent.Record, extra map[string]any) (*mcpruntime.ToolResult, error) {
-	recordSummary := agentSoulRecordSummary(record)
+	recordSummary := agentContentRecordSummary(record)
 	data := map[string]any{
 		"actor_username": actorUsername,
 		"agent_soul":     recordSummary,
@@ -1382,6 +1700,34 @@ func agentSoulSuccessResult(summary string, actorUsername string, record *agentc
 		},
 		"schema": agentSoulSchemaMarker(),
 		"data":   map[string]any{"location": "structuredContent.data"},
+	}
+	if len(extra) > 0 {
+		text["metadata"] = extra
+	}
+	return toolJSONTextResult(text, map[string]any{"data": data})
+}
+
+func agentInstructionsSuccessResult(summary string, actorUsername string, record *agentcontent.Record, extra map[string]any) (*mcpruntime.ToolResult, error) {
+	recordSummary := agentContentRecordSummary(record)
+	data := map[string]any{
+		"actor_username":     actorUsername,
+		"agent_instructions": recordSummary,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+
+	text := map[string]any{
+		"summary": summary,
+		"agent_instructions": map[string]any{
+			"account":          recordSummary["account"],
+			"agent_id":         recordSummary["agent_id"],
+			"version":          recordSummary["version"],
+			"lifecycle_state":  recordSummary["lifecycle_state"],
+			"content_bytes":    recordSummary["content_bytes"],
+			"content_location": "structuredContent.data.agent_instructions.content",
+		},
+		"data": map[string]any{"location": "structuredContent.data"},
 	}
 	if len(extra) > 0 {
 		text["metadata"] = extra
@@ -1436,33 +1782,37 @@ func agentDelegateToolResultFromError(err error) (*mcpruntime.ToolResult, error)
 	})
 }
 
-func agentContentToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
+func agentContentToolResultFromError(err error, contentType agentcontent.ContentType) (*mcpruntime.ToolResult, error) {
 	if err == nil {
 		return nil, nil
 	}
 
+	contentName := string(contentType)
+	if contentName == "" {
+		contentName = "agent content"
+	}
 	details := map[string]any{
 		"source":       "agent_content",
-		"content_type": string(agentcontent.ContentTypeAgentSoul),
+		"content_type": contentName,
 	}
 	var sizeErr *agentcontent.SizeError
 	switch {
 	case errors.Is(err, agentcontent.ErrContentNotFound):
-		return toolErrorResult("not_found", "agent_soul record not found in this account-scoped Ptah content store", http.StatusNotFound, details)
+		return toolErrorResult("not_found", contentName+" record not found in this account-scoped Ptah content store", http.StatusNotFound, details)
 	case errors.As(err, &sizeErr):
 		details["limit_bytes"] = sizeErr.Limit
 		details["actual_bytes"] = sizeErr.Actual
-		return toolErrorResult("invalid_request", "agent_soul content exceeds the per-record size limit", http.StatusBadRequest, details)
+		return toolErrorResult("invalid_request", contentName+" content exceeds the per-record size limit", http.StatusBadRequest, details)
 	case errors.Is(err, agentcontent.ErrInvalidContentType):
 		return toolErrorResult("invalid_request", "invalid agent content type", http.StatusBadRequest, details)
 	case errors.Is(err, agentcontent.ErrMissingUpdatedBySubjectID):
-		return toolErrorResult("forbidden", "agent_soul writes require an authenticated subject id", http.StatusForbidden, details)
+		return toolErrorResult("forbidden", contentName+" writes require an authenticated subject id", http.StatusForbidden, details)
 	case errors.Is(err, agentcontent.ErrContentConflict):
-		return toolErrorResult("conflict", "agent_soul content update conflict; retry the operation", http.StatusConflict, details)
+		return toolErrorResult("conflict", contentName+" content update conflict; retry the operation", http.StatusConflict, details)
 	case errors.Is(err, agentcontent.ErrInvalidLifecycleState):
-		return toolErrorResult("internal", "agent_soul content record has invalid lifecycle state", http.StatusInternalServerError, details)
+		return toolErrorResult("internal", contentName+" content record has invalid lifecycle state", http.StatusInternalServerError, details)
 	default:
-		return toolErrorResult("internal", "Body failed to access the Ptah agent_soul content record", http.StatusInternalServerError, details)
+		return toolErrorResult("internal", "Body failed to access the Ptah "+contentName+" content record", http.StatusInternalServerError, details)
 	}
 }
 
@@ -1656,7 +2006,7 @@ func unavailableContentSummary() map[string]any {
 	}
 }
 
-func agentSoulRecordSummary(record *agentcontent.Record) map[string]any {
+func agentContentRecordSummary(record *agentcontent.Record) map[string]any {
 	if record == nil {
 		return map[string]any{}
 	}
