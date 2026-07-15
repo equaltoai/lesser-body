@@ -13,6 +13,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
@@ -45,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		wantTools  []string
 	}{
 		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive"}},
-		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{}},
+		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"read"}, audienceForPath(tc.path))
@@ -104,6 +105,12 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 			}
 			if got := toolNames(listBody.Result.Tools); !reflect.DeepEqual(got, tc.wantTools) {
 				t.Fatalf("tools/list names = %v, want %v", got, tc.wantTools)
+			}
+			if tc.name == "ba" {
+				def := listBody.Result.Tools[0]
+				if def.Name != baserver.ToolAgentLocalInstallPlan || def.Annotations == nil || def.Annotations.ReadOnlyHint == nil || *def.Annotations.ReadOnlyHint || def.Annotations.DestructiveHint == nil || *def.Annotations.DestructiveHint || def.Annotations.IdempotentHint == nil || *def.Annotations.IdempotentHint {
+					t.Fatalf("agent_local_install_plan annotations not write/additive: %+v", def)
+				}
 			}
 			if tc.name == "ptah" {
 				def := listBody.Result.Tools[0]
@@ -556,8 +563,38 @@ func TestInstancePlaneMCP_RejectsDisallowedPrincipals(t *testing.T) {
 			wantErr: "instance_principal_not_allowed",
 		},
 		{
+			name: "agent delegated OAuth token on ba",
+			path: "/instance/ba/mcp",
+			setup: func(t testing.TB) map[string][]string {
+				t.Helper()
+				t.Setenv("JWT_SECRET", "test-secret")
+				t.Setenv("JWT_SECRET_ARN", "")
+				auth.ResetForTests()
+				token := newTestTokenWithAudienceAndAgent(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ba/mcp"), true)
+				return bearerHeaders(token)
+			},
+			want:    403,
+			wantErr: "instance_principal_not_allowed",
+		},
+		{
 			name: "legacy managed instance key despite compatibility flag",
 			path: "/instance/ptah/mcp",
+			setup: func(t testing.TB) map[string][]string {
+				t.Helper()
+				t.Setenv("JWT_SECRET", "")
+				t.Setenv("JWT_SECRET_ARN", "")
+				t.Setenv("LESSER_HOST_INSTANCE_KEY", "legacy-instance-key")
+				t.Setenv("LESSER_HOST_INSTANCE_KEY_ARN", "")
+				t.Setenv("MCP_ALLOW_LEGACY_INSTANCE_KEY", "true")
+				auth.ResetForTests()
+				return bearerHeaders("legacy-instance-key")
+			},
+			want:    403,
+			wantErr: "instance_principal_not_allowed",
+		},
+		{
+			name: "legacy managed instance key on ba despite compatibility flag",
+			path: "/instance/ba/mcp",
 			setup: func(t testing.TB) map[string][]string {
 				t.Helper()
 				t.Setenv("JWT_SECRET", "")

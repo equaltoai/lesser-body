@@ -15,7 +15,7 @@
 - Instance-plane Ptah MCP (authenticated): `POST /instance/ptah/mcp`
   - Uses a separate AppTheory MCP server instance for account-holder orchestration tools.
 - Instance-plane Ba MCP (authenticated): `POST /instance/ba/mcp`
-  - Uses a separate AppTheory MCP server instance. The foundation surface currently has no registered tools.
+  - Uses a separate AppTheory MCP server instance for account-holder install-pack/grant tooling.
 
 Canonical base URL for a Lesser stage:
 
@@ -81,8 +81,9 @@ Deprecated bearer-token/runtime-credential flows should be migrated to OAuth con
 Instance-plane MCP endpoints (`/instance/ptah/mcp` and `/instance/ba/mcp`) also require Lesser OAuth JWT bearer
 authentication, but they are not actor-delegated Ka surfaces. They fail closed unless the authenticated principal is an
 account-holder OAuth token, not an agent-delegated token and not the legacy managed instance key. The token audience
-must match the exact instance MCP resource URL, for example `https://api.<stageDomain>/instance/ptah/mcp`. Ptah write
-tools still enforce their own write-scope requirement before invoking downstream Lesser integration APIs.
+must match the exact instance MCP resource URL, for example `https://api.<stageDomain>/instance/ptah/mcp` or
+`https://api.<stageDomain>/instance/ba/mcp`. Ptah and Ba write tools still enforce their own write-scope
+requirements before side effects such as Lesser integration calls or one-time grant minting.
 
 Scoped public x402 invocation grants:
 
@@ -688,6 +689,85 @@ structured MCP content containing Lesser's response, idempotency/replay metadata
 Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
 `SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor
 as `souled` through the existing `internal/soulbinding` read path.
+
+### Instance-plane Ba tools
+
+Ba tools are served only from `POST /instance/ba/mcp` and are not registered on Ka's actor-scoped `/mcp/{actor}`
+surface or Ptah's `/instance/ptah/mcp` surface. Clients discover them with an authenticated Ba `tools/list` request
+after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract.
+
+| Tool | Scope | Description |
+|------|-------|-------------|
+| `agent_local_install_plan` | Write | Render a deterministic local install pack for an account-scoped agent and mint a one-time header-free download grant. |
+
+`agent_local_install_plan` input:
+
+- Required: `agent_id`, `client`.
+- `client` must be `claude_code` or `codex`; optional `profile`, when supplied, must match `client`.
+- Derived: account scope is the authenticated account-holder OAuth principal. Optional `actor_username`, when supplied,
+  must match that principal after normalization. Callers cannot supply an account override.
+- Derived: the stage domain and download origin come from the CDK-provided `INSTANCE_MCP_ENDPOINT` template
+  (`https://api.<stageDomain>/instance/{surface}/mcp`), not from caller input or unvalidated `Host` headers. Rendered
+  packs still target the canonical actor MCP endpoint `https://api.<stageDomain>/mcp/{actor}`.
+
+`agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
+installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
+usernames, and `actor_username` mismatches are rejected before Body reads content, renders a pack, or mints a grant.
+The instance-plane x402 seam remains fail-closed in this foundation slice: x402 headers on `/instance/ba/mcp` are
+rejected before tool dispatch.
+
+The tool reads current account-scoped `agent_soul` and `agent_instructions` records through
+`internal/agentcontent.Store.Get`, renders a deterministic ZIP through `internal/installpack`, then mints a short-lived
+one-time grant through `internal/downloadgrant.Store.Issue`. The grant binding is fixed to:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "actor": "<safe local actor segment derived from agent_id>",
+  "namespace": "equaltoai",
+  "route": "/instance/ba/mcp",
+  "client": "codex",
+  "profile": "codex",
+  "pack_id": "<deterministic Ba pack id>",
+  "pack_digest": "sha256:<input/content digest>"
+}
+```
+
+The successful response is a TheoryMCP-compatible install-plan envelope under `structuredContent.data`. Text content is
+only a concise locator and does not duplicate the raw download URL, raw token, `agent_soul`, or `agent_instructions`
+content. The data envelope includes at least:
+
+- `schema` (`lesserbody.agent_local_install_plan.v1`)
+- `grant_id` and `expires_at`
+- `download_url` and `install_pack_resource.uri`
+- `pack_id`, `pack_digest`, and `pack_checksum`
+- `resource_metadata` / `install_pack_resource` with `method: "GET"`, `media_type: "application/zip"`,
+  `requires_authorization_header: false`, and the safe grant binding query metadata
+- `manifest`, `manifest_entries`, `marker_metadata` / `install_marker`
+- `mcp_server_name` and `mcp_endpoint_url`
+- `merge_instructions`, `update_guidance`, and `verification_steps`
+
+The download URL is intentionally header-free for local installer clients and uses the public grant route:
+
+```text
+GET https://api.<stageDomain>/instance/downloads/installer-grants/{grantId}?token=<raw-token>&account=...&actor=...&namespace=...&client=...&profile=...&pack_id=...&pack_digest=...
+```
+
+The raw token is returned only inside that tool response URL at issue time. `internal/downloadgrant` persists only a
+domain-separated `TokenHash`, TTL-compatible `expiresAt`, grant id, status, and safe binding fields. Ba audit logging
+for successful plans records only safe metadata such as `grant_id`, account, actor, client/profile, `pack_id`,
+`pack_digest`, and `pack_checksum`; it must never log raw tokens, token hashes, grant URLs, `agent_soul` content, or
+`agent_instructions` content.
+
+The grant download route consumes matching active grants atomically and then renders the ZIP through the same
+`internal/installpack` provider path. Successful downloads return `application/zip` with `Cache-Control: no-store`.
+Replay of a consumed grant returns `410 Gone`; unknown, expired, mismatched-token, or mismatched-binding grants return
+`404 Not Found` without token material. Clients must verify `pack_checksum` against the downloaded ZIP bytes, read
+`MANIFEST.json`, and verify every `manifest_entries[].checksum` before writing or merging local files.
+
+Ba applies a bounded in-process per-account grant minting rate cap before content reads and grant issuance. This is a
+foundation-slice safety backstop only; it does not coordinate across Lambda execution environments and is not a durable
+quota system. Exceeded caps return structured tool error code `rate_limited` with HTTP-style status `429`.
 
 ### Shared read-tool shaping parameters
 

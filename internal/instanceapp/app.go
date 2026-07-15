@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -35,6 +36,9 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 		return nil, err
 	}
 	ba := newPlaneServer(name, version, SurfaceBa)
+	if err := baserver.RegisterTools(ba.Registry(), opts.baToolOptions...); err != nil {
+		return nil, err
+	}
 
 	app := apptheory.New(
 		apptheory.WithAuthHook(auth.Hook(slog.Default())),
