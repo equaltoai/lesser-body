@@ -430,6 +430,37 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
+| `agent_create` | Write | Delegate runtime credentials for an existing Lesser local agent account and create a Body/Ptah account-scoped registry entry. |
+
+`agent_create` input:
+
+- Required: `agent_username`, `scopes`.
+- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
+  must match that principal after normalization or the tool fails closed.
+- Optional Lesser delegation fields: `display_name`, `bio`, `expires_in`, `device_label`, and `agent_info`.
+
+Current producer constraint: Lesser's source-backed `POST /api/v1/agents/delegate` endpoint delegates to an existing
+local agent account and mints a fresh runtime token/session. It does **not** create a new Lesser account today. Body/Ptah
+therefore does not fabricate account creation; `agent_create` calls `internal/lesserapi.DelegateAgent` with the caller's
+OAuth bearer token and only creates the Body-owned `INSTANCE_REGISTRY_TABLE` entry after Lesser returns the existing
+agent account.
+
+`agent_create` requires an account-holder OAuth principal with `write` scope. Agent-delegated principals, read-only
+principals, missing bearer tokens, and `actor_username` mismatches are rejected before Body calls Lesser or the registry.
+The tool never uses `LESSER_SOUL_BINDING_INTEGRATION_BEARER`; that dedicated server-to-server bearer is only for
+`agent_bind_soul`.
+
+Successful output includes safe account and registry summaries plus the delegated Lesser token response in
+`structuredContent.data.token`. Those token fields (`access_token` and `refresh_token`) are credentials: Body does not
+include them in log events or text content. Callers that persist the MCP result must handle that structured token block as
+secret material.
+
+Partial-failure reconciliation: Lesser delegation is non-idempotent and Body performs no automatic retry because each
+successful Lesser call mints credentials. If Lesser succeeds but the Body registry create later fails or detects a
+duplicate, Body cannot roll back the minted Lesser token/session in this milestone. Duplicate registry conflicts return
+tool error code `agent_already_exists` without cross-account registry details; other registry failures return
+`agent_registry_error` with partial-failure metadata so operators can reconcile or revoke any unneeded Lesser runtime
+session through Lesser-owned session management.
 
 `agent_bind_soul` input:
 

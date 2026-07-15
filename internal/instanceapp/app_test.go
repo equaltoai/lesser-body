@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
@@ -21,7 +22,10 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 	"github.com/theory-cloud/apptheory/testkit"
+	"github.com/theory-cloud/tabletheory/v2"
 	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	"github.com/theory-cloud/tabletheory/v2/pkg/session"
+	"github.com/theory-cloud/tabletheory/v2/pkg/testing/fakedb"
 )
 
 func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
@@ -40,7 +44,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,6 +109,10 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				def := listBody.Result.Tools[0]
 				if def.Annotations == nil || def.Annotations.ReadOnlyHint == nil || *def.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_bind_soul annotations not write/additive: %+v", def.Annotations)
+				}
+				createDef := listBody.Result.Tools[1]
+				if createDef.Name != "agent_create" || createDef.Annotations == nil || createDef.Annotations.ReadOnlyHint == nil || *createDef.Annotations.ReadOnlyHint || createDef.Annotations.DestructiveHint == nil || *createDef.Annotations.DestructiveHint {
+					t.Fatalf("agent_create annotations not write/additive: %+v", createDef)
 				}
 			}
 		})
@@ -239,6 +247,101 @@ func TestInstancePlaneMCP_AgentBindSoulRequiresWriteScope(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("Lesser requests = %d, want 0", requests)
+	}
+}
+
+func TestInstancePlaneMCP_AgentCreateDelegatesWithCallerBearerAndRegistry(t *testing.T) {
+	requests := 0
+	var capturedAuth string
+	var capturedBody lesserapi.AgentDelegationRequest
+	lesser := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/agents/delegate" {
+			t.Fatalf("path = %s, want /api/v1/agents/delegate", r.URL.Path)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got != "" {
+			t.Fatalf("Idempotency-Key = %q, want none for non-idempotent Lesser delegation", got)
+		}
+		capturedAuth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode Lesser request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(instanceAgentDelegationResponse()))
+	}))
+	defer lesser.Close()
+
+	registryStore := newInstanceAgentRegistryStore(t)
+	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
+		return registryStore, nil
+	})
+	t.Cleanup(resetRegistry)
+
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("LESSER_API_BASE_URL", lesser.URL)
+	auth.ResetForTests()
+	lesserapi.ResetForTests()
+
+	app, err := instanceapp.New("lesser-body-instance", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	userToken := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
+	headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", userToken)
+
+	out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_create", map[string]any{
+		"agent_username": "ptah_agent",
+		"actor_username": "agent1",
+		"display_name":   "Ptah Agent",
+		"bio":            "delegated runtime",
+		"scopes":         []string{"read", "write:statuses"},
+		"expires_in":     3600,
+		"device_label":   "ptah-instance-plane",
+		"agent_info": map[string]any{
+			"version": "1",
+		},
+	})
+	if out.Result == nil || out.Result.IsError {
+		t.Fatalf("agent_create result = %+v error = %+v", out.Result, out.Error)
+	}
+	if requests != 1 {
+		t.Fatalf("Lesser requests = %d, want exactly 1", requests)
+	}
+	if capturedAuth != "Bearer "+userToken {
+		t.Fatalf("Authorization = %q, want caller bearer", capturedAuth)
+	}
+	if strings.Contains(capturedAuth, "integration-secret") {
+		t.Fatalf("agent_create used soul-binding integration bearer")
+	}
+	if capturedBody.AgentUsername != "ptah_agent" || capturedBody.DisplayName != "Ptah Agent" || capturedBody.Bio != "delegated runtime" {
+		t.Fatalf("captured body identity fields = %+v", capturedBody)
+	}
+	if got := strings.Join(capturedBody.Scopes, ","); got != "read,write:statuses" {
+		t.Fatalf("captured scopes = %q", got)
+	}
+	if capturedBody.ExpiresIn != 3600 || capturedBody.DeviceLabel != "ptah-instance-plane" {
+		t.Fatalf("captured token options = %+v", capturedBody)
+	}
+
+	registered, err := registryStore.Get(context.Background(), "agent1", "https://lesser.example/users/ptah_agent")
+	if err != nil {
+		t.Fatalf("registry Get: %v", err)
+	}
+	if registered.Account != "agent1" || registered.AgentID != "https://lesser.example/users/ptah_agent" {
+		t.Fatalf("registry entry = %+v", registered)
+	}
+
+	data := toolResultData(t, out.Result)
+	token, _ := data["token"].(map[string]any)
+	if token["access_token"] != "mock-access-token" || token["refresh_token"] != "mock-refresh-token" {
+		t.Fatalf("structured token = %+v", token)
+	}
+	if len(out.Result.Content) == 0 || strings.Contains(out.Result.Content[0].Text, "mock-access-token") || strings.Contains(out.Result.Content[0].Text, "mock-refresh-token") {
+		t.Fatalf("text content leaked delegated credentials: %+v", out.Result.Content)
 	}
 }
 
@@ -642,6 +745,39 @@ func toolResultError(t testing.TB, result *mcpruntime.ToolResult) map[string]any
 	return payload
 }
 
+func newInstanceAgentRegistryStore(t testing.TB) *agentregistry.Store {
+	t.Helper()
+	t.Setenv(agentregistry.EnvInstanceRegistryTable, "body-instance-registry-test")
+
+	fake := fakedb.New()
+	db, err := tabletheory.NewWithClient(session.Config{Region: "us-east-1"}, fake)
+	if err != nil {
+		t.Fatalf("NewWithClient() error = %v", err)
+	}
+	store, err := agentregistry.NewStore(db, "body-instance-registry-test")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := db.CreateTable(instanceAgentRegistryRecord{}); err != nil {
+		t.Fatalf("CreateTable() error = %v", err)
+	}
+	return store
+}
+
+type instanceAgentRegistryRecord struct {
+	PK string `theorydb:"pk,attr:pk" json:"pk"`
+	SK string `theorydb:"sk,attr:sk" json:"sk"`
+
+	Account           string    `theorydb:"attr:account" json:"account"`
+	AgentID           string    `theorydb:"attr:agentId" json:"agent_id"`
+	RegistryCreatedAt time.Time `theorydb:"attr:createdAt" json:"created_at"`
+	RegistryUpdatedAt time.Time `theorydb:"attr:updatedAt" json:"updated_at"`
+}
+
+func (instanceAgentRegistryRecord) TableName() string {
+	return "body-instance-registry-test"
+}
+
 func instanceSoulBindingResponse(replayed bool) string {
 	return fmt.Sprintf(`{
 		"version":"1",
@@ -670,6 +806,42 @@ func instanceSoulBindingResponse(replayed bool) string {
 		},
 		"links":{"status":"/api/v1/souls/bindings/agent-0xabc"}
 	}`, lesserapi.SoulAuthorityModelInstanceTrust, lesserapi.SoulAnchorStateHostedOffchain, lesserapi.SoulOperationalBindingHostedBound, replayed)
+}
+
+func instanceAgentDelegationResponse() string {
+	return `{
+		"account": {
+			"id": "https://lesser.example/users/ptah_agent",
+			"username": "ptah_agent",
+			"acct": "ptah_agent",
+			"display_name": "Ptah Agent",
+			"locked": false,
+			"bot": true,
+			"discoverable": true,
+			"group": false,
+			"created_at": "2026-07-15T12:00:00Z",
+			"note": "",
+			"url": "https://lesser.example/@ptah_agent",
+			"avatar": "https://lesser.example/avatars/original/missing.png",
+			"avatar_static": "https://lesser.example/avatars/original/missing.png",
+			"header": "https://lesser.example/headers/original/missing.png",
+			"header_static": "https://lesser.example/headers/original/missing.png",
+			"followers_count": 0,
+			"following_count": 0,
+			"statuses_count": 0,
+			"last_status_at": "",
+			"emojis": [],
+			"fields": []
+		},
+		"token": {
+			"access_token": "mock-access-token",
+			"token_type": "Bearer",
+			"expires_in": 3600,
+			"refresh_token": "mock-refresh-token",
+			"scope": "read write:statuses",
+			"created_at": 1794744000
+		}
+	}`
 }
 
 func firstHeader(headers map[string][]string, name string) string {
