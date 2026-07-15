@@ -431,6 +431,72 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
 | `agent_create` | Write | Delegate runtime credentials for an existing Lesser local agent account and create a Body/Ptah account-scoped registry entry. |
+| `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor. |
+| `agent_list` | Read | List Body/Ptah account-scoped registry entries with cursor pagination. |
+
+`agent_get` input:
+
+- Required: `agent_id`.
+- Derived: the account scope is always the authenticated account-holder OAuth principal. Callers cannot supply an
+  account override. Optional `actor_username`, when supplied, must match the authenticated principal after normalization
+  or the tool fails closed.
+
+`agent_get` requires an account-holder OAuth principal with read-capable scope. `read`, `write`, and `admin` are
+read-capable for this instance-plane read surface; agent-delegated principals and non-account-holder principals are
+rejected before the registry is read. The tool calls only the Body-owned `internal/agentregistry.Store.Get` path over the
+`INSTANCE_REGISTRY_TABLE`; it does not call Lesser and does not read `LESSER_TABLE_NAME`.
+
+Successful output has `structuredContent.data.registry`:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "agent_id": "<agent id>",
+  "created_at": "<RFC3339 timestamp>",
+  "updated_at": "<RFC3339 timestamp>"
+}
+```
+
+The current registry record stores only account, agent id, and registry timestamps. It does not yet have a source-backed
+content-version field or content summary. Until a future source-backed field exists, `agent_get` returns explicit
+placeholders:
+
+```json
+{
+  "content_version": {"status": "not_available", "source": "agentregistry"},
+  "content_summary": {"status": "not_available", "source": "agentregistry"}
+}
+```
+
+Missing records and cross-account lookups return tool error code `not_found` with no account/agent detail leakage.
+Malformed input returns `invalid_request`; registry read failures return `agent_registry_error`.
+
+`agent_list` input:
+
+- Optional: `limit` (default `25`, maximum `100`) and opaque `cursor`.
+- Not accepted: account overrides. The account partition is always derived from the authenticated account-holder
+  principal.
+
+`agent_list` requires the same account-holder/read-capable authority as `agent_get`. It uses
+`internal/agentregistry.Store.List`, which performs a TableTheory query over the `ACCOUNT#<account>` partition and
+`AGENT#` sort-key prefix in `INSTANCE_REGISTRY_TABLE`; it does not scan the table, read Lesser's table, or call Lesser.
+
+Successful output includes `structuredContent.data.agents`, where each item contains `registry`, `content_version`, and
+`content_summary` using the same shapes and current `not_available` placeholders as `agent_get`, plus pagination
+metadata:
+
+```json
+{
+  "pagination": {
+    "limit": 25,
+    "next_cursor": "<opaque cursor or empty string>",
+    "has_more": false,
+    "count": 0
+  }
+}
+```
+
+Invalid `limit` or `cursor` values return `invalid_request`. Registry failures return `agent_registry_error`.
 
 `agent_create` input:
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 
 	tools := registry.List()
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
 	def := tools[0]
@@ -81,6 +82,42 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	for _, prop := range []string{"actor_username", "display_name", "bio", "expires_in", "device_label", "agent_info"} {
 		if _, ok := createSchema.Props[prop]; !ok {
 			t.Fatalf("agent_create schema missing %s", prop)
+		}
+	}
+
+	getDef := tools[2]
+	if getDef.Name != toolAgentGet {
+		t.Fatalf("third tool name = %q, want %q", getDef.Name, toolAgentGet)
+	}
+	assertReadOnlyToolDef(t, getDef)
+	var getSchema struct {
+		Required []string       `json:"required"`
+		Props    map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(getDef.InputSchema, &getSchema); err != nil {
+		t.Fatalf("agent_get input schema invalid json: %v", err)
+	}
+	if !contains(getSchema.Required, "agent_id") {
+		t.Fatalf("agent_get required = %v, missing agent_id", getSchema.Required)
+	}
+	if _, ok := getSchema.Props["actor_username"]; !ok {
+		t.Fatalf("agent_get schema should advertise optional actor_username mismatch guard")
+	}
+
+	listDef := tools[3]
+	if listDef.Name != toolAgentList {
+		t.Fatalf("fourth tool name = %q, want %q", listDef.Name, toolAgentList)
+	}
+	assertReadOnlyToolDef(t, listDef)
+	var listSchema struct {
+		Props map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(listDef.InputSchema, &listSchema); err != nil {
+		t.Fatalf("agent_list input schema invalid json: %v", err)
+	}
+	for _, prop := range []string{"limit", "cursor"} {
+		if _, ok := listSchema.Props[prop]; !ok {
+			t.Fatalf("agent_list schema missing %s", prop)
 		}
 	}
 }
@@ -425,6 +462,270 @@ func TestAgentCreateDocumentsPartialFailureWhenRegistryCreateFails(t *testing.T)
 	}
 }
 
+func TestAgentGetReadsAccountScopedRegistryWithReadCapableScopes(t *testing.T) {
+	for _, scope := range []string{"read", "write", "admin"} {
+		t.Run(scope, func(t *testing.T) {
+			store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
+				Account:   "drone-ada",
+				AgentID:   "agent-123",
+				CreatedAt: time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+				UpdatedAt: time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC),
+			}}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(toolContext("Drone-Ada", []string{scope}, "owner-oauth-token"), toolAgentGet, json.RawMessage(`{"agent_id":" agent-123 ","actor_username":"drone-ada"}`))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("result = %+v", result)
+			}
+			if store.getCalls != 1 || store.getAccount != "drone-ada" || store.getAgentID != "agent-123" {
+				t.Fatalf("registry Get calls/account/id = %d/%q/%q, want 1/drone-ada/agent-123", store.getCalls, store.getAccount, store.getAgentID)
+			}
+			data := structuredData(t, result)
+			registrySummary, _ := data["registry"].(map[string]any)
+			if registrySummary["account"] != "drone-ada" || registrySummary["agent_id"] != "agent-123" {
+				t.Fatalf("registry summary = %+v", registrySummary)
+			}
+			contentVersion, _ := data["content_version"].(map[string]any)
+			contentSummary, _ := data["content_summary"].(map[string]any)
+			if contentVersion["status"] != "not_available" || contentSummary["status"] != "not_available" {
+				t.Fatalf("content placeholders = version %+v summary %+v", contentVersion, contentSummary)
+			}
+		})
+	}
+}
+
+func TestAgentGetNotFoundDoesNotLeakRegistryDetails(t *testing.T) {
+	store := &fakeAgentRegistry{getErr: fmt.Errorf("%w: hidden account/agent details", agentregistry.ErrAgentNotFound)}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("drone-ada", []string{"read"}, "owner-oauth-token"), toolAgentGet, json.RawMessage(`{"agent_id":"agent-elsewhere"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "not_found", 404)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "hidden account/agent details") || strings.Contains(string(encoded), "agent-elsewhere") || strings.Contains(string(encoded), "drone-ada") {
+		t.Fatalf("not_found leaked account/agent details: %s", string(encoded))
+	}
+	if store.getCalls != 1 {
+		t.Fatalf("registry Get calls = %d, want 1", store.getCalls)
+	}
+}
+
+func TestAgentGetRejectsInvalidInputAndPrincipalsBeforeRegistryRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		args      string
+		wantCode  string
+		wantState int
+	}{
+		{
+			name:      "missing agent_id",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      `{}`,
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "unknown field",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      `{"agent_id":"agent-123","account":"other"}`,
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "mismatched actor username",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      `{"agent_id":"agent-123","actor_username":"other"}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+		{
+			name:      "insufficient scope",
+			ctx:       toolContext("drone-ada", []string{"follow"}, "owner-oauth-token"),
+			args:      `{"agent_id":"agent-123"}`,
+			wantCode:  "insufficient_scope",
+			wantState: 403,
+		},
+		{
+			name:      "agent principal",
+			ctx:       toolContextWithAgent("drone-ada", []string{"read"}, "agent-runtime-token", true),
+			args:      `{"agent_id":"agent-123"}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{Account: "drone-ada", AgentID: "agent-123"}}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(tc.ctx, toolAgentGet, json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, tc.wantCode, tc.wantState)
+			if store.getCalls != 0 {
+				t.Fatalf("registry Get calls = %d, want 0", store.getCalls)
+			}
+		})
+	}
+}
+
+func TestAgentListReadsAccountScopedRegistryWithPagination(t *testing.T) {
+	store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{
+		Agents: []*agentregistry.Agent{
+			{
+				Account:   "drone-ada",
+				AgentID:   "agent-001",
+				CreatedAt: time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+				UpdatedAt: time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
+			},
+			{
+				Account:   "drone-ada",
+				AgentID:   "agent-002",
+				CreatedAt: time.Date(2026, 7, 15, 12, 2, 0, 0, time.UTC),
+				UpdatedAt: time.Date(2026, 7, 15, 12, 3, 0, 0, time.UTC),
+			},
+		},
+		NextCursor: "cursor-2",
+		HasMore:    true,
+		Count:      2,
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{"limit":2,"cursor":"cursor-1"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != 2 || store.listIn.Cursor != "cursor-1" {
+		t.Fatalf("registry List input = calls %d %+v, want account-scoped limit/cursor", store.listCalls, store.listIn)
+	}
+	data := structuredData(t, result)
+	agents, _ := data["agents"].([]map[string]any)
+	if len(agents) != 2 {
+		t.Fatalf("agents = %+v, want two", data["agents"])
+	}
+	gotIDs := []string{}
+	for _, item := range agents {
+		registrySummary, _ := item["registry"].(map[string]any)
+		gotIDs = append(gotIDs, registrySummary["agent_id"].(string))
+		contentVersion, _ := item["content_version"].(map[string]any)
+		if contentVersion["status"] != "not_available" {
+			t.Fatalf("content_version = %+v, want not_available", contentVersion)
+		}
+	}
+	if want := []string{"agent-001", "agent-002"}; !reflect.DeepEqual(gotIDs, want) {
+		t.Fatalf("agent ids = %v, want %v", gotIDs, want)
+	}
+	pagination, _ := data["pagination"].(map[string]any)
+	if pagination["next_cursor"] != "cursor-2" || pagination["has_more"] != true || pagination["count"] != 2 || pagination["limit"] != 2 {
+		t.Fatalf("pagination = %+v", pagination)
+	}
+}
+
+func TestAgentListRejectsInvalidInputAndPrincipalsBeforeRegistryRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		args      string
+		wantCode  string
+		wantState int
+	}{
+		{
+			name:      "zero limit",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      `{"limit":0}`,
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "too large limit",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      fmt.Sprintf(`{"limit":%d}`, agentregistry.MaxListLimit+1),
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "caller-supplied account rejected",
+			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
+			args:      `{"account":"other"}`,
+			wantCode:  "invalid_request",
+			wantState: 400,
+		},
+		{
+			name:      "insufficient scope",
+			ctx:       toolContext("drone-ada", []string{"follow"}, "owner-oauth-token"),
+			args:      `{}`,
+			wantCode:  "insufficient_scope",
+			wantState: 403,
+		},
+		{
+			name:      "agent principal",
+			ctx:       toolContextWithAgent("drone-ada", []string{"read"}, "agent-runtime-token", true),
+			args:      `{}`,
+			wantCode:  "forbidden",
+			wantState: 403,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{}}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(tc.ctx, toolAgentList, json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, tc.wantCode, tc.wantState)
+			if store.listCalls != 0 {
+				t.Fatalf("registry List calls = %d, want 0", store.listCalls)
+			}
+		})
+	}
+}
+
+func TestAgentListMapsInvalidCursor(t *testing.T) {
+	store := &fakeAgentRegistry{listErr: fmt.Errorf("%w: hidden cursor decode detail", agentregistry.ErrInvalidCursor)}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("drone-ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{"cursor":"bad-cursor"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "invalid_request", 400)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "hidden cursor decode detail") {
+		t.Fatalf("invalid cursor leaked store detail: %s", string(encoded))
+	}
+	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != agentregistry.DefaultListLimit || store.listIn.Cursor != "bad-cursor" {
+		t.Fatalf("registry List input = calls %d %+v, want default-limit account scoped cursor", store.listCalls, store.listIn)
+	}
+}
+
 type fakeSoulBindingClient struct {
 	calls             int
 	integrationBearer string
@@ -468,6 +769,17 @@ type fakeAgentRegistry struct {
 	in    agentregistry.CreateInput
 	agent *agentregistry.Agent
 	err   error
+
+	getCalls   int
+	getAccount string
+	getAgentID string
+	getAgent   *agentregistry.Agent
+	getErr     error
+
+	listCalls  int
+	listIn     agentregistry.ListInput
+	listResult *agentregistry.ListResult
+	listErr    error
 }
 
 func (f *fakeAgentRegistry) Create(_ context.Context, in agentregistry.CreateInput) (*agentregistry.Agent, error) {
@@ -477,6 +789,31 @@ func (f *fakeAgentRegistry) Create(_ context.Context, in agentregistry.CreateInp
 		return nil, f.err
 	}
 	return f.agent, nil
+}
+
+func (f *fakeAgentRegistry) Get(_ context.Context, account string, agentID string) (*agentregistry.Agent, error) {
+	f.getCalls++
+	f.getAccount = account
+	f.getAgentID = agentID
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.getAgent != nil {
+		return f.getAgent, nil
+	}
+	return f.agent, nil
+}
+
+func (f *fakeAgentRegistry) List(_ context.Context, in agentregistry.ListInput) (*agentregistry.ListResult, error) {
+	f.listCalls++
+	f.listIn = in
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if f.listResult != nil {
+		return f.listResult, nil
+	}
+	return &agentregistry.ListResult{}, nil
 }
 
 func toolContext(username string, scopes []string, bearer string) context.Context {
@@ -589,4 +926,20 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertReadOnlyToolDef(t testing.TB, def mcpruntime.ToolDef) {
+	t.Helper()
+	if def.Annotations == nil {
+		t.Fatalf("%s annotations missing", def.Name)
+	}
+	if def.Annotations.ReadOnlyHint == nil || !*def.Annotations.ReadOnlyHint {
+		t.Fatalf("%s should advertise readOnlyHint=true: %+v", def.Name, def.Annotations)
+	}
+	if def.Annotations.DestructiveHint == nil || *def.Annotations.DestructiveHint {
+		t.Fatalf("%s should advertise destructiveHint=false: %+v", def.Name, def.Annotations)
+	}
+	if def.Annotations.IdempotentHint == nil || !*def.Annotations.IdempotentHint {
+		t.Fatalf("%s should advertise idempotentHint=true: %+v", def.Name, def.Annotations)
+	}
 }
