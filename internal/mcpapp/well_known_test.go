@@ -34,13 +34,43 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 		t.Fatalf("unexpected status: %d (%s)", resp.Status, string(resp.Body))
 	}
 
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body, &raw); err != nil {
+		t.Fatalf("unmarshal raw mcp.json: %v", err)
+	}
+	wantTopLevel := map[string]bool{
+		"name":              true,
+		"version":           true,
+		"endpoint":          true,
+		"capabilities":      true,
+		"auth":              true,
+		"runtime_profiles":  true,
+		"instance_surfaces": true,
+		"tools":             true,
+	}
+	for key := range raw {
+		if !wantTopLevel[key] {
+			t.Fatalf("unexpected top-level discovery key %q in %s", key, string(resp.Body))
+		}
+	}
+	for key := range wantTopLevel {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("missing top-level discovery key %q in %s", key, string(resp.Body))
+		}
+	}
+
 	var out struct {
-		Name         string           `json:"name"`
-		Version      string           `json:"version"`
-		Endpoint     string           `json:"endpoint"`
-		Capabilities map[string]bool  `json:"capabilities"`
-		Tools        []map[string]any `json:"tools"`
-		Auth         struct {
+		Name             string           `json:"name"`
+		Version          string           `json:"version"`
+		Endpoint         string           `json:"endpoint"`
+		Capabilities     map[string]bool  `json:"capabilities"`
+		Tools            []map[string]any `json:"tools"`
+		InstanceSurfaces map[string]struct {
+			Endpoint                     string `json:"endpoint"`
+			ProtectedResourceMetadataURL string `json:"protected_resource_metadata_url"`
+			ToolsDiscovery               string `json:"tools_discovery"`
+		} `json:"instance_surfaces"`
+		Auth struct {
 			Type   string   `json:"type"`
 			Scopes []string `json:"scopes"`
 			Notes  string   `json:"notes"`
@@ -73,6 +103,28 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	if strings.Contains(strings.ToLower(out.Auth.Notes), "or managed instance key") {
 		t.Fatalf("discovery should not recommend managed instance key, got %q", out.Auth.Notes)
 	}
+	for _, scope := range out.Auth.Scopes {
+		if scope == "admin" || strings.Contains(scope, "instance") {
+			t.Fatalf("discovery advertised non-public scope %q", scope)
+		}
+	}
+	if got := out.InstanceSurfaces["ptah"].Endpoint; got != "https://api.example.com/instance/ptah/mcp" {
+		t.Fatalf("ptah endpoint = %q", got)
+	}
+	if got := out.InstanceSurfaces["ptah"].ProtectedResourceMetadataURL; got != "https://api.example.com/.well-known/oauth-protected-resource/instance/ptah/mcp" {
+		t.Fatalf("ptah protected_resource_metadata_url = %q", got)
+	}
+	if got := out.InstanceSurfaces["ba"].Endpoint; got != "https://api.example.com/instance/ba/mcp" {
+		t.Fatalf("ba endpoint = %q", got)
+	}
+	if got := out.InstanceSurfaces["ba"].ProtectedResourceMetadataURL; got != "https://api.example.com/.well-known/oauth-protected-resource/instance/ba/mcp" {
+		t.Fatalf("ba protected_resource_metadata_url = %q", got)
+	}
+	for surface, hint := range out.InstanceSurfaces {
+		if hint.ToolsDiscovery != "authenticated tools/list" {
+			t.Fatalf("%s tools_discovery = %q", surface, hint.ToolsDiscovery)
+		}
+	}
 
 	foundEcho := false
 	foundSkillsCatalog := false
@@ -80,6 +132,8 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	foundArticleDraftCreate := false
 	foundArticleDraftPublish := false
 	foundPhoneCall := false
+	foundAgentCreate := false
+	foundAgentLocalInstallPlan := false
 	for _, tool := range out.Tools {
 		if tool["name"] == "echo" {
 			foundEcho = true
@@ -99,6 +153,12 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 		if tool["name"] == "phone_call" {
 			foundPhoneCall = true
 		}
+		if tool["name"] == "agent_create" {
+			foundAgentCreate = true
+		}
+		if tool["name"] == "agent_local_install_plan" {
+			foundAgentLocalInstallPlan = true
+		}
 	}
 	if !foundEcho {
 		t.Fatalf("expected echo tool in well-known doc")
@@ -114,6 +174,9 @@ func TestM7_WellKnownMcpJSON(t *testing.T) {
 	}
 	if foundPhoneCall {
 		t.Fatalf("phone_call should not appear in well-known doc")
+	}
+	if foundAgentCreate || foundAgentLocalInstallPlan {
+		t.Fatalf("instance-plane tools must not appear in Ka public tools list")
 	}
 }
 
@@ -136,12 +199,25 @@ func TestM7_WellKnownMcpJSON_AdvertisesActorTemplateEndpoint(t *testing.T) {
 	}
 
 	var out struct {
-		Endpoint string `json:"endpoint"`
+		Endpoint         string `json:"endpoint"`
+		InstanceSurfaces map[string]struct {
+			Endpoint                     string `json:"endpoint"`
+			ProtectedResourceMetadataURL string `json:"protected_resource_metadata_url"`
+		} `json:"instance_surfaces"`
 	}
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.Endpoint != "https://api.example.com/mcp/{actor}" {
 		t.Fatalf("unexpected endpoint: %q", out.Endpoint)
+	}
+	if got := out.InstanceSurfaces["ptah"].Endpoint; got != "https://api.example.com/instance/ptah/mcp" {
+		t.Fatalf("unexpected ptah instance endpoint: %q", got)
+	}
+	if got := out.InstanceSurfaces["ba"].Endpoint; got != "https://api.example.com/instance/ba/mcp" {
+		t.Fatalf("unexpected ba instance endpoint: %q", got)
+	}
+	if got := out.InstanceSurfaces["ptah"].ProtectedResourceMetadataURL; got != "https://api.example.com/.well-known/oauth-protected-resource/instance/ptah/mcp" {
+		t.Fatalf("unexpected ptah metadata url: %q", got)
 	}
 }
