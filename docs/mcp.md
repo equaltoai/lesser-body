@@ -12,10 +12,16 @@
   - `GET /mcp/{actor}` and `DELETE /mcp/{actor}` are also supported for MCP Streamable HTTP compatibility.
 - Shared compatibility endpoint: `GET|POST|DELETE /mcp`
   - Returns HTTP `410 Gone` with migration guidance. It no longer serves MCP traffic.
+- Instance-plane Ptah OAuth protected-resource metadata:
+  `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`
 - Instance-plane Ptah MCP (authenticated): `POST /instance/ptah/mcp`
   - Uses a separate AppTheory MCP server instance for account-holder orchestration tools.
+- Instance-plane Ba OAuth protected-resource metadata:
+  `GET /.well-known/oauth-protected-resource/instance/ba/mcp`
 - Instance-plane Ba MCP (authenticated): `POST /instance/ba/mcp`
   - Uses a separate AppTheory MCP server instance for account-holder install-pack/grant tooling.
+- Instance-plane Ba install-pack download grants:
+  `GET /instance/downloads/installer-grants/{grantId}`
 
 Canonical base URL for a Lesser stage:
 
@@ -140,6 +146,142 @@ Client registration remains a Lesser concern. Today the Lesser API exposes publi
 `lesser-body` does not proxy or emulate client registration. If your MCP client specifically expects RFC 7591 dynamic
 client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
 its credentials out of band.
+
+## Instance-plane operator chapter (Ptah/Ba)
+
+The instance plane is the operator-facing control surface for authoring and installing Lesser agents. It is deliberately
+separate from Ka, the actor-scoped agent MCP surface. Operators should treat the three surfaces as separate MCP
+resources:
+
+| Plane | Public route | Purpose | Tool discovery |
+|-------|--------------|---------|----------------|
+| Ka actor surface | `/mcp/{actor}` | An individual Lesser agent's social, memory, communication, identity, resources, prompts, and task-capable read tools. | Public `/.well-known/mcp.json` lists Ka tools; authenticated `tools/list` is profile-filtered for that actor. |
+| Ptah instance surface | `/instance/ptah/mcp` | Account-holder orchestration: account-scoped agent registry, draft `agent_soul` / `agent_instructions`, Lesser delegation, and hosted soul/body binding. | Authenticated Ptah `tools/list` only. Ptah tools are not advertised as Ka tools. |
+| Ba instance surface | `/instance/ba/mcp` | Account-holder local install planning: deterministic install pack rendering and one-time download-grant minting. | Authenticated Ba `tools/list` only. Ba tools are not advertised as Ka tools. |
+| Ba download route | `/instance/downloads/installer-grants/{grantId}` | Header-free one-time ZIP download after `agent_local_install_plan` issues a grant. | Not an MCP endpoint; it is a public GET guarded by the opaque token and full binding query. |
+
+### Discovery and RFC 9728 metadata
+
+Ptah/Ba discovery and auth metadata are AppTheory/RFC 9728-backed. Body uses AppTheory's OAuth protected-resource
+metadata model for the published `resource`, `authorization_servers`, `scopes_supported`, and
+`bearer_methods_supported` fields; operators must not replace it with a local OAuth metadata shim or an MCP-client
+specific shortcut.
+
+- Ka public discovery is `GET /.well-known/mcp.json`. It includes an `instance_surfaces` map for `ptah` and `ba` derived
+  from the configured `MCP_ENDPOINT`, with each instance endpoint and protected-resource metadata URL. This is a locator
+  for operators; it is not Ptah/Ba tool-schema discovery.
+- Ptah protected-resource metadata is
+  `GET /.well-known/oauth-protected-resource/instance/ptah/mcp` and its `resource` is the exact
+  `https://api.<stageDomain>/instance/ptah/mcp` URL.
+- Ba protected-resource metadata is
+  `GET /.well-known/oauth-protected-resource/instance/ba/mcp` and its `resource` is the exact
+  `https://api.<stageDomain>/instance/ba/mcp` URL.
+- Public OAuth metadata advertises only issuable Lesser scopes: `read`, `write`, `follow`, and `push`. It does not
+  advertise `admin` or Host instance-capability strings.
+
+`MCP_ENDPOINT` and `INSTANCE_MCP_ENDPOINT` are the source of truth for public resource identifiers. Runtime discovery
+may validate request-derived host/protocol information against those configured URLs, but the configured endpoints remain
+canonical; raw `Host` or `X-Forwarded-Host` headers are not trusted as a substitute when configuration is absent or
+mismatched.
+
+### Required configuration
+
+The operator-facing endpoint variables are:
+
+- `MCP_ENDPOINT` on the Ka Lambda, for example `https://api.<stageDomain>/mcp/{actor}`.
+  - Required for `/.well-known/mcp.json`, Ka RFC 9728 metadata, and Ka resource URLs.
+  - Used to derive the `instance_surfaces` locator in public discovery.
+- `INSTANCE_MCP_ENDPOINT` on the instance Lambda, for example
+  `https://api.<stageDomain>/instance/{surface}/mcp`.
+  - Required for Ptah/Ba RFC 9728 metadata.
+  - `{surface}` is replaced with `ptah` or `ba`.
+  - Used by Ba to derive the stage domain, canonical actor MCP endpoints inside install packs, and grant download
+    origin.
+
+Body CDK publishes the Ka SSM exports (`mcp_lambda_arn`, `mcp_endpoint_url`, session/stream table names) and the
+instance-plane SSM exports (`instance_mcp_lambda_arn`, `instance_mcp_endpoint_url`,
+`instance_content_table_name`, `instance_registry_table_name`, `instance_grant_table_name`, and
+`instance_session_table_name`) under `/<app>/<stage>/lesser-body/exports/v1/`. Lesser imports those exports when its
+corresponding routing flags are enabled.
+
+### Deploy order and rollout status
+
+For a first-time stage, keep the SSM-first order:
+
+1. Deploy Lesser without Body routing enabled (`soulEnabled=false`; keep the Lesser-side `instancePlaneEnabled` routing
+   flag off as well).
+2. Deploy `lesser-body`. This publishes both Ka and instance-plane SSM exports and provisions the instance-plane state
+   tables.
+3. Re-deploy Lesser with `soulEnabled=true` and, when the stage is ready for Ptah/Ba, `instancePlaneEnabled=true` so
+   Lesser wires `/mcp/{actor}`, Ka discovery, Ptah/Ba protected-resource metadata, Ptah/Ba MCP routes, and the Ba
+   installer-grant download route through the Lesser API domain.
+
+Subsequent deployments can update Body and Lesser independently as long as the existing SSM exports remain present and
+stable. Do not rename or delete the `/exports/v1/` parameters.
+
+Project 48 status note: #364 lab canary evidence and M10 rollout/soak remain pending. This document describes the
+operator contract and validation expectations; it does not claim that lab canaries, lab soak, deploy-stage staging soak,
+or live rollout have completed.
+
+### Auth model and threat model
+
+Ptah and Ba require Lesser OAuth JWT bearer authentication against the exact instance resource URL:
+
+- `https://api.<stageDomain>/instance/ptah/mcp`
+- `https://api.<stageDomain>/instance/ba/mcp`
+
+The principal must be an account-holder OAuth token. Agent-delegated principals, legacy managed-instance-key principals,
+missing bearer tokens, and actor-username mismatches fail closed before tool side effects. Write tools still require
+write-capable OAuth scope, and read tools require read-capable scope. The managed instance key remains a server-to-server
+credential for lesser-host communication and compatibility paths; it is not an instance-plane operator login.
+
+Threat model invariants:
+
+- Ptah/Ba tools are not dynamically registered and are not advertised in the Ka public tool list.
+- Discovery/auth stays AppTheory/RFC 9728-backed; do not synthesize local OAuth metadata or bypass the AppTheory MCP
+  initialization / authenticated `tools/list` path.
+- Configured public endpoint templates are canonical. Raw Host headers, caller-supplied origins, and download query
+  fields are validation inputs, not authority.
+- Ptah writes only Body-owned instance content/registry state or delegates through Lesser-owned APIs; it does not write
+  Lesser's actor table directly.
+- Ba grant state lives in Body's `INSTANCE_GRANT_TABLE`; only token hashes and safe binding fields persist.
+- Logs and text content must never include bearer tokens, raw grant tokens, full grant URLs, token hashes,
+  `LESSER_HOST_INSTANCE_KEY`, `agent_soul` bodies, or `agent_instructions` bodies.
+
+### Instance-plane x402 policy
+
+Instance-plane x402 capability grants are distinct from actor-scoped public x402 invocation grants:
+
+- OAuth is still required. The grant augments a non-operator account-holder OAuth request; it does not create an OAuth
+  principal and does not grant actor-scoped public invocation authority.
+- Explicit operator OAuth authority is exempt from the instance x402 gate for the operator principal only.
+- `agent_create` consumes Host capability `instance-capability/v1` / `instance:agent_create`, bound to
+  `tool="agent_create"` and `resource="instance://tools/agent_create"`.
+- `agent_local_install_plan` consumes Host capability `instance-capability/v1` / `instance:install_plan`, bound to
+  `tool="agent_local_install_plan"` and `resource="instance://tools/agent_local_install_plan"`.
+- Body hashes payment evidence before Host consume, rejects actor/scoped invocation grants such as
+  `scoped-invocation/v1` / `tools.invoke`, and performs no non-idempotent side effect until Host accepts the exact
+  capability/tool/resource/request/payment binding.
+
+### Ba grant and download URL semantics
+
+`agent_local_install_plan` returns a TheoryMCP-compatible install-plan envelope in `structuredContent.data`. The text
+content is only a locator; operators and canaries should read the structured fields:
+
+- `install_pack_resource.uri` / `download_url` is a one-time header-free GET URL for local installer clients.
+- `install_pack_resource.requires_authorization_header` is `false`; clients must not attach OAuth bearer tokens to the
+  download request.
+- The URL contains the raw token only once, at issuance. Treat it as a secret and do not print it in logs, shell
+  history, issue comments, canary output, or release notes.
+- The route consumes a matching active grant atomically. A successful first GET returns `application/zip` with
+  `Cache-Control: no-store`; same-token replay returns `410 Gone`; unknown, expired, mismatched-token, and
+  mismatched-binding requests return a generic `404 Not Found`.
+- Clients must verify `pack_checksum` against the ZIP bytes, inspect `MANIFEST.json`, and verify every
+  `manifest_entries[].checksum` before writing or merging local files.
+
+Detailed Ptah/Ba tool schemas and result shapes remain in the
+[Instance-plane Ptah tools](#instance-plane-ptah-tools) and
+[Instance-plane Ba tools](#instance-plane-ba-tools) sections below.
 
 ## Canonical vs transitional auth paths
 

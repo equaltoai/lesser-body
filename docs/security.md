@@ -7,8 +7,13 @@ This doc describes the implemented security posture of `lesser-body`.
 ## Public surface
 
 - **Public:** `GET /.well-known/mcp.json`
-- **Public:** `GET /.well-known/oauth-protected-resource`
-- **Auth required:** `POST /mcp` (also `GET /mcp`, `DELETE /mcp`)
+- **Public:** `GET /.well-known/oauth-protected-resource/mcp/{actor}`
+- **Public:** `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`
+- **Public:** `GET /.well-known/oauth-protected-resource/instance/ba/mcp`
+- **Public one-time download:** `GET /instance/downloads/installer-grants/{grantId}` with the opaque token and full
+  binding query issued by Ba
+- **Auth required:** `POST /mcp/{actor}` (also `GET /mcp/{actor}`, `DELETE /mcp/{actor}`)
+- **Auth required:** `POST /instance/ptah/mcp`, `POST /instance/ba/mcp`
 
 ## Authentication model
 
@@ -27,6 +32,26 @@ This doc describes the implemented security posture of `lesser-body`.
   - default secret id fallback: `lesser/jwt-secret`
 - Tokens must include a non-empty `username` claim (used as the request identity).
 - Tokens are rejected if `iat` is older than 24 hours (a safety check independent of `exp`).
+
+### Instance-plane authentication and threat model
+
+Ptah (`/instance/ptah/mcp`) and Ba (`/instance/ba/mcp`) use separate AppTheory MCP server instances and separate RFC
+9728 protected-resource metadata documents. Their OAuth `resource` identifiers are the exact instance endpoint URLs
+derived from `INSTANCE_MCP_ENDPOINT`, for example `https://api.<stageDomain>/instance/ptah/mcp` and
+`https://api.<stageDomain>/instance/ba/mcp`. Operators must not replace this with local OAuth metadata, raw Host-header
+inference, or an MCP-client-specific shortcut.
+
+Instance-plane MCP requests require a Lesser OAuth JWT bearer token for an account-holder principal:
+
+- agent-delegated principals are rejected before tool dispatch;
+- legacy managed-instance-key principals are rejected before tool dispatch;
+- `actor_username` arguments, when present, must match the authenticated account-holder username;
+- read surfaces require read-capable scope and write/minting surfaces require write-capable scope; and
+- configured endpoint templates are canonical. Request Host / forwarded Host values can only be validated against
+  configuration, never used as authority when configuration is missing or mismatched.
+
+Ptah/Ba tools are not Ka actor tools. They are discovered with authenticated `tools/list` on the corresponding instance
+MCP endpoint, not by broadening `/.well-known/mcp.json` beyond its Ka tool catalog.
 
 ### Scope enforcement (MCP calls)
 
@@ -213,6 +238,9 @@ At a minimum, the MCP Lambda needs:
 - DynamoDB read/write on the MCP task table when task storage is provisioned. This is transient task runtime state used
   for session-scoped MCP task records; body advertises the MCP `tasks` capability only when `MCP_TASK_TABLE` is set and
   the read-only `skill_bundle_get` task pilot is registered.
+- DynamoDB read/write on Body-owned instance-plane tables for the instance Lambda only:
+  `INSTANCE_CONTENT_TABLE`, `INSTANCE_REGISTRY_TABLE`, `INSTANCE_GRANT_TABLE`, and `INSTANCE_SESSION_TABLE`. These
+  tables back Ptah/Ba operator state and one-time grant/session state; they are not Lesser actor data tables.
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
 ## Client considerations
