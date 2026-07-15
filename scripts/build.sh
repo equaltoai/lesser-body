@@ -8,7 +8,7 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 cd "$ROOT_DIR"
 
 mkdir -p dist
-rm -f dist/lesser-body.zip dist/lesser-body-instance.zip
+rm -f dist/lesser-body.zip dist/lesser-body-instance.zip dist/checksums.txt
 
 BUILD_DIR="$(mktemp -d)"
 cleanup() {
@@ -34,5 +34,13 @@ build_lambda_zip() {
   echo "OK: dist/${zip_name}"
 }
 
+write_checksums() {
+  echo "Writing dist/checksums.txt..."
+  sha256sum dist/lesser-body.zip dist/lesser-body-instance.zip > dist/checksums.txt
+  sha256sum -c dist/checksums.txt
+  echo "OK: dist/checksums.txt"
+}
+
 build_lambda_zip ./cmd/lesser-body lesser-body.zip
 build_lambda_zip ./cmd/lesser-body-instance lesser-body-instance.zip
+write_checksums
