@@ -10,6 +10,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/baserver"
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -47,8 +48,8 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 	app.Post("/instance/ptah/mcp", requireInstancePrincipal(withToolContext(ptah.Handler())), apptheory.RequireAuth())
 	app.Post("/instance/ba/mcp", requireInstancePrincipal(withToolContext(ba.Handler())), apptheory.RequireAuth())
 	app.Get(installerGrantPathPattern, installerGrantHandler(opts))
-	app.Get("/.well-known/oauth-protected-resource/instance/ptah/mcp", wellKnownStubHandler(SurfacePtah))
-	app.Get("/.well-known/oauth-protected-resource/instance/ba/mcp", wellKnownStubHandler(SurfaceBa))
+	app.Get(instanceProtectedResourceMetadataPath(SurfacePtah), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, SurfacePtah)))
+	app.Get(instanceProtectedResourceMetadataPath(SurfaceBa), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, SurfaceBa)))
 
 	return app, nil
 }
@@ -197,21 +198,6 @@ func instanceAudienceForRequest(ctx *apptheory.Context) string {
 		Host:   host,
 		Path:   path,
 	}).String()
-}
-
-func wellKnownStubHandler(surface string) apptheory.Handler {
-	surface = strings.TrimSpace(surface)
-	return func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return apptheory.MustJSON(501, map[string]any{
-			"error": map[string]any{
-				"code":    "instance_metadata_not_implemented",
-				"message": "instance-plane OAuth metadata is not implemented in this foundation slice",
-				"details": map[string]any{
-					"surface": surface,
-				},
-			},
-		}), nil
-	}
 }
 
 func firstHeaderValue(ctx *apptheory.Context, name string) string {

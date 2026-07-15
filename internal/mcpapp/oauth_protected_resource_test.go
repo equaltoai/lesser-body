@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -72,6 +73,11 @@ func TestWellKnownOAuthProtectedResource(t *testing.T) {
 	}
 	if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
 		t.Fatalf("unexpected scopes_supported: got %#v want %#v", out.ScopesSupported, want)
+	}
+	for _, scope := range out.ScopesSupported {
+		if scope == "admin" || strings.Contains(scope, "instance") {
+			t.Fatalf("per-actor metadata advertised non-public scope %q", scope)
+		}
 	}
 	if len(out.BearerMethodsSupported) != 1 || out.BearerMethodsSupported[0] != "header" {
 		t.Fatalf("unexpected bearer_methods_supported: %#v", out.BearerMethodsSupported)

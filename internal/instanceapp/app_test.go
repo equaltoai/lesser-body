@@ -809,7 +809,10 @@ func TestInstancePlaneMCP_UnknownPlaneIsNotMounted(t *testing.T) {
 	}
 }
 
-func TestInstancePlaneWellKnownStubs_FailClosed(t *testing.T) {
+func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
+	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
+	t.Setenv("MCP_ALLOWED_ORIGINS", "https://claude.ai")
+
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -817,24 +820,130 @@ func TestInstancePlaneWellKnownStubs_FailClosed(t *testing.T) {
 	env := testkit.New()
 
 	for _, tc := range []struct {
-		name string
-		path string
+		name     string
+		surface  string
+		path     string
+		resource string
 	}{
-		{name: "ptah", path: "/.well-known/oauth-protected-resource/instance/ptah/mcp"},
-		{name: "ba", path: "/.well-known/oauth-protected-resource/instance/ba/mcp"},
+		{
+			name:     "ptah",
+			surface:  "ptah",
+			path:     "/.well-known/oauth-protected-resource/instance/ptah/mcp",
+			resource: "https://api.example.com/instance/ptah/mcp",
+		},
+		{
+			name:     "ba",
+			surface:  "ba",
+			path:     "/.well-known/oauth-protected-resource/instance/ba/mcp",
+			resource: "https://api.example.com/instance/ba/mcp",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := env.Invoke(context.Background(), app, apptheory.Request{
 				Method: "GET",
 				Path:   tc.path,
+				Headers: map[string][]string{
+					"host":              {testHost},
+					"x-forwarded-proto": {"https"},
+					"origin":            {"https://claude.ai"},
+				},
 			})
-			if resp.Status != 501 {
-				t.Fatalf("status = %d, want 501; body = %s", resp.Status, string(resp.Body))
+			if resp.Status != 200 {
+				t.Fatalf("status = %d, want 200; body = %s", resp.Status, string(resp.Body))
 			}
-			if !strings.Contains(string(resp.Body), "instance_metadata_not_implemented") {
-				t.Fatalf("response did not include fail-closed stub code: %s", string(resp.Body))
+			if got := firstHeader(resp.Headers, "content-type"); got != "application/json" {
+				t.Fatalf("content-type = %q, want application/json", got)
+			}
+			if got := firstHeader(resp.Headers, "cache-control"); got != "public, max-age=60" {
+				t.Fatalf("cache-control = %q, want public, max-age=60", got)
+			}
+			if got := firstHeader(resp.Headers, "access-control-allow-origin"); got != "https://claude.ai" {
+				t.Fatalf("access-control-allow-origin = %q, want https://claude.ai", got)
+			}
+
+			var out struct {
+				Resource               string   `json:"resource"`
+				AuthorizationServers   []string `json:"authorization_servers"`
+				ScopesSupported        []string `json:"scopes_supported"`
+				BearerMethodsSupported []string `json:"bearer_methods_supported"`
+			}
+			if err := json.Unmarshal(resp.Body, &out); err != nil {
+				t.Fatalf("unmarshal metadata: %v", err)
+			}
+			if out.Resource != tc.resource {
+				t.Fatalf("resource = %q, want %q", out.Resource, tc.resource)
+			}
+			if want := []string{"https://api.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
+				t.Fatalf("authorization_servers = %#v, want %#v", out.AuthorizationServers, want)
+			}
+			if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
+				t.Fatalf("scopes_supported = %#v, want %#v", out.ScopesSupported, want)
+			}
+			if strings.Contains(strings.ToLower(string(resp.Body)), "admin") || strings.Contains(string(resp.Body), "instance:") {
+				t.Fatalf("instance metadata advertised non-issuable/internal scopes: %s", string(resp.Body))
+			}
+			if want := []string{"header"}; !reflect.DeepEqual(out.BearerMethodsSupported, want) {
+				t.Fatalf("bearer_methods_supported = %#v, want %#v", out.BearerMethodsSupported, want)
 			}
 		})
+	}
+}
+
+func TestInstancePlaneWellKnownProtectedResource_RejectsMissingConfiguredEndpoint(t *testing.T) {
+	t.Setenv(baserver.EnvInstanceMCPEndpoint, "")
+
+	app, err := instanceapp.New("lesser-body-instance", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/oauth-protected-resource/instance/ptah/mcp",
+		Headers: map[string][]string{
+			"host":              {"evil.example"},
+			"x-forwarded-proto": {"https"},
+		},
+	})
+	if resp.Status != 500 {
+		t.Fatalf("status = %d, want 500; body = %s", resp.Status, string(resp.Body))
+	}
+	body := string(resp.Body)
+	if !strings.Contains(body, baserver.EnvInstanceMCPEndpoint+" is required") {
+		t.Fatalf("expected missing endpoint error, got %s", body)
+	}
+	if strings.Contains(body, "evil.example") {
+		t.Fatalf("missing endpoint response must not infer from untrusted host headers: %s", body)
+	}
+}
+
+func TestInstancePlaneWellKnownProtectedResource_RejectsConfiguredEndpointMismatch(t *testing.T) {
+	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
+
+	app, err := instanceapp.New("lesser-body-instance", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/oauth-protected-resource/instance/ba/mcp",
+		Headers: map[string][]string{
+			"x-forwarded-host":  {"other.example.com"},
+			"x-forwarded-proto": {"https"},
+		},
+	})
+	if resp.Status != 400 {
+		t.Fatalf("status = %d, want 400; body = %s", resp.Status, string(resp.Body))
+	}
+	body := string(resp.Body)
+	if !strings.Contains(body, "app.invalid_public_url") {
+		t.Fatalf("expected invalid public url error, got %s", body)
+	}
+	if !strings.Contains(body, "https://api.example.com/.well-known/oauth-protected-resource/instance/ba/mcp") {
+		t.Fatalf("expected canonical metadata URL in mismatch response, got %s", body)
 	}
 }
 
