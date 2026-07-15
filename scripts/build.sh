@@ -8,7 +8,7 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 cd "$ROOT_DIR"
 
 mkdir -p dist
-rm -f dist/lesser-body.zip
+rm -f dist/lesser-body.zip dist/lesser-body-instance.zip
 
 BUILD_DIR="$(mktemp -d)"
 cleanup() {
@@ -16,12 +16,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Building Lambda bootstrap (linux/arm64)..."
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$BUILD_DIR/bootstrap" ./cmd/lesser-body
-chmod +x "$BUILD_DIR/bootstrap"
-touch -t 198001010000 "$BUILD_DIR/bootstrap"
+build_lambda_zip() {
+  local package_path="$1"
+  local zip_name="$2"
+  local package_build_dir="$BUILD_DIR/${zip_name%.zip}"
 
-echo "Packaging dist/lesser-body.zip..."
-(cd "$BUILD_DIR" && zip -X -q "$ROOT_DIR/dist/lesser-body.zip" bootstrap)
+  mkdir -p "$package_build_dir"
 
-echo "OK: dist/lesser-body.zip"
+  echo "Building ${zip_name} bootstrap (linux/arm64)..."
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$package_build_dir/bootstrap" "$package_path"
+  chmod +x "$package_build_dir/bootstrap"
+  touch -t 198001010000 "$package_build_dir/bootstrap"
+
+  echo "Packaging dist/${zip_name}..."
+  (cd "$package_build_dir" && zip -X -q "$ROOT_DIR/dist/${zip_name}" bootstrap)
+
+  echo "OK: dist/${zip_name}"
+}
+
+build_lambda_zip ./cmd/lesser-body lesser-body.zip
+build_lambda_zip ./cmd/lesser-body-instance lesser-body-instance.zip
