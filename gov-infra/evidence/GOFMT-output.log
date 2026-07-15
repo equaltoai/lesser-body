@@ -1,0 +1,6 @@
+$ test -z "$(gofmt -l .)"
+cdk/node_modules/aws-cdk/lib/init-templates/app/go/%name%.template.go:10:6: expected 'IDENT', found '%'
+cdk/node_modules/aws-cdk/lib/init-templates/app/go/%name%.template.go:16:2: expected declaration, found 'if'
+cdk/node_modules/aws-cdk/lib/init-templates/sample-app/go/%name%.template.go:12:6: expected 'IDENT', found '%'
+cdk/node_modules/aws-cdk/lib/init-templates/sample-app/go/%name%.template.go:18:2: expected declaration, found 'if'
+cdk/node_modules/aws-cdk/lib/init-templates/sample-app/go/%name%_test.template.go:11:10: expected '(', found '%'

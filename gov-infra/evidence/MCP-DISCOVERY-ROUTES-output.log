@@ -1,0 +1,3 @@
+$ bash scripts/check_cdk_discovery_routes.sh
+80 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.
+OK: synthesized template includes per-actor MCP transport and discovery routes
