@@ -85,6 +85,25 @@ must match the exact instance MCP resource URL, for example `https://api.<stageD
 `https://api.<stageDomain>/instance/ba/mcp`. Ptah and Ba write tools still enforce their own write-scope
 requirements before side effects such as Lesser integration calls or one-time grant minting.
 
+Instance-plane x402 capability grants:
+
+- Non-operator account-holder callers of minting tools send Host-issued instance capability evidence alongside their
+  OAuth bearer on the instance-plane `tools/call`. Operator OAuth callers (`admin` scope or explicit operator/client
+  claims) are exempt from this instance x402 gate only for the operator principal.
+- `agent_create` requires `capabilityVersion="instance-capability/v1"`, `capability="instance:agent_create"`,
+  `tool="agent_create"`, and resource `instance://tools/agent_create`.
+- `agent_local_install_plan` requires `capabilityVersion="instance-capability/v1"`,
+  `capability="instance:install_plan"`, `tool="agent_local_install_plan"`, and resource
+  `instance://tools/agent_local_install_plan`.
+- Body consumes the grant with lesser-host's instance contract from lesser-host PR #920:
+  `POST /api/v1/soul/x402/grants/{grantId}/consume` with `grantToken`, `agentId`, `capabilityVersion`,
+  `capability`, `tool`, `resource`, `requestHash`, `paymentEvidenceHash`, and `idempotencyKey`. Raw payment evidence
+  is hashed before this Host consume request and is never logged or persisted.
+- Host consume must succeed and bind the returned grant to the same capability version, capability, tool, scope,
+  resource, request hash, and payment evidence hash before Body performs the instance tool side effect. Host replay
+  responses fail closed before Body re-runs the non-idempotent side effect. Actor/scoped invocation grants such as
+  `scoped-invocation/v1` / `tools.invoke` are rejected for instance tools.
+
 Scoped public x402 invocation grants:
 
 - Public paid callers do **not** use `Authorization: Bearer <token>` and do not become an OAuth principal/operator.
@@ -102,9 +121,9 @@ Scoped public x402 invocation grants:
 - Before dispatch, Body requires the accepted consumed grant to bind the actor-resolved agent, capability, tool, caller/payment
   evidence hashes, request hash, MCP resource URL, expiry, scoped-invocation authority, issued status, usage limit, and
   caller-access/payment policy version.
-- Mixing OAuth `Authorization` and x402 grant headers on the same request is rejected. x402 grants never grant
-  principal/operator authority and do not bypass tool-internal OAuth requirements for tools that still require a
-  principal session.
+- On actor-scoped `/mcp/{actor}`, mixing OAuth `Authorization` and public x402 invocation-grant headers on the same
+  request is rejected. Public x402 grants never grant principal/operator authority and do not bypass tool-internal OAuth
+  requirements for tools that still require a principal session.
 
 ## Discovery and registration chain
 
@@ -353,12 +372,18 @@ The managed instance key compatibility path currently bypasses scope checks (tre
 being deprecated for inbound MCP traffic. That bypass only remains available when
 `MCP_ALLOW_LEGACY_INSTANCE_KEY=true`; migrate clients through the [OAuth migration guide](oauth-migration.md).
 
-Scoped x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the single
-`tools/call` request bound into the grant. Body also enforces Host consumed-grant `grant.scope` against the requested
-tool's `RequiredScopesForTool` classification using the same `read` ⊂ `write` ⊂ `admin` hierarchy; missing, unknown,
-or insufficient grant scope fails closed as `x402_grant_scope_mismatch`. Body rejects wrong actor-resolved agent, wrong
-capability/tool, wrong resource/request hash, expired grants, replay/usage rejection, missing payment evidence,
-unsupported scoped-invocation authority/status, and missing or unsupported policy versions before tool dispatch.
+Scoped public x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the
+single `tools/call` request bound into the grant. Body also enforces Host consumed-grant `grant.scope` against the
+requested tool's `RequiredScopesForTool` classification using the same `read` ⊂ `write` ⊂ `admin` hierarchy; missing,
+unknown, or insufficient grant scope fails closed as `x402_grant_scope_mismatch`. Body rejects wrong actor-resolved
+agent, wrong capability/tool, wrong resource/request hash, expired grants, replay/usage rejection, missing payment
+evidence, unsupported scoped-invocation authority/status, and missing or unsupported policy versions before tool
+dispatch.
+
+Instance-plane x402 capability grants are separate from public actor-scoped invocation grants. They are consumed only
+for the OAuth-authenticated minting tools `agent_create` and `agent_local_install_plan`, require
+`capabilityVersion="instance-capability/v1"`, and fail closed when a caller presents actor/scoped capabilities such as
+`tools.invoke` or `scoped-invocation/v1`.
 
 Body's scope gate runs before AppTheory tool dispatch. For `memory_append` and host-backed communication writes, this
 is the single scope gate before the memory write or lesser-host delegation. For social writes, Body gates first and then
@@ -713,8 +738,10 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
 `agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
 installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
 usernames, and `actor_username` mismatches are rejected before Body reads content, renders a pack, or mints a grant.
-The instance-plane x402 seam remains fail-closed in this foundation slice: x402 headers on `/instance/ba/mcp` are
-rejected before tool dispatch.
+For non-operator callers it also requires Host's instance x402 capability grant
+(`capabilityVersion="instance-capability/v1"`, `capability="instance:install_plan"`,
+`tool="agent_local_install_plan"`) and consumes that grant before content reads, pack rendering, or download-grant
+minting. Operator OAuth callers are exempt; actor/scoped invocation grants are rejected for this instance tool.
 
 The tool reads current account-scoped `agent_soul` and `agent_instructions` records through
 `internal/agentcontent.Store.Get`, renders a deterministic ZIP through `internal/installpack`, then mints a short-lived

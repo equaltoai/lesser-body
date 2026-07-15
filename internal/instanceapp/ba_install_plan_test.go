@@ -40,7 +40,7 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 		t.Fatalf("new app: %v", err)
 	}
 	env := testkit.New()
-	token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ba/mcp"))
+	token := newOperatorTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ba/mcp"))
 	headers := initializedMCPHeaders(t, env, app, "/instance/ba/mcp", token)
 
 	out := callMCPTool(t, env, app, "/instance/ba/mcp", headers, baserver.ToolAgentLocalInstallPlan, map[string]any{

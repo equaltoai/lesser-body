@@ -44,8 +44,8 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 		apptheory.WithAuthHook(auth.Hook(slog.Default())),
 	)
 
-	app.Post("/instance/ptah/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ptah.Handler()))), apptheory.RequireAuth())
-	app.Post("/instance/ba/mcp", rejectX402Headers(requireInstancePrincipal(withToolContext(ba.Handler()))), apptheory.RequireAuth())
+	app.Post("/instance/ptah/mcp", requireInstancePrincipal(withToolContext(ptah.Handler())), apptheory.RequireAuth())
+	app.Post("/instance/ba/mcp", requireInstancePrincipal(withToolContext(ba.Handler())), apptheory.RequireAuth())
 	app.Get(installerGrantPathPattern, installerGrantHandler(opts))
 	app.Get("/.well-known/oauth-protected-resource/instance/ptah/mcp", wellKnownStubHandler(SurfacePtah))
 	app.Get("/.well-known/oauth-protected-resource/instance/ba/mcp", wellKnownStubHandler(SurfaceBa))
@@ -76,6 +76,11 @@ func withToolContext(next apptheory.Handler) apptheory.Handler {
 			if principal != nil || token != "" || requestID != "" {
 				toolCtx := auth.InjectToolContext(ctx.Context(), principal, token)
 				toolCtx = auth.WithToolRequestID(toolCtx, requestID)
+				toolCtx = auth.InjectToolRequestSnapshot(toolCtx, auth.ToolRequestSnapshot{
+					Headers: ctx.Request.Headers,
+					Body:    ctx.Request.Body,
+					Path:    ctx.Request.Path,
+				})
 				setRequestContext(ctx, toolCtx)
 			}
 		}
@@ -209,20 +214,6 @@ func wellKnownStubHandler(surface string) apptheory.Handler {
 	}
 }
 
-func rejectX402Headers(next apptheory.Handler) apptheory.Handler {
-	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		if hasAnyHeader(ctx, x402HeaderNames...) {
-			return apptheory.MustJSON(400, map[string]any{
-				"error": map[string]any{
-					"code":    "x402_not_supported",
-					"message": "x402 instance-plane invocation is not supported in this foundation slice",
-				},
-			}), nil
-		}
-		return next(ctx)
-	}
-}
-
 func firstHeaderValue(ctx *apptheory.Context, name string) string {
 	if ctx == nil {
 		return ""
@@ -247,38 +238,4 @@ func firstCommaSeparatedHeaderValue(ctx *apptheory.Context, name string) string 
 		return strings.TrimSpace(before)
 	}
 	return value
-}
-
-var x402HeaderNames = []string{
-	"lesser-x402-grant-id",
-	"x-lesser-x402-grant-id",
-	"lesser-x402-grant",
-	"x-lesser-x402-grant",
-	"lesser-x402-capability",
-	"x-lesser-x402-capability",
-	"payment-signature",
-	"x-payment",
-}
-
-func hasAnyHeader(ctx *apptheory.Context, names ...string) bool {
-	if ctx == nil {
-		return false
-	}
-	for key, values := range ctx.Request.Headers {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		for _, name := range names {
-			if !strings.EqualFold(key, name) {
-				continue
-			}
-			for _, value := range values {
-				if strings.TrimSpace(value) != "" {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

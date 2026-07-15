@@ -76,7 +76,7 @@ func TestAgentLocalInstallPlanMintsGrantEnvelopeWithoutTextTokenLeak(t *testing.
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("Owner", []string{"write"}), ToolAgentLocalInstallPlan, json.RawMessage(`{
+	result, err := registry.Call(operatorToolContext("Owner", []string{"write"}), ToolAgentLocalInstallPlan, json.RawMessage(`{
 		"agent_id":" agent-one ",
 		"client":"codex",
 		"profile":"codex",
@@ -240,7 +240,7 @@ func TestAgentLocalInstallPlanEnforcesPerAccountInProcessRateCap(t *testing.T) {
 	); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
-	ctx := toolContext("owner", []string{"write"})
+	ctx := operatorToolContext("owner", []string{"write"})
 	args := json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`)
 	first, err := registry.Call(ctx, ToolAgentLocalInstallPlan, args)
 	if err != nil || first == nil || first.IsError {
@@ -340,6 +340,15 @@ func (f *fakeContentStore) Get(_ context.Context, account string, agentID string
 
 func key(account, agentID string, contentType agentcontent.ContentType) string {
 	return strings.ToLower(strings.TrimSpace(account)) + "\x00" + strings.TrimSpace(agentID) + "\x00" + string(contentType)
+}
+
+func operatorToolContext(username string, scopes []string) context.Context {
+	ctx := toolContext(username, scopes)
+	principal := auth.PrincipalFromToolContext(ctx)
+	if principal != nil && principal.Claims != nil {
+		principal.Claims.ClientClass = "operator"
+	}
+	return ctx
 }
 
 func toolContext(username string, scopes []string) context.Context {

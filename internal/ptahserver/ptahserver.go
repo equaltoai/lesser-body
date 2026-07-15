@@ -17,6 +17,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/instancex402"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -635,6 +636,13 @@ func (cfg config) handleAgentCreate(ctx context.Context, args json.RawMessage) (
 		return toolErrorResult("unauthorized", "agent_create requires the caller OAuth bearer for Lesser delegation", http.StatusUnauthorized, map[string]any{
 			"source": "lesser_agent_delegate",
 		})
+	}
+	if gateResult, err := instancex402.RequireGrant(ctx, instancex402.Requirement{
+		Tool:       toolAgentCreate,
+		Capability: instancex402.CapabilityAgentCreate,
+		Account:    actorUsername,
+	}); gateResult != nil || err != nil {
+		return gateResult, err
 	}
 
 	client, err := cfg.agentDelegate()
