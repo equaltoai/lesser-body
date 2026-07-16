@@ -12,6 +12,16 @@
   - `GET /mcp/{actor}` and `DELETE /mcp/{actor}` are also supported for MCP Streamable HTTP compatibility.
 - Shared compatibility endpoint: `GET|POST|DELETE /mcp`
   - Returns HTTP `410 Gone` with migration guidance. It no longer serves MCP traffic.
+- Instance-plane Ptah OAuth protected-resource metadata:
+  `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`
+- Instance-plane Ptah MCP (authenticated): `POST /instance/ptah/mcp`
+  - Uses a separate AppTheory MCP server instance for account-holder orchestration tools.
+- Instance-plane Ba OAuth protected-resource metadata:
+  `GET /.well-known/oauth-protected-resource/instance/ba/mcp`
+- Instance-plane Ba MCP (authenticated): `POST /instance/ba/mcp`
+  - Uses a separate AppTheory MCP server instance for account-holder install-pack/grant tooling.
+- Instance-plane Ba install-pack download grants:
+  `GET /instance/downloads/installer-grants/{grantId}`
 
 Canonical base URL for a Lesser stage:
 
@@ -74,6 +84,32 @@ Deprecated compatibility path:
 Deprecated bearer-token/runtime-credential flows should be migrated to OAuth connector registration. See
 `docs/oauth-migration.md` for exact registration and config examples.
 
+Instance-plane MCP endpoints (`/instance/ptah/mcp` and `/instance/ba/mcp`) also require Lesser OAuth JWT bearer
+authentication, but they are not actor-delegated Ka surfaces. They fail closed unless the authenticated principal is an
+account-holder OAuth token, not an agent-delegated token and not the legacy managed instance key. The token audience
+must match the exact instance MCP resource URL, for example `https://api.<stageDomain>/instance/ptah/mcp` or
+`https://api.<stageDomain>/instance/ba/mcp`. Ptah and Ba write tools still enforce their own write-scope
+requirements before side effects such as Lesser integration calls or one-time grant minting.
+
+Instance-plane x402 capability grants:
+
+- Non-operator account-holder callers of minting tools send Host-issued instance capability evidence alongside their
+  OAuth bearer on the instance-plane `tools/call`. Operator OAuth callers (`admin` scope or explicit operator/client
+  claims) are exempt from this instance x402 gate only for the operator principal.
+- `agent_create` requires `capabilityVersion="instance-capability/v1"`, `capability="instance:agent_create"`,
+  `tool="agent_create"`, and resource `instance://tools/agent_create`.
+- `agent_local_install_plan` requires `capabilityVersion="instance-capability/v1"`,
+  `capability="instance:install_plan"`, `tool="agent_local_install_plan"`, and resource
+  `instance://tools/agent_local_install_plan`.
+- Body consumes the grant with lesser-host's instance contract from lesser-host PR #920:
+  `POST /api/v1/soul/x402/grants/{grantId}/consume` with `grantToken`, `agentId`, `capabilityVersion`,
+  `capability`, `tool`, `resource`, `requestHash`, `paymentEvidenceHash`, and `idempotencyKey`. Raw payment evidence
+  is hashed before this Host consume request and is never logged or persisted.
+- Host consume must succeed and bind the returned grant to the same capability version, capability, tool, scope,
+  resource, request hash, and payment evidence hash before Body performs the instance tool side effect. Host replay
+  responses fail closed before Body re-runs the non-idempotent side effect. Actor/scoped invocation grants such as
+  `scoped-invocation/v1` / `tools.invoke` are rejected for instance tools.
+
 Scoped public x402 invocation grants:
 
 - Public paid callers do **not** use `Authorization: Bearer <token>` and do not become an OAuth principal/operator.
@@ -91,9 +127,9 @@ Scoped public x402 invocation grants:
 - Before dispatch, Body requires the accepted consumed grant to bind the actor-resolved agent, capability, tool, caller/payment
   evidence hashes, request hash, MCP resource URL, expiry, scoped-invocation authority, issued status, usage limit, and
   caller-access/payment policy version.
-- Mixing OAuth `Authorization` and x402 grant headers on the same request is rejected. x402 grants never grant
-  principal/operator authority and do not bypass tool-internal OAuth requirements for tools that still require a
-  principal session.
+- On actor-scoped `/mcp/{actor}`, mixing OAuth `Authorization` and public x402 invocation-grant headers on the same
+  request is rejected. Public x402 grants never grant principal/operator authority and do not bypass tool-internal OAuth
+  requirements for tools that still require a principal session.
 
 ## Discovery and registration chain
 
@@ -110,6 +146,142 @@ Client registration remains a Lesser concern. Today the Lesser API exposes publi
 `lesser-body` does not proxy or emulate client registration. If your MCP client specifically expects RFC 7591 dynamic
 client registration rather than Lesser's existing app-registration flow, pre-register the OAuth client and configure
 its credentials out of band.
+
+## Instance-plane operator chapter (Ptah/Ba)
+
+The instance plane is the operator-facing control surface for authoring and installing Lesser agents. It is deliberately
+separate from Ka, the actor-scoped agent MCP surface. Operators should treat the three surfaces as separate MCP
+resources:
+
+| Plane | Public route | Purpose | Tool discovery |
+|-------|--------------|---------|----------------|
+| Ka actor surface | `/mcp/{actor}` | An individual Lesser agent's social, memory, communication, identity, resources, prompts, and task-capable read tools. | Public `/.well-known/mcp.json` lists Ka tools; authenticated `tools/list` is profile-filtered for that actor. |
+| Ptah instance surface | `/instance/ptah/mcp` | Account-holder orchestration: account-scoped agent registry, draft `agent_soul` / `agent_instructions`, Lesser delegation, and hosted soul/body binding. | Authenticated Ptah `tools/list` only. Ptah tools are not advertised as Ka tools. |
+| Ba instance surface | `/instance/ba/mcp` | Account-holder local install planning: deterministic install pack rendering and one-time download-grant minting. | Authenticated Ba `tools/list` only. Ba tools are not advertised as Ka tools. |
+| Ba download route | `/instance/downloads/installer-grants/{grantId}` | Header-free one-time ZIP download after `agent_local_install_plan` issues a grant. | Not an MCP endpoint; it is a public GET guarded by the opaque token and full binding query. |
+
+### Discovery and RFC 9728 metadata
+
+Ptah/Ba discovery and auth metadata are AppTheory/RFC 9728-backed. Body uses AppTheory's OAuth protected-resource
+metadata model for the published `resource`, `authorization_servers`, `scopes_supported`, and
+`bearer_methods_supported` fields; operators must not replace it with a local OAuth metadata shim or an MCP-client
+specific shortcut.
+
+- Ka public discovery is `GET /.well-known/mcp.json`. It includes an `instance_surfaces` map for `ptah` and `ba` derived
+  from the configured `MCP_ENDPOINT`, with each instance endpoint and protected-resource metadata URL. This is a locator
+  for operators; it is not Ptah/Ba tool-schema discovery.
+- Ptah protected-resource metadata is
+  `GET /.well-known/oauth-protected-resource/instance/ptah/mcp` and its `resource` is the exact
+  `https://api.<stageDomain>/instance/ptah/mcp` URL.
+- Ba protected-resource metadata is
+  `GET /.well-known/oauth-protected-resource/instance/ba/mcp` and its `resource` is the exact
+  `https://api.<stageDomain>/instance/ba/mcp` URL.
+- Public OAuth metadata advertises only issuable Lesser scopes: `read`, `write`, `follow`, and `push`. It does not
+  advertise `admin` or Host instance-capability strings.
+
+`MCP_ENDPOINT` and `INSTANCE_MCP_ENDPOINT` are the source of truth for public resource identifiers. Runtime discovery
+may validate request-derived host/protocol information against those configured URLs, but the configured endpoints remain
+canonical; raw `Host` or `X-Forwarded-Host` headers are not trusted as a substitute when configuration is absent or
+mismatched.
+
+### Required configuration
+
+The operator-facing endpoint variables are:
+
+- `MCP_ENDPOINT` on the Ka Lambda, for example `https://api.<stageDomain>/mcp/{actor}`.
+  - Required for `/.well-known/mcp.json`, Ka RFC 9728 metadata, and Ka resource URLs.
+  - Used to derive the `instance_surfaces` locator in public discovery.
+- `INSTANCE_MCP_ENDPOINT` on the instance Lambda, for example
+  `https://api.<stageDomain>/instance/{surface}/mcp`.
+  - Required for Ptah/Ba RFC 9728 metadata.
+  - `{surface}` is replaced with `ptah` or `ba`.
+  - Used by Ba to derive the stage domain, canonical actor MCP endpoints inside install packs, and grant download
+    origin.
+
+Body CDK publishes the Ka SSM exports (`mcp_lambda_arn`, `mcp_endpoint_url`, session/stream table names) and the
+instance-plane SSM exports (`instance_mcp_lambda_arn`, `instance_mcp_endpoint_url`,
+`instance_content_table_name`, `instance_registry_table_name`, `instance_grant_table_name`, and
+`instance_session_table_name`) under `/<app>/<stage>/lesser-body/exports/v1/`. Lesser imports those exports when its
+corresponding routing flags are enabled.
+
+### Deploy order and rollout status
+
+For a first-time stage, keep the SSM-first order:
+
+1. Deploy Lesser without Body routing enabled (`soulEnabled=false`; keep the Lesser-side `instancePlaneEnabled` routing
+   flag off as well).
+2. Deploy `lesser-body`. This publishes both Ka and instance-plane SSM exports and provisions the instance-plane state
+   tables.
+3. Re-deploy Lesser with `soulEnabled=true` and, when the stage is ready for Ptah/Ba, `instancePlaneEnabled=true` so
+   Lesser wires `/mcp/{actor}`, Ka discovery, Ptah/Ba protected-resource metadata, Ptah/Ba MCP routes, and the Ba
+   installer-grant download route through the Lesser API domain.
+
+Subsequent deployments can update Body and Lesser independently as long as the existing SSM exports remain present and
+stable. Do not rename or delete the `/exports/v1/` parameters.
+
+Project 48 status note: #364 lab canary evidence and M10 rollout/soak remain pending. This document describes the
+operator contract and validation expectations; it does not claim that lab canaries, lab soak, deploy-stage staging soak,
+or live rollout have completed.
+
+### Auth model and threat model
+
+Ptah and Ba require Lesser OAuth JWT bearer authentication against the exact instance resource URL:
+
+- `https://api.<stageDomain>/instance/ptah/mcp`
+- `https://api.<stageDomain>/instance/ba/mcp`
+
+The principal must be an account-holder OAuth token. Agent-delegated principals, legacy managed-instance-key principals,
+missing bearer tokens, and actor-username mismatches fail closed before tool side effects. Write tools still require
+write-capable OAuth scope, and read tools require read-capable scope. The managed instance key remains a server-to-server
+credential for lesser-host communication and compatibility paths; it is not an instance-plane operator login.
+
+Threat model invariants:
+
+- Ptah/Ba tools are not dynamically registered and are not advertised in the Ka public tool list.
+- Discovery/auth stays AppTheory/RFC 9728-backed; do not synthesize local OAuth metadata or bypass the AppTheory MCP
+  initialization / authenticated `tools/list` path.
+- Configured public endpoint templates are canonical. Raw Host headers, caller-supplied origins, and download query
+  fields are validation inputs, not authority.
+- Ptah writes only Body-owned instance content/registry state or delegates through Lesser-owned APIs; it does not write
+  Lesser's actor table directly.
+- Ba grant state lives in Body's `INSTANCE_GRANT_TABLE`; only token hashes and safe binding fields persist.
+- Logs and text content must never include bearer tokens, raw grant tokens, full grant URLs, token hashes,
+  `LESSER_HOST_INSTANCE_KEY`, `agent_soul` bodies, or `agent_instructions` bodies.
+
+### Instance-plane x402 policy
+
+Instance-plane x402 capability grants are distinct from actor-scoped public x402 invocation grants:
+
+- OAuth is still required. The grant augments a non-operator account-holder OAuth request; it does not create an OAuth
+  principal and does not grant actor-scoped public invocation authority.
+- Explicit operator OAuth authority is exempt from the instance x402 gate for the operator principal only.
+- `agent_create` consumes Host capability `instance-capability/v1` / `instance:agent_create`, bound to
+  `tool="agent_create"` and `resource="instance://tools/agent_create"`.
+- `agent_local_install_plan` consumes Host capability `instance-capability/v1` / `instance:install_plan`, bound to
+  `tool="agent_local_install_plan"` and `resource="instance://tools/agent_local_install_plan"`.
+- Body hashes payment evidence before Host consume, rejects actor/scoped invocation grants such as
+  `scoped-invocation/v1` / `tools.invoke`, and performs no non-idempotent side effect until Host accepts the exact
+  capability/tool/resource/request/payment binding.
+
+### Ba grant and download URL semantics
+
+`agent_local_install_plan` returns a TheoryMCP-compatible install-plan envelope in `structuredContent.data`. The text
+content is only a locator; operators and canaries should read the structured fields:
+
+- `install_pack_resource.uri` / `download_url` is a one-time header-free GET URL for local installer clients.
+- `install_pack_resource.requires_authorization_header` is `false`; clients must not attach OAuth bearer tokens to the
+  download request.
+- The URL contains the raw token only once, at issuance. Treat it as a secret and do not print it in logs, shell
+  history, issue comments, canary output, or release notes.
+- The route consumes a matching active grant atomically. A successful first GET returns `application/zip` with
+  `Cache-Control: no-store`; same-token replay returns `410 Gone`; unknown, expired, mismatched-token, and
+  mismatched-binding requests return a generic `404 Not Found`.
+- Clients must verify `pack_checksum` against the ZIP bytes, inspect `MANIFEST.json`, and verify every
+  `manifest_entries[].checksum` before writing or merging local files.
+
+Detailed Ptah/Ba tool schemas and result shapes remain in the
+[Instance-plane Ptah tools](#instance-plane-ptah-tools) and
+[Instance-plane Ba tools](#instance-plane-ba-tools) sections below.
 
 ## Canonical vs transitional auth paths
 
@@ -328,18 +500,36 @@ Use a distinct MCP URL per agent so OAuth tokens stay isolated per client cache 
 
 JWT-based callers are authorized by scopes inside the JWT claims:
 
-- `admin`: can call any tool
-- `write`: can call write tools and read tools
-- `read`: can call read tools only
+- `read`: can call read tools and read-scoped MCP methods only
+- `write`: can call write tools plus everything `read` can call
+- `admin`: can call every `write` and `read` surface
+
+The hierarchy is `read` ⊂ `write` ⊂ `admin`: `write` satisfies read requirements, and `admin` satisfies both read and
+write requirements. The authoritative per-tool classification is `internal/mcpserver/tool_scopes.go`
+(`toolScopes`/`RequiredScopesForTool`); this documentation table is a client-facing description of that classifier, not
+the runtime source of truth. A registered tool without an explicit classification fails closed to `admin` rather than
+defaulting to `read`, and exhaustiveness tests fail when the registered tool surface and `toolScopes` drift.
 
 The managed instance key compatibility path currently bypasses scope checks (treat it as `admin`), which is why it is
 being deprecated for inbound MCP traffic. That bypass only remains available when
-`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`.
+`MCP_ALLOW_LEGACY_INSTANCE_KEY=true`; migrate clients through the [OAuth migration guide](oauth-migration.md).
 
-Scoped x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the single
-`tools/call` request bound into the grant. Body rejects wrong actor-resolved agent, wrong capability/tool, wrong resource/request
-hash, expired grants, replay/usage rejection, missing payment evidence, unsupported scoped-invocation authority/status,
-and missing or unsupported policy versions before tool dispatch.
+Scoped public x402 grant callers are authorized by the Host-issued grant, not JWT scopes. They can invoke only the
+single `tools/call` request bound into the grant. Body also enforces Host consumed-grant `grant.scope` against the
+requested tool's `RequiredScopesForTool` classification using the same `read` ⊂ `write` ⊂ `admin` hierarchy; missing,
+unknown, or insufficient grant scope fails closed as `x402_grant_scope_mismatch`. Body rejects wrong actor-resolved
+agent, wrong capability/tool, wrong resource/request hash, expired grants, replay/usage rejection, missing payment
+evidence, unsupported scoped-invocation authority/status, and missing or unsupported policy versions before tool
+dispatch.
+
+Instance-plane x402 capability grants are separate from public actor-scoped invocation grants. They are consumed only
+for the OAuth-authenticated minting tools `agent_create` and `agent_local_install_plan`, require
+`capabilityVersion="instance-capability/v1"`, and fail closed when a caller presents actor/scoped capabilities such as
+`tools.invoke` or `scoped-invocation/v1`.
+
+Body's scope gate runs before AppTheory tool dispatch. For `memory_append` and host-backed communication writes, this
+is the single scope gate before the memory write or lesser-host delegation. For social writes, Body gates first and then
+calls Lesser's REST API with the caller bearer so Lesser can apply its server-side authorization checks as well.
 
 ## Tools
 
@@ -362,6 +552,7 @@ Scope key:
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
+| `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
 | `article_draft_create` | Write | Create an unpublished Article draft through Lesser CMS; defaults to a compact draft ref and never auto-publishes. |
 | `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
 | `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
@@ -397,6 +588,355 @@ Scope key:
 | `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary plus the current managed `lessersoul.ai` email address when Host publishes one. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
+
+### Instance-plane Ptah tools
+
+Ptah tools are served only from `POST /instance/ptah/mcp` and are not registered on Ka's actor-scoped `/mcp/{actor}`
+surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authenticated Ptah `tools/list` request after
+`initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract.
+
+| Tool | Scope | Description |
+|------|-------|-------------|
+| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
+| `agent_create` | Write | Delegate runtime credentials for an existing Lesser local agent account and create a Body/Ptah account-scoped registry entry. |
+| `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor. |
+| `agent_list` | Read | List Body/Ptah account-scoped registry entries with cursor pagination. |
+| `agent_soul_get` | Read | Read the current account-scoped Ptah `agent_soul` draft/archived record. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
+| `agent_soul_upsert` | Write | Create or update account-scoped Ptah `agent_soul` draft content through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
+| `agent_soul_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_soul` record through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
+| `agent_instructions_get` | Read | Read the current account-scoped Ptah `agent_instructions` draft/archived record. |
+| `agent_instructions_upsert` | Write | Create or update account-scoped Ptah `agent_instructions` draft content through `internal/agentcontent.Store`. |
+| `agent_instructions_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_instructions` record through `internal/agentcontent.Store`. |
+
+`agent_get` input:
+
+- Required: `agent_id`.
+- Derived: the account scope is always the authenticated account-holder OAuth principal. Callers cannot supply an
+  account override. Optional `actor_username`, when supplied, must match the authenticated principal after normalization
+  or the tool fails closed.
+
+`agent_get` requires an account-holder OAuth principal with read-capable scope. `read`, `write`, and `admin` are
+read-capable for this instance-plane read surface; agent-delegated principals and non-account-holder principals are
+rejected before the registry is read. The tool calls only the Body-owned `internal/agentregistry.Store.Get` path over the
+`INSTANCE_REGISTRY_TABLE`; it does not call Lesser and does not read `LESSER_TABLE_NAME`.
+
+Successful output has `structuredContent.data.registry`:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "agent_id": "<agent id>",
+  "created_at": "<RFC3339 timestamp>",
+  "updated_at": "<RFC3339 timestamp>"
+}
+```
+
+The current registry record stores only account, agent id, and registry timestamps. It does not yet have a source-backed
+content-version field or content summary. Until a future source-backed field exists, `agent_get` returns explicit
+placeholders:
+
+```json
+{
+  "content_version": {"status": "not_available", "source": "agentregistry"},
+  "content_summary": {"status": "not_available", "source": "agentregistry"}
+}
+```
+
+Missing records and cross-account lookups return tool error code `not_found` with no account/agent detail leakage.
+Malformed input returns `invalid_request`; registry read failures return `agent_registry_error`.
+
+`agent_list` input:
+
+- Optional: `limit` (default `25`, maximum `100`) and opaque `cursor`.
+- Not accepted: account overrides. The account partition is always derived from the authenticated account-holder
+  principal.
+
+`agent_list` requires the same account-holder/read-capable authority as `agent_get`. It uses
+`internal/agentregistry.Store.List`, which performs a TableTheory query over the `ACCOUNT#<account>` partition and
+`AGENT#` sort-key prefix in `INSTANCE_REGISTRY_TABLE`; it does not scan the table, read Lesser's table, or call Lesser.
+
+Successful output includes `structuredContent.data.agents`, where each item contains `registry`, `content_version`, and
+`content_summary` using the same shapes and current `not_available` placeholders as `agent_get`, plus pagination
+metadata:
+
+```json
+{
+  "pagination": {
+    "limit": 25,
+    "next_cursor": "<opaque cursor or empty string>",
+    "has_more": false,
+    "count": 0
+  }
+}
+```
+
+Invalid `limit` or `cursor` values return `invalid_request`. Registry failures return `agent_registry_error`.
+
+`agent_soul_get` input:
+
+- Required: `agent_id`.
+- Derived: the account scope is always the authenticated account-holder OAuth principal. Callers cannot supply an
+  account override. Optional `actor_username`, when supplied, must match the authenticated principal after normalization
+  or the tool fails closed.
+
+`agent_soul_get` requires an account-holder OAuth principal with read-capable scope. It calls only the Body-owned
+`internal/agentcontent.Store.Get` path with content type `agent_soul`; it does not call Lesser, read `LESSER_TABLE_NAME`,
+or accept cross-account selectors. Missing records and cross-account lookups return structured tool error code
+`not_found` without account/agent detail leakage.
+
+Successful output has `structuredContent.data.agent_soul`:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "agent_id": "<agent id>",
+  "type": "agent_soul",
+  "content": "<draft soul content>",
+  "content_bytes": 123,
+  "version": 1,
+  "lifecycle_state": "draft",
+  "created_at": "<RFC3339 timestamp>",
+  "updated_at": "<RFC3339 timestamp>",
+  "updated_by_subject_id": "<authenticated JWT subject>"
+}
+```
+
+The result also includes `structuredContent.data.schema` with status `provisional` and marker
+`provisional_agent_soul_schema_pending_lesser_soul_s1`. This marker must remain until the lesser-soul S1/Panonomous
+contract is governance-unblocked and a follow-up commit finalizes the schema. The text content stays concise and points
+to `structuredContent.data.agent_soul.content` instead of duplicating the draft body.
+
+`agent_soul_upsert` input:
+
+- Required: `agent_id`, `content`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_soul_upsert` requires write scope. It stores draft soul content through `internal/agentcontent.Store.Upsert` with
+content type `agent_soul`, so the TableTheory-backed instance content store owns version increments, lifecycle state, and
+size bounds. It does not introduce a separate persistence layer, DynamoDB client, or Lesser-table write. Successful
+upserts return the same `agent_soul` record shape with `lifecycle_state:"draft"` and the incremented `version`.
+
+`agent_soul_archive` input:
+
+- Required: `agent_id`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_soul_archive` requires write scope. It archives through `internal/agentcontent.Store.Archive`, preserves the
+store's idempotent archive behavior, and reports:
+
+```json
+{
+  "already_archived": false,
+  "idempotent": true
+}
+```
+
+`already_archived` is true when the current account-scoped record was already archived before the archive call. The
+returned `agent_soul` record keeps the store-owned version and has `lifecycle_state:"archived"`.
+
+For all `agent_soul_*` tools, malformed input returns `invalid_request`; agent-delegated or mismatched principals return
+`forbidden`; missing content records return `not_found`; optimistic write races return `conflict`; and unexpected
+content-store failures return `internal` with sanitized `source:"agent_content"` details.
+
+`agent_instructions_get` input:
+
+- Required: `agent_id`.
+- Derived: the account scope is always the authenticated account-holder OAuth principal. Callers cannot supply an
+  account override. Optional `actor_username`, when supplied, must match the authenticated principal after normalization
+  or the tool fails closed.
+
+`agent_instructions_get` requires an account-holder OAuth principal with read-capable scope. It calls only the
+Body-owned `internal/agentcontent.Store.Get` path with content type `agent_instructions`; it does not call Lesser, read
+`LESSER_TABLE_NAME`, or accept cross-account selectors. Missing records and cross-account lookups return structured tool
+error code `not_found` without account/agent detail leakage.
+
+Successful output has `structuredContent.data.agent_instructions`:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "agent_id": "<agent id>",
+  "type": "agent_instructions",
+  "content": "<draft instructions content>",
+  "content_bytes": 123,
+  "version": 1,
+  "lifecycle_state": "draft",
+  "created_at": "<RFC3339 timestamp>",
+  "updated_at": "<RFC3339 timestamp>",
+  "updated_by_subject_id": "<authenticated JWT subject>"
+}
+```
+
+The text content stays concise and points to `structuredContent.data.agent_instructions.content` instead of duplicating
+the draft body. `agent_instructions` has its own `internal/agentcontent` record and version counter, independent of
+`agent_soul`.
+
+`agent_instructions_upsert` input:
+
+- Required: `agent_id`, `content`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_instructions_upsert` requires write scope. It stores draft instructions through
+`internal/agentcontent.Store.Upsert` with content type `agent_instructions`, so the TableTheory-backed instance content
+store owns version increments, lifecycle state, and size bounds. It does not introduce a separate persistence layer,
+DynamoDB client, or Lesser-table write. Successful upserts return the same `agent_instructions` record shape with
+`lifecycle_state:"draft"` and the incremented version.
+
+`agent_instructions_archive` input:
+
+- Required: `agent_id`.
+- Derived: account scope is the authenticated account-holder OAuth principal; `updated_by_subject_id` is the
+  authenticated JWT subject. Optional `actor_username`, when supplied, must match that principal.
+
+`agent_instructions_archive` requires write scope. It archives through `internal/agentcontent.Store.Archive`, preserves
+the store's idempotent archive behavior, and reports:
+
+```json
+{
+  "already_archived": false,
+  "idempotent": true
+}
+```
+
+`already_archived` is true when the current account-scoped record was already archived before the archive call. The
+returned `agent_instructions` record keeps the store-owned version and has `lifecycle_state:"archived"`.
+
+For all `agent_instructions_*` tools, malformed input returns `invalid_request`; agent-delegated or mismatched
+principals return `forbidden`; missing content records return `not_found`; optimistic write races return `conflict`; and
+unexpected content-store failures return `internal` with sanitized `source:"agent_content"` details.
+
+`agent_create` input:
+
+- Required: `agent_username`, `scopes`.
+- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
+  must match that principal after normalization or the tool fails closed.
+- Optional Lesser delegation fields: `display_name`, `bio`, `expires_in`, `device_label`, and `agent_info`.
+
+Current producer constraint: Lesser's source-backed `POST /api/v1/agents/delegate` endpoint delegates to an existing
+local agent account and mints a fresh runtime token/session. It does **not** create a new Lesser account today. Body/Ptah
+therefore does not fabricate account creation; `agent_create` calls `internal/lesserapi.DelegateAgent` with the caller's
+OAuth bearer token and only creates the Body-owned `INSTANCE_REGISTRY_TABLE` entry after Lesser returns the existing
+agent account.
+
+`agent_create` requires an account-holder OAuth principal with `write` scope. Agent-delegated principals, read-only
+principals, missing bearer tokens, and `actor_username` mismatches are rejected before Body calls Lesser or the registry.
+The tool never uses `LESSER_SOUL_BINDING_INTEGRATION_BEARER`; that dedicated server-to-server bearer is only for
+`agent_bind_soul`.
+
+Successful output includes safe account and registry summaries plus the delegated Lesser token response in
+`structuredContent.data.token`. Those token fields (`access_token` and `refresh_token`) are credentials: Body does not
+include them in log events or text content. Callers that persist the MCP result must handle that structured token block as
+secret material.
+
+Partial-failure reconciliation: Lesser delegation is non-idempotent and Body performs no automatic retry because each
+successful Lesser call mints credentials. If Lesser succeeds but the Body registry create later fails or detects a
+duplicate, Body cannot roll back the minted Lesser token/session in this milestone. Duplicate registry conflicts return
+tool error code `agent_already_exists` without cross-account registry details; other registry failures return
+`agent_registry_error` with partial-failure metadata so operators can reconcile or revoke any unneeded Lesser runtime
+session through Lesser-owned session management.
+
+`agent_bind_soul` input:
+
+- Required: `soul_agent_id`, `idempotency_key`.
+- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
+  must match that principal after normalization or the tool fails closed.
+- Optional correlation/evidence: `body_actor_id` (defaults to `body://ptah/{actor_username}`), `host_registration_id`,
+  `host_conversation_id`, `principal_address`, and nested `evidence.host_request_id`,
+  `evidence.declaration_hash`, `evidence.issued_at`.
+
+The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API (`POST /api/v1/souls/bindings`) through
+`internal/lesserapi` using the dedicated `LESSER_SOUL_BINDING_INTEGRATION_BEARER` configuration value and the supplied
+non-empty idempotency key. It never forwards the caller's OAuth token to that server-to-server surface. Body supplies
+Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`, `hosted_bound_soul`) and returns
+structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent summary.
+
+Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
+`SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor
+as `souled` through the existing `internal/soulbinding` read path.
+
+### Instance-plane Ba tools
+
+Ba tools are served only from `POST /instance/ba/mcp` and are not registered on Ka's actor-scoped `/mcp/{actor}`
+surface or Ptah's `/instance/ptah/mcp` surface. Clients discover them with an authenticated Ba `tools/list` request
+after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract.
+
+| Tool | Scope | Description |
+|------|-------|-------------|
+| `agent_local_install_plan` | Write | Render a deterministic local install pack for an account-scoped agent and mint a one-time header-free download grant. |
+
+`agent_local_install_plan` input:
+
+- Required: `agent_id`, `client`.
+- `client` must be `claude_code` or `codex`; optional `profile`, when supplied, must match `client`.
+- Derived: account scope is the authenticated account-holder OAuth principal. Optional `actor_username`, when supplied,
+  must match that principal after normalization. Callers cannot supply an account override.
+- Derived: the stage domain and download origin come from the CDK-provided `INSTANCE_MCP_ENDPOINT` template
+  (`https://api.<stageDomain>/instance/{surface}/mcp`), not from caller input or unvalidated `Host` headers. Rendered
+  packs still target the canonical actor MCP endpoint `https://api.<stageDomain>/mcp/{actor}`.
+
+`agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
+installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
+usernames, and `actor_username` mismatches are rejected before Body reads content, renders a pack, or mints a grant.
+For non-operator callers it also requires Host's instance x402 capability grant
+(`capabilityVersion="instance-capability/v1"`, `capability="instance:install_plan"`,
+`tool="agent_local_install_plan"`) and consumes that grant before content reads, pack rendering, or download-grant
+minting. Operator OAuth callers are exempt; actor/scoped invocation grants are rejected for this instance tool.
+
+The tool reads current account-scoped `agent_soul` and `agent_instructions` records through
+`internal/agentcontent.Store.Get`, renders a deterministic ZIP through `internal/installpack`, then mints a short-lived
+one-time grant through `internal/downloadgrant.Store.Issue`. The grant binding is fixed to:
+
+```json
+{
+  "account": "<authenticated account username>",
+  "actor": "<safe local actor segment derived from agent_id>",
+  "namespace": "equaltoai",
+  "route": "/instance/ba/mcp",
+  "client": "codex",
+  "profile": "codex",
+  "pack_id": "<deterministic Ba pack id>",
+  "pack_digest": "sha256:<input/content digest>"
+}
+```
+
+The successful response is a TheoryMCP-compatible install-plan envelope under `structuredContent.data`. Text content is
+only a concise locator and does not duplicate the raw download URL, raw token, `agent_soul`, or `agent_instructions`
+content. The data envelope includes at least:
+
+- `schema` (`lesserbody.agent_local_install_plan.v1`)
+- `grant_id` and `expires_at`
+- `download_url` and `install_pack_resource.uri`
+- `pack_id`, `pack_digest`, and `pack_checksum`
+- `resource_metadata` / `install_pack_resource` with `method: "GET"`, `media_type: "application/zip"`,
+  `requires_authorization_header: false`, and the safe grant binding query metadata
+- `manifest`, `manifest_entries`, `marker_metadata` / `install_marker`
+- `mcp_server_name` and `mcp_endpoint_url`
+- `merge_instructions`, `update_guidance`, and `verification_steps`
+
+The download URL is intentionally header-free for local installer clients and uses the public grant route:
+
+```text
+GET https://api.<stageDomain>/instance/downloads/installer-grants/{grantId}?token=<raw-token>&account=...&actor=...&namespace=...&client=...&profile=...&pack_id=...&pack_digest=...
+```
+
+The raw token is returned only inside that tool response URL at issue time. `internal/downloadgrant` persists only a
+domain-separated `TokenHash`, TTL-compatible `expiresAt`, grant id, status, and safe binding fields. Ba audit logging
+for successful plans records only safe metadata such as `grant_id`, account, actor, client/profile, `pack_id`,
+`pack_digest`, and `pack_checksum`; it must never log raw tokens, token hashes, grant URLs, `agent_soul` content, or
+`agent_instructions` content.
+
+The grant download route consumes matching active grants atomically and then renders the ZIP through the same
+`internal/installpack` provider path. Successful downloads return `application/zip` with `Cache-Control: no-store`.
+Replay of a consumed grant returns `410 Gone`; unknown, expired, mismatched-token, or mismatched-binding grants return
+`404 Not Found` without token material. Clients must verify `pack_checksum` against the downloaded ZIP bytes, read
+`MANIFEST.json`, and verify every `manifest_entries[].checksum` before writing or merging local files.
+
+Ba applies a bounded in-process per-account grant minting rate cap before content reads and grant issuance. This is a
+foundation-slice safety backstop only; it does not coordinate across Lambda execution environments and is not a durable
+quota system. Exceeded caps return structured tool error code `rate_limited` with HTTP-style status `429`.
 
 ### Shared read-tool shaping parameters
 

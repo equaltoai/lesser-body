@@ -54,6 +54,21 @@ Variables:
   - Do not remove this just because inbound MCP clients migrate to OAuth; host-backed communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 
+### Instance-plane storage
+
+Ptah/Ba instance-plane state uses body-owned DynamoDB tables provisioned by this repo's CDK stack. These tables
+are separate from Lesser's actor data table (`LESSER_TABLE_NAME`).
+
+- `INSTANCE_CONTENT_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane content state.
+- `INSTANCE_REGISTRY_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for Ptah-created account-scoped agent registry records keyed by `(account, agentID)`.
+    Internal stores must use this table rather than `LESSER_TABLE_NAME`.
+- `INSTANCE_GRANT_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane grant state.
+- `INSTANCE_SESSION_TABLE` (string, required for the instance-plane Lambda)
+  - Body-owned table for instance-plane session state; CDK configures `expiresAt` as its TTL attribute.
+
 ### MCP session and stream persistence
 
 - `MCP_SESSION_TABLE` (string, optional)
@@ -95,10 +110,19 @@ that runtime only for the current read-only `skill_bundle_get` pilot; task state
 - `MCP_ENDPOINT` (string, required for public discovery/OAuth metadata)
   - The public MCP endpoint template clients should use (for example: `https://api.dev.example.com/mcp/{actor}`).
   - Used by `GET /.well-known/mcp.json` and by the `agent://config` resource.
+  - Also used by public discovery to derive the `instance_surfaces` locator for Ptah/Ba.
   - Discovery validates that inbound requests are arriving on the same public MCP URL instead of emitting
     mismatched `resource` metadata.
   - Public discovery fails closed when unset; lesser-body does not infer OAuth resource metadata from `Host` or
     `X-Forwarded-Host` headers.
+- `INSTANCE_MCP_ENDPOINT` (string, required for the instance-plane Lambda)
+  - The canonical instance-plane endpoint template, for example:
+    `https://api.dev.example.com/instance/{surface}/mcp`.
+  - `{surface}` is replaced with `ptah` or `ba` for RFC 9728 protected-resource metadata and Ba install-plan URLs.
+  - Used by Ptah/Ba protected-resource metadata to publish exact `resource` URLs and by Ba to derive the stage domain,
+    actor MCP endpoint, and one-time install-pack download origin.
+  - The configured value is canonical. Instance discovery may compare request-derived host/protocol values against it,
+    but raw `Host` / `X-Forwarded-Host` headers are never a substitute when configuration is missing or mismatched.
 - `MCP_ALLOWED_ORIGINS` (string, optional but recommended for browser clients)
   - Comma-separated list of allowed browser origins for discovery and MCP responses.
   - Deployed CDK defaults include `https://claude.ai`, `https://claude.com`, and the stage domains.
@@ -177,6 +201,21 @@ Published by this repo’s CDK stack:
   - Session table name (if provisioned).
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
   - Stream table used for MCP streaming state.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_mcp_lambda_arn`
+  - Imported by Lesser when its instance-plane routing flag is enabled to wire
+    `POST /instance/ptah/mcp`, `POST /instance/ba/mcp`,
+    `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`,
+    `GET /.well-known/oauth-protected-resource/instance/ba/mcp`, and the Ba installer-grant download route.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_mcp_endpoint_url`
+  - Convenience value intended to equal `https://api.<stageDomain>/instance/{surface}/mcp`.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_content_table_name`
+  - Body-owned Ptah/Ba content table name.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_registry_table_name`
+  - Body-owned Ptah account-scoped agent registry table name.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_grant_table_name`
+  - Body-owned Ba one-time install/download grant table name.
+- `/<app>/<stage>/lesser-body/exports/v1/instance_session_table_name`
+  - Body-owned instance-plane MCP session table name.
 
 The MCP task table is intentionally internal while the `tasks` capability is disabled. The current CDK stack does not
 publish `/<app>/<stage>/lesser-body/exports/v1/mcp_task_table_name`; adding that SSM export would be a separate

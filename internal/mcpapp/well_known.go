@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
@@ -15,19 +16,26 @@ import (
 )
 
 type mcpWellKnownDoc struct {
-	Name            string                            `json:"name"`
-	Version         string                            `json:"version"`
-	Endpoint        string                            `json:"endpoint,omitempty"`
-	Capabilities    map[string]bool                   `json:"capabilities"`
-	Auth            map[string]any                    `json:"auth"`
-	RuntimeProfiles map[string]runtimepolicy.Contract `json:"runtime_profiles,omitempty"`
-	Tools           []mcpWellKnownToolHint            `json:"tools,omitempty"`
+	Name             string                                 `json:"name"`
+	Version          string                                 `json:"version"`
+	Endpoint         string                                 `json:"endpoint,omitempty"`
+	Capabilities     map[string]bool                        `json:"capabilities"`
+	Auth             map[string]any                         `json:"auth"`
+	RuntimeProfiles  map[string]runtimepolicy.Contract      `json:"runtime_profiles,omitempty"`
+	InstanceSurfaces map[string]mcpWellKnownInstanceSurface `json:"instance_surfaces,omitempty"`
+	Tools            []mcpWellKnownToolHint                 `json:"tools,omitempty"`
 }
 
 type mcpWellKnownToolHint struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+}
+
+type mcpWellKnownInstanceSurface struct {
+	Endpoint                     string `json:"endpoint"`
+	ProtectedResourceMetadataURL string `json:"protected_resource_metadata_url"`
+	ToolsDiscovery               string `json:"tools_discovery"`
 }
 
 type protectedResourceMetadataDocument struct {
@@ -63,6 +71,11 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 			},
 			RuntimeProfiles: runtimepolicy.Contracts(),
 		}
+		instanceSurfaces, err := publicInstanceSurfacesForMcpEndpoint(endpoint)
+		if err != nil {
+			return invalidDiscoveryConfigResponse(err), nil
+		}
+		doc.InstanceSurfaces = instanceSurfaces
 		if mcpserver.TasksPublicDiscoveryEnabled(srv) {
 			doc.Capabilities["tasks"] = true
 		}
@@ -163,6 +176,50 @@ func protectedResourceMetadataURLForRequest(ctx *apptheory.Context) string {
 		return url
 	}
 	return ""
+}
+
+func publicInstanceSurfacesForMcpEndpoint(mcpEndpoint string) (map[string]mcpWellKnownInstanceSurface, error) {
+	template, err := publicInstanceEndpointTemplateForMcpEndpoint(mcpEndpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]mcpWellKnownInstanceSurface, 2)
+	for _, surface := range []string{"ptah", "ba"} {
+		endpoint := strings.ReplaceAll(template, "{surface}", surface)
+		metadataURL, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(endpoint)
+		if !ok {
+			return nil, fmt.Errorf("derive instance protected-resource metadata URL for %s", surface)
+		}
+		out[surface] = mcpWellKnownInstanceSurface{
+			Endpoint:                     endpoint,
+			ProtectedResourceMetadataURL: metadataURL,
+			ToolsDiscovery:               "authenticated tools/list",
+		}
+	}
+	return out, nil
+}
+
+func publicInstanceEndpointTemplateForMcpEndpoint(mcpEndpoint string) (string, error) {
+	validatedEndpoint, err := validatedMcpEndpoint(mcpEndpoint)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(validatedEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse MCP endpoint: %w", err)
+	}
+	info, err := parseMcpEndpointPath(u.Path)
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimRight(strings.TrimSpace(info.BasePath), "/")
+	if path == "" {
+		path = "/instance/{surface}/mcp"
+	} else {
+		path += "/instance/{surface}/mcp"
+	}
+	return canonicalAbsoluteURL(u, path), nil
 }
 
 func inferMcpEndpointFromRequest(ctx *apptheory.Context) string {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/memory"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -114,6 +115,7 @@ func TestX402Grant_DefaultConsumerCallsAcceptedHostConsumeContract(t *testing.T)
 				"agentId":           gotBody["agentId"],
 				"capability":        gotBody["capability"],
 				"tool":              gotBody["tool"],
+				"scope":             "read",
 				"resource":          gotBody["resource"],
 				"requestHash":       gotBody["requestHash"],
 				"callerSubjectHash": "caller-subject-hash",
@@ -187,6 +189,86 @@ func TestX402Grant_RejectsWrongTool(t *testing.T) {
 
 	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "echo", map[string]any{"message": "hi"})
 	assertX402FailureReason(t, resp, 403, "x402_grant_tool_mismatch")
+}
+
+func TestX402Grant_RejectsReadScopeGrantForWriteToolBeforeSideEffect(t *testing.T) {
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	memory.ResetForTests()
+	t.Cleanup(memory.ResetForTests)
+
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Grant.Scope = "read"
+		return resp
+	})
+	defer restore()
+
+	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "memory_append", map[string]any{
+		"content": "wrong-scope sentinel",
+	})
+	assertX402FailureReason(t, resp, 403, "x402_grant_scope_mismatch")
+
+	store, err := memory.Default()
+	if err != nil {
+		t.Fatalf("memory store: %v", err)
+	}
+	got, err := store.Query(context.Background(), publicX402IdentityForGrantID("grant-123"), memory.QueryInput{
+		Query: "wrong-scope sentinel",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("query memory after rejected grant: %v", err)
+	}
+	if len(got.Events) != 0 {
+		t.Fatalf("read-scope write-tool grant must not dispatch memory_append, got events: %+v", got.Events)
+	}
+}
+
+func TestX402Grant_AllowsMatchingScopeWriteTool(t *testing.T) {
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	memory.ResetForTests()
+	t.Cleanup(memory.ResetForTests)
+
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Grant.Scope = "write"
+		return resp
+	})
+	defer restore()
+
+	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "memory_append", map[string]any{
+		"content": "matching write-scope sentinel",
+	})
+	assertX402ToolCallSucceeded(t, resp)
+
+	store, err := memory.Default()
+	if err != nil {
+		t.Fatalf("memory store: %v", err)
+	}
+	got, err := store.Query(context.Background(), publicX402IdentityForGrantID("grant-123"), memory.QueryInput{
+		Query: "matching write-scope sentinel",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("query memory after accepted grant: %v", err)
+	}
+	if len(got.Events) != 1 {
+		t.Fatalf("matching write-scope grant should dispatch memory_append once, got events: %+v", got.Events)
+	}
+}
+
+func TestX402Grant_AllowsReadScopeReadTool(t *testing.T) {
+	restore := setupX402GrantTest(t, func(req mcpapp.X402GrantConsumeRequestForTests) mcpapp.X402GrantConsumeResponseForTests {
+		resp := validX402GrantConsumeResponse(req, time.Now().UTC().Add(time.Hour))
+		resp.Grant.Scope = "read"
+		return resp
+	})
+	defer restore()
+
+	resp := invokeX402Tool(t, mustNewTestApp(t), "agent1", "grant-token", "payment-signature-value", "echo", map[string]any{
+		"message": "paid read",
+	})
+	assertX402ToolCallSucceeded(t, resp)
 }
 
 func TestX402Grant_RejectsExpiredGrant(t *testing.T) {
@@ -434,6 +516,10 @@ func invokeX402Tool(t *testing.T, app *apptheory.App, actor string, grant string
 }
 
 func validX402GrantConsumeResponse(req mcpapp.X402GrantConsumeRequestForTests, expiresAt time.Time) mcpapp.X402GrantConsumeResponseForTests {
+	scope := "read"
+	if req.Tool == "memory_append" {
+		scope = "write"
+	}
 	return mcpapp.X402GrantConsumeResponseForTests{
 		Accepted: true,
 		Replayed: false,
@@ -443,6 +529,7 @@ func validX402GrantConsumeResponse(req mcpapp.X402GrantConsumeRequestForTests, e
 			Actor:             req.Actor,
 			Tool:              req.Tool,
 			Capability:        req.Capability,
+			Scope:             scope,
 			PolicyVersion:     "caller-access-payment/v1",
 			Authority:         "scoped_invocation",
 			Status:            "issued",
@@ -460,6 +547,20 @@ func validX402GrantConsumeResponse(req mcpapp.X402GrantConsumeRequestForTests, e
 			UsedCount: 1,
 			MaxUsage:  1,
 		},
+	}
+}
+
+func assertX402ToolCallSucceeded(t *testing.T, resp apptheory.Response) {
+	t.Helper()
+	if resp.Status != 200 {
+		t.Fatalf("expected 200, got %d (%s)", resp.Status, string(resp.Body))
+	}
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
+		t.Fatalf("unmarshal tools/call: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("tools/call error: %+v", rpc.Error)
 	}
 }
 
@@ -483,4 +584,9 @@ func assertX402FailureReason(t *testing.T, resp apptheory.Response, status int, 
 	if details := out.Error.Details; details["paymentEvidence"] != nil || details["grant"] != nil {
 		t.Fatalf("x402 failure leaked raw evidence/grant details: %+v", details)
 	}
+}
+
+func publicX402IdentityForGrantID(grantID string) string {
+	sum := sha256.Sum256([]byte(grantID))
+	return "public_x402:sha256:" + hex.EncodeToString(sum[:])
 }

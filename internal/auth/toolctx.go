@@ -11,7 +11,18 @@ const (
 	toolContextKeyPrincipal toolContextKey = iota
 	toolContextKeyBearerToken
 	toolContextKeyRequestID
+	toolContextKeyRequestSnapshot
 )
+
+// ToolRequestSnapshot carries the sanitized-by-construction request envelope
+// needed by tool-internal gates that must bind authorization to the exact MCP
+// request. It may contain sensitive header values such as raw x402 grant tokens
+// and payment evidence; callers must not log or persist it.
+type ToolRequestSnapshot struct {
+	Headers map[string][]string
+	Body    []byte
+	Path    string
+}
 
 func InjectToolContext(ctx context.Context, principal *Principal, bearerToken string) context.Context {
 	if ctx == nil {
@@ -69,5 +80,40 @@ func RequestIDFromToolContext(ctx context.Context) string {
 	}
 	val := ctx.Value(toolContextKeyRequestID)
 	out, _ := val.(string)
+	return out
+}
+
+func InjectToolRequestSnapshot(ctx context.Context, snapshot ToolRequestSnapshot) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	copied := ToolRequestSnapshot{
+		Headers: cloneHeaders(snapshot.Headers),
+		Body:    append([]byte(nil), snapshot.Body...),
+		Path:    strings.TrimSpace(snapshot.Path),
+	}
+	return context.WithValue(ctx, toolContextKeyRequestSnapshot, copied)
+}
+
+func RequestSnapshotFromToolContext(ctx context.Context) ToolRequestSnapshot {
+	if ctx == nil {
+		return ToolRequestSnapshot{}
+	}
+	snapshot, _ := ctx.Value(toolContextKeyRequestSnapshot).(ToolRequestSnapshot)
+	return ToolRequestSnapshot{
+		Headers: cloneHeaders(snapshot.Headers),
+		Body:    append([]byte(nil), snapshot.Body...),
+		Path:    strings.TrimSpace(snapshot.Path),
+	}
+}
+
+func cloneHeaders(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(headers))
+	for key, values := range headers {
+		out[key] = append([]string(nil), values...)
+	}
 	return out
 }

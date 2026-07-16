@@ -134,11 +134,13 @@ test("lesser table policy uses least-privilege primary table access", () => {
 
 test("managed template pins MCP table logical IDs", () => {
   const got = dynamoTableLogicalIDs(mustResources(synthManagedTemplate()));
-  assert.deepEqual(got, [
+  for (const want of [
     "McpServerSessionTable469EA0FB",
     "McpServerStreamTableC6A2DC7E",
     "McpServerTaskTable72DDFBBB",
-  ]);
+  ]) {
+    assert.equal(got.includes(want), true, `expected managed template to preserve ${want}; got ${got.join(", ")}`);
+  }
 });
 
 test("runtime stack uses AppTheory durable stream table schema", () => {
@@ -230,7 +232,9 @@ test("runtime stack preserves named MCP table fingerprints", () => {
     },
   };
 
-  assert.deepEqual(got, want);
+  for (const [tableName, fingerprint] of Object.entries(want)) {
+    assert.deepEqual(got[tableName], fingerprint);
+  }
 });
 
 test("stream table export name stays stable across baseline reset", () => {
@@ -239,6 +243,95 @@ test("stream table export name stays stable across baseline reset", () => {
   const props = mustRecord(streamExport.Properties, "stream export missing Properties");
 
   assert.equal(mustJSON(props.Value), '{"Ref":"McpServerStreamTableC6A2DC7E"}');
+});
+
+test("runtime stack provisions instance-plane lambda with owned tables", () => {
+  const resources = mustResources(synthRuntimeTemplate());
+  const instanceHandler = instanceMcpHandlerLambdaFunction(resources);
+  const instanceHandlerProps = mustRecord(instanceHandler.Properties, "instance lambda missing Properties");
+  const vars = lambdaEnvironmentVariables(instanceHandler);
+
+  assert.equal(instanceHandlerProps.Handler, "instance");
+  assert.equal(vars.INSTANCE_MCP_ENDPOINT, "https://api.dev.example.com/instance/{surface}/mcp");
+  assert.equal(mustJSON(vars.INSTANCE_CONTENT_TABLE), '{"Ref":"InstanceContentTable"}');
+  assert.equal(mustJSON(vars.INSTANCE_REGISTRY_TABLE), '{"Ref":"InstanceRegistryTable"}');
+  assert.equal(mustJSON(vars.INSTANCE_GRANT_TABLE), '{"Ref":"InstanceGrantTable"}');
+  assert.equal(mustJSON(vars.INSTANCE_SESSION_TABLE), '{"Ref":"InstanceSessionTable"}');
+  assert.equal(mustJSON(vars.JWT_SECRET_ARN), '"{{resolve:ssm:/theory/shared/secrets/jwt-secret-arn}}"');
+
+  const got = dynamoTableFingerprints(resources);
+  const want: Record<string, DynamoTableFingerprint> = {
+    "theory-dev-instance-content": {
+      logical_id: "InstanceContentTable",
+      table_name: "theory-dev-instance-content",
+      partition_key: "pk",
+      sort_key: "sk",
+      ttl_attribute: "",
+    },
+    "theory-dev-instance-registry": {
+      logical_id: "InstanceRegistryTable",
+      table_name: "theory-dev-instance-registry",
+      partition_key: "pk",
+      sort_key: "sk",
+      ttl_attribute: "",
+    },
+    "theory-dev-instance-grants": {
+      logical_id: "InstanceGrantTable",
+      table_name: "theory-dev-instance-grants",
+      partition_key: "pk",
+      sort_key: "sk",
+      ttl_attribute: "",
+    },
+    "theory-dev-instance-sessions": {
+      logical_id: "InstanceSessionTable",
+      table_name: "theory-dev-instance-sessions",
+      partition_key: "pk",
+      sort_key: "sk",
+      ttl_attribute: "expiresAt",
+    },
+  };
+  for (const [tableName, fingerprint] of Object.entries(want)) {
+    assert.deepEqual(got[tableName], fingerprint);
+  }
+
+  const statements = allPolicyStatements(resources).filter((statement) =>
+    mustJSON(extractStatementResources(statement)).includes("InstanceContentTable"),
+  );
+  const instanceTablePolicyJSON = mustJSON(statements);
+  for (const wantAction of [
+    '"dynamodb:BatchGetItem"',
+    '"dynamodb:BatchWriteItem"',
+    '"dynamodb:DeleteItem"',
+    '"dynamodb:DescribeTable"',
+    '"dynamodb:GetItem"',
+    '"dynamodb:PutItem"',
+    '"dynamodb:Query"',
+    '"dynamodb:UpdateItem"',
+  ]) {
+    assert.equal(instanceTablePolicyJSON.includes(wantAction), true, `expected ${wantAction} in ${instanceTablePolicyJSON}`);
+  }
+  assert.equal(instanceTablePolicyJSON.includes('"dynamodb:Scan"'), false, `expected instance table policy to omit Scan: ${instanceTablePolicyJSON}`);
+});
+
+test("runtime stack publishes additive instance-plane SSM exports", () => {
+  const resources = mustResources(synthRuntimeTemplate());
+  const expected: Record<string, string> = {
+    "/theory/dev/lesser-body/exports/v1/instance_mcp_lambda_arn": "InstanceMcpHandler",
+    "/theory/dev/lesser-body/exports/v1/instance_content_table_name": "InstanceContentTable",
+    "/theory/dev/lesser-body/exports/v1/instance_registry_table_name": "InstanceRegistryTable",
+    "/theory/dev/lesser-body/exports/v1/instance_grant_table_name": "InstanceGrantTable",
+    "/theory/dev/lesser-body/exports/v1/instance_session_table_name": "InstanceSessionTable",
+  };
+
+  for (const [name, ref] of Object.entries(expected)) {
+    const resource = findSSMParameterByName(resources, name);
+    const props = mustRecord(resource.Properties, `export ${name} missing Properties`);
+    assert.equal(mustJSON(props.Value).includes(ref), true, `expected ${name} to reference ${ref}, got ${mustJSON(props.Value)}`);
+  }
+
+  const endpoint = findSSMParameterByName(resources, "/theory/dev/lesser-body/exports/v1/instance_mcp_endpoint_url");
+  const endpointProps = mustRecord(endpoint.Properties, "instance endpoint export missing Properties");
+  assert.equal(endpointProps.Value, "https://api.dev.example.com/instance/{surface}/mcp");
 });
 
 interface CloudFormationTemplate {
@@ -277,8 +370,10 @@ function synthRuntimeTemplate(): CloudFormationTemplate {
     appName: "theory",
     stage: "dev",
     code: lambda.Code.fromAsset(fakeLambdaAssetDir()),
+    instanceCode: lambda.Code.fromAsset(fakeLambdaAssetDir()),
     serviceVersion: "test",
     publicEndpoint: "https://api.dev.example.com/mcp/{actor}",
+    instancePublicEndpoint: "https://api.dev.example.com/instance/{surface}/mcp",
     lesserApiBaseUrl: "https://api.dev.example.com",
     allowedOrigins: "https://claude.ai",
     jwtSecretArnParamPath: "/theory/shared/secrets/jwt-secret-arn",
@@ -363,11 +458,24 @@ function mcpHandlerLambdaFunction(resources: Record<string, CloudFormationResour
       continue;
     }
     const props = mustRecord(resource.Properties, "lambda missing Properties");
-    if (props.Handler === "bootstrap") {
+    if (props.Handler === "bootstrap" && Object.hasOwn(lambdaEnvironmentVariables(resource), "MCP_ENDPOINT")) {
       return resource;
     }
   }
   throw new Error("template missing MCP handler AWS::Lambda::Function resource");
+}
+
+function instanceMcpHandlerLambdaFunction(resources: Record<string, CloudFormationResource>): CloudFormationResource {
+  for (const resource of Object.values(resources)) {
+    if (resource.Type !== "AWS::Lambda::Function") {
+      continue;
+    }
+    const props = mustRecord(resource.Properties, "lambda missing Properties");
+    if (props.Handler === "instance" && Object.hasOwn(lambdaEnvironmentVariables(resource), "INSTANCE_MCP_ENDPOINT")) {
+      return resource;
+    }
+  }
+  throw new Error("template missing instance MCP handler AWS::Lambda::Function resource");
 }
 
 function lambdaEnvironmentVariables(lambdaResource: CloudFormationResource): CloudFormationRecord {
@@ -477,7 +585,10 @@ function dynamoTableKeyNames(logicalId: string, props: CloudFormationRecord): [s
 }
 
 function dynamoTableTtlAttribute(logicalId: string, props: CloudFormationRecord): string {
-  const spec = mustRecord(props.TimeToLiveSpecification, `table ${logicalId} missing TimeToLiveSpecification`);
+  if (props.TimeToLiveSpecification === undefined) {
+    return "";
+  }
+  const spec = mustRecord(props.TimeToLiveSpecification, `table ${logicalId} TimeToLiveSpecification has unexpected type`);
   if (typeof spec.AttributeName !== "string" || spec.AttributeName === "") {
     throw new Error(`table ${logicalId} missing TTL attribute name`);
   }

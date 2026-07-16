@@ -28,8 +28,10 @@ interface LesserBodyRuntimeProps {
   readonly appName: string;
   readonly stage: string;
   readonly code: lambda.Code;
+  readonly instanceCode: lambda.Code;
   readonly serviceVersion?: string;
   readonly publicEndpoint: string;
+  readonly instancePublicEndpoint: string;
   readonly lesserApiBaseUrl?: string;
   readonly allowedOrigins: string;
   readonly jwtSecretArnParamPath?: string;
@@ -41,6 +43,10 @@ interface LesserBodyRuntimeProps {
 const MCP_SESSION_TABLE_LOGICAL_ID = "McpServerSessionTable469EA0FB";
 const MCP_STREAM_TABLE_LOGICAL_ID = "McpServerStreamTableC6A2DC7E";
 const MCP_TASK_TABLE_LOGICAL_ID = "McpServerTaskTable72DDFBBB";
+const INSTANCE_CONTENT_TABLE_LOGICAL_ID = "InstanceContentTable";
+const INSTANCE_REGISTRY_TABLE_LOGICAL_ID = "InstanceRegistryTable";
+const INSTANCE_GRANT_TABLE_LOGICAL_ID = "InstanceGrantTable";
+const INSTANCE_SESSION_TABLE_LOGICAL_ID = "InstanceSessionTable";
 
 export class LesserBodyStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LesserBodyStackProps) {
@@ -55,8 +61,10 @@ export class LesserBodyStack extends cdk.Stack {
       appName,
       stage,
       code: lambda.Code.fromAsset("../dist/lesser-body.zip"),
+      instanceCode: lambda.Code.fromAsset("../dist/lesser-body-instance.zip"),
       serviceVersion: "dev",
       publicEndpoint: publicMcpEndpoint(stageDomain),
+      instancePublicEndpoint: publicInstanceMcpEndpoint(stageDomain),
       lesserApiBaseUrl: lesserApiBaseUrl(stageDomain),
       allowedOrigins: mcpAllowedOrigins(stageDomain),
       lesserHostInstanceKeyArn: exactInstanceKeyArn,
@@ -127,8 +135,10 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
         bucketNameParam: codeBucketParam,
         objectKeyParam: codeKeyParam,
       }),
+      instanceCode: lambda.Code.fromAsset("../dist/lesser-body-instance.zip"),
       serviceVersion,
       publicEndpoint: publicMcpEndpoint(stageDomain),
+      instancePublicEndpoint: publicInstanceMcpEndpoint(stageDomain),
       lesserApiBaseUrl: lesserApiBaseUrl(stageDomain),
       allowedOrigins: mcpAllowedOrigins(stageDomain),
       jwtSecretArnParamPath: jwtSecretArnParamPathParam.valueAsString,
@@ -305,6 +315,8 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
     });
     mcpStreamTableParam.overrideLogicalId("McpStreamTableParam604E9EFA");
   }
+
+  configureInstancePlaneStack(stack, props, jwtSecretArnValue, jwtSecretKeyArnValue, jwtSecret);
 }
 
 function overrideRemoteMcpTableLogicalId(table: dynamodb.ITable | undefined, logicalId: string): void {
@@ -319,6 +331,141 @@ function overrideRemoteMcpTableLogicalId(table: dynamodb.ITable | undefined, log
     throw new Error("remote MCP table default child is not a CloudFormation resource");
   }
   defaultChild.overrideLogicalId(logicalId);
+}
+
+interface InstancePlaneTables {
+  readonly content: dynamodb.Table;
+  readonly registry: dynamodb.Table;
+  readonly grant: dynamodb.Table;
+  readonly session: dynamodb.Table;
+}
+
+function configureInstancePlaneStack(
+  stack: cdk.Stack,
+  props: LesserBodyRuntimeProps,
+  jwtSecretArnValue: string,
+  jwtSecretKeyArnValue: string,
+  jwtSecret: secretsmanager.ISecret,
+): void {
+  const tables = createInstancePlaneTables(stack, props.appName, props.stage);
+  const handler = new lambda.Function(stack, "InstanceMcpHandler", {
+    runtime: lambda.Runtime.PROVIDED_AL2023,
+    architecture: lambda.Architecture.ARM_64,
+    // provided.al2023 zip functions still enter through the packaged bootstrap;
+    // this handler label keeps managed-template checks able to distinguish Ka.
+    handler: "instance",
+    code: props.instanceCode,
+    functionName: cdk.Fn.join("-", [props.appName, props.stage, "lesser-body", "instance-mcp"]),
+    memorySize: 1024,
+    timeout: cdk.Duration.seconds(30),
+    tracing: lambda.Tracing.ACTIVE,
+    environment: {
+      SERVICE_VERSION: props.serviceVersion?.trim() || "dev",
+      JWT_SECRET_ARN: jwtSecretArnValue,
+      INSTANCE_MCP_ENDPOINT: props.instancePublicEndpoint,
+      INSTANCE_CONTENT_TABLE: tables.content.tableName,
+      INSTANCE_REGISTRY_TABLE: tables.registry.tableName,
+      INSTANCE_GRANT_TABLE: tables.grant.tableName,
+      INSTANCE_SESSION_TABLE: tables.session.tableName,
+    },
+  });
+
+  jwtSecret.grantRead(handler);
+  handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: ["kms:Decrypt", "kms:DescribeKey"],
+    resources: [jwtSecretKeyArnValue],
+  }));
+  handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: [
+      "dynamodb:BatchGetItem",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:UpdateItem",
+    ],
+    resources: [
+      tables.content.tableArn,
+      tables.registry.tableArn,
+      tables.grant.tableArn,
+      tables.session.tableArn,
+    ],
+  }));
+
+  const instanceMcpLambdaArnParam = new ssm.CfnParameter(stack, "InstanceMcpLambdaArnParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_mcp_lambda_arn"),
+    type: "String",
+    value: handler.functionArn,
+  });
+  instanceMcpLambdaArnParam.overrideLogicalId("InstanceMcpLambdaArnParam");
+
+  const instanceMcpEndpointParam = new ssm.CfnParameter(stack, "InstanceMcpEndpointParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_mcp_endpoint_url"),
+    type: "String",
+    value: props.instancePublicEndpoint,
+  });
+  instanceMcpEndpointParam.overrideLogicalId("InstanceMcpEndpointParam");
+
+  const instanceContentTableParam = new ssm.CfnParameter(stack, "InstanceContentTableParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_content_table_name"),
+    type: "String",
+    value: tables.content.tableName,
+  });
+  instanceContentTableParam.overrideLogicalId("InstanceContentTableParam");
+
+  const instanceRegistryTableParam = new ssm.CfnParameter(stack, "InstanceRegistryTableParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_registry_table_name"),
+    type: "String",
+    value: tables.registry.tableName,
+  });
+  instanceRegistryTableParam.overrideLogicalId("InstanceRegistryTableParam");
+
+  const instanceGrantTableParam = new ssm.CfnParameter(stack, "InstanceGrantTableParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_grant_table_name"),
+    type: "String",
+    value: tables.grant.tableName,
+  });
+  instanceGrantTableParam.overrideLogicalId("InstanceGrantTableParam");
+
+  const instanceSessionTableParam = new ssm.CfnParameter(stack, "InstanceSessionTableParam", {
+    name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "instance_session_table_name"),
+    type: "String",
+    value: tables.session.tableName,
+  });
+  instanceSessionTableParam.overrideLogicalId("InstanceSessionTableParam");
+}
+
+function createInstancePlaneTables(stack: cdk.Stack, appName: string, stage: string): InstancePlaneTables {
+  const content = newInstancePlaneTable(stack, "InstanceContentTable", appName, stage, "content", INSTANCE_CONTENT_TABLE_LOGICAL_ID);
+  const registry = newInstancePlaneTable(stack, "InstanceRegistryTable", appName, stage, "registry", INSTANCE_REGISTRY_TABLE_LOGICAL_ID);
+  const grant = newInstancePlaneTable(stack, "InstanceGrantTable", appName, stage, "grants", INSTANCE_GRANT_TABLE_LOGICAL_ID);
+  const session = newInstancePlaneTable(stack, "InstanceSessionTable", appName, stage, "sessions", INSTANCE_SESSION_TABLE_LOGICAL_ID, "expiresAt");
+  return { content, registry, grant, session };
+}
+
+function newInstancePlaneTable(
+  stack: cdk.Stack,
+  id: string,
+  appName: string,
+  stage: string,
+  suffix: string,
+  logicalId: string,
+  ttlAttribute?: string,
+): dynamodb.Table {
+  const table = new dynamodb.Table(stack, id, {
+    tableName: cdk.Fn.join("-", [appName, stage, "instance", suffix]),
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
+    timeToLiveAttribute: ttlAttribute,
+  });
+  overrideRemoteMcpTableLogicalId(table, logicalId);
+  return table;
 }
 
 function ssmParamName(...parts: string[]): string {
@@ -409,6 +556,10 @@ function resolvedStageDomainFromDeployInputs(stack: cdk.Stack, stage: string, ba
 
 function publicMcpEndpoint(stageDomain: string): string {
   return cdk.Fn.join("", ["https://api.", stageDomain, "/mcp/{actor}"]);
+}
+
+function publicInstanceMcpEndpoint(stageDomain: string): string {
+  return cdk.Fn.join("", ["https://api.", stageDomain, "/instance/{surface}/mcp"]);
 }
 
 function lesserApiBaseUrl(stageDomain: string): string {

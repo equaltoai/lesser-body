@@ -1,0 +1,58 @@
+{
+  "schema": "gov_infra_pack.v1",
+  "project": {
+    "name": "lesser-body",
+    "repository": "equaltoai/lesser-body",
+    "steward": "body"
+  },
+  "profile": {
+    "id": "software_repo_gov_infra",
+    "terminates_in_verifier": true,
+    "ci_hook_required": true,
+    "allowed_write_scope": [
+      "gov-infra/**",
+      ".github/workflows/ci.yml"
+    ]
+  },
+  "verifier": {
+    "command": "bash gov-infra/verifiers/gov-verify-rubric.sh",
+    "report_path": "gov-infra/evidence/gov-rubric-report.json",
+    "report_schema": "gov_rubric_report.v1"
+  },
+  "authoritative_sources_inspected": [
+    {
+      "path": ".codex/theorymcp/body/install-marker.json",
+      "fact": "layout_profile_version=software_repo_gov_infra; layout_checksum=sha256:1a80ff513d2ceb9287c029c2ec69a2d0fed3d8ebaf9413e5f8cdd12b709c9117"
+    },
+    {
+      "surface": "mcp__theorymcp.server_instructions",
+      "fact": "body published agent instructions version 10; feature->staging->main branch profile; ci / verify required for feature->staging"
+    },
+    {
+      "path": "AGENTS.md",
+      "fact": "body_lab/TheoryMCP steward-routing trust model and routed GitHub provenance preference"
+    },
+    {
+      "path": ".agents/skills/apply-and-verify-governance/SKILL.md",
+      "fact": "software_repo_gov_infra steward applies governance and runs repo-local gov_rubric_report.v1 verifier evidence"
+    },
+    {
+      "path": "Factory issue #401 assignment comment",
+      "url": "https://github.com/equaltoai/lesser-body/issues/401#issuecomment-4982280964",
+      "fact": "expected verifier/report paths, schema gov_rubric_report.v1, PASS status, exact-ref evidence, governance-only scope"
+    },
+    {
+      "path": "progenitor docs/agent-designs/2026-07-05-rubric-gate-skills.md",
+      "fact": "steward lane profile-defined verifier/report/schema and ci_hook_required=true"
+    },
+    {
+      "path": "progenitor docs/patterns/parent-stages-genome-child-applies.md",
+      "fact": "child stewards checksum-verify parent-staged governance genomes before gov-init; no checksum-able genome was staged here"
+    }
+  ],
+  "namespace_genome": {
+    "status": "not_staged_in_this_checkout",
+    "agent_route_govern_tools_available": false,
+    "note": "No namespace manifest or checksum-bearing governance genome bytes were available to verify in this body steward session."
+  }
+}

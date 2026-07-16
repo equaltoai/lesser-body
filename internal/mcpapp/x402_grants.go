@@ -31,7 +31,6 @@ const (
 	x402GrantConsumePathPrefix  = "/api/v1/soul/x402/grants/"
 	x402GrantConsumePathSuffix  = "/consume"
 	x402InvocationGrantVersion  = "scoped-x402-invocation-grant/v1"
-	x402InvocationGrantScope    = "tools/call"
 	x402MaxEvidenceHeaderLength = 64 << 10
 )
 
@@ -69,6 +68,7 @@ type x402InvocationGrantView struct {
 	Actor             string                  `json:"actor,omitempty"`
 	Capability        string                  `json:"capability,omitempty"`
 	Tool              string                  `json:"tool,omitempty"`
+	Scope             string                  `json:"scope,omitempty"`
 	Resource          string                  `json:"resource,omitempty"`
 	RequestHash       string                  `json:"requestHash,omitempty"`
 	CallerSubjectHash string                  `json:"callerSubjectHash,omitempty"`
@@ -378,6 +378,10 @@ func normalizeX402GrantConsumeResponse(req x402GrantConsumeRequest, resp x402Gra
 	if !strings.EqualFold(strings.TrimSpace(grant.Tool), strings.TrimSpace(req.Tool)) {
 		return failure("x402_grant_tool_mismatch")
 	}
+	grantScope := x402NormalizeAccessScope(grant.Scope)
+	if !x402ScopeAuthorizesRequiredScopes(grantScope, requiredScopesForTool(req.Tool)) {
+		return failure("x402_grant_scope_mismatch")
+	}
 	if !strings.EqualFold(strings.TrimSpace(grant.Capability), strings.TrimSpace(req.Capability)) {
 		return failure("x402_grant_capability_mismatch")
 	}
@@ -435,7 +439,7 @@ func normalizeX402GrantConsumeResponse(req x402GrantConsumeRequest, resp x402Gra
 		Actor:               strings.TrimSpace(grant.Actor),
 		Tool:                strings.TrimSpace(grant.Tool),
 		Capability:          strings.TrimSpace(grant.Capability),
-		Scope:               x402InvocationGrantScope,
+		Scope:               grantScope,
 		GrantVersion:        x402InvocationGrantVersion,
 		PolicyVersion:       strings.TrimSpace(grant.PolicyVersion),
 		Resource:            strings.TrimSpace(grant.Resource),
@@ -510,7 +514,51 @@ func x402GrantAllowsMCPRequest(req *mcpruntime.Request, grant *auth.X402Invocati
 	if req.Method != "tools/call" {
 		return false
 	}
-	return strings.EqualFold(requestedToolName(req), strings.TrimSpace(grant.Tool))
+	toolName := requestedToolName(req)
+	if !strings.EqualFold(toolName, strings.TrimSpace(grant.Tool)) {
+		return false
+	}
+	return x402ScopeAuthorizesRequiredScopes(grant.Scope, requiredScopesForTool(toolName))
+}
+
+func x402NormalizeAccessScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "read":
+		return "read"
+	case "write":
+		return "write"
+	case "admin":
+		return "admin"
+	default:
+		return ""
+	}
+}
+
+func x402ScopeAuthorizesRequiredScopes(grantScope string, requiredScopes []string) bool {
+	grantRank := x402AccessScopeRank(grantScope)
+	if grantRank == 0 || len(requiredScopes) == 0 {
+		return false
+	}
+	for _, requiredScope := range requiredScopes {
+		requiredRank := x402AccessScopeRank(requiredScope)
+		if requiredRank > 0 && grantRank >= requiredRank {
+			return true
+		}
+	}
+	return false
+}
+
+func x402AccessScopeRank(scope string) int {
+	switch x402NormalizeAccessScope(scope) {
+	case "read":
+		return 1
+	case "write":
+		return 2
+	case "admin":
+		return 3
+	default:
+		return 0
+	}
 }
 
 func x402GrantFailureResponse(ctx *apptheory.Context, failure *x402GrantFailure) *apptheory.Response {

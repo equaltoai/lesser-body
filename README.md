@@ -11,6 +11,10 @@ routes:
 - `GET /.well-known/mcp.json` → lesser-body (public discovery)
 - `GET /.well-known/oauth-protected-resource/mcp/{actor}` → lesser-body (public OAuth resource metadata)
 - `POST /mcp/{actor}` → lesser-body (authenticated MCP JSON-RPC)
+- `GET /.well-known/oauth-protected-resource/instance/{ptah|ba}/mcp` → lesser-body instance plane
+  (AppTheory/RFC 9728-backed Ptah/Ba OAuth resource metadata)
+- `POST /instance/ptah/mcp` and `POST /instance/ba/mcp` → lesser-body instance plane
+  (authenticated account-holder operator MCP)
 
 It reuses Lesser’s existing primitives:
 
@@ -18,6 +22,7 @@ It reuses Lesser’s existing primitives:
 - Lesser stage DynamoDB table (for memory events)
 - Lesser REST API (for social tools like timelines and post creation)
 - lesser-host Soul Comm APIs (for email/SMS/voice mailbox and outbound communication delegation)
+- Body-owned Ptah/Ba instance-plane tables for operator content, registry, one-time grants, and instance sessions
 
 For inbound MCP clients, the canonical auth path is the Lesser OAuth connector flow. Managed instance key and
 hardcoded bearer-token client configs are deprecated compatibility paths; see `docs/oauth-migration.md`.
@@ -25,6 +30,7 @@ hardcoded bearer-token client configs are deprecated compatibility paths; see `d
 ## Key Features
 
 - **MCP tools/resources/prompts** powered by AppTheory’s MCP runtime
+- **Ptah/Ba instance-plane operator surfaces** backed by AppTheory MCP and RFC 9728 protected-resource metadata
 - **SSM-first cross-stack wiring** (no CloudFormation exports/imports)
 - **Auth + scope enforcement** (`read|write|admin`) for tool calls
 - **Optional DynamoDB-backed MCP sessions** for production continuity
@@ -36,7 +42,7 @@ hardcoded bearer-token client configs are deprecated compatibility paths; see `d
 
 - Deploy: `docs/deployment.md`
 - Configure: `docs/configuration.md`
-- Verify MCP: `docs/mcp.md`
+- Verify MCP and Ptah/Ba instance plane: `docs/mcp.md`
 - Migrate legacy clients: `docs/oauth-migration.md`
 - Plan operator automation replacement: `docs/operator-auth-replacement.md`
 

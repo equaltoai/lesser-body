@@ -12,6 +12,10 @@ These legacy inbound patterns are deprecated:
 - Simulacrum runtime credentials issued via `delegateToAgent()`
 - managed instance key as a direct `/mcp/{actor}` bearer token
 
+When `MCP_ALLOW_LEGACY_INSTANCE_KEY=true` enables managed-instance-key inbound compatibility, lesser-body treats that
+caller as `admin` for MCP scope enforcement. Use that path only as an explicit, time-boxed rollback bridge while
+clients move to OAuth; do not treat it as a normal least-privilege client mode.
+
 This guide shows how to migrate without removing the `LESSER_HOST_INSTANCE_KEY` that host-backed communication tools
 and scoped x402 grant consume/verification still need for server-to-server calls into lesser-host.
 

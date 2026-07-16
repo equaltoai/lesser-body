@@ -1,0 +1,1 @@
+Report shape is generated after all checks complete. This check reserves an evidence slot so downstream gates can see that the schema/report path is owned by this verifier.
