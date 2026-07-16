@@ -8,6 +8,10 @@ API domain as:
 - `GET /.well-known/mcp.json` (public discovery)
 - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (public OAuth protected-resource metadata)
 - `POST /mcp/{actor}` (authenticated MCP JSON-RPC)
+- `GET /.well-known/oauth-protected-resource/instance/ptah/mcp` and
+  `GET /.well-known/oauth-protected-resource/instance/ba/mcp` (public Ptah/Ba OAuth protected-resource metadata)
+- `POST /instance/ptah/mcp` and `POST /instance/ba/mcp` (authenticated account-holder instance-plane MCP)
+- `GET /instance/downloads/installer-grants/{grantId}` (Ba one-time install-pack download grants)
 
 ## Prerequisites
 
@@ -21,17 +25,21 @@ API domain as:
 This repo’s CDK stack deploys:
 
 - `lesser-body` MCP Lambda (`cmd/lesser-body`)
+- `lesser-body` instance-plane Lambda (`cmd/lesser-body-instance`) for Ptah/Ba
 - A standalone **Remote MCP gateway** (API Gateway REST API v1) via AppTheory CDK (`AppTheoryRemoteMcpServer`)
 - (Recommended) DynamoDB session table for MCP sessions
 - DynamoDB stream table for MCP streaming state
 - Private S3 stream-spill bucket for large logical MCP stream events
 - DynamoDB task table for future MCP task runtime state, with the `tasks` capability still disabled
+- Body-owned DynamoDB tables for Ptah/Ba content, registry, one-time grants, and instance-plane MCP sessions
 - SSM exports used by the Lesser stack to wire routes
 
 Notes:
 
 - The **canonical** client-facing endpoint in the Lesser ecosystem is `https://api.<stageDomain>/mcp/{actor}` (wired by
   the Lesser stack when `soulEnabled=true`).
+- The canonical instance-plane endpoint template is `https://api.<stageDomain>/instance/{surface}/mcp` (wired by the
+  Lesser stack when its instance-plane routing flag is enabled).
 - The standalone execute-api endpoint exists as part of the current `lesser-body` stack implementation; treat it as an
   implementation detail unless you are intentionally using it for isolated testing.
 
@@ -49,6 +57,12 @@ And it publishes these (consumed by Lesser when `soulEnabled=true`):
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url`
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_session_table_name` (when session table is enabled)
 - `/<app>/<stage>/lesser-body/exports/v1/mcp_stream_table_name`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_mcp_lambda_arn`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_mcp_endpoint_url`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_content_table_name`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_registry_table_name`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_grant_table_name`
+- `/<app>/<stage>/lesser-body/exports/v1/instance_session_table_name`
 
 The stream-spill bucket is internal to body's AppTheory-backed MCP transport. It is not an SSM export and does not
 change the public MCP endpoint contract; clients still resume by logical `Last-Event-ID`.
@@ -59,16 +73,22 @@ AppTheory's task runtime for the read-only `skill_bundle_get` task pilot and the
 
 ## Deploy order (avoid the “missing SSM param” trap)
 
-Because Lesser wires `/mcp/{actor}` by importing `mcp_lambda_arn` from SSM, and `lesser-body` requires Lesser’s SSM exports, the
-safe sequence is:
+Because Lesser wires `/mcp/{actor}` and `/instance/{surface}/mcp` by importing Body Lambda ARNs from SSM, and
+`lesser-body` requires Lesser's SSM exports, the safe first-time sequence is:
 
-1) Deploy Lesser with `soulEnabled=false` (so it does **not** try to import lesser-body yet)
-2) Deploy `lesser-body` (this repo)
-3) Re-deploy Lesser with `soulEnabled=true` (so `/mcp/{actor}`, `/.well-known/mcp.json`, and
-   `/.well-known/oauth-protected-resource/mcp/{actor}` route to the lesser-body Lambda)
+1) Deploy Lesser with Body routing disabled (`soulEnabled=false`; keep the Lesser-side `instancePlaneEnabled` routing
+   flag off as well) so it does **not** try to import Body SSM exports yet.
+2) Deploy `lesser-body` (this repo). This publishes the Ka exports plus the instance-plane exports and provisions the
+   Ptah/Ba state tables.
+3) Re-deploy Lesser with `soulEnabled=true` and, when enabling Ptah/Ba, `instancePlaneEnabled=true` so
+   `/mcp/{actor}`, `/.well-known/mcp.json`, `/.well-known/oauth-protected-resource/mcp/{actor}`,
+   `/.well-known/oauth-protected-resource/instance/ptah/mcp`,
+   `/.well-known/oauth-protected-resource/instance/ba/mcp`, `/instance/ptah/mcp`, `/instance/ba/mcp`, and the Ba
+   installer-grant download route proxy to Body.
 
-If you already have `mcp_lambda_arn` present for the target stage, you can deploy Lesser with `soulEnabled=true`
-immediately.
+If you already have the relevant Body SSM exports present for the target stage, you can deploy Lesser with the matching
+routing flag(s) enabled immediately. Do not rename, delete, or manually patch the `/exports/v1/` SSM parameters; older
+Lesser deployments may still read them.
 
 ## Build the Lambda artifact
 
@@ -81,6 +101,7 @@ bash scripts/build.sh
 Output:
 
 - `dist/lesser-body.zip`
+- `dist/lesser-body-instance.zip`
 
 ## Deploy (CDK directly)
 
@@ -165,6 +186,8 @@ After deploy, confirm exports exist:
 ```bash
 aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/mcp_lambda_arn"
 aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/mcp_endpoint_url"
+aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/instance_mcp_lambda_arn"
+aws ssm get-parameter --name "/<app>/<stage>/lesser-body/exports/v1/instance_mcp_endpoint_url"
 ```
 
 Do not expect an `mcp_task_table_name` export in this phase; the task table remains an internal AppTheory runtime asset
@@ -201,6 +224,26 @@ Expected headers include:
 - `vary: origin`
 
 MCP calls require auth. See `docs/mcp.md` for examples and auth expectations.
+
+When Lesser is also deployed with `instancePlaneEnabled=true`, verify the AppTheory/RFC 9728-backed Ptah/Ba metadata
+before invoking instance tools:
+
+```bash
+curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource/instance/ptah/mcp" | jq .
+curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource/instance/ba/mcp" | jq .
+```
+
+Expected instance protected-resource fields are the same `resource`, `authorization_servers`, `scopes_supported`, and
+`bearer_methods_supported` fields. `resource` must match the exact instance endpoint
+(`https://api.<stageDomain>/instance/ptah/mcp` or `https://api.<stageDomain>/instance/ba/mcp`), and scopes should remain
+the public Lesser OAuth catalog (`read`, `write`, `follow`, `push`).
+
+After metadata verification, use an account-holder OAuth token with an audience for the exact instance resource URL,
+send MCP `initialize`, and then call authenticated `tools/list` on the Ptah or Ba endpoint. Do not synthesize local
+OAuth metadata, skip AppTheory initialization, or reuse actor-scoped `/mcp/{actor}` tokens against instance resources.
+
+Project 48 status note: the #364 Ptah/Ba lab canary evidence and M10 rollout/soak remain pending. Do not mark lab soak,
+deploy-stage staging soak, or live rollout complete from the metadata checks above alone.
 
 For host-backed communication validation in lab, run the mailbox canary with an actor-scoped OAuth token. The script
 checks `identity_whoami`, `identity_lookup`, default/standard mailbox compatibility, and explicit

@@ -15,6 +15,7 @@ This directory contains the canonical operator + developer documentation for `le
 1) Deploy the plugin (this repo): `docs/deployment.md`
 2) Managed release contract: `docs/managed-deploy-contract.md`
 3) Configure and verify: `docs/configuration.md`, `docs/mcp.md`
+   - Ptah/Ba instance-plane operator chapter: `docs/mcp.md#instance-plane-operator-chapter-ptahba`
 4) Managed deploy inventory/history: `docs/managed-deploy-inventory.md`
 5) Managed multi-asset fixture: `docs/managed-deploy-fixtures/app-theory-v1.5.0-multi-asset/`
 6) Migrate legacy bearer-token clients: `docs/oauth-migration.md`
@@ -44,6 +45,10 @@ Local dev guide: `docs/development.md`
 - Discovery doc: `GET https://api.<stageDomain>/.well-known/mcp.json`
 - OAuth protected-resource doc: `GET https://api.<stageDomain>/.well-known/oauth-protected-resource/mcp/<actor>`
 - MCP endpoint: `POST https://api.<stageDomain>/mcp/<actor>`
+- Instance-plane OAuth protected-resource docs:
+  `GET https://api.<stageDomain>/.well-known/oauth-protected-resource/instance/{ptah|ba}/mcp`
+- Instance-plane MCP endpoints: `POST https://api.<stageDomain>/instance/ptah/mcp` and
+  `POST https://api.<stageDomain>/instance/ba/mcp`
 
 Protocol + tool catalog: `docs/mcp.md`
 - Skills client flow: `docs/skills-mcp.md`

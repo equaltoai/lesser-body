@@ -9,20 +9,37 @@ stage and reuse that stage’s existing resources.
 
 ```
 MCP client (AgentCore / other)
-  └── HTTPS POST /mcp (api.<stageDomain>)
+  └── HTTPS POST /mcp/{actor} (api.<stageDomain>)
         └── API Gateway (Lesser REST API)
-              └── Lambda (lesser-body)
-                    ├── MCP server (tools/resources/prompts)
+              └── Lambda (lesser-body Ka)
+                    ├── AppTheory MCP server (tools/resources/prompts)
                     ├── Calls Lesser REST API for social tools
                     ├── Calls lesser-host Soul Comm APIs for email/SMS/voice mailbox and send/reply
                     └── Reads/writes Lesser DynamoDB table for memory events
+
+Operator client
+  ├── HTTPS POST /instance/ptah/mcp (api.<stageDomain>)
+  │     └── Lesser API domain proxy
+  │           └── Lambda (lesser-body instance plane / Ptah)
+  │                 ├── AppTheory MCP server (account-holder orchestration tools)
+  │                 ├── Body-owned INSTANCE_CONTENT_TABLE / INSTANCE_REGISTRY_TABLE
+  │                 └── Lesser-owned APIs for delegation and hosted soul/body binding
+  └── HTTPS POST /instance/ba/mcp (api.<stageDomain>)
+        └── Lesser API domain proxy
+              └── Lambda (lesser-body instance plane / Ba)
+                    ├── AppTheory MCP server (install-pack planning tool)
+                    ├── Body-owned INSTANCE_CONTENT_TABLE / INSTANCE_GRANT_TABLE
+                    └── GET /instance/downloads/installer-grants/{grantId} for one-time ZIP downloads
 ```
 
 Notes:
 
 - The `lesser-body` CDK stack currently provisions its own API Gateway REST API v1 (AppTheory “Remote MCP server”).
   In the Lesser ecosystem, the intended client-facing path is still **through the Lesser API custom domain**
-  (`https://api.<stageDomain>/mcp`) when `soulEnabled=true`.
+  (`https://api.<stageDomain>/mcp/{actor}`) when `soulEnabled=true`.
+- The Ptah/Ba instance plane is also reached through the Lesser API custom domain. It uses a separate Lambda entrypoint,
+  separate AppTheory MCP server instances, and Body-owned instance tables so Ptah/Ba operator state does not become
+  Lesser actor-table writes.
 
 ## Components
 
@@ -32,7 +49,16 @@ Notes:
   - boots an AppTheory app
   - mounts:
     - `GET /.well-known/mcp.json` (discovery)
+    - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (RFC 9728 protected-resource metadata)
     - `/mcp` (MCP JSON-RPC handler; auth required)
+- `cmd/lesser-body-instance/main.go`
+  - boots the Ptah/Ba AppTheory app
+  - mounts:
+    - `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`
+    - `GET /.well-known/oauth-protected-resource/instance/ba/mcp`
+    - `POST /instance/ptah/mcp`
+    - `POST /instance/ba/mcp`
+    - `GET /instance/downloads/installer-grants/{grantId}`
 
 ### MCP server (tool registry)
 
@@ -41,6 +67,21 @@ Notes:
   - optional DynamoDB-backed session store when `MCP_SESSION_TABLE` is set
   - optional DynamoDB-backed stream replay store when `MCP_STREAM_TABLE` is set; AppTheory spills large logical stream
     events to the private `MCP_STREAM_SPILL_BUCKET` without changing the client-visible SSE / `Last-Event-ID` contract
+
+### Instance plane (Ptah/Ba)
+
+- `internal/instanceapp/`
+  - creates separate AppTheory MCP server instances for `ptah` and `ba`
+  - serves Ptah/Ba RFC 9728 protected-resource metadata from configured `INSTANCE_MCP_ENDPOINT`
+  - rejects agent-delegated and legacy managed-instance-key principals before instance tool dispatch
+  - serves the Ba header-free one-time installer-grant download route
+- `internal/ptahserver/`
+  - registers account-holder orchestration tools for agent registry, draft content, delegation, and binding
+  - uses Body-owned instance tables and Lesser-owned APIs rather than direct Lesser table writes
+- `internal/baserver/`
+  - registers `agent_local_install_plan`
+  - derives install-pack stage/domain and download origin from `INSTANCE_MCP_ENDPOINT`, not request Host headers
+  - persists only one-time grant hashes and safe binding fields through `internal/downloadgrant`
 
 ### Auth
 
@@ -86,15 +127,23 @@ Notes:
 
 The intended integration is:
 
-1) `lesser-body` publishes `mcp_lambda_arn` to SSM
-2) Lesser imports that ARN when `soulEnabled=true` and wires:
+1) `lesser-body` publishes Ka and instance-plane exports to SSM
+2) Lesser imports `mcp_lambda_arn` when `soulEnabled=true` and wires:
    - `POST /mcp` (streaming integration)
    - `GET /.well-known/mcp.json`
+   - `GET /.well-known/oauth-protected-resource/mcp/{actor}`
+3) Lesser imports `instance_mcp_lambda_arn` when its instance-plane routing flag is enabled and wires:
+   - `POST /instance/ptah/mcp`
+   - `POST /instance/ba/mcp`
+   - `GET /.well-known/oauth-protected-resource/instance/ptah/mcp`
+   - `GET /.well-known/oauth-protected-resource/instance/ba/mcp`
+   - `GET /instance/downloads/installer-grants/{grantId}`
 
 See:
 
 - `docs/deployment.md`
 - `docs/configuration.md`
+- `docs/mcp.md#instance-plane-operator-chapter-ptahba`
 - `docs/oauth-migration.md`
 - `docs/operator-auth-replacement.md`
 - `ROADMAP.md` (implementation sequencing and constraints)
