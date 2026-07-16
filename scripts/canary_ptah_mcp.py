@@ -31,6 +31,11 @@ The canary consumes the published RFC 9728 protected-resource metadata and AppTh
 agent_create -> agent_soul_upsert -> agent_instructions_upsert -> agent_get/content gets -> agent_list. It refuses
 authenticated redirects, redacts bearer tokens, never prints delegated token values, full soul/instructions content, raw
 RPC payloads, or upstream error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
+
+Local deterministic probe:
+  scripts/canary_ptah_mcp.py --self-test-redaction
+      Verifies the agent_create text redaction guard accepts safe token metadata keys such as has_refresh_token and
+      credential_location while still rejecting delegated credential values and exact credential fields.
 """
 
 from __future__ import annotations
@@ -61,6 +66,11 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 NO_REDIRECT_OPENER = urllib.request.build_opener(NoRedirectHandler)
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{0,255}$")
+FORBIDDEN_CREDENTIAL_FIELDS = frozenset({"access_token", "refresh_token"})
+FORBIDDEN_CREDENTIAL_FIELD_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(access_token|refresh_token)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 USAGE = __doc__ or ""
@@ -357,12 +367,17 @@ class MCPClient:
         return data, result
 
 
-def result_text(result: dict[str, Any]) -> str:
+def tool_text_blocks(result: dict[str, Any]) -> list[str]:
     blocks = result.get("content") if isinstance(result.get("content"), list) else []
     texts: list[str] = []
     for block in blocks:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
             texts.append(block["text"])
+    return texts
+
+
+def result_text(result: dict[str, Any]) -> str:
+    texts = tool_text_blocks(result)
     return "\n".join(texts)
 
 
@@ -405,15 +420,100 @@ def registry_agent_id(data: dict[str, Any], *, context: str) -> str:
     return agent_id
 
 
+def credential_field_names(value: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).strip().lower()
+            if normalized in FORBIDDEN_CREDENTIAL_FIELDS:
+                found.add(normalized)
+            found.update(credential_field_names(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(credential_field_names(child))
+    return found
+
+
+def credential_field_names_in_text(text: str) -> set[str]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {match.group(1).lower() for match in FORBIDDEN_CREDENTIAL_FIELD_RE.finditer(text)}
+    return credential_field_names(parsed)
+
+
 def require_tool_text_omits_secret_values(result: dict[str, Any], token_map: dict[str, Any]) -> None:
     text = result_text(result)
-    for key in ("access_token", "refresh_token"):
+    for key in FORBIDDEN_CREDENTIAL_FIELDS:
         value = token_map.get(key)
         if isinstance(value, str) and len(value) >= 8 and value in text:
             raise CanaryError(f"agent_create text leaked delegated {key}")
-    for forbidden in ("access_token", "refresh_token"):
-        if forbidden in text.lower():
-            raise CanaryError("agent_create text mentioned delegated credential field names")
+    forbidden_fields: set[str] = set()
+    for block_text in tool_text_blocks(result):
+        forbidden_fields.update(credential_field_names_in_text(block_text))
+    if forbidden_fields:
+        raise CanaryError(
+            "agent_create text mentioned delegated credential field names: "
+            + ",".join(sorted(forbidden_fields))
+        )
+
+
+def expect_redaction_failure(name: str, result: dict[str, Any], token_map: dict[str, Any]) -> None:
+    try:
+        require_tool_text_omits_secret_values(result, token_map)
+    except CanaryError:
+        return
+    raise CanaryError(f"redaction self-test expected failure for {name}")
+
+
+def self_test_redaction_guard() -> int:
+    token_map = {
+        "access_token": "self-test-access-token-value",
+        "refresh_token": "self-test-refresh-token-value",
+    }
+    server_agent_create_text = {
+        "summary": "Lesser agent runtime credentials delegated and Ptah registry entry created",
+        "account": {
+            "id": "https://lesser.example/users/ptah_agent",
+            "username": "ptah_agent",
+            "acct": "ptah_agent@example.com",
+            "display_name": "Ptah Agent",
+            "bot": True,
+            "url": "https://lesser.example/@ptah_agent",
+        },
+        "registry": {
+            "account": "drone-ada",
+            "agent_id": "https://lesser.example/users/ptah_agent",
+            "created_at": "2026-07-16T00:00:00Z",
+            "updated_at": "2026-07-16T00:00:00Z",
+        },
+        "token_metadata": {
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "read",
+            "created_at": 1784160000,
+            "has_refresh_token": True,
+            "credential_location": "structuredContent.data.token",
+        },
+        "data": {"location": "structuredContent.data"},
+    }
+    safe_result = {"content": [{"type": "text", "text": json.dumps(server_agent_create_text, sort_keys=True)}]}
+    require_tool_text_omits_secret_values(safe_result, token_map)
+
+    leaked_value = dict(server_agent_create_text)
+    leaked_value["diagnostic"] = token_map["access_token"]
+    expect_redaction_failure(
+        "actual access token value",
+        {"content": [{"type": "text", "text": json.dumps(leaked_value, sort_keys=True)}]},
+        token_map,
+    )
+    expect_redaction_failure(
+        "exact delegated credential key",
+        {"content": [{"type": "text", "text": json.dumps({"token": {"refresh_token": "<redacted>"}})}]},
+        token_map,
+    )
+    log("ok redaction self-test allowed token metadata keys and rejected credential leaks")
+    return 0
 
 
 def require_tool_text_omits_content(result: dict[str, Any], content: str, *, context: str) -> None:
@@ -429,6 +529,8 @@ def content_record(data: dict[str, Any], key: str, *, context: str) -> dict[str,
 
 
 def main() -> int:
+    if "--self-test-redaction" in sys.argv:
+        return self_test_redaction_guard()
     if "--help" in sys.argv or "-h" in sys.argv:
         print(USAGE.strip())
         return 0
