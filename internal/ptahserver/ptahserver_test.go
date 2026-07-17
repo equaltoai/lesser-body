@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -730,29 +731,28 @@ func TestAgentListReadsAccountScopedRegistryWithPagination(t *testing.T) {
 				UpdatedAt: time.Date(2026, 7, 15, 12, 3, 0, 0, time.UTC),
 			},
 		},
-		NextCursor: "cursor-2",
-		HasMore:    true,
-		Count:      2,
+		Count: 2,
 	}}
+	live := &fakeAgentLiveClient{}
 	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+	if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{"limit":2,"cursor":"cursor-1"}`))
+	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{"limit":1}`))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result == nil || result.IsError {
 		t.Fatalf("result = %+v", result)
 	}
-	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != 2 || store.listIn.Cursor != "cursor-1" {
-		t.Fatalf("registry List input = calls %d %+v, want account-scoped limit/cursor", store.listCalls, store.listIn)
+	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != agentregistry.MaxListLimit || store.listIn.Cursor != "" {
+		t.Fatalf("registry List input = calls %d %+v, want account-scoped full-page read", store.listCalls, store.listIn)
 	}
 	data := structuredData(t, result)
 	agents, _ := data["agents"].([]map[string]any)
-	if len(agents) != 2 {
-		t.Fatalf("agents = %+v, want two", data["agents"])
+	if len(agents) != 1 {
+		t.Fatalf("agents = %+v, want one", data["agents"])
 	}
 	gotIDs := []string{}
 	for _, item := range agents {
@@ -763,12 +763,193 @@ func TestAgentListReadsAccountScopedRegistryWithPagination(t *testing.T) {
 			t.Fatalf("content_version = %+v, want not_available", contentVersion)
 		}
 	}
-	if want := []string{"agent-001", "agent-002"}; !reflect.DeepEqual(gotIDs, want) {
+	if want := []string{"agent-001"}; !reflect.DeepEqual(gotIDs, want) {
 		t.Fatalf("agent ids = %v, want %v", gotIDs, want)
 	}
 	pagination, _ := data["pagination"].(map[string]any)
-	if pagination["next_cursor"] != "cursor-2" || pagination["has_more"] != true || pagination["count"] != 2 || pagination["limit"] != 2 {
+	nextCursor, _ := pagination["next_cursor"].(string)
+	if nextCursor == "" || pagination["has_more"] != true || pagination["count"] != 1 || pagination["limit"] != 1 {
 		t.Fatalf("pagination = %+v", pagination)
+	}
+
+	result, err = registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(fmt.Sprintf(`{"limit":10,"cursor":%q}`, nextCursor)))
+	if err != nil {
+		t.Fatalf("second Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("second result = %+v", result)
+	}
+	if store.listCalls != 2 || store.listIn.Account != "drone-ada" || store.listIn.Limit != agentregistry.MaxListLimit || store.listIn.Cursor != "" {
+		t.Fatalf("second registry List input = calls %d %+v, want account-scoped full-page read", store.listCalls, store.listIn)
+	}
+	secondData := structuredData(t, result)
+	secondAgents, _ := secondData["agents"].([]map[string]any)
+	if len(secondAgents) != 1 {
+		t.Fatalf("second agents = %+v, want one", secondData["agents"])
+	}
+	secondRegistry, _ := secondAgents[0]["registry"].(map[string]any)
+	if secondRegistry["agent_id"] != "agent-002" {
+		t.Fatalf("second registry = %+v, want agent-002", secondRegistry)
+	}
+}
+
+func TestAgentListFallsBackToLesserLiveAgentsWhenRegistryIsEmpty(t *testing.T) {
+	store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{}}
+	live := &fakeAgentLiveClient{agents: []lesserapi.AgentDirectoryEntry{{
+		Username:     "scout",
+		DisplayName:  "Scout",
+		AgentType:    "CUSTOM",
+		AgentVersion: "1",
+	}}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.listCalls != 1 || live.calls != 1 {
+		t.Fatalf("dependency calls = registry:%d live:%d, want one each", store.listCalls, live.calls)
+	}
+	data := structuredData(t, result)
+	agents, _ := data["agents"].([]map[string]any)
+	if len(agents) != 1 {
+		t.Fatalf("agents = %+v, want one live entry", data["agents"])
+	}
+	if _, ok := agents[0]["registry"]; ok {
+		t.Fatalf("live-only entry unexpectedly claimed Body registry ownership: %+v", agents[0])
+	}
+	if agents[0]["source"] != "lesser_live" {
+		t.Fatalf("source = %v, want lesser_live", agents[0]["source"])
+	}
+	liveSummary, _ := agents[0]["live_agent"].(map[string]any)
+	if liveSummary["username"] != "scout" {
+		t.Fatalf("live_agent = %+v, want scout", liveSummary)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	if strings.Contains(string(encoded), "access_token") || strings.Contains(string(encoded), "refresh_token") || strings.Contains(string(encoded), "delegated_scopes") {
+		t.Fatalf("agent_list leaked credential/private field names: %s", encoded)
+	}
+}
+
+func TestAgentListPreservesRegistryEntriesAcrossRegistryPages(t *testing.T) {
+	store := &fakeAgentRegistry{listResults: map[string]*agentregistry.ListResult{
+		"": {
+			Agents:     []*agentregistry.Agent{{Account: "drone-ada", AgentID: "agent-001"}},
+			NextCursor: "registry-page-2",
+			HasMore:    true,
+		},
+		"registry-page-2": {
+			Agents: []*agentregistry.Agent{{Account: "drone-ada", AgentID: "agent-002"}},
+		},
+	}}
+	live := &fakeAgentLiveClient{}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("drone-ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{"limit":100}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.listCalls != 2 || live.calls != 1 {
+		t.Fatalf("dependency calls = registry:%d live:%d, want two registry pages and one live read", store.listCalls, live.calls)
+	}
+	agents, _ := structuredData(t, result)["agents"].([]map[string]any)
+	if len(agents) != 2 {
+		t.Fatalf("agents = %+v, want both registry entries", agents)
+	}
+}
+
+func TestAgentListMergesAndDeduplicatesRegistryAndLiveAgentsStably(t *testing.T) {
+	store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{Agents: []*agentregistry.Agent{
+		{Account: "drone-ada", AgentID: "https://lesser.example/users/scout"},
+		{Account: "drone-ada", AgentID: "ptah-only"},
+	}}}
+	live := &fakeAgentLiveClient{agents: []lesserapi.AgentDirectoryEntry{
+		{Username: "scout", DisplayName: "Scout"},
+		{Username: "live-only", DisplayName: "Live Only"},
+		{Username: "scout", DisplayName: "Scout duplicate"},
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	agents, _ := structuredData(t, result)["agents"].([]map[string]any)
+	if len(agents) != 3 {
+		t.Fatalf("agents = %+v, want three deduplicated entries", agents)
+	}
+	orderedNames := make([]string, 0, len(agents))
+	var sawScout, sawPtahOnly, sawLiveOnly bool
+	for _, item := range agents {
+		liveSummary, _ := item["live_agent"].(map[string]any)
+		registrySummary, _ := item["registry"].(map[string]any)
+		switch liveSummary["username"] {
+		case "scout":
+			orderedNames = append(orderedNames, "scout")
+			sawScout = true
+			if item["source"] != "merged" || registrySummary["agent_id"] != "https://lesser.example/users/scout" {
+				t.Fatalf("scout merge = %+v", item)
+			}
+		case "live-only":
+			orderedNames = append(orderedNames, "live-only")
+			sawLiveOnly = true
+			if item["source"] != "lesser_live" || registrySummary != nil {
+				t.Fatalf("live-only merge = %+v", item)
+			}
+		default:
+			if liveSummary != nil {
+				t.Fatalf("unexpected live username in item = %+v", item)
+			}
+			registryID, _ := registrySummary["agent_id"].(string)
+			orderedNames = append(orderedNames, registryID)
+			if item["source"] != "ptah_registry" || registrySummary["agent_id"] != "ptah-only" {
+				t.Fatalf("registry-only merge = %+v", item)
+			}
+			sawPtahOnly = true
+		}
+	}
+	if !sawScout || !sawPtahOnly || !sawLiveOnly {
+		t.Fatalf("merge coverage = scout:%t ptah-only:%t live-only:%t", sawScout, sawPtahOnly, sawLiveOnly)
+	}
+	if want := []string{"live-only", "scout", "ptah-only"}; !reflect.DeepEqual(orderedNames, want) {
+		t.Fatalf("merged ordering = %v, want %v", orderedNames, want)
+	}
+}
+
+func TestAgentListReturnsSanitizedLiveSourceError(t *testing.T) {
+	store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{}}
+	live := &fakeAgentLiveClient{err: errors.New("upstream body contains private detail")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("Drone-Ada", []string{"read"}, "owner-oauth-token"), toolAgentList, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_live_source_error", http.StatusBadGateway)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "private detail") {
+		t.Fatalf("live source error leaked upstream detail: %s", encoded)
 	}
 }
 
@@ -818,8 +999,9 @@ func TestAgentListRejectsInvalidInputAndPrincipalsBeforeRegistryRead(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{}}
+			live := &fakeAgentLiveClient{}
 			registry := mcpruntime.NewToolRegistry()
-			if err := RegisterTools(registry, WithAgentRegistryStore(store)); err != nil {
+			if err := RegisterTools(registry, WithAgentRegistryStore(store), WithAgentLiveClient(live)); err != nil {
 				t.Fatalf("RegisterTools: %v", err)
 			}
 
@@ -830,6 +1012,9 @@ func TestAgentListRejectsInvalidInputAndPrincipalsBeforeRegistryRead(t *testing.
 			assertToolError(t, result, tc.wantCode, tc.wantState)
 			if store.listCalls != 0 {
 				t.Fatalf("registry List calls = %d, want 0", store.listCalls)
+			}
+			if live.calls != 0 {
+				t.Fatalf("live agent calls = %d, want 0", live.calls)
 			}
 		})
 	}
@@ -851,8 +1036,8 @@ func TestAgentListMapsInvalidCursor(t *testing.T) {
 	if strings.Contains(string(encoded), "hidden cursor decode detail") {
 		t.Fatalf("invalid cursor leaked store detail: %s", string(encoded))
 	}
-	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != agentregistry.DefaultListLimit || store.listIn.Cursor != "bad-cursor" {
-		t.Fatalf("registry List input = calls %d %+v, want default-limit account scoped cursor", store.listCalls, store.listIn)
+	if store.listCalls != 1 || store.listIn.Account != "drone-ada" || store.listIn.Limit != agentregistry.MaxListLimit || store.listIn.Cursor != "bad-cursor" {
+		t.Fatalf("registry List input = calls %d %+v, want full-page account scoped legacy cursor", store.listCalls, store.listIn)
 	}
 }
 
@@ -1371,6 +1556,20 @@ type fakeAgentDelegateClient struct {
 	err    error
 }
 
+type fakeAgentLiveClient struct {
+	calls  int
+	agents []lesserapi.AgentDirectoryEntry
+	err    error
+}
+
+func (f *fakeAgentLiveClient) ListAgents(_ context.Context) ([]lesserapi.AgentDirectoryEntry, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.agents, nil
+}
+
 func (f *fakeAgentDelegateClient) DelegateAgent(_ context.Context, bearerToken string, req lesserapi.AgentDelegationRequest) (*lesserapi.AgentDelegationResponse, error) {
 	f.calls++
 	f.bearer = bearerToken
@@ -1393,10 +1592,11 @@ type fakeAgentRegistry struct {
 	getAgent   *agentregistry.Agent
 	getErr     error
 
-	listCalls  int
-	listIn     agentregistry.ListInput
-	listResult *agentregistry.ListResult
-	listErr    error
+	listCalls   int
+	listIn      agentregistry.ListInput
+	listResult  *agentregistry.ListResult
+	listResults map[string]*agentregistry.ListResult
+	listErr     error
 }
 
 type fakeAgentContentStore struct {
@@ -1445,6 +1645,11 @@ func (f *fakeAgentRegistry) List(_ context.Context, in agentregistry.ListInput) 
 	f.listIn = in
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+	if f.listResults != nil {
+		if result, ok := f.listResults[in.Cursor]; ok {
+			return result, nil
+		}
 	}
 	if f.listResult != nil {
 		return f.listResult, nil

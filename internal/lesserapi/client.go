@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	envBaseURL  = "LESSER_API_BASE_URL"
-	envMcpURL   = "MCP_ENDPOINT"
-	envTimeoutS = "LESSER_API_TIMEOUT_SECONDS"
+	envBaseURL        = "LESSER_API_BASE_URL"
+	envMcpURL         = "MCP_ENDPOINT"
+	envInstanceMcpURL = "INSTANCE_MCP_ENDPOINT"
+	envTimeoutS       = "LESSER_API_TIMEOUT_SECONDS"
 )
 
 type Client struct {
@@ -201,6 +202,16 @@ func resolveBaseURL() (*url.URL, error) {
 		}
 		return u, nil
 	}
+	if raw := strings.TrimSpace(os.Getenv(envInstanceMcpURL)); raw != "" {
+		u, err := parseBaseURL(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := stripInstanceMcpPath(u); err != nil {
+			return nil, err
+		}
+		return u, nil
+	}
 	return nil, fmt.Errorf("%s or %s is required", envBaseURL, envMcpURL)
 }
 
@@ -276,5 +287,27 @@ func stripMcpPath(u *url.URL) error {
 	if u.Path == "/" {
 		u.Path = ""
 	}
+	return nil
+}
+
+func stripInstanceMcpPath(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("instance MCP endpoint URL is nil")
+	}
+
+	path := strings.TrimRight(strings.TrimSpace(u.Path), "/")
+	const suffix = "/mcp"
+	if !strings.HasPrefix(path, "/instance/") || !strings.HasSuffix(path, suffix) {
+		return fmt.Errorf("instance MCP endpoint path must include /instance/{surface}/mcp")
+	}
+
+	instancePath := strings.TrimSuffix(path, suffix)
+	parts := strings.Split(strings.TrimPrefix(instancePath, "/instance/"), "/")
+	if len(parts) != 1 || strings.TrimSpace(parts[0]) == "" {
+		return fmt.Errorf("instance MCP endpoint path must include /instance/{surface}/mcp")
+	}
+
+	u.Path = ""
+	u.RawPath = ""
 	return nil
 }

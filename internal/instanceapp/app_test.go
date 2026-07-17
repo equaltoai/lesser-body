@@ -406,6 +406,10 @@ func TestInstancePlaneMCP_AgentGetAndListReadRegistry(t *testing.T) {
 		return registryStore, nil
 	})
 	t.Cleanup(resetRegistry)
+	resetLive := ptahserver.SetAgentLiveClientFactoryForTests(func() (ptahserver.AgentLiveClient, error) {
+		return &instanceAgentLiveClient{}, nil
+	})
+	t.Cleanup(resetLive)
 
 	t.Setenv("JWT_SECRET", "test-secret")
 	auth.ResetForTests()
@@ -490,6 +494,58 @@ func TestInstancePlaneMCP_AgentGetAndListReadRegistry(t *testing.T) {
 	secondPagination, _ := secondData["pagination"].(map[string]any)
 	if secondPagination["has_more"] != false || secondPagination["next_cursor"] != "" || secondPagination["count"] != float64(1) {
 		t.Fatalf("second pagination = %+v, want terminal page", secondPagination)
+	}
+}
+
+func TestInstancePlaneMCP_AgentListFallsBackToLesserLiveAgents(t *testing.T) {
+	registryStore := newInstanceAgentRegistryStore(t)
+	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
+		return registryStore, nil
+	})
+	t.Cleanup(resetRegistry)
+	live := &instanceAgentLiveClient{agents: []lesserapi.AgentDirectoryEntry{{
+		Username:     "scout",
+		DisplayName:  "Scout",
+		AgentType:    "CUSTOM",
+		AgentVersion: "1",
+	}}}
+	resetLive := ptahserver.SetAgentLiveClientFactoryForTests(func() (ptahserver.AgentLiveClient, error) {
+		return live, nil
+	})
+	t.Cleanup(resetLive)
+
+	t.Setenv("JWT_SECRET", "test-secret")
+	auth.ResetForTests()
+
+	app, err := instanceapp.New("lesser-body-instance", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"read"}, audienceForPath("/instance/ptah/mcp"))
+	headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", token)
+	out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_list", map[string]any{})
+	if out.Result == nil || out.Result.IsError {
+		t.Fatalf("agent_list result = %+v error = %+v", out.Result, out.Error)
+	}
+	if live.calls != 1 {
+		t.Fatalf("live agent calls = %d, want one", live.calls)
+	}
+	data := toolResultData(t, out.Result)
+	agents, _ := data["agents"].([]any)
+	if len(agents) != 1 {
+		t.Fatalf("agents = %+v, want one live agent", data["agents"])
+	}
+	item, _ := agents[0].(map[string]any)
+	if item["source"] != "lesser_live" {
+		t.Fatalf("source = %v, want lesser_live", item["source"])
+	}
+	if _, ok := item["registry"]; ok {
+		t.Fatalf("live-only item claimed Body registry ownership: %+v", item)
+	}
+	liveSummary, _ := item["live_agent"].(map[string]any)
+	if liveSummary["username"] != "scout" {
+		t.Fatalf("live_agent = %+v, want scout", liveSummary)
 	}
 }
 
@@ -1069,6 +1125,16 @@ func newInstanceAgentRegistryStore(t testing.TB) *agentregistry.Store {
 		t.Fatalf("CreateTable() error = %v", err)
 	}
 	return store
+}
+
+type instanceAgentLiveClient struct {
+	calls  int
+	agents []lesserapi.AgentDirectoryEntry
+}
+
+func (f *instanceAgentLiveClient) ListAgents(_ context.Context) ([]lesserapi.AgentDirectoryEntry, error) {
+	f.calls++
+	return f.agents, nil
 }
 
 type instanceAgentRegistryRecord struct {
