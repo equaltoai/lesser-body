@@ -57,8 +57,8 @@ test("managed template requires app-scoped Lesser parameter paths", () => {
 });
 
 test("lesser table policy uses least-privilege primary table access", () => {
-  const template = synthRuntimeTemplate();
-  const lesserTableStatements = allPolicyStatements(mustResources(template)).filter((statement) =>
+  const resources = mustResources(synthRuntimeTemplate());
+  const lesserTableStatements = policyStatementsForLambda(resources, mcpHandlerLambdaFunction(resources)).filter((statement) =>
     mustJSON(extractStatementResources(statement)).includes("/theory/dev/lesser/exports/v1/table_name"),
   );
 
@@ -258,6 +258,8 @@ test("runtime stack provisions instance-plane lambda with owned tables", () => {
   assert.equal(mustJSON(vars.INSTANCE_GRANT_TABLE), '{"Ref":"InstanceGrantTable"}');
   assert.equal(mustJSON(vars.INSTANCE_SESSION_TABLE), '{"Ref":"InstanceSessionTable"}');
   assert.equal(mustJSON(vars.JWT_SECRET_ARN), '"{{resolve:ssm:/theory/shared/secrets/jwt-secret-arn}}"');
+  assert.equal(mustJSON(vars.LESSER_TABLE_NAME), '"{{resolve:ssm:/theory/dev/lesser/exports/v1/table_name}}"');
+  assert.equal(vars.LESSER_API_BASE_URL, "https://api.dev.example.com");
 
   const got = dynamoTableFingerprints(resources);
   const want: Record<string, DynamoTableFingerprint> = {
@@ -311,6 +313,36 @@ test("runtime stack provisions instance-plane lambda with owned tables", () => {
     assert.equal(instanceTablePolicyJSON.includes(wantAction), true, `expected ${wantAction} in ${instanceTablePolicyJSON}`);
   }
   assert.equal(instanceTablePolicyJSON.includes('"dynamodb:Scan"'), false, `expected instance table policy to omit Scan: ${instanceTablePolicyJSON}`);
+});
+
+test("instance-plane lambda receives managed Lesser/Host genesis configuration", () => {
+  const resources = mustResources(synthManagedTemplate());
+  const instanceHandler = instanceMcpHandlerLambdaFunction(resources);
+  const vars = lambdaEnvironmentVariables(instanceHandler);
+
+  assert.match(mustJSON(vars.LESSER_TABLE_NAME), /LesserTableNameParamPath|lesser\/exports\/v1\/table_name/);
+  assert.match(mustJSON(vars.LESSER_API_BASE_URL), /https:\/\/api\./);
+  assert.match(mustJSON(vars.LESSER_HOST_INSTANCE_KEY_ARN), /LesserHostInstanceKeyARN/);
+
+  const statements = policyStatementsForLambda(resources, instanceHandler);
+  const statementJSON = mustJSON(statements);
+  for (const want of [
+    '"dynamodb:DescribeTable"',
+    '"dynamodb:GetItem"',
+    '"dynamodb:Query"',
+    '"dynamodb:LeadingKeys"',
+    '"INSTANCE#CONFIG"',
+    '"secretsmanager:GetSecretValue"',
+    '"secretsmanager:DescribeSecret"',
+    "instance-key*",
+    "lesser-host/lab/instances",
+    "LesserHostInstanceKeyARN",
+  ]) {
+    assert.equal(statementJSON.includes(want), true, `expected instance policy to contain ${want}: ${statementJSON}`);
+  }
+  for (const unwanted of ['"LBMEMORY#*"', '"SOUL_BODY_BINDING_USERNAME#*"']) {
+    assert.equal(statementJSON.includes(unwanted), false, `instance trust-config policy must omit ${unwanted}: ${statementJSON}`);
+  }
 });
 
 test("runtime stack publishes additive instance-plane SSM exports", () => {
@@ -425,6 +457,33 @@ function allPolicyStatements(resources: Record<string, CloudFormationResource>):
     out.push(...extractPolicyStatements(resource));
   }
   assert.notEqual(out.length, 0, "expected at least one IAM policy statement");
+  return out;
+}
+
+function policyStatementsForLambda(
+  resources: Record<string, CloudFormationResource>,
+  lambdaResource: CloudFormationResource,
+): CloudFormationRecord[] {
+  const lambdaProps = mustRecord(lambdaResource.Properties, "lambda missing Properties");
+  const role = mustRecord(lambdaProps.Role, "lambda missing execution role");
+  const roleGetAtt = mustArray(role["Fn::GetAtt"], "lambda role must use Fn::GetAtt");
+  const roleLogicalId = String(roleGetAtt[0] ?? "");
+  if (!roleLogicalId) {
+    throw new Error("lambda role missing logical id");
+  }
+
+  const out: CloudFormationRecord[] = [];
+  for (const resource of Object.values(resources)) {
+    if (resource.Type !== "AWS::IAM::Policy") {
+      continue;
+    }
+    const props = mustRecord(resource.Properties, "policy missing Properties");
+    if (!mustJSON(props.Roles).includes(`"Ref":"${roleLogicalId}"`)) {
+      continue;
+    }
+    out.push(...extractPolicyStatements(resource));
+  }
+  assert.notEqual(out.length, 0, `expected IAM policy statements for ${roleLogicalId}`);
   return out;
 }
 
