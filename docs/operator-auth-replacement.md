@@ -39,6 +39,7 @@ Expected properties:
 - auditable `client_id`
 - explicit `client_class=operator` or equivalent machine-readable identity marker in token claims
 - explicit operator/admin authority carried by OAuth rather than inferred from possession of an infrastructure secret
+- Ptah protected-resource metadata advertises `admin` and `operator` alongside the normal OAuth scopes so clients can discover the operator claim path before authorization
 - normal MCP bearer-token transport to `POST /mcp`
 
 The exact authority model depends on `equaltoai/lesser#259`.

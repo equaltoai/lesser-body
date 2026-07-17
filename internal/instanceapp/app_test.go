@@ -764,18 +764,21 @@ func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
 		surface  string
 		path     string
 		resource string
+		scopes   []string
 	}{
 		{
 			name:     "ptah",
 			surface:  "ptah",
 			path:     "/.well-known/oauth-protected-resource/instance/ptah/mcp",
 			resource: "https://api.example.com/instance/ptah/mcp",
+			scopes:   []string{"read", "write", "follow", "push", "admin", "operator"},
 		},
 		{
 			name:     "ba",
 			surface:  "ba",
 			path:     "/.well-known/oauth-protected-resource/instance/ba/mcp",
 			resource: "https://api.example.com/instance/ba/mcp",
+			scopes:   []string{"read", "write", "follow", "push"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -816,11 +819,11 @@ func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
 			if want := []string{"https://api.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
 				t.Fatalf("authorization_servers = %#v, want %#v", out.AuthorizationServers, want)
 			}
-			if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
-				t.Fatalf("scopes_supported = %#v, want %#v", out.ScopesSupported, want)
+			if !reflect.DeepEqual(out.ScopesSupported, tc.scopes) {
+				t.Fatalf("scopes_supported = %#v, want %#v", out.ScopesSupported, tc.scopes)
 			}
-			if strings.Contains(strings.ToLower(string(resp.Body)), "admin") || strings.Contains(string(resp.Body), "instance:") {
-				t.Fatalf("instance metadata advertised non-issuable/internal scopes: %s", string(resp.Body))
+			if tc.surface == "ba" && (strings.Contains(strings.ToLower(string(resp.Body)), "admin") || strings.Contains(string(resp.Body), "operator") || strings.Contains(string(resp.Body), "instance:")) {
+				t.Fatalf("ba metadata advertised Ptah-only or internal scopes: %s", string(resp.Body))
 			}
 			if want := []string{"header"}; !reflect.DeepEqual(out.BearerMethodsSupported, want) {
 				t.Fatalf("bearer_methods_supported = %#v, want %#v", out.BearerMethodsSupported, want)

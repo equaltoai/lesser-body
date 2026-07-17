@@ -14,7 +14,10 @@ import (
 
 const instanceSurfacePlaceholder = "{surface}"
 
-var instanceOAuthDiscoveryScopes = []string{"read", "write", "follow", "push"}
+var instanceOAuthDiscoveryScopes = map[string][]string{
+	SurfacePtah: {"read", "write", "follow", "push", "admin", "operator"},
+	SurfaceBa:   {"read", "write", "follow", "push"},
+}
 
 type instanceEndpointInfo struct {
 	BasePath string
@@ -52,7 +55,7 @@ func wellKnownProtectedResourceHandler(instanceEndpointTemplate string, surface 
 		if err != nil {
 			return nil, fmt.Errorf("build instance protected resource metadata: %w", err)
 		}
-		md.ScopesSupported = append([]string(nil), instanceOAuthDiscoveryScopes...)
+		md.ScopesSupported = append([]string(nil), instanceOAuthDiscoveryScopes[surface]...)
 		md.BearerMethodsSupported = []string{"header"}
 
 		body, err := json.Marshal(md)

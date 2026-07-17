@@ -17,7 +17,7 @@ import (
 
 const testSoulAgentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func TestInstancePlaneX402_BaInstallPlanRequiresGrantBeforeDownloadGrant(t *testing.T) {
+func TestInstancePlaneX402_BaInstallPlanPublicOAuthTokenRequiresGrantBeforeDownloadGrant(t *testing.T) {
 	const endpoint = "https://api.dev.example.com/instance/{surface}/mcp"
 	resetConsumer := instancex402.SetConsumerForTests(func(context.Context, instancex402.ConsumeRequestForTests) (instancex402.ConsumeResponseForTests, error) {
 		t.Fatalf("missing x402 grant must fail before Host consume")
