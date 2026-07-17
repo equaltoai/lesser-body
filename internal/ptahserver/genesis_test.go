@@ -84,38 +84,53 @@ func (f *fakeGenesisClient) FinalizeConversation(_ context.Context, bearer strin
 	return f.finalizeResponse, nil
 }
 
-func TestGenesisRejectsOrdinaryWriteOAuthAndPaymentEvidenceWithoutCallingHost(t *testing.T) {
+func TestGenesisRejectsOrdinaryOAuthAndPaymentEvidenceWithoutCallingHost(t *testing.T) {
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
-	fake := &fakeGenesisClient{}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
+	for _, tc := range []struct {
+		name      string
+		scopes    []string
+		wantError string
+	}{
+		{name: "read", scopes: []string{"read"}, wantError: "insufficient_scope"},
+		{name: "write", scopes: []string{"write"}, wantError: "owner_operator_required"},
+		{name: "follow", scopes: []string{"follow"}, wantError: "insufficient_scope"},
+		{name: "push", scopes: []string{"push"}, wantError: "insufficient_scope"},
+		{name: "read_write", scopes: []string{"read", "write"}, wantError: "owner_operator_required"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeGenesisClient{}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
 
-	ctx := auth.InjectToolRequestSnapshot(toolContext("owner", []string{"read", "write"}, "ordinary-write-bearer"), auth.ToolRequestSnapshot{
-		Headers: map[string][]string{
-			"lesser-x402-grant":      {"grant-token-test-only"},
-			"lesser-x402-grant-id":   {"grant-id-test-only"},
-			"lesser-x402-capability": {"instance:agent_create"},
-			"payment-signature":      {"payment-proof-test-only"},
-		},
-		Body: []byte(`{"domain":"example.com","local_id":"new-agent"}`),
-	})
-	result, err := registry.Call(ctx, toolAgentGenesisBegin, json.RawMessage(`{
-		"domain":"example.com",
-		"local_id":"new-agent"
-	}`))
-	if err != nil {
-		t.Fatalf("genesis call: %v", err)
-	}
-	if result == nil || !result.IsError {
-		t.Fatalf("ordinary write token should be rejected: %+v", result)
-	}
-	if got := structuredErrorCode(t, result); got != "owner_operator_required" {
-		t.Fatalf("error code = %q, want owner_operator_required", got)
-	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("ordinary write token reached Host: %v", fake.calls)
+			ctx := auth.InjectToolRequestSnapshot(toolContext("owner", tc.scopes, "ordinary-oauth-bearer"), auth.ToolRequestSnapshot{
+				Headers: map[string][]string{
+					"lesser-x402-grant":      {"grant-token-test-only"},
+					"lesser-x402-grant-id":   {"grant-id-test-only"},
+					"lesser-x402-capability": {"tools.invoke"},
+					"payment-signature":      {"payment-proof-test-only"},
+				},
+				Body: []byte(`{"domain":"example.com","local_id":"new-agent"}`),
+			})
+			result, err := registry.Call(ctx, toolAgentGenesisBegin, json.RawMessage(`{
+				"domain":"example.com",
+				"local_id":"new-agent"
+			}`))
+			if err != nil {
+				t.Fatalf("genesis call: %v", err)
+			}
+			if result == nil || !result.IsError {
+				t.Fatalf("ordinary OAuth token should be rejected: %+v", result)
+			}
+			if got := structuredErrorCode(t, result); got != tc.wantError {
+				t.Fatalf("error code = %q, want %s", got, tc.wantError)
+			}
+			if len(fake.calls) != 0 {
+				t.Fatalf("ordinary OAuth token reached Host: %v", fake.calls)
+			}
+		})
 	}
 }
 
@@ -186,9 +201,6 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 	beginData := structuredGenesisData(t, begin)
 	if beginData["source"] != "lesser_host" || beginData["state_authority"] != "Host HostedGenesisSession" || beginData["flow"] != "genesis_conversation" {
 		t.Fatalf("begin source/authority = %#v", beginData)
-	}
-	if existing, ok := beginData["existing_agent_create"].(bool); !ok || existing {
-		t.Fatalf("genesis flow incorrectly reports existing-agent delegation: %#v", beginData["existing_agent_create"])
 	}
 	if got := beginData["registration_id"]; got != "reg-123" {
 		t.Fatalf("registration id = %#v, want reg-123", got)

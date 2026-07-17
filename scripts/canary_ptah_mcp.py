@@ -11,7 +11,7 @@ Required environment:
   PTAH_GENESIS_DOMAIN
       Managed Lesser/Host domain for the new agent registration.
   PTAH_GENESIS_LOCAL_ID
-      New local id to mint. This must not be an existing-agent delegation input.
+      New local id to mint through the Host-backed genesis conversation.
   PTAH_GENESIS_MODEL
       Host genesis model identifier for the first conversation turn.
   PTAH_GENESIS_MESSAGES_JSON
@@ -25,9 +25,9 @@ Optional environment:
 
 The canary consumes the published RFC 9728 protected-resource metadata and AppTheory MCP tools/list surface, then proves
 owner connects to Ptah -> Host-backed genesis begin/advance/read/recover/complete -> finalize -> agent_list visibility.
-`agent_create` is intentionally not used as minting proof: it remains a compatibility-only existing-agent delegation
-tool. The canary refuses authenticated redirects, redacts bearer tokens, never prints owner messages, Host declarations,
-wallet material, raw RPC payloads, or upstream error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
+Minting is represented only by that Host-backed genesis conversation; the canary refuses authenticated redirects,
+redacts bearer tokens, never prints owner messages, Host declarations, wallet material, raw RPC payloads, or upstream
+error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
 
 Local deterministic probe:
   scripts/canary_ptah_mcp.py --self-test-redaction
@@ -673,6 +673,8 @@ def main() -> int:
     missing = sorted(required_tools - tool_names)
     if missing:
         raise CanaryError(f"tools/list missing Ptah tools: {missing}")
+    if "agent_create" in tool_names:
+        raise CanaryError("tools/list advertises removed Ptah tool agent_create")
     log("ok tools/list Ptah Host-backed genesis and visibility tools present")
 
     authorization_parts = authorization.split(None, 1)
@@ -686,7 +688,7 @@ def main() -> int:
     log(
         "ok agent_genesis_begin "
         f"registration_sha256_12={sha12(registration_id)} authority=instance_trust "
-        f"existing_agent_create=false payloadB={client.last_response_bytes}"
+        f"payloadB={client.last_response_bytes}"
     )
 
     conversation_id = ""

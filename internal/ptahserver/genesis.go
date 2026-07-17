@@ -503,13 +503,12 @@ func requiredGenesisMessage(value string) (string, error) {
 func genesisSuccessResult(toolName string, operation string, raw map[string]any) (*mcpruntime.ToolResult, error) {
 	data := sanitizeGenesisResponse(operation, raw)
 	text := map[string]any{
-		"summary":               "Host-backed Ptah genesis state updated",
-		"operation":             operation,
-		"source":                "lesser_host",
-		"state_authority":       "Host HostedGenesisSession",
-		"flow":                  "genesis_conversation",
-		"existing_agent_create": false,
-		"data":                  map[string]any{"location": "structuredContent.data"},
+		"summary":         "Host-backed Ptah genesis state updated",
+		"operation":       operation,
+		"source":          "lesser_host",
+		"state_authority": "Host HostedGenesisSession",
+		"flow":            "genesis_conversation",
+		"data":            map[string]any{"location": "structuredContent.data"},
 	}
 	if conversation, ok := data["conversation"].(map[string]any); ok {
 		for _, key := range []string{"registration_id", "conversation_id", "agent_id", "status"} {
@@ -582,10 +581,9 @@ func genesisAudit(ctx context.Context, toolName string, actor string, allowed bo
 
 func sanitizeGenesisResponse(operation string, raw map[string]any) map[string]any {
 	data := map[string]any{
-		"source":                "lesser_host",
-		"state_authority":       "Host HostedGenesisSession",
-		"flow":                  "genesis_conversation",
-		"existing_agent_create": false,
+		"source":          "lesser_host",
+		"state_authority": "Host HostedGenesisSession",
+		"flow":            "genesis_conversation",
 	}
 	switch operation {
 	case "begin":

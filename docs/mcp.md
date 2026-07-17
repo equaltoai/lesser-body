@@ -103,13 +103,11 @@ proper owner token. These genesis tools are x402-exempt for the explicit owner/o
 
 Instance-plane x402 capability grants:
 
-- Non-operator account-holder callers of the compatibility minting/install tools send Host-issued instance capability
-  evidence alongside their OAuth bearer on the instance-plane `tools/call`. Explicit operator OAuth callers are exempt
-  from this instance x402 gate only for the operator principal.
+- Non-operator account-holder callers of the install-plan tool send Host-issued instance capability evidence alongside
+  their OAuth bearer on the instance-plane `tools/call`. Explicit operator OAuth callers are exempt from this instance
+  x402 gate only for the operator principal.
 - The Host-backed `agent_genesis_*` flow is a separate owner-operated path. It does not consume x402 evidence, and a
   public or ordinary `write` token cannot enter it by presenting payment evidence.
-- `agent_create` requires `capabilityVersion="instance-capability/v1"`, `capability="instance:agent_create"`,
-  `tool="agent_create"`, and resource `instance://tools/agent_create`.
 - `agent_local_install_plan` requires `capabilityVersion="instance-capability/v1"`,
   `capability="instance:install_plan"`, `tool="agent_local_install_plan"`, and resource
   `instance://tools/agent_local_install_plan`.
@@ -168,7 +166,7 @@ resources:
 | Plane | Public route | Purpose | Tool discovery |
 |-------|--------------|---------|----------------|
 | Ka actor surface | `/mcp/{actor}` | An individual Lesser agent's social, memory, communication, identity, resources, prompts, and task-capable read tools. | Public `/.well-known/mcp.json` lists Ka tools; authenticated `tools/list` is profile-filtered for that actor. |
-| Ptah instance surface | `/instance/ptah/mcp` | Account-holder orchestration: Host-backed genesis conversations for new agents, compatibility delegation for existing Lesser agents, account-scoped registry, draft `agent_soul` / `agent_instructions`, and hosted soul/body binding. | Authenticated Ptah `tools/list` only. Ptah tools are not advertised as Ka tools. |
+| Ptah instance surface | `/instance/ptah/mcp` | Account-holder orchestration: Host-backed genesis conversations for new agents, account-scoped registry, draft `agent_soul` / `agent_instructions`, and hosted soul/body binding. | Authenticated Ptah `tools/list` only. Ptah tools are not advertised as Ka tools. |
 | Ba instance surface | `/instance/ba/mcp` | Account-holder local install planning: deterministic install pack rendering and one-time download-grant minting. | Authenticated Ba `tools/list` only. Ba tools are not advertised as Ka tools. |
 | Ba download route | `/instance/downloads/installer-grants/{grantId}` | Header-free one-time ZIP download after `agent_local_install_plan` issues a grant. | Not an MCP endpoint; it is a public GET guarded by the opaque token and full binding query. |
 
@@ -257,8 +255,8 @@ Threat model invariants:
 - Ptah writes only Body-owned instance content/registry state or delegates through Lesser-owned APIs; it does not write
   Lesser's actor table directly.
 - Ptah genesis registration and conversation state are owned by lesser-host's `HostedGenesisSession` routes. Body does
-  not maintain a local genesis state machine, require a pre-existing Lesser agent, or treat `agent_create` delegation as
-  a minting proof.
+  not maintain a local genesis state machine or require a pre-existing Lesser agent; minting is the Host-backed genesis
+  conversation exposed by the `agent_genesis_*` tools.
 - Ba grant state lives in Body's `INSTANCE_GRANT_TABLE`; only token hashes and safe binding fields persist.
 - Logs and text content must never include bearer tokens, raw grant tokens, full grant URLs, token hashes,
   `LESSER_HOST_INSTANCE_KEY`, genesis transcripts, wallet signatures, produced declarations, `agent_soul` bodies, or
@@ -273,9 +271,7 @@ Instance-plane x402 capability grants are distinct from actor-scoped public x402
   principal and does not grant actor-scoped public invocation authority.
 - Explicit operator OAuth authority is exempt from the instance x402 gate for the operator principal only.
 - Host-backed Ptah genesis is owner-operated and x402-exempt. It requires the explicit owner/operator OAuth claim and
-  does not accept ordinary `write` scope, payment evidence, or existing-agent delegation as a substitute.
-- `agent_create` consumes Host capability `instance-capability/v1` / `instance:agent_create`, bound to
-  `tool="agent_create"` and `resource="instance://tools/agent_create"`.
+  does not accept ordinary `write` scope or payment evidence as a substitute.
 - `agent_local_install_plan` consumes Host capability `instance-capability/v1` / `instance:install_plan`, bound to
   `tool="agent_local_install_plan"` and `resource="instance://tools/agent_local_install_plan"`.
 - Body hashes payment evidence before Host consume, rejects actor/scoped invocation grants such as
@@ -542,7 +538,7 @@ evidence, unsupported scoped-invocation authority/status, and missing or unsuppo
 dispatch.
 
 Instance-plane x402 capability grants are separate from public actor-scoped invocation grants. They are consumed only
-for the OAuth-authenticated minting tools `agent_create` and `agent_local_install_plan`, require
+for the OAuth-authenticated install-plan tool `agent_local_install_plan`, require
 `capabilityVersion="instance-capability/v1"`, and fail closed when a caller presents actor/scoped capabilities such as
 `tools.invoke` or `scoped-invocation/v1`.
 
@@ -617,7 +613,6 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
-| `agent_create` | Write | Compatibility-only delegation of runtime credentials for an existing Lesser local agent account; this is not genesis minting. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. |
 | `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including the latest bounded conversation turn when available. |
 | `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id. |
@@ -636,9 +631,8 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 
 ### Host-backed Ptah genesis minting
 
-The owner proof for a new Ptah agent is a Host-backed genesis conversation over MCP, not the compatibility
-`agent_create` path. The latter calls Lesser's existing-agent delegation endpoint and must not be presented as a minting
-proof. Ba install-plan work is outside this flow; it can consume a completed agent later.
+The owner proof for a new Ptah agent is the Host-backed genesis conversation over MCP. Ba install-plan work is outside
+this flow; it can consume a completed agent later.
 
 The owner-operated sequence is:
 
@@ -887,38 +881,6 @@ returned `agent_instructions` record keeps the store-owned version and has `life
 For all `agent_instructions_*` tools, malformed input returns `invalid_request`; agent-delegated or mismatched
 principals return `forbidden`; missing content records return `not_found`; optimistic write races return `conflict`; and
 unexpected content-store failures return `internal` with sanitized `source:"agent_content"` details.
-
-### `agent_create` compatibility flow (not genesis minting)
-
-`agent_create` input:
-
-- Required: `agent_username`, `scopes`.
-- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
-  must match that principal after normalization or the tool fails closed.
-- Optional Lesser delegation fields: `display_name`, `bio`, `expires_in`, `device_label`, and `agent_info`.
-
-Current producer constraint: Lesser's source-backed `POST /api/v1/agents/delegate` endpoint delegates to an existing
-local agent account and mints a fresh runtime token/session. It does **not** create a new Lesser account today. Body/Ptah
-therefore does not fabricate account creation; `agent_create` calls `internal/lesserapi.DelegateAgent` with the caller's
-OAuth bearer token and only creates the Body-owned `INSTANCE_REGISTRY_TABLE` entry after Lesser returns the existing
-agent account.
-
-`agent_create` requires an account-holder OAuth principal with `write` scope. Agent-delegated principals, read-only
-principals, missing bearer tokens, and `actor_username` mismatches are rejected before Body calls Lesser or the registry.
-The tool never uses `LESSER_SOUL_BINDING_INTEGRATION_BEARER`; that dedicated server-to-server bearer is only for
-`agent_bind_soul`.
-
-Successful output includes safe account and registry summaries plus the delegated Lesser token response in
-`structuredContent.data.token`. Those token fields (`access_token` and `refresh_token`) are credentials: Body does not
-include them in log events or text content. Callers that persist the MCP result must handle that structured token block as
-secret material.
-
-Partial-failure reconciliation: Lesser delegation is non-idempotent and Body performs no automatic retry because each
-successful Lesser call mints credentials. If Lesser succeeds but the Body registry create later fails or detects a
-duplicate, Body cannot roll back the minted Lesser token/session in this milestone. Duplicate registry conflicts return
-tool error code `agent_already_exists` without cross-account registry details; other registry failures return
-`agent_registry_error` with partial-failure metadata so operators can reconcile or revoke any unneeded Lesser runtime
-session through Lesser-owned session management.
 
 `agent_bind_soul` input:
 

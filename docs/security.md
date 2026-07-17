@@ -101,9 +101,8 @@ or `admin` and must authorize the requested tool's required scope under the same
 insufficient `grant.scope` fails closed with `x402_grant_scope_mismatch` before MCP tool dispatch. The M0.2 regression
 locks live in `internal/mcpapp/x402_grants_test.go`.
 
-Instance-plane x402 capability grants are a separate Host-authored contract for OAuth-authenticated minting tools.
-`agent_create` consumes `capabilityVersion="instance-capability/v1"` / `capability="instance:agent_create"`;
-`agent_local_install_plan` consumes `capabilityVersion="instance-capability/v1"` /
+Instance-plane x402 capability grants are a separate Host-authored contract for the OAuth-authenticated install-plan
+tool. `agent_local_install_plan` consumes `capabilityVersion="instance-capability/v1"` /
 `capability="instance:install_plan"`. Body hashes payment evidence before Host consume, rejects actor/scoped grants
 (`scoped-invocation/v1`, `tools.invoke`, and mismatched tool/resource bindings), and performs no instance tool side
 effect until Host accepts the grant. Explicit operator OAuth authority is exempt; ordinary OAuth connector sessions are

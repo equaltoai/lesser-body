@@ -76,7 +76,7 @@ Notes:
   - rejects agent-delegated and legacy managed-instance-key principals before instance tool dispatch
   - serves the Ba header-free one-time installer-grant download route
 - `internal/ptahserver/`
-  - registers account-holder orchestration tools for agent registry, draft content, delegation, and binding
+  - registers account-holder orchestration tools for Host-backed genesis, agent registry, draft content, and binding
   - uses Body-owned instance tables and Lesser-owned APIs rather than direct Lesser table writes
 - `internal/baserver/`
   - registers `agent_local_install_plan`

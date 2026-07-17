@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,43 +114,44 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				}
 			}
 			if tc.name == "ptah" {
+				for _, tool := range listBody.Result.Tools {
+					if tool.Name == "agent_create" {
+						t.Fatalf("removed agent_create tool is still advertised: %+v", tool)
+					}
+				}
 				def := listBody.Result.Tools[0]
 				if def.Annotations == nil || def.Annotations.ReadOnlyHint == nil || *def.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_bind_soul annotations not write/additive: %+v", def.Annotations)
 				}
-				createDef := listBody.Result.Tools[1]
-				if createDef.Name != "agent_create" || createDef.Annotations == nil || createDef.Annotations.ReadOnlyHint == nil || *createDef.Annotations.ReadOnlyHint || createDef.Annotations.DestructiveHint == nil || *createDef.Annotations.DestructiveHint {
-					t.Fatalf("agent_create annotations not write/additive: %+v", createDef)
-				}
-				getDef := listBody.Result.Tools[2]
+				getDef := listBody.Result.Tools[1]
 				if getDef.Name != "agent_get" || getDef.Annotations == nil || getDef.Annotations.ReadOnlyHint == nil || !*getDef.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_get annotations not read-only: %+v", getDef)
 				}
-				listDef := listBody.Result.Tools[3]
+				listDef := listBody.Result.Tools[2]
 				if listDef.Name != "agent_list" || listDef.Annotations == nil || listDef.Annotations.ReadOnlyHint == nil || !*listDef.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_list annotations not read-only: %+v", listDef)
 				}
-				soulGetDef := listBody.Result.Tools[4]
+				soulGetDef := listBody.Result.Tools[3]
 				if soulGetDef.Name != "agent_soul_get" || soulGetDef.Annotations == nil || soulGetDef.Annotations.ReadOnlyHint == nil || !*soulGetDef.Annotations.ReadOnlyHint || !strings.Contains(soulGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
 					t.Fatalf("agent_soul_get annotations/description invalid: %+v", soulGetDef)
 				}
-				soulUpsertDef := listBody.Result.Tools[5]
+				soulUpsertDef := listBody.Result.Tools[4]
 				if soulUpsertDef.Name != "agent_soul_upsert" || soulUpsertDef.Annotations == nil || soulUpsertDef.Annotations.ReadOnlyHint == nil || *soulUpsertDef.Annotations.ReadOnlyHint || soulUpsertDef.Annotations.IdempotentHint == nil || *soulUpsertDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_soul_upsert annotations invalid: %+v", soulUpsertDef)
 				}
-				soulArchiveDef := listBody.Result.Tools[6]
+				soulArchiveDef := listBody.Result.Tools[5]
 				if soulArchiveDef.Name != "agent_soul_archive" || soulArchiveDef.Annotations == nil || soulArchiveDef.Annotations.ReadOnlyHint == nil || *soulArchiveDef.Annotations.ReadOnlyHint || soulArchiveDef.Annotations.IdempotentHint == nil || !*soulArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_soul_archive annotations invalid: %+v", soulArchiveDef)
 				}
-				instructionsGetDef := listBody.Result.Tools[7]
+				instructionsGetDef := listBody.Result.Tools[6]
 				if instructionsGetDef.Name != "agent_instructions_get" || instructionsGetDef.Annotations == nil || instructionsGetDef.Annotations.ReadOnlyHint == nil || !*instructionsGetDef.Annotations.ReadOnlyHint || strings.Contains(instructionsGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
 					t.Fatalf("agent_instructions_get annotations/description invalid: %+v", instructionsGetDef)
 				}
-				instructionsUpsertDef := listBody.Result.Tools[8]
+				instructionsUpsertDef := listBody.Result.Tools[7]
 				if instructionsUpsertDef.Name != "agent_instructions_upsert" || instructionsUpsertDef.Annotations == nil || instructionsUpsertDef.Annotations.ReadOnlyHint == nil || *instructionsUpsertDef.Annotations.ReadOnlyHint || instructionsUpsertDef.Annotations.IdempotentHint == nil || *instructionsUpsertDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_upsert annotations invalid: %+v", instructionsUpsertDef)
 				}
-				instructionsArchiveDef := listBody.Result.Tools[9]
+				instructionsArchiveDef := listBody.Result.Tools[8]
 				if instructionsArchiveDef.Name != "agent_instructions_archive" || instructionsArchiveDef.Annotations == nil || instructionsArchiveDef.Annotations.ReadOnlyHint == nil || *instructionsArchiveDef.Annotations.ReadOnlyHint || instructionsArchiveDef.Annotations.IdempotentHint == nil || !*instructionsArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_archive annotations invalid: %+v", instructionsArchiveDef)
 				}
@@ -287,107 +288,6 @@ func TestInstancePlaneMCP_AgentBindSoulRequiresWriteScope(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("Lesser requests = %d, want 0", requests)
-	}
-}
-
-func TestInstancePlaneMCP_AgentCreateDelegatesWithCallerBearerAndRegistry(t *testing.T) {
-	requests := 0
-	var capturedAuth string
-	var capturedBody lesserapi.AgentDelegationRequest
-	lesser := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/v1/agents/delegate" {
-			t.Fatalf("path = %s, want /api/v1/agents/delegate", r.URL.Path)
-		}
-		if got := r.Header.Get("Idempotency-Key"); got != "" {
-			t.Fatalf("Idempotency-Key = %q, want none for non-idempotent Lesser delegation", got)
-		}
-		capturedAuth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
-			t.Fatalf("decode Lesser request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(instanceAgentDelegationResponse()))
-	}))
-	defer lesser.Close()
-
-	registryStore := newInstanceAgentRegistryStore(t)
-	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
-		return registryStore, nil
-	})
-	t.Cleanup(resetRegistry)
-
-	t.Setenv("JWT_SECRET", "test-secret")
-	t.Setenv("LESSER_API_BASE_URL", lesser.URL)
-	auth.ResetForTests()
-	lesserapi.ResetForTests()
-
-	app, err := instanceapp.New("lesser-body-instance", "dev")
-	if err != nil {
-		t.Fatalf("new app: %v", err)
-	}
-	env := testkit.New()
-	resetConsumer := instancex402.SetConsumerForTests(func(context.Context, instancex402.ConsumeRequestForTests) (instancex402.ConsumeResponseForTests, error) {
-		t.Fatalf("operator-exempt agent_create must not consume an x402 grant")
-		return instancex402.ConsumeResponseForTests{}, nil
-	})
-	t.Cleanup(resetConsumer)
-
-	userToken := newOperatorTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
-	headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", userToken)
-
-	out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_create", map[string]any{
-		"agent_username": "ptah_agent",
-		"actor_username": "agent1",
-		"display_name":   "Ptah Agent",
-		"bio":            "delegated runtime",
-		"scopes":         []string{"read", "write:statuses"},
-		"expires_in":     3600,
-		"device_label":   "ptah-instance-plane",
-		"agent_info": map[string]any{
-			"version": "1",
-		},
-	})
-	if out.Result == nil || out.Result.IsError {
-		t.Fatalf("agent_create result = %+v error = %+v", out.Result, out.Error)
-	}
-	if requests != 1 {
-		t.Fatalf("Lesser requests = %d, want exactly 1", requests)
-	}
-	if capturedAuth != "Bearer "+userToken {
-		t.Fatalf("Authorization = %q, want caller bearer", capturedAuth)
-	}
-	if strings.Contains(capturedAuth, "integration-secret") {
-		t.Fatalf("agent_create used soul-binding integration bearer")
-	}
-	if capturedBody.AgentUsername != "ptah_agent" || capturedBody.DisplayName != "Ptah Agent" || capturedBody.Bio != "delegated runtime" {
-		t.Fatalf("captured body identity fields = %+v", capturedBody)
-	}
-	if got := strings.Join(capturedBody.Scopes, ","); got != "read,write:statuses" {
-		t.Fatalf("captured scopes = %q", got)
-	}
-	if capturedBody.ExpiresIn != 3600 || capturedBody.DeviceLabel != "ptah-instance-plane" {
-		t.Fatalf("captured token options = %+v", capturedBody)
-	}
-
-	registered, err := registryStore.Get(context.Background(), "agent1", "https://lesser.example/users/ptah_agent")
-	if err != nil {
-		t.Fatalf("registry Get: %v", err)
-	}
-	if registered.Account != "agent1" || registered.AgentID != "https://lesser.example/users/ptah_agent" {
-		t.Fatalf("registry entry = %+v", registered)
-	}
-
-	data := toolResultData(t, out.Result)
-	token, _ := data["token"].(map[string]any)
-	if token["access_token"] != "mock-access-token" || token["refresh_token"] != "mock-refresh-token" {
-		t.Fatalf("structured token = %+v", token)
-	}
-	if len(out.Result.Content) == 0 || strings.Contains(out.Result.Content[0].Text, "mock-access-token") || strings.Contains(out.Result.Content[0].Text, "mock-refresh-token") {
-		t.Fatalf("text content leaked delegated credentials: %+v", out.Result.Content)
 	}
 }
 
@@ -773,22 +673,6 @@ func TestInstancePlaneMCP_RejectsActorScopedX402GrantForInstanceTools(t *testing
 		t.Fatalf("new app: %v", err)
 	}
 	env := testkit.New()
-
-	t.Run("agent_create", func(t *testing.T) {
-		token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ptah/mcp"))
-		headers := initializedMCPHeaders(t, env, app, "/instance/ptah/mcp", token)
-		addInstanceX402Headers(headers, "scoped-grant-agent-create", "raw-scoped-grant-token", "tools.invoke", "raw-scoped-payment")
-
-		out := callMCPTool(t, env, app, "/instance/ptah/mcp", headers, "agent_create", map[string]any{
-			"agent_username": "ptah_agent",
-			"actor_username": "agent1",
-			"scopes":         []string{"read"},
-		})
-		if reason := toolResultErrorReason(t, out.Result); reason != "x402_grant_capability_mismatch" {
-			t.Fatalf("agent_create x402 reason = %q, want capability mismatch", reason)
-		}
-		assertNoRawX402Leak(t, out.Result, "raw-scoped-grant-token", "raw-scoped-payment", "host-instance-key-secret")
-	})
 
 	t.Run("agent_local_install_plan", func(t *testing.T) {
 		token := newTestTokenWithAudience(t, "test-secret", "agent1", []string{"write"}, audienceForPath("/instance/ba/mcp"))
@@ -1179,42 +1063,6 @@ func instanceSoulBindingResponse(replayed bool) string {
 		},
 		"links":{"status":"/api/v1/souls/bindings/agent-0xabc"}
 	}`, lesserapi.SoulAuthorityModelInstanceTrust, lesserapi.SoulAnchorStateHostedOffchain, lesserapi.SoulOperationalBindingHostedBound, replayed)
-}
-
-func instanceAgentDelegationResponse() string {
-	return `{
-		"account": {
-			"id": "https://lesser.example/users/ptah_agent",
-			"username": "ptah_agent",
-			"acct": "ptah_agent",
-			"display_name": "Ptah Agent",
-			"locked": false,
-			"bot": true,
-			"discoverable": true,
-			"group": false,
-			"created_at": "2026-07-15T12:00:00Z",
-			"note": "",
-			"url": "https://lesser.example/@ptah_agent",
-			"avatar": "https://lesser.example/avatars/original/missing.png",
-			"avatar_static": "https://lesser.example/avatars/original/missing.png",
-			"header": "https://lesser.example/headers/original/missing.png",
-			"header_static": "https://lesser.example/headers/original/missing.png",
-			"followers_count": 0,
-			"following_count": 0,
-			"statuses_count": 0,
-			"last_status_at": "",
-			"emojis": [],
-			"fields": []
-		},
-		"token": {
-			"access_token": "mock-access-token",
-			"token_type": "Bearer",
-			"expires_in": 3600,
-			"refresh_token": "mock-refresh-token",
-			"scope": "read write:statuses",
-			"created_at": 1794744000
-		}
-	}`
 }
 
 func firstHeader(headers map[string][]string, name string) string {
