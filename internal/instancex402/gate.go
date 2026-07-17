@@ -224,27 +224,31 @@ func normalizeRequirement(req Requirement) Requirement {
 }
 
 func instanceOperatorExempt(principal *auth.Principal) bool {
+	return IsInstanceOperator(principal)
+}
+
+// IsInstanceOperator reports explicit owner/operator authority for instance
+// tools. A write scope, a delegated_by marker, or an agent token is not an
+// operator claim. This predicate is shared by the x402 exemption and Ptah's
+// Host-backed genesis flow so paid/public OAuth sessions cannot be upgraded
+// into instance-owner authority by inference.
+func IsInstanceOperator(principal *auth.Principal) bool {
 	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || principal.Claims == nil {
 		return false
 	}
 	claims := principal.Claims
+	if claims.IsAgent {
+		return false
+	}
 	for _, scope := range claims.Scopes {
 		if strings.EqualFold(strings.TrimSpace(scope), "admin") {
 			return true
 		}
 	}
-	switch normalizeOperatorClass(claims.ClientClass) {
-	case "operator":
+	if normalizeOperatorClass(claims.ClientClass) == "operator" {
 		return true
 	}
-	if strings.TrimSpace(claims.DelegatedBy) != "" {
-		return true
-	}
-	switch normalizeOperatorClass(claims.AgentType) {
-	case "operator":
-		return true
-	}
-	return false
+	return normalizeOperatorClass(claims.AgentType) == "operator"
 }
 
 func normalizeOperatorClass(value string) string {
