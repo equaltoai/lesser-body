@@ -177,23 +177,8 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
     resources: [jwtSecretKeyArnValue],
   }));
 
-  if (props.lesserHostInstanceKeyArn !== undefined) {
-    handler.addEnvironment("LESSER_HOST_INSTANCE_KEY_ARN", props.lesserHostInstanceKeyArn);
-  }
-
-  const instanceKeySecretResources = [
-    legacyInstanceKeySecretArnPattern(stack, props.appName),
-    managedLesserHostInstanceKeySecretArnPattern(stack, props.stage, props.appName),
-  ];
-  const exactSecretArn = optionalNonEmptyStringValue(stack, "HasLesserHostInstanceKeyARN", props.lesserHostInstanceKeyArn);
-  if (exactSecretArn !== undefined) {
-    instanceKeySecretResources.push(exactSecretArn);
-  }
-
-  handler.addToRolePolicy(new iam.PolicyStatement({
-    actions: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
-    resources: instanceKeySecretResources,
-  }));
+  const exactInstanceKeyArn = optionalNonEmptyStringValue(stack, "HasLesserHostInstanceKeyARN", props.lesserHostInstanceKeyArn);
+  configureLesserHostInstanceKeyAccess(stack, handler, props, exactInstanceKeyArn);
 
   const mcpProps = {
     handler,
@@ -264,26 +249,7 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
 
   const lesserTableParamPath = props.lesserTableParamPath || ssmParamName(props.appName, props.stage, "lesser", "exports", "v1", "table_name");
   const tableName = lookupStringParameterValue(stack, "LesserTableNameParamLookup", props.lesserTableParamPath, lesserTableParamPath);
-  handler.addEnvironment("LESSER_TABLE_NAME", tableName);
-  const tableArn = stack.formatArn({
-    service: "dynamodb",
-    resource: "table",
-    resourceName: tableName,
-  });
-  handler.addToRolePolicy(new iam.PolicyStatement({
-    actions: ["dynamodb:DescribeTable"],
-    resources: [tableArn],
-  }));
-  handler.addToRolePolicy(new iam.PolicyStatement({
-    actions: ["dynamodb:Query", "dynamodb:GetItem"],
-    resources: [tableArn],
-    conditions: dynamodbLeadingKeysCondition("LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"),
-  }));
-  handler.addToRolePolicy(new iam.PolicyStatement({
-    actions: ["dynamodb:PutItem"],
-    resources: [tableArn],
-    conditions: dynamodbLeadingKeysCondition("LBMEMORY#*"),
-  }));
+  configureLesserTableAccess(stack, handler, tableName, true);
 
   const mcpLambdaArnParam = new ssm.CfnParameter(stack, "McpLambdaArnParam", {
     name: ssmParamName(props.appName, props.stage, "lesser-body", "exports", "v1", "mcp_lambda_arn"),
@@ -316,7 +282,7 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
     mcpStreamTableParam.overrideLogicalId("McpStreamTableParam604E9EFA");
   }
 
-  configureInstancePlaneStack(stack, props, jwtSecretArnValue, jwtSecretKeyArnValue, jwtSecret);
+  configureInstancePlaneStack(stack, props, jwtSecretArnValue, jwtSecretKeyArnValue, jwtSecret, tableName, exactInstanceKeyArn);
 }
 
 function overrideRemoteMcpTableLogicalId(table: dynamodb.ITable | undefined, logicalId: string): void {
@@ -346,6 +312,8 @@ function configureInstancePlaneStack(
   jwtSecretArnValue: string,
   jwtSecretKeyArnValue: string,
   jwtSecret: secretsmanager.ISecret,
+  lesserTableName: string,
+  exactInstanceKeyArn: string | undefined,
 ): void {
   const tables = createInstancePlaneTables(stack, props.appName, props.stage);
   const handler = new lambda.Function(stack, "InstanceMcpHandler", {
@@ -375,6 +343,13 @@ function configureInstancePlaneStack(
     actions: ["kms:Decrypt", "kms:DescribeKey"],
     resources: [jwtSecretKeyArnValue],
   }));
+  if (props.lesserApiBaseUrl?.trim()) {
+    // This is a deploy-configured fallback only. Runtime request Host headers
+    // remain untrusted and cannot replace the managed TRUST_CONFIG path.
+    handler.addEnvironment("LESSER_API_BASE_URL", props.lesserApiBaseUrl);
+  }
+  configureLesserHostInstanceKeyAccess(stack, handler, props, exactInstanceKeyArn);
+  configureLesserTableAccess(stack, handler, lesserTableName, false);
   handler.addToRolePolicy(new iam.PolicyStatement({
     actions: [
       "dynamodb:BatchGetItem",
@@ -435,6 +410,63 @@ function configureInstancePlaneStack(
     value: tables.session.tableName,
   });
   instanceSessionTableParam.overrideLogicalId("InstanceSessionTableParam");
+}
+
+function configureLesserHostInstanceKeyAccess(
+  stack: cdk.Stack,
+  handler: lambda.Function,
+  props: LesserBodyRuntimeProps,
+  exactInstanceKeyArn: string | undefined,
+): void {
+  if (props.lesserHostInstanceKeyArn !== undefined) {
+    handler.addEnvironment("LESSER_HOST_INSTANCE_KEY_ARN", props.lesserHostInstanceKeyArn);
+  }
+
+  const instanceKeySecretResources = [
+    legacyInstanceKeySecretArnPattern(stack, props.appName),
+    managedLesserHostInstanceKeySecretArnPattern(stack, props.stage, props.appName),
+  ];
+  if (exactInstanceKeyArn !== undefined) {
+    instanceKeySecretResources.push(exactInstanceKeyArn);
+  }
+
+  handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+    resources: instanceKeySecretResources,
+  }));
+}
+
+function configureLesserTableAccess(
+  stack: cdk.Stack,
+  handler: lambda.Function,
+  tableName: string,
+  includeMemoryWrite: boolean,
+): void {
+  handler.addEnvironment("LESSER_TABLE_NAME", tableName);
+  const tableArn = stack.formatArn({
+    service: "dynamodb",
+    resource: "table",
+    resourceName: tableName,
+  });
+  handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: ["dynamodb:DescribeTable"],
+    resources: [tableArn],
+  }));
+  const lesserTableReadKeys = includeMemoryWrite
+    ? ["LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"]
+    : ["INSTANCE#CONFIG"];
+  handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: ["dynamodb:Query", "dynamodb:GetItem"],
+    resources: [tableArn],
+    conditions: dynamodbLeadingKeysCondition(...lesserTableReadKeys),
+  }));
+  if (includeMemoryWrite) {
+    handler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:PutItem"],
+      resources: [tableArn],
+      conditions: dynamodbLeadingKeysCondition("LBMEMORY#*"),
+    }));
+  }
 }
 
 function createInstancePlaneTables(stack: cdk.Stack, appName: string, stage: string): InstancePlaneTables {
