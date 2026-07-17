@@ -600,7 +600,7 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
 | `agent_create` | Write | Delegate runtime credentials for an existing Lesser local agent account and create a Body/Ptah account-scoped registry entry. |
 | `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor. |
-| `agent_list` | Read | List Body/Ptah account-scoped registry entries with cursor pagination. |
+| `agent_list` | Read | List Body/Ptah account-scoped registry entries merged with Lesser's public live-agent directory, with cursor pagination. |
 | `agent_soul_get` | Read | Read the current account-scoped Ptah `agent_soul` draft/archived record. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
 | `agent_soul_upsert` | Write | Create or update account-scoped Ptah `agent_soul` draft content through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
 | `agent_soul_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_soul` record through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
@@ -651,13 +651,26 @@ Malformed input returns `invalid_request`; registry read failures return `agent_
 - Not accepted: account overrides. The account partition is always derived from the authenticated account-holder
   principal.
 
-`agent_list` requires the same account-holder/read-capable authority as `agent_get`. It uses
-`internal/agentregistry.Store.List`, which performs a TableTheory query over the `ACCOUNT#<account>` partition and
-`AGENT#` sort-key prefix in `INSTANCE_REGISTRY_TABLE`; it does not scan the table, read Lesser's table, or call Lesser.
+`agent_list` requires the same account-holder/read-capable authority as `agent_get`. It first reads the authenticated
+account's Body-owned `internal/agentregistry.Store.List` path, which performs a TableTheory query over the
+`ACCOUNT#<account>` partition and `AGENT#` sort-key prefix in `INSTANCE_REGISTRY_TABLE`; it does not scan the table or
+read `LESSER_TABLE_NAME`. It then reads Lesser's authoritative public `GET /api/v1/agents` directory through the typed
+`internal/lesserapi` client. The request does not forward the Ptah caller bearer, so the live view remains the same public
+contract available to an anonymous Lesser API client.
 
-Successful output includes `structuredContent.data.agents`, where each item contains `registry`, `content_version`, and
-`content_summary` using the same shapes and current `not_available` placeholders as `agent_get`, plus pagination
-metadata:
+The two read-only views are merged deterministically. Registry ids that are actor URLs (or local ids) matching a live
+agent username are represented once with `source: "merged"`; the Body registry contribution remains in `registry` and
+the public Lesser contribution is in `live_agent`. Registry-only entries use `source: "ptah_registry"`; live-only entries
+use `source: "lesser_live"` and do not claim Body account ownership. Duplicate live usernames are case-insensitively
+deduplicated. Registry rows returned outside the authenticated account partition are discarded defensively. The merged
+ordering is stable and the returned cursor is opaque to clients. A live source failure fails closed with
+`agent_live_source_error` rather than returning a partial inventory.
+
+Successful output includes `structuredContent.data.agents`. Registry-backed items retain `registry`, `content_version`,
+and `content_summary` using the same current `not_available` placeholders as `agent_get`. Live-backed items add the
+public `live_agent` summary and source-specific content placeholders. The typed live summary allowlist excludes
+`agent_owner`, `delegated_scopes`, `identity_semantics.soul_agent_id`, OAuth tokens, and delegated runtime secrets. The
+tool never writes Lesser actor data. Pagination metadata remains:
 
 ```json
 {
@@ -670,7 +683,8 @@ metadata:
 }
 ```
 
-Invalid `limit` or `cursor` values return `invalid_request`. Registry failures return `agent_registry_error`.
+Invalid `limit` or cursor values return `invalid_request`. Body registry failures return `agent_registry_error`; Lesser
+directory failures return `agent_live_source_error` with no upstream response body or credential detail.
 
 `agent_soul_get` input:
 

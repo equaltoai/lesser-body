@@ -137,7 +137,8 @@ that runtime only for the current read-only `skill_bundle_get` pilot; task state
   - See `docs/oauth-migration.md` for the rollout sequence.
 - `LESSER_API_BASE_URL` (string, optional)
   - Base URL used by social tools when calling the Lesser REST API (for example: `https://api.dev.example.com`).
-  - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp/{actor}` (or `/mcp`).
+  - If not set, it is derived from `MCP_ENDPOINT` by stripping `/mcp/{actor}` (or `/mcp`), or on the instance-plane
+    Lambda from `INSTANCE_MCP_ENDPOINT` by stripping `/instance/{surface}/mcp`.
 - `LESSER_SOUL_API_BASE_URL` (string, optional)
   - Base URL used by identity and communication tools when calling the soul API (for example: `https://lab.lesser.host`).
   - In managed deployments, if not set, lesser-body resolves it from the persisted Lesser `TRUST_CONFIG.baseURL` record
