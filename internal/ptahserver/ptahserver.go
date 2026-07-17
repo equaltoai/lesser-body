@@ -3,13 +3,16 @@ package ptahserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +74,13 @@ type AgentRegistry interface {
 	List(ctx context.Context, in agentregistry.ListInput) (*agentregistry.ListResult, error)
 }
 
+// AgentLiveClient is the read-only Lesser public live-agent directory
+// dependency used by Ptah agent_list. Its implementation is the typed client
+// in internal/lesserapi; it never receives the caller's Ptah bearer token.
+type AgentLiveClient interface {
+	ListAgents(ctx context.Context) ([]lesserapi.AgentDirectoryEntry, error)
+}
+
 type config struct {
 	soulBinding        soulBindingClient
 	soulBindingFactory func() (soulBindingClient, error)
@@ -79,6 +89,8 @@ type config struct {
 	agentDelegateFactory func() (agentDelegateClient, error)
 	agentRegistry        AgentRegistry
 	agentRegistryFactory func() (AgentRegistry, error)
+	agentLiveClient      AgentLiveClient
+	agentLiveFactory     func() (AgentLiveClient, error)
 
 	agentContent        AgentContentStore
 	agentContentFactory func() (AgentContentStore, error)
@@ -115,6 +127,14 @@ func WithAgentRegistryStore(store AgentRegistry) Option {
 	}
 }
 
+// WithAgentLiveClient injects the read-only Lesser public live-agent client
+// used by agent_list.
+func WithAgentLiveClient(client AgentLiveClient) Option {
+	return func(cfg *config) {
+		cfg.agentLiveClient = client
+	}
+}
+
 // WithAgentContentStore injects the body-owned agent content store used by
 // Ptah authoring tools.
 func WithAgentContentStore(store AgentContentStore) Option {
@@ -136,6 +156,8 @@ func WithIntegrationBearer(bearer string) Option {
 var (
 	agentRegistryFactoryMu       sync.RWMutex
 	agentRegistryFactoryForTests func() (AgentRegistry, error)
+	agentLiveFactoryMu           sync.RWMutex
+	agentLiveFactoryForTests     func() (AgentLiveClient, error)
 )
 
 // SetAgentRegistryFactoryForTests overrides the production registry factory for
@@ -151,6 +173,23 @@ func SetAgentRegistryFactoryForTests(factory func() (AgentRegistry, error)) func
 		agentRegistryFactoryMu.Lock()
 		agentRegistryFactoryForTests = previous
 		agentRegistryFactoryMu.Unlock()
+	}
+}
+
+// SetAgentLiveClientFactoryForTests overrides the production Lesser live-agent
+// client factory for tests that construct the instance app, whose public New
+// function intentionally does not expose tool-registration dependency
+// injection.
+func SetAgentLiveClientFactoryForTests(factory func() (AgentLiveClient, error)) func() {
+	agentLiveFactoryMu.Lock()
+	previous := agentLiveFactoryForTests
+	agentLiveFactoryForTests = factory
+	agentLiveFactoryMu.Unlock()
+
+	return func() {
+		agentLiveFactoryMu.Lock()
+		agentLiveFactoryForTests = previous
+		agentLiveFactoryMu.Unlock()
 	}
 }
 
@@ -206,6 +245,7 @@ func defaultConfig() config {
 			return lesserapi.Default()
 		},
 		agentRegistryFactory: defaultAgentRegistry,
+		agentLiveFactory:     defaultAgentLiveClient,
 		agentContentFactory: func() (AgentContentStore, error) {
 			return agentcontent.Default()
 		},
@@ -223,6 +263,16 @@ func defaultAgentRegistry() (AgentRegistry, error) {
 		return factory()
 	}
 	return agentregistry.Default()
+}
+
+func defaultAgentLiveClient() (AgentLiveClient, error) {
+	agentLiveFactoryMu.RLock()
+	factory := agentLiveFactoryForTests
+	agentLiveFactoryMu.RUnlock()
+	if factory != nil {
+		return factory()
+	}
+	return lesserapi.Default()
 }
 
 func agentBindSoulDef() mcpruntime.ToolDef {
@@ -320,7 +370,7 @@ func agentListDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentList,
 		Title:       "List registered agents",
-		Description: "List Body/Ptah account-scoped agent registry entries for the authenticated account-holder principal. Requires read scope.",
+		Description: "List the authenticated account-holder's Body/Ptah registry entries merged with Lesser's public live-agent directory. Requires read scope; live entries contain public metadata only.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(fmt.Sprintf(`{
 			"type":"object",
@@ -333,7 +383,7 @@ func agentListDef() mcpruntime.ToolDef {
 		OutputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"data":{"type":"object","description":"Account-scoped registry entries and pagination metadata."},
+				"data":{"type":"object","description":"Merged Body/Ptah registry and public Lesser live-agent entries with stable pagination metadata."},
 				"error":{"type":"object","description":"Structured tool error when isError=true."}
 			}
 		}`),
@@ -512,6 +562,62 @@ type agentGetInput struct {
 type agentListInput struct {
 	Limit  *int   `json:"limit"`
 	Cursor string `json:"cursor"`
+}
+
+const (
+	agentListCursorPrefix       = "ptah-agent-list-v1:"
+	maxAgentRegistryListPages   = 1000
+	agentListLiveSourceCode     = "lesser_live"
+	agentListRegistrySourceCode = "ptah_registry"
+	agentListMergedSourceCode   = "merged"
+)
+
+type agentListCursor struct {
+	After                string
+	LegacyRegistryCursor string
+}
+
+type encodedAgentListCursor struct {
+	Version int    `json:"version"`
+	After   string `json:"after"`
+}
+
+type mergedAgentListEntry struct {
+	Key      string
+	Registry *agentregistry.Agent
+	Live     *lesserapi.AgentDirectoryEntry
+}
+
+func decodeAgentListCursor(raw string) (agentListCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return agentListCursor{}, nil
+	}
+	if !strings.HasPrefix(raw, agentListCursorPrefix) {
+		// Cursors issued by the previous registry-only implementation remain
+		// readable as a one-time compatibility path. The next response always
+		// emits the merged-view cursor format.
+		return agentListCursor{LegacyRegistryCursor: raw}, nil
+	}
+
+	encoded := strings.TrimPrefix(raw, agentListCursorPrefix)
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return agentListCursor{}, fmt.Errorf("decode merged agent cursor: %w", err)
+	}
+	var cursor encodedAgentListCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return agentListCursor{}, fmt.Errorf("decode merged agent cursor: %w", err)
+	}
+	if cursor.Version != 1 || strings.TrimSpace(cursor.After) == "" {
+		return agentListCursor{}, fmt.Errorf("merged agent cursor is invalid")
+	}
+	return agentListCursor{After: strings.TrimSpace(cursor.After)}, nil
+}
+
+func encodeAgentListCursor(after string) string {
+	payload, _ := json.Marshal(encodedAgentListCursor{Version: 1, After: after})
+	return agentListCursorPrefix + base64.RawURLEncoding.EncodeToString(payload)
 }
 
 type agentSoulGetInput struct {
@@ -803,6 +909,12 @@ func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*m
 	if errResult != nil || err != nil {
 		return errResult, err
 	}
+	cursor, err := decodeAgentListCursor(in.Cursor)
+	if err != nil {
+		return toolErrorResult("invalid_request", "cursor is invalid", http.StatusBadRequest, map[string]any{
+			"source": "agent_list",
+		})
+	}
 
 	registry, err := cfg.registry()
 	if err != nil {
@@ -823,11 +935,7 @@ func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*m
 		"cursor_present", strings.TrimSpace(in.Cursor) != "",
 	)
 
-	page, err := registry.List(ctx, agentregistry.ListInput{
-		Account: actorUsername,
-		Limit:   limit,
-		Cursor:  in.Cursor,
-	})
+	registryAgents, err := listAllAgentRegistryEntries(ctx, registry, actorUsername, cursor.LegacyRegistryCursor)
 	if err != nil {
 		switch {
 		case errors.Is(err, agentregistry.ErrInvalidCursor):
@@ -849,7 +957,186 @@ func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*m
 			})
 		}
 	}
-	return agentListSuccessResult(actorUsername, limit, page)
+
+	liveClient, err := cfg.liveAgents()
+	if err != nil {
+		return agentLiveSourceError(err)
+	}
+	if liveClient == nil {
+		return agentLiveSourceError(fmt.Errorf("Lesser live-agent client is nil"))
+	}
+	liveAgents, err := liveClient.ListAgents(ctx)
+	if err != nil {
+		return agentLiveSourceError(err)
+	}
+
+	entries := mergeAgentListEntries(actorUsername, registryAgents, liveAgents)
+	start := 0
+	if cursor.After != "" {
+		start = sort.Search(len(entries), func(index int) bool {
+			return entries[index].Key > cursor.After
+		})
+	}
+	if start > len(entries) {
+		start = len(entries)
+	}
+	end := start + limit
+	if end > len(entries) {
+		end = len(entries)
+	}
+	pageEntries := entries[start:end]
+	hasMore := end < len(entries)
+	nextCursor := ""
+	if hasMore && len(pageEntries) > 0 {
+		nextCursor = encodeAgentListCursor(pageEntries[len(pageEntries)-1].Key)
+	}
+	return agentListSuccessResult(actorUsername, limit, pageEntries, nextCursor, hasMore)
+}
+
+func listAllAgentRegistryEntries(ctx context.Context, registry AgentRegistry, account string, startCursor string) ([]*agentregistry.Agent, error) {
+	cursor := strings.TrimSpace(startCursor)
+	seenCursors := map[string]struct{}{}
+	if cursor != "" {
+		seenCursors[cursor] = struct{}{}
+	}
+	agents := make([]*agentregistry.Agent, 0)
+
+	for pageNumber := 0; pageNumber < maxAgentRegistryListPages; pageNumber++ {
+		page, err := registry.List(ctx, agentregistry.ListInput{
+			Account: account,
+			Limit:   agentregistry.MaxListLimit,
+			Cursor:  cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			return nil, fmt.Errorf("agent registry returned a nil page")
+		}
+		agents = append(agents, page.Agents...)
+		if !page.HasMore {
+			return agents, nil
+		}
+
+		nextCursor := strings.TrimSpace(page.NextCursor)
+		if nextCursor == "" {
+			return nil, fmt.Errorf("agent registry pagination did not provide a next cursor")
+		}
+		if _, ok := seenCursors[nextCursor]; ok {
+			return nil, fmt.Errorf("agent registry pagination cursor repeated")
+		}
+		seenCursors[nextCursor] = struct{}{}
+		cursor = nextCursor
+	}
+	return nil, fmt.Errorf("agent registry pagination exceeded safety bound")
+}
+
+func agentLiveSourceError(err error) (*mcpruntime.ToolResult, error) {
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) && apiErr != nil {
+		slog.Warn("ptah agent_list Lesser live-agent source failed", "upstream_status", apiErr.Status)
+	} else {
+		slog.Warn("ptah agent_list Lesser live-agent source unavailable", "error", "source request failed")
+	}
+	return toolErrorResult("agent_live_source_error", "Body failed to read Lesser's public live-agent directory", http.StatusBadGateway, map[string]any{
+		"source": agentListLiveSourceCode,
+	})
+}
+
+func mergeAgentListEntries(account string, registryAgents []*agentregistry.Agent, liveAgents []lesserapi.AgentDirectoryEntry) []mergedAgentListEntry {
+	orderedLive := make([]lesserapi.AgentDirectoryEntry, 0, len(liveAgents))
+	for _, agent := range liveAgents {
+		if normalizeAgentIdentity(agent.Username) == "" {
+			continue
+		}
+		orderedLive = append(orderedLive, agent)
+	}
+	sort.SliceStable(orderedLive, func(left, right int) bool {
+		leftKey := normalizeAgentIdentity(orderedLive[left].Username)
+		rightKey := normalizeAgentIdentity(orderedLive[right].Username)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		if orderedLive[left].Username != orderedLive[right].Username {
+			return orderedLive[left].Username < orderedLive[right].Username
+		}
+		return orderedLive[left].DisplayName < orderedLive[right].DisplayName
+	})
+
+	liveByIdentity := make(map[string]*lesserapi.AgentDirectoryEntry, len(orderedLive))
+	for index := range orderedLive {
+		identity := normalizeAgentIdentity(orderedLive[index].Username)
+		if _, exists := liveByIdentity[identity]; exists {
+			continue
+		}
+		liveByIdentity[identity] = &orderedLive[index]
+	}
+
+	orderedRegistry := make([]*agentregistry.Agent, 0, len(registryAgents))
+	for _, agent := range registryAgents {
+		if agent == nil || normalizeActorUsername(agent.Account) != normalizeActorUsername(account) || normalizeAgentIdentity(agent.AgentID) == "" {
+			continue
+		}
+		orderedRegistry = append(orderedRegistry, agent)
+	}
+	sort.SliceStable(orderedRegistry, func(left, right int) bool {
+		leftKey := normalizeAgentIdentity(orderedRegistry[left].AgentID)
+		rightKey := normalizeAgentIdentity(orderedRegistry[right].AgentID)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		return strings.ToLower(strings.TrimSpace(orderedRegistry[left].AgentID)) < strings.ToLower(strings.TrimSpace(orderedRegistry[right].AgentID))
+	})
+
+	entries := make([]mergedAgentListEntry, 0, len(orderedRegistry)+len(liveByIdentity))
+	seenKeys := make(map[string]struct{}, len(orderedRegistry)+len(liveByIdentity))
+	matchedLive := make(map[string]struct{}, len(liveByIdentity))
+	for _, agent := range orderedRegistry {
+		identity := normalizeAgentIdentity(agent.AgentID)
+		live := liveByIdentity[identity]
+		key := "registry:" + strings.ToLower(strings.TrimSpace(agent.AgentID))
+		if live != nil {
+			key = "agent:" + identity
+			matchedLive[identity] = struct{}{}
+		}
+		if _, exists := seenKeys[key]; exists {
+			continue
+		}
+		seenKeys[key] = struct{}{}
+		entries = append(entries, mergedAgentListEntry{Key: key, Registry: agent, Live: live})
+	}
+	for index := range orderedLive {
+		identity := normalizeAgentIdentity(orderedLive[index].Username)
+		if _, matched := matchedLive[identity]; matched {
+			continue
+		}
+		key := "agent:" + identity
+		if _, exists := seenKeys[key]; exists {
+			continue
+		}
+		seenKeys[key] = struct{}{}
+		entries = append(entries, mergedAgentListEntry{Key: key, Live: &orderedLive[index]})
+	}
+
+	sort.SliceStable(entries, func(left, right int) bool {
+		return entries[left].Key < entries[right].Key
+	})
+	return entries
+}
+
+func normalizeAgentIdentity(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" && parsed.Path != "" {
+		value = parsed.Path
+	}
+	value = strings.Trim(value, "/")
+	if slash := strings.LastIndex(value, "/"); slash >= 0 {
+		value = value[slash+1:]
+	}
+	return strings.TrimPrefix(value, "@")
 }
 
 func (cfg config) handleAgentSoulGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1479,6 +1766,16 @@ func (cfg config) registry() (AgentRegistry, error) {
 	return cfg.agentRegistryFactory()
 }
 
+func (cfg config) liveAgents() (AgentLiveClient, error) {
+	if cfg.agentLiveClient != nil {
+		return cfg.agentLiveClient, nil
+	}
+	if cfg.agentLiveFactory == nil {
+		return nil, fmt.Errorf("Lesser live-agent client is not configured")
+	}
+	return cfg.agentLiveFactory()
+}
+
 func (cfg config) content() (AgentContentStore, error) {
 	if cfg.agentContent != nil {
 		return cfg.agentContent, nil
@@ -1642,25 +1939,36 @@ func agentGetSuccessResult(actorUsername string, agent *agentregistry.Agent) (*m
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
 
-func agentListSuccessResult(actorUsername string, limit int, page *agentregistry.ListResult) (*mcpruntime.ToolResult, error) {
-	agents := []*agentregistry.Agent(nil)
-	nextCursor := ""
-	hasMore := false
-	count := 0
-	if page != nil {
-		agents = page.Agents
-		nextCursor = page.NextCursor
-		hasMore = page.HasMore
-		count = page.Count
+func agentListSuccessResult(actorUsername string, limit int, entries []mergedAgentListEntry, nextCursor string, hasMore bool) (*mcpruntime.ToolResult, error) {
+	items := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		source := agentListLiveSourceCode
+		contentSource := agentListLiveSourceCode
+		if entry.Registry != nil && entry.Live != nil {
+			source = agentListMergedSourceCode
+			contentSource = "agentregistry"
+		} else if entry.Registry != nil {
+			source = agentListRegistrySourceCode
+			contentSource = "agentregistry"
+		}
+		item := map[string]any{
+			"content_version": unavailableContentVersionForSource(contentSource),
+			"content_summary": unavailableContentSummaryForSource(contentSource),
+			"source":          source,
+		}
+		if entry.Registry != nil {
+			item["registry"] = registryAgentSummary(entry.Registry)
+		}
+		if entry.Live != nil {
+			liveSummary, err := mapFromJSON(entry.Live)
+			if err != nil {
+				return nil, err
+			}
+			item["live_agent"] = liveSummary
+		}
+		items = append(items, item)
 	}
-	items := make([]map[string]any, 0, len(agents))
-	for _, agent := range agents {
-		items = append(items, map[string]any{
-			"registry":        registryAgentSummary(agent),
-			"content_version": unavailableContentVersion(),
-			"content_summary": unavailableContentSummary(),
-		})
-	}
+	count := len(items)
 
 	pagination := map[string]any{
 		"limit":       limit,
@@ -1675,7 +1983,7 @@ func agentListSuccessResult(actorUsername string, limit int, page *agentregistry
 	}
 
 	text := map[string]any{
-		"summary":    "Ptah registry entries listed",
+		"summary":    "Ptah registry and Lesser live-agent entries listed",
 		"count":      count,
 		"has_more":   hasMore,
 		"pagination": pagination,
@@ -1999,18 +2307,34 @@ func registryAgentSummary(agent *agentregistry.Agent) map[string]any {
 }
 
 func unavailableContentVersion() map[string]any {
+	return unavailableContentVersionForSource("agentregistry")
+}
+
+func unavailableContentVersionForSource(source string) map[string]any {
+	reason := "Body/Ptah registry records do not currently store source-backed content version metadata."
+	if source == agentListLiveSourceCode {
+		reason = "Lesser's public live-agent directory does not expose Body/Ptah content version metadata."
+	}
 	return map[string]any{
 		"status": "not_available",
-		"source": "agentregistry",
-		"reason": "Body/Ptah registry records do not currently store source-backed content version metadata.",
+		"source": source,
+		"reason": reason,
 	}
 }
 
 func unavailableContentSummary() map[string]any {
+	return unavailableContentSummaryForSource("agentregistry")
+}
+
+func unavailableContentSummaryForSource(source string) map[string]any {
+	reason := "Body/Ptah registry records do not currently store source-backed content summary metadata."
+	if source == agentListLiveSourceCode {
+		reason = "Lesser's public live-agent directory does not expose Body/Ptah content summary metadata."
+	}
 	return map[string]any{
 		"status": "not_available",
-		"source": "agentregistry",
-		"reason": "Body/Ptah registry records do not currently store source-backed content summary metadata.",
+		"source": source,
+		"reason": reason,
 	}
 }
 
