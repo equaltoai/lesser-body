@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
-	"github.com/equaltoai/lesser-body/internal/instancex402"
+	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -32,7 +31,6 @@ const (
 	EnvSoulBindingIntegrationBearer = "LESSER_SOUL_BINDING_INTEGRATION_BEARER"
 
 	toolAgentBindSoul = "agent_bind_soul"
-	toolAgentCreate   = "agent_create"
 	toolAgentGet      = "agent_get"
 	toolAgentList     = "agent_list"
 
@@ -50,10 +48,6 @@ const (
 
 type soulBindingClient interface {
 	InitiateSoulBinding(ctx context.Context, integrationBearer string, idempotencyKey string, req lesserapi.SoulBindingRequest) (*lesserapi.SoulBindingResponse, error)
-}
-
-type agentDelegateClient interface {
-	DelegateAgent(ctx context.Context, bearerToken string, req lesserapi.AgentDelegationRequest) (*lesserapi.AgentDelegationResponse, error)
 }
 
 // AgentContentStore is the body-owned Ptah content dependency used by Ptah
@@ -85,8 +79,8 @@ type config struct {
 	soulBinding        soulBindingClient
 	soulBindingFactory func() (soulBindingClient, error)
 
-	agentDelegateClient  agentDelegateClient
-	agentDelegateFactory func() (agentDelegateClient, error)
+	genesisClient        hostapi.GenesisClient
+	genesisFactory       func() (hostapi.GenesisClient, error)
 	agentRegistry        AgentRegistry
 	agentRegistryFactory func() (AgentRegistry, error)
 	agentLiveClient      AgentLiveClient
@@ -111,11 +105,11 @@ func WithSoulBindingClient(client soulBindingClient) Option {
 	}
 }
 
-// WithAgentDelegateClient injects the Lesser delegate client used by
-// agent_create.
-func WithAgentDelegateClient(client agentDelegateClient) Option {
+// WithGenesisClient injects the lesser-host registration/mint-conversation
+// client used by the Ptah genesis tools.
+func WithGenesisClient(client hostapi.GenesisClient) Option {
 	return func(cfg *config) {
-		cfg.agentDelegateClient = client
+		cfg.genesisClient = client
 	}
 }
 
@@ -209,9 +203,6 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentBindSoulDef(), cfg.handleAgentBindSoul); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentCreateDef(), cfg.handleAgentCreate); err != nil {
-		return err
-	}
 	if err := r.RegisterTool(agentGetDef(), cfg.handleAgentGet); err != nil {
 		return err
 	}
@@ -233,7 +224,28 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentInstructionsUpsertDef(), cfg.handleAgentInstructionsUpsert); err != nil {
 		return err
 	}
-	return r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive)
+	if err := r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisReadDef(), cfg.handleAgentGenesisRead); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisAdvanceDef(), cfg.handleAgentGenesisAdvance); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisRecoverDef(), cfg.handleAgentGenesisRecover); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisCompleteDef(), cfg.handleAgentGenesisComplete); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisFinalizePreflightDef(), cfg.handleAgentGenesisFinalizePreflight); err != nil {
+		return err
+	}
+	return r.RegisterTool(agentGenesisFinalizeDef(), cfg.handleAgentGenesisFinalize)
 }
 
 func defaultConfig() config {
@@ -241,8 +253,8 @@ func defaultConfig() config {
 		soulBindingFactory: func() (soulBindingClient, error) {
 			return lesserapi.Default()
 		},
-		agentDelegateFactory: func() (agentDelegateClient, error) {
-			return lesserapi.Default()
+		genesisFactory: func() (hostapi.GenesisClient, error) {
+			return hostapi.Default()
 		},
 		agentRegistryFactory: defaultAgentRegistry,
 		agentLiveFactory:     defaultAgentLiveClient,
@@ -304,37 +316,6 @@ func agentBindSoulDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"data":{"type":"object","description":"Structured Lesser soul-binding response, idempotency metadata, status link, and agent summary."},
-				"error":{"type":"object","description":"Structured tool error when isError=true."}
-			}
-		}`),
-	}
-}
-
-func agentCreateDef() mcpruntime.ToolDef {
-	return mcpruntime.ToolDef{
-		Name:        toolAgentCreate,
-		Title:       "Create agent runtime delegation",
-		Description: "Delegate runtime credentials for an existing Lesser local agent account, then create a body-owned account-scoped Ptah registry entry. Requires an account-holder OAuth principal with write scope.",
-		Annotations: additiveMutationToolAnnotations(),
-		InputSchema: json.RawMessage(`{
-			"type":"object",
-			"properties":{
-				"agent_username":{"type":"string","description":"Existing Lesser local agent account username to delegate. This tool does not create the Lesser account."},
-				"scopes":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Requested delegated OAuth scopes for the agent runtime session."},
-				"display_name":{"type":"string","description":"Optional display name passed through to Lesser's delegation endpoint; current Lesser behavior does not create or update accounts with it."},
-				"bio":{"type":"string","description":"Optional bio passed through to Lesser's delegation endpoint; current Lesser behavior does not create or update accounts with it."},
-				"expires_in":{"type":"integer","description":"Optional access-token/runtime-session TTL in seconds. Lesser validates bounds."},
-				"device_label":{"type":"string","description":"Optional runtime-session display label for Lesser."},
-				"agent_info":{"description":"Optional future/legacy agent metadata passed to Lesser. Current Lesser delegation accepts but ignores it for existing-agent delegation."},
-				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
-			},
-			"required":["agent_username","scopes"],
-			"additionalProperties":false
-		}`),
-		OutputSchema: json.RawMessage(`{
-			"type":"object",
-			"properties":{
-				"data":{"type":"object","description":"Safe account and registry summary plus structured delegated token credentials."},
 				"error":{"type":"object","description":"Structured tool error when isError=true."}
 			}
 		}`),
@@ -543,17 +524,6 @@ type agentBindSoulEvidenceIn struct {
 	IssuedAt        string `json:"issued_at"`
 }
 
-type agentCreateInput struct {
-	AgentUsername string   `json:"agent_username"`
-	Scopes        []string `json:"scopes"`
-	DisplayName   string   `json:"display_name"`
-	Bio           string   `json:"bio"`
-	ExpiresIn     int      `json:"expires_in"`
-	DeviceLabel   string   `json:"device_label"`
-	AgentInfo     any      `json:"agent_info"`
-	ActorUsername string   `json:"actor_username"`
-}
-
 type agentGetInput struct {
 	AgentID       string `json:"agent_id"`
 	ActorUsername string `json:"actor_username"`
@@ -717,130 +687,6 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 		return soulBindingToolResultFromError(err)
 	}
 	return soulBindingSuccessResult(actorUsername, in.IdempotencyKey, resp)
-}
-
-func (cfg config) handleAgentCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
-	principal := auth.PrincipalFromToolContext(ctx)
-	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentCreate)
-	if errResult != nil || err != nil {
-		return errResult, err
-	}
-	if !principalHasWriteScope(principal) {
-		return toolErrorResult("insufficient_scope", "agent_create requires write scope", http.StatusForbidden, map[string]any{
-			"requiredScopes": []string{"write"},
-			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
-		})
-	}
-
-	in, errResult, err := parseAgentCreateInput(args, actorUsername)
-	if errResult != nil || err != nil {
-		return errResult, err
-	}
-
-	callerBearer := strings.TrimSpace(auth.BearerTokenFromToolContext(ctx))
-	if callerBearer == "" {
-		return toolErrorResult("unauthorized", "agent_create requires the caller OAuth bearer for Lesser delegation", http.StatusUnauthorized, map[string]any{
-			"source": "lesser_agent_delegate",
-		})
-	}
-	if gateResult, err := instancex402.RequireGrant(ctx, instancex402.Requirement{
-		Tool:       toolAgentCreate,
-		Capability: instancex402.CapabilityAgentCreate,
-		Account:    actorUsername,
-	}); gateResult != nil || err != nil {
-		return gateResult, err
-	}
-
-	client, err := cfg.agentDelegate()
-	if err != nil {
-		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
-			"source": "lesser_body_ptah",
-		})
-	}
-	registry, err := cfg.registry()
-	if err != nil {
-		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
-			"source": "agent_registry",
-		})
-	}
-
-	slog.InfoContext(ctx, "ptah tool invocation",
-		"tool", toolAgentCreate,
-		"actor_username", actorUsername,
-		"agent_username", in.AgentUsername,
-		"scope_count", len(in.Scopes),
-		"bearer_present", true,
-	)
-
-	resp, err := client.DelegateAgent(ctx, callerBearer, lesserapi.AgentDelegationRequest{
-		AgentUsername: in.AgentUsername,
-		DisplayName:   in.DisplayName,
-		Bio:           in.Bio,
-		Scopes:        append([]string(nil), in.Scopes...),
-		ExpiresIn:     in.ExpiresIn,
-		DeviceLabel:   in.DeviceLabel,
-		AgentInfo:     in.AgentInfo,
-	})
-	if err != nil {
-		return agentDelegateToolResultFromError(err)
-	}
-
-	agentID := delegatedAgentID(resp)
-	if agentID == "" {
-		slog.WarnContext(ctx, "ptah agent_create lesser delegation response missing account id",
-			"tool", toolAgentCreate,
-			"actor_username", actorUsername,
-			"agent_username", in.AgentUsername,
-		)
-		return agentRegistryPartialFailureResult("agent_registry_error", "Lesser delegated credentials but response did not include an account id for registry creation", http.StatusBadGateway, map[string]any{
-			"source":                    "lesser_agent_delegate",
-			"lesserDelegationSucceeded": true,
-			"mintedCredentialsMayExist": true,
-			"reconciliationRequired":    true,
-		})
-	}
-
-	created, err := registry.Create(ctx, agentregistry.CreateInput{
-		Account: actorUsername,
-		AgentID: agentID,
-	})
-	if err != nil {
-		if errors.Is(err, agentregistry.ErrAgentAlreadyExists) {
-			slog.InfoContext(ctx, "ptah agent_create registry duplicate",
-				"tool", toolAgentCreate,
-				"actor_username", actorUsername,
-				"agent_username", in.AgentUsername,
-				"lesser_delegation_succeeded", true,
-			)
-			return toolErrorResult("agent_already_exists", "agent already exists in this account-scoped Ptah registry; Lesser may have minted fresh credentials before the duplicate was detected", http.StatusConflict, map[string]any{
-				"source":                    "agent_registry",
-				"lesserDelegationSucceeded": true,
-				"mintedCredentialsMayExist": true,
-				"reconciliationRequired":    true,
-			})
-		}
-		slog.WarnContext(ctx, "ptah agent_create registry create failed after lesser delegation",
-			"tool", toolAgentCreate,
-			"actor_username", actorUsername,
-			"agent_username", in.AgentUsername,
-			"error", err.Error(),
-			"lesser_delegation_succeeded", true,
-		)
-		return agentRegistryPartialFailureResult("agent_registry_error", "Lesser delegated credentials but Body failed to create the Ptah registry entry", http.StatusInternalServerError, map[string]any{
-			"source":                    "agent_registry",
-			"lesserDelegationSucceeded": true,
-			"mintedCredentialsMayExist": true,
-			"reconciliationRequired":    true,
-		})
-	}
-
-	slog.InfoContext(ctx, "ptah agent_create completed",
-		"tool", toolAgentCreate,
-		"actor_username", actorUsername,
-		"agent_username", in.AgentUsername,
-		"agent_id", agentID,
-	)
-	return agentCreateSuccessResult(actorUsername, resp, created)
 }
 
 func (cfg config) handleAgentGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1491,45 +1337,6 @@ func parseAgentBindSoulInput(args json.RawMessage, actorUsername string) (agentB
 	return in, nil, nil
 }
 
-func parseAgentCreateInput(args json.RawMessage, actorUsername string) (agentCreateInput, *mcpruntime.ToolResult, error) {
-	raw := strings.TrimSpace(string(args))
-	if raw == "" || raw == "null" {
-		raw = "{}"
-	}
-
-	var in agentCreateInput
-	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
-		return agentCreateInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
-	}
-	in.AgentUsername = strings.TrimSpace(in.AgentUsername)
-	in.DisplayName = strings.TrimSpace(in.DisplayName)
-	in.Bio = strings.TrimSpace(in.Bio)
-	in.DeviceLabel = strings.TrimSpace(in.DeviceLabel)
-	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
-
-	if in.AgentUsername == "" {
-		return agentCreateInput{}, mustToolErrorResult("invalid_request", "agent_username is required", http.StatusBadRequest, nil), nil
-	}
-	if len(in.Scopes) == 0 {
-		return agentCreateInput{}, mustToolErrorResult("invalid_request", "scopes are required", http.StatusBadRequest, nil), nil
-	}
-	for i, scope := range in.Scopes {
-		scope = strings.TrimSpace(scope)
-		if scope == "" {
-			return agentCreateInput{}, mustToolErrorResult("invalid_request", "scopes cannot contain empty values", http.StatusBadRequest, nil), nil
-		}
-		in.Scopes[i] = scope
-	}
-	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
-		return agentCreateInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
-			"source": "lesser_body_ptah",
-		}), nil
-	}
-	return in, nil, nil
-}
-
 func parseAgentGetInput(args json.RawMessage, actorUsername string) (agentGetInput, *mcpruntime.ToolResult, error) {
 	raw := strings.TrimSpace(string(args))
 	if raw == "" || raw == "null" {
@@ -1746,14 +1553,14 @@ func (cfg config) soulBindingClient() (soulBindingClient, error) {
 	return cfg.soulBindingFactory()
 }
 
-func (cfg config) agentDelegate() (agentDelegateClient, error) {
-	if cfg.agentDelegateClient != nil {
-		return cfg.agentDelegateClient, nil
+func (cfg config) genesis() (hostapi.GenesisClient, error) {
+	if cfg.genesisClient != nil {
+		return cfg.genesisClient, nil
 	}
-	if cfg.agentDelegateFactory == nil {
-		return nil, fmt.Errorf("agent delegate client is not configured")
+	if cfg.genesisFactory == nil {
+		return nil, fmt.Errorf("Host genesis client is not configured")
 	}
-	return cfg.agentDelegateFactory()
+	return cfg.genesisFactory()
 }
 
 func (cfg config) registry() (AgentRegistry, error) {
@@ -1853,67 +1660,6 @@ func soulBindingSuccessResult(actorUsername string, idempotencyKey string, resp 
 		"status_link": statusLink,
 		"agent":       agentSummary,
 		"data":        map[string]any{"location": "structuredContent.data"},
-	}
-	return toolJSONTextResult(text, map[string]any{"data": data})
-}
-
-func agentCreateSuccessResult(actorUsername string, resp *lesserapi.AgentDelegationResponse, registry *agentregistry.Agent) (*mcpruntime.ToolResult, error) {
-	if resp == nil {
-		return nil, fmt.Errorf("agent delegation response is nil")
-	}
-	accountMap, err := mapFromJSON(resp.Account)
-	if err != nil {
-		return nil, err
-	}
-	tokenMap, err := mapFromJSON(resp.Token)
-	if err != nil {
-		return nil, err
-	}
-
-	accountSummary := map[string]any{
-		"id":           resp.Account.ID,
-		"username":     resp.Account.Username,
-		"acct":         resp.Account.Acct,
-		"display_name": resp.Account.DisplayName,
-		"bot":          resp.Account.Bot,
-		"url":          resp.Account.URL,
-	}
-	tokenMetadata := map[string]any{
-		"token_type":          resp.Token.TokenType,
-		"expires_in":          resp.Token.ExpiresIn,
-		"scope":               resp.Token.Scope,
-		"created_at":          resp.Token.CreatedAt,
-		"has_refresh_token":   resp.Token.RefreshToken != "",
-		"credential_location": "structuredContent.data.token",
-	}
-
-	registrySummary := map[string]any{}
-	if registry != nil {
-		registrySummary = map[string]any{
-			"account":    registry.Account,
-			"agent_id":   registry.AgentID,
-			"created_at": formatTime(registry.CreatedAt),
-			"updated_at": formatTime(registry.UpdatedAt),
-		}
-	}
-
-	data := map[string]any{
-		"actor_username":       actorUsername,
-		"current_behavior":     "delegates_existing_lesser_agent_account",
-		"lesser_account":       accountMap,
-		"account_summary":      accountSummary,
-		"registry":             registrySummary,
-		"token":                tokenMap,
-		"token_metadata":       tokenMetadata,
-		"reconciliation_notes": "Lesser delegation is non-idempotent; if registry creation fails after delegation, Body cannot roll back minted Lesser credentials.",
-	}
-
-	text := map[string]any{
-		"summary":        "Lesser agent runtime credentials delegated and Ptah registry entry created",
-		"account":        accountSummary,
-		"registry":       registrySummary,
-		"token_metadata": tokenMetadata,
-		"data":           map[string]any{"location": "structuredContent.data"},
 	}
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
@@ -2074,30 +1820,6 @@ func soulBindingToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	})
 }
 
-func agentDelegateToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
-	if err == nil {
-		return nil, nil
-	}
-
-	var apiErr *lesserapi.APIError
-	if errors.As(err, &apiErr) {
-		details := map[string]any{
-			"source":         "lesser_agent_delegate",
-			"upstreamStatus": apiErr.Status,
-			"upstreamBody":   redactedAPIErrorBody(apiErr.Body),
-		}
-		if parsed := parseJSONObject(apiErr.Body); parsed != nil {
-			redactCredentialFields(parsed)
-			details["upstreamJSON"] = parsed
-		}
-		return toolErrorResult(lesserAPIErrorCode(apiErr.Status), "Lesser agent delegation API request failed", apiErr.Status, details)
-	}
-
-	return toolErrorResult("upstream_error", err.Error(), http.StatusBadGateway, map[string]any{
-		"source": "lesser_agent_delegate",
-	})
-}
-
 func agentContentToolResultFromError(err error, contentType agentcontent.ContentType) (*mcpruntime.ToolResult, error) {
 	if err == nil {
 		return nil, nil
@@ -2130,14 +1852,6 @@ func agentContentToolResultFromError(err error, contentType agentcontent.Content
 	default:
 		return toolErrorResult("internal", "Body failed to access the Ptah "+contentName+" content record", http.StatusInternalServerError, details)
 	}
-}
-
-func agentRegistryPartialFailureResult(code string, message string, status int, details map[string]any) (*mcpruntime.ToolResult, error) {
-	if details == nil {
-		details = map[string]any{}
-	}
-	details["partialFailure"] = true
-	return toolErrorResult(code, message, status, details)
 }
 
 func lesserAPIErrorCode(status int) string {
@@ -2365,13 +2079,6 @@ func agentSoulSchemaMarker() map[string]any {
 	}
 }
 
-func delegatedAgentID(resp *lesserapi.AgentDelegationResponse) string {
-	if resp == nil {
-		return ""
-	}
-	return strings.TrimSpace(resp.Account.ID)
-}
-
 func formatTime(value time.Time) string {
 	if value.IsZero() {
 		return ""
@@ -2407,40 +2114,4 @@ func parseJSONObject(raw []byte) map[string]any {
 		return nil
 	}
 	return out
-}
-
-var credentialFieldPattern = regexp.MustCompile(`(?i)("(?:access|refresh)_token"\s*:\s*)"[^"]*"`)
-
-func redactedAPIErrorBody(raw []byte) string {
-	raw = []byte(strings.TrimSpace(string(raw)))
-	if len(raw) == 0 {
-		return ""
-	}
-
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err == nil {
-		redactCredentialFields(decoded)
-		if b, err := json.Marshal(decoded); err == nil {
-			return string(b)
-		}
-	}
-	return credentialFieldPattern.ReplaceAllString(string(raw), `${1}"<redacted>"`)
-}
-
-func redactCredentialFields(value any) {
-	switch v := value.(type) {
-	case map[string]any:
-		for key, child := range v {
-			switch strings.ToLower(strings.TrimSpace(key)) {
-			case "access_token", "refresh_token":
-				v[key] = "<redacted>"
-			default:
-				redactCredentialFields(child)
-			}
-		}
-	case []any:
-		for _, child := range v {
-			redactCredentialFields(child)
-		}
-	}
 }

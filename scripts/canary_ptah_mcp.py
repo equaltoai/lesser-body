@@ -5,37 +5,33 @@ Required environment:
   PTAH_MCP_ENDPOINT or MCP_ENDPOINT
       Ptah instance MCP endpoint, for example https://api.dev.example.com/instance/ptah/mcp.
   PTAH_MCP_BEARER_TOKEN or MCP_BEARER_TOKEN
-      Account-holder Lesser OAuth access token for the Ptah instance resource. Alternatively set
+      Lesser owner/operator OAuth access token for the exact Ptah instance resource. The token must carry the
+      explicit operator claim issued by Lesser; an ordinary public write token is expected to be rejected. Alternatively set
       PTAH_MCP_AUTHORIZATION or MCP_AUTHORIZATION to a complete "Bearer ..." header value.
-  PTAH_AGENT_USERNAME
-      Existing Lesser local agent account username to delegate with agent_create. The canary does not create
-      the Lesser account; use a fresh canary agent account to avoid agent_create registry duplicates.
-  PTAH_CANARY_CONFIRM_AGENT_CREATE=true
-      Required because agent_create delegates runtime credentials and creates a Ptah registry entry.
-  PTAH_CANARY_CONFIRM_CONTENT_UPSERT=true
-      Required because the canary writes draft agent_soul and agent_instructions content.
+  PTAH_GENESIS_DOMAIN
+      Managed Lesser/Host domain for the new agent registration.
+  PTAH_GENESIS_LOCAL_ID
+      New local id to mint through the Host-backed genesis conversation.
+  PTAH_GENESIS_MODEL
+      Host genesis model identifier for the first conversation turn.
+  PTAH_GENESIS_MESSAGES_JSON
+      JSON array of owner messages, in order. The canary submits each turn through Host and never prints the messages.
 
 Optional environment:
   PTAH_PROTECTED_RESOURCE_METADATA_URL  Override the derived RFC 9728 metadata URL.
-  PTAH_ACTOR_USERNAME                   Explicit account-holder username; must match the token principal.
-  PTAH_AGENT_SCOPES                     Comma/space-separated delegated scopes (default: read).
-  PTAH_AGENT_DISPLAY_NAME               Optional display name passed through to Lesser delegation.
-  PTAH_AGENT_BIO                        Optional bio passed through to Lesser delegation.
-  PTAH_AGENT_EXPIRES_IN                 Optional delegated token TTL seconds.
-  PTAH_AGENT_DEVICE_LABEL               Optional device label (default: generated canary label).
-  PTAH_AGENT_INFO_JSON                  Optional JSON object passed as agent_info.
-  PTAH_AGENT_SOUL                       Draft agent_soul content (default: generated minimal canary text).
-  PTAH_AGENT_INSTRUCTIONS               Draft agent_instructions content (default: generated minimal canary text).
+  PTAH_GENESIS_MAX_POLLS                Bounded read/recovery polls per Host checkpoint (default: 20, max: 60).
+  PTAH_GENESIS_POLL_SECONDS              Delay between polls (default: 2, max: 30).
+  PTAH_GENESIS_IDEMPOTENCY_KEY           Optional first-turn idempotency key; otherwise a canary key is generated.
 
-The canary consumes the published RFC 9728 protected-resource metadata and AppTheory MCP tools/list surface, then runs
-agent_create -> agent_soul_upsert -> agent_instructions_upsert -> agent_get/content gets -> agent_list. It refuses
-authenticated redirects, redacts bearer tokens, never prints delegated token values, full soul/instructions content, raw
-RPC payloads, or upstream error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
+The canary consumes the published RFC 9728 protected-resource metadata and AppTheory MCP tools/list surface, then proves
+owner connects to Ptah -> Host-backed genesis begin/advance/read/recover/complete -> finalize -> agent_list visibility.
+Minting is represented only by that Host-backed genesis conversation; the canary refuses authenticated redirects,
+redacts bearer tokens, never prints owner messages, Host declarations, wallet material, raw RPC payloads, or upstream
+error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
 
 Local deterministic probe:
   scripts/canary_ptah_mcp.py --self-test-redaction
-      Verifies the agent_create text redaction guard accepts safe token metadata keys such as has_refresh_token and
-      credential_location while still rejecting delegated credential values and exact credential fields.
+      Verifies the genesis text redaction guard rejects transcript, declaration, wallet-signature, and credential leaks.
 """
 
 from __future__ import annotations
@@ -46,10 +42,10 @@ import os
 import re
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
 from typing import Any
 
 
@@ -66,7 +62,6 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 NO_REDIRECT_OPENER = urllib.request.build_opener(NoRedirectHandler)
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{0,255}$")
-FORBIDDEN_CREDENTIAL_FIELDS = frozenset({"access_token", "refresh_token"})
 FORBIDDEN_CREDENTIAL_FIELD_RE = re.compile(
     r"(?<![A-Za-z0-9_])(access_token|refresh_token)(?![A-Za-z0-9_])",
     re.IGNORECASE,
@@ -388,144 +383,226 @@ def required_string(value: Any, *, context: str) -> str:
     return text
 
 
-def parse_scopes(raw: str) -> list[str]:
+def parse_genesis_messages(raw: str) -> list[str]:
     if not raw.strip():
-        return ["read"]
-    scopes = [part.strip() for part in re.split(r"[\s,]+", raw) if part.strip()]
-    if not scopes:
-        raise CanaryError("PTAH_AGENT_SCOPES produced no scopes")
-    return scopes
-
-
-def parse_agent_info(raw: str) -> Any:
-    if not raw:
-        return None
+        raise CanaryError("PTAH_GENESIS_MESSAGES_JSON is required")
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise CanaryError("PTAH_AGENT_INFO_JSON must be valid JSON") from exc
-    if not isinstance(value, dict):
-        raise CanaryError("PTAH_AGENT_INFO_JSON must be a JSON object")
-    return value
+        raise CanaryError("PTAH_GENESIS_MESSAGES_JSON must be valid JSON") from exc
+    if not isinstance(value, list) or not value:
+        raise CanaryError("PTAH_GENESIS_MESSAGES_JSON must be a non-empty JSON array")
+    if len(value) > 64:
+        raise CanaryError("PTAH_GENESIS_MESSAGES_JSON may contain at most 64 messages")
+    messages: list[str] = []
+    for index, item in enumerate(value):
+        message = str(item).strip() if isinstance(item, str) else ""
+        if not message or len(message) > 8192:
+            raise CanaryError(f"PTAH_GENESIS_MESSAGES_JSON message {index} is empty or too long")
+        messages.append(message)
+    return messages
 
 
-def registry_agent_id(data: dict[str, Any], *, context: str) -> str:
-    registry = data.get("registry") if isinstance(data.get("registry"), dict) else {}
-    agent_id = str(registry.get("agent_id") or "").strip()
+def genesis_conversation(data: dict[str, Any], *, context: str) -> dict[str, Any]:
+    conversation = data.get("conversation")
+    if not isinstance(conversation, dict):
+        raise CanaryError(f"{context} missing Host conversation projection")
+    return conversation
+
+
+def genesis_status(data: dict[str, Any], *, context: str) -> str:
+    status = str(genesis_conversation(data, context=context).get("status") or "").strip().lower()
+    if not status:
+        raise CanaryError(f"{context} missing Host conversation status")
+    return status
+
+
+def genesis_registration_id(data: dict[str, Any], *, context: str) -> str:
+    return required_string(data.get("registration_id"), context=f"{context} registration_id")
+
+
+def genesis_conversation_id(data: dict[str, Any], *, context: str) -> str:
+    conversation = genesis_conversation(data, context=context)
+    return required_string(conversation.get("conversation_id") or data.get("conversation_id"), context=f"{context} conversation_id")
+
+
+def genesis_agent_id(data: dict[str, Any], *, context: str) -> str:
+    agent_id = str(data.get("agent_id") or "").strip()
     if not agent_id:
-        account = data.get("account_summary") if isinstance(data.get("account_summary"), dict) else {}
-        agent_id = str(account.get("id") or "").strip()
+        conversation = data.get("conversation") if isinstance(data.get("conversation"), dict) else {}
+        agent_id = str(conversation.get("agent_id") or "").strip()
     if not agent_id:
-        raise CanaryError(f"{context} missing registry/account agent id")
-    return agent_id
+        publication = data.get("publication") if isinstance(data.get("publication"), dict) else {}
+        agent_id = str(publication.get("agent_id") or "").strip()
+    return required_string(agent_id, context=f"{context} agent_id")
 
 
-def credential_field_names(value: Any) -> set[str]:
-    found: set[str] = set()
-    if isinstance(value, dict):
-        for key, child in value.items():
-            normalized = str(key).strip().lower()
-            if normalized in FORBIDDEN_CREDENTIAL_FIELDS:
-                found.add(normalized)
-            found.update(credential_field_names(child))
-    elif isinstance(value, list):
-        for child in value:
-            found.update(credential_field_names(child))
-    return found
+FORBIDDEN_GENESIS_TEXT_FIELDS = frozenset(
+    {
+        "access_token",
+        "refresh_token",
+        "wallet_signature",
+        "wallet_address",
+        "grant_token",
+        "declaration",
+        "produced_declarations",
+        "transcript",
+    }
+)
 
 
-def credential_field_names_in_text(text: str) -> set[str]:
+def genesis_text_field_names(text: str) -> set[str]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        return {match.group(1).lower() for match in FORBIDDEN_CREDENTIAL_FIELD_RE.finditer(text)}
-    return credential_field_names(parsed)
+        return {
+            match.group(1).lower()
+            for match in FORBIDDEN_CREDENTIAL_FIELD_RE.finditer(text)
+        }
+    found: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                normalized = str(key).strip().lower()
+                if normalized in FORBIDDEN_GENESIS_TEXT_FIELDS:
+                    found.add(normalized)
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(parsed)
+    return found
 
 
-def require_tool_text_omits_secret_values(result: dict[str, Any], token_map: dict[str, Any]) -> None:
+def require_genesis_text_safety(result: dict[str, Any], secret_values: list[str]) -> None:
     text = result_text(result)
-    for key in FORBIDDEN_CREDENTIAL_FIELDS:
-        value = token_map.get(key)
-        if isinstance(value, str) and len(value) >= 8 and value in text:
-            raise CanaryError(f"agent_create text leaked delegated {key}")
+    for secret in secret_values:
+        if secret and len(secret) >= 8 and secret in text:
+            raise CanaryError("genesis text leaked a protected value")
     forbidden_fields: set[str] = set()
     for block_text in tool_text_blocks(result):
-        forbidden_fields.update(credential_field_names_in_text(block_text))
+        forbidden_fields.update(genesis_text_field_names(block_text))
     if forbidden_fields:
-        raise CanaryError(
-            "agent_create text mentioned delegated credential field names: "
-            + ",".join(sorted(forbidden_fields))
-        )
+        raise CanaryError("genesis text exposed protected fields: " + ",".join(sorted(forbidden_fields)))
 
 
-def expect_redaction_failure(name: str, result: dict[str, Any], token_map: dict[str, Any]) -> None:
+def expect_redaction_failure(name: str, result: dict[str, Any], secret_values: list[str]) -> None:
     try:
-        require_tool_text_omits_secret_values(result, token_map)
+        require_genesis_text_safety(result, secret_values)
     except CanaryError:
         return
     raise CanaryError(f"redaction self-test expected failure for {name}")
 
 
 def self_test_redaction_guard() -> int:
-    token_map = {
-        "access_token": "self-test-access-token-value",
-        "refresh_token": "self-test-refresh-token-value",
+    protected = [
+        "self-test-owner-bearer-value",
+        "self-test-private-transcript-value",
+        "self-test-wallet-signature-value",
+    ]
+    safe_result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "summary": "Host-backed Ptah genesis state updated",
+                        "operation": "read",
+                        "source": "lesser_host",
+                        "state_authority": "Host HostedGenesisSession",
+                        "data": {"location": "structuredContent.data"},
+                    },
+                    sort_keys=True,
+                ),
+            }
+        ]
     }
-    server_agent_create_text = {
-        "summary": "Lesser agent runtime credentials delegated and Ptah registry entry created",
-        "account": {
-            "id": "https://lesser.example/users/ptah_agent",
-            "username": "ptah_agent",
-            "acct": "ptah_agent@example.com",
-            "display_name": "Ptah Agent",
-            "bot": True,
-            "url": "https://lesser.example/@ptah_agent",
-        },
-        "registry": {
-            "account": "drone-ada",
-            "agent_id": "https://lesser.example/users/ptah_agent",
-            "created_at": "2026-07-16T00:00:00Z",
-            "updated_at": "2026-07-16T00:00:00Z",
-        },
-        "token_metadata": {
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "scope": "read",
-            "created_at": 1784160000,
-            "has_refresh_token": True,
-            "credential_location": "structuredContent.data.token",
-        },
-        "data": {"location": "structuredContent.data"},
-    }
-    safe_result = {"content": [{"type": "text", "text": json.dumps(server_agent_create_text, sort_keys=True)}]}
-    require_tool_text_omits_secret_values(safe_result, token_map)
-
-    leaked_value = dict(server_agent_create_text)
-    leaked_value["diagnostic"] = token_map["access_token"]
+    require_genesis_text_safety(safe_result, protected)
     expect_redaction_failure(
-        "actual access token value",
-        {"content": [{"type": "text", "text": json.dumps(leaked_value, sort_keys=True)}]},
-        token_map,
+        "raw owner bearer",
+        {"content": [{"type": "text", "text": protected[0]}]},
+        protected,
     )
     expect_redaction_failure(
-        "exact delegated credential key",
-        {"content": [{"type": "text", "text": json.dumps({"token": {"refresh_token": "<redacted>"}})}]},
-        token_map,
+        "full transcript value",
+        {"content": [{"type": "text", "text": protected[1]}]},
+        protected,
     )
-    log("ok redaction self-test allowed token metadata keys and rejected credential leaks")
+    expect_redaction_failure(
+        "wallet signature field",
+        {"content": [{"type": "text", "text": json.dumps({"wallet_signature": "<redacted>"})}]},
+        protected,
+    )
+    log("ok genesis redaction self-test rejected bearer, transcript, and wallet-signature leaks")
     return 0
 
 
-def require_tool_text_omits_content(result: dict[str, Any], content: str, *, context: str) -> None:
-    if content and content in result_text(result):
-        raise CanaryError(f"{context} text duplicated full content")
+def poll_genesis(
+    client: MCPClient,
+    registration_id: str,
+    conversation_id: str,
+    *,
+    max_polls: int,
+    poll_seconds: int,
+    protected_values: list[str],
+    context: str,
+) -> tuple[dict[str, Any], str]:
+    for attempt in range(max_polls):
+        data, result = client.tool_call(
+            "agent_genesis_read",
+            {"registration_id": registration_id, "conversation_id": conversation_id},
+        )
+        require_genesis_text_safety(result, protected_values)
+        status = genesis_status(data, context=context)
+        log(
+            f"ok {context} poll={attempt + 1}/{max_polls} status={safe_identifier(status)} "
+            f"conversation_sha256_12={sha12(conversation_id)} payloadB={client.last_response_bytes}"
+        )
+        if status == "failed":
+            recovered, recovery_result = client.tool_call(
+                "agent_genesis_recover",
+                {"registration_id": registration_id, "conversation_id": conversation_id},
+            )
+            require_genesis_text_safety(recovery_result, protected_values)
+            log(
+                f"ok {context} recovery poll={attempt + 1}/{max_polls} "
+                f"payloadB={client.last_response_bytes}"
+            )
+            recovered_conversation_id = genesis_conversation_id(recovered, context=f"{context} recovery")
+            if recovered_conversation_id != conversation_id:
+                conversation_id = recovered_conversation_id
+            continue
+        if status == "declaration_ready" or status in {"finalized", "published", "completed"}:
+            return data, status
+        if status == "assistant_turn_ready":
+            return data, status
+        if attempt + 1 < max_polls:
+            time.sleep(poll_seconds)
+    raise CanaryError(f"{context} did not reach a usable Host checkpoint within {max_polls} polls")
 
 
-def content_record(data: dict[str, Any], key: str, *, context: str) -> dict[str, Any]:
-    record = data.get(key)
-    if not isinstance(record, dict):
-        raise CanaryError(f"{context} missing {key}")
-    return record
+def visible_agent_matches(item: Any, agent_id: str, local_id: str) -> bool:
+    if not isinstance(item, dict):
+        return False
+    candidates: list[str] = []
+    for key in ("agent_id", "id", "username", "acct", "url"):
+        value = item.get(key)
+        if isinstance(value, str):
+            candidates.append(value.strip())
+    for nested_key in ("live_agent", "registry"):
+        nested = item.get(nested_key)
+        if isinstance(nested, dict):
+            for key in ("agent_id", "id", "username", "acct", "url"):
+                value = nested.get(key)
+                if isinstance(value, str):
+                    candidates.append(value.strip())
+    wanted_local = local_id.casefold()
+    for candidate in candidates:
+        if candidate == agent_id or candidate.casefold() == wanted_local:
+            return True
+    return False
 
 
 def main() -> int:
@@ -544,22 +621,16 @@ def main() -> int:
     if not authorization.lower().startswith("bearer "):
         raise CanaryError("authorization must use Bearer scheme")
 
-    if not env_bool("PTAH_CANARY_CONFIRM_AGENT_CREATE"):
-        raise CanaryError("PTAH_CANARY_CONFIRM_AGENT_CREATE=true is required because agent_create delegates credentials")
-    if not env_bool("PTAH_CANARY_CONFIRM_CONTENT_UPSERT"):
-        raise CanaryError("PTAH_CANARY_CONFIRM_CONTENT_UPSERT=true is required because this probe writes draft content")
-
-    agent_username = env_required("PTAH_AGENT_USERNAME")
-    actor_username = env("PTAH_ACTOR_USERNAME")
-    scopes = parse_scopes(env("PTAH_AGENT_SCOPES", default="read"))
-    expires_in = env_int("PTAH_AGENT_EXPIRES_IN", minimum=60, maximum=60 * 60 * 24 * 365)
-    nonce = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4)
-    device_label = env("PTAH_AGENT_DEVICE_LABEL", default=f"lesser-body-ptah-canary-{nonce}")
-    default_soul = f"Ptah canary provisional agent_soul draft. nonce={nonce}\n"
-    default_instructions = f"Ptah canary agent instructions draft. nonce={nonce}\n"
-    soul_content = os.environ.get("PTAH_AGENT_SOUL", default_soul)
-    instructions_content = os.environ.get("PTAH_AGENT_INSTRUCTIONS", default_instructions)
-    agent_info = parse_agent_info(env("PTAH_AGENT_INFO_JSON"))
+    domain = env_required("PTAH_GENESIS_DOMAIN")
+    local_id = env_required("PTAH_GENESIS_LOCAL_ID")
+    model = env_required("PTAH_GENESIS_MODEL")
+    messages = parse_genesis_messages(env_required("PTAH_GENESIS_MESSAGES_JSON"))
+    max_polls = env_int("PTAH_GENESIS_MAX_POLLS", minimum=1, maximum=60) or 20
+    poll_seconds = env_int("PTAH_GENESIS_POLL_SECONDS", minimum=1, maximum=30) or 2
+    idempotency_key = env(
+        "PTAH_GENESIS_IDEMPOTENCY_KEY",
+        default=f"ptah-canary-{sha12(domain + ':' + local_id)}-{secrets.token_hex(4)}",
+    )
 
     metadata_url = protected_resource_metadata_url(endpoint, env("PTAH_PROTECTED_RESOURCE_METADATA_URL"), "ptah")
 
@@ -567,10 +638,10 @@ def main() -> int:
     log("Authorization: Bearer <redacted>")
     log(
         "canary input "
-        f"agent_username_sha256_12={sha12(agent_username)} scopes={','.join(scopes)} "
-        f"device_label_sha256_12={sha12(device_label)} soul_bytes={len(soul_content.encode('utf-8'))} "
-        f"soul_sha256_12={sha12(soul_content)} instructions_bytes={len(instructions_content.encode('utf-8'))} "
-        f"instructions_sha256_12={sha12(instructions_content)}"
+        f"domain_sha256_12={sha12(domain)} local_id_sha256_12={sha12(local_id)} "
+        f"model_sha256_12={sha12(model)} message_count={len(messages)} "
+        f"message_bytes={sum(len(message.encode('utf-8')) for message in messages)} "
+        f"idempotency_key_sha256_12={sha12(idempotency_key)} max_polls={max_polls} poll_seconds={poll_seconds}"
     )
 
     metadata = fetch_protected_resource_metadata(endpoint, metadata_url)
@@ -590,106 +661,119 @@ def main() -> int:
     tools_result = client.post_rpc("tools/list")
     tool_names = {tool.get("name") for tool in tools_result.get("tools", []) if isinstance(tool, dict)}
     required_tools = {
-        "agent_create",
-        "agent_get",
+        "agent_genesis_begin",
+        "agent_genesis_read",
+        "agent_genesis_advance",
+        "agent_genesis_recover",
+        "agent_genesis_complete",
+        "agent_genesis_finalize_preflight",
+        "agent_genesis_finalize",
         "agent_list",
-        "agent_soul_get",
-        "agent_soul_upsert",
-        "agent_instructions_get",
-        "agent_instructions_upsert",
     }
     missing = sorted(required_tools - tool_names)
     if missing:
         raise CanaryError(f"tools/list missing Ptah tools: {missing}")
-    log("ok tools/list Ptah create/content/read tools present")
+    if "agent_create" in tool_names:
+        raise CanaryError("tools/list advertises removed Ptah tool agent_create")
+    log("ok tools/list Ptah Host-backed genesis and visibility tools present")
 
-    create_args: dict[str, Any] = {
-        "agent_username": agent_username,
-        "scopes": scopes,
-        "device_label": device_label,
-    }
-    for key, value in (
-        ("actor_username", actor_username),
-        ("display_name", env("PTAH_AGENT_DISPLAY_NAME")),
-        ("bio", env("PTAH_AGENT_BIO")),
-    ):
-        if value:
-            create_args[key] = value
-    if expires_in is not None:
-        create_args["expires_in"] = expires_in
-    if agent_info is not None:
-        create_args["agent_info"] = agent_info
-
-    created, create_result = client.tool_call("agent_create", create_args)
-    token_map = created.get("token") if isinstance(created.get("token"), dict) else {}
-    token_metadata = created.get("token_metadata") if isinstance(created.get("token_metadata"), dict) else {}
-    require_tool_text_omits_secret_values(create_result, token_map)
-    agent_id = registry_agent_id(created, context="agent_create")
+    authorization_parts = authorization.split(None, 1)
+    protected_values = [authorization_parts[1].strip()] if len(authorization_parts) == 2 else []
+    begin, begin_result = client.tool_call(
+        "agent_genesis_begin",
+        {"domain": domain, "local_id": local_id},
+    )
+    require_genesis_text_safety(begin_result, protected_values)
+    registration_id = genesis_registration_id(begin, context="agent_genesis_begin")
     log(
-        "ok agent_create "
-        f"agent_id={safe_identifier(agent_id)} token_type={safe_identifier(token_metadata.get('token_type'))} "
-        f"expires_in={safe_identifier(token_metadata.get('expires_in'))} "
-        f"has_refresh_token={bool(token_metadata.get('has_refresh_token'))} payloadB={client.last_response_bytes}"
+        "ok agent_genesis_begin "
+        f"registration_sha256_12={sha12(registration_id)} authority=instance_trust "
+        f"payloadB={client.last_response_bytes}"
     )
 
-    soul_upsert, soul_result = client.tool_call(
-        "agent_soul_upsert",
-        {"agent_id": agent_id, **({"actor_username": actor_username} if actor_username else {}), "content": soul_content},
-    )
-    require_tool_text_omits_content(soul_result, soul_content, context="agent_soul_upsert")
-    soul_record = content_record(soul_upsert, "agent_soul", context="agent_soul_upsert")
-    if soul_record.get("content") != soul_content:
-        raise CanaryError("agent_soul_upsert content echo did not match submitted content")
+    conversation_id = ""
+    current_status = ""
+    for index, message in enumerate(messages):
+        advance_args: dict[str, Any] = {
+            "registration_id": registration_id,
+            "message": message,
+            "idempotency_key": idempotency_key if index == 0 else f"{idempotency_key}-{index + 1}",
+        }
+        if index == 0:
+            advance_args["model"] = model
+        if conversation_id:
+            advance_args["conversation_id"] = conversation_id
+        advance, advance_result = client.tool_call("agent_genesis_advance", advance_args)
+        require_genesis_text_safety(advance_result, protected_values)
+        conversation_id = genesis_conversation_id(advance, context=f"agent_genesis_advance turn {index + 1}")
+        _, current_status = poll_genesis(
+            client,
+            registration_id,
+            conversation_id,
+            max_polls=max_polls,
+            poll_seconds=poll_seconds,
+            protected_values=protected_values,
+            context=f"agent_genesis_advance turn {index + 1}",
+        )
+        log(
+            f"ok agent_genesis_advance turn={index + 1}/{len(messages)} "
+            f"status={safe_identifier(current_status)} conversation_sha256_12={sha12(conversation_id)} "
+            f"payloadB={client.last_response_bytes}"
+        )
+        if current_status == "declaration_ready":
+            break
+
+    if not conversation_id:
+        raise CanaryError("Host did not return a conversation_id")
+    if current_status != "declaration_ready":
+        complete, complete_result = client.tool_call(
+            "agent_genesis_complete",
+            {"registration_id": registration_id, "conversation_id": conversation_id},
+        )
+        require_genesis_text_safety(complete_result, protected_values)
+        complete_conversation_id = genesis_conversation_id(complete, context="agent_genesis_complete")
+        if complete_conversation_id != conversation_id:
+            conversation_id = complete_conversation_id
+        _, current_status = poll_genesis(
+            client,
+            registration_id,
+            conversation_id,
+            max_polls=max_polls,
+            poll_seconds=poll_seconds,
+            protected_values=protected_values,
+            context="agent_genesis_complete",
+        )
+        if current_status != "declaration_ready":
+            raise CanaryError(
+                "Host did not reach declaration_ready after the supplied owner messages; "
+                "add the next required message to PTAH_GENESIS_MESSAGES_JSON"
+            )
     log(
-        "ok agent_soul_upsert "
-        f"agent_id={safe_identifier(soul_record.get('agent_id'))} version={safe_identifier(soul_record.get('version'))} "
-        f"lifecycle={safe_identifier(soul_record.get('lifecycle_state'))} content_bytes={safe_identifier(soul_record.get('content_bytes'))} "
-        f"content_sha256_12={sha12(soul_content)} payloadB={client.last_response_bytes}"
+        "ok agent_genesis_complete "
+        f"status={safe_identifier(current_status)} conversation_sha256_12={sha12(conversation_id)} "
+        f"payloadB={client.last_response_bytes}"
     )
 
-    instructions_upsert, instructions_result = client.tool_call(
-        "agent_instructions_upsert",
-        {"agent_id": agent_id, **({"actor_username": actor_username} if actor_username else {}), "content": instructions_content},
+    _, preflight_result = client.tool_call(
+        "agent_genesis_finalize_preflight",
+        {"registration_id": registration_id, "conversation_id": conversation_id},
     )
-    require_tool_text_omits_content(instructions_result, instructions_content, context="agent_instructions_upsert")
-    instructions_record = content_record(instructions_upsert, "agent_instructions", context="agent_instructions_upsert")
-    if instructions_record.get("content") != instructions_content:
-        raise CanaryError("agent_instructions_upsert content echo did not match submitted content")
+    require_genesis_text_safety(preflight_result, protected_values)
     log(
-        "ok agent_instructions_upsert "
-        f"agent_id={safe_identifier(instructions_record.get('agent_id'))} version={safe_identifier(instructions_record.get('version'))} "
-        f"lifecycle={safe_identifier(instructions_record.get('lifecycle_state'))} "
-        f"content_bytes={safe_identifier(instructions_record.get('content_bytes'))} "
-        f"content_sha256_12={sha12(instructions_content)} payloadB={client.last_response_bytes}"
+        "ok agent_genesis_finalize_preflight "
+        f"conversation_sha256_12={sha12(conversation_id)} payloadB={client.last_response_bytes}"
     )
 
-    got_agent, _ = client.tool_call("agent_get", {"agent_id": agent_id, **({"actor_username": actor_username} if actor_username else {})})
-    got_agent_id = registry_agent_id(got_agent, context="agent_get")
-    if got_agent_id != agent_id:
-        raise CanaryError("agent_get returned a different agent id")
-    log(f"ok agent_get agent_id={safe_identifier(got_agent_id)} payloadB={client.last_response_bytes}")
-
-    got_soul, _ = client.tool_call("agent_soul_get", {"agent_id": agent_id, **({"actor_username": actor_username} if actor_username else {})})
-    got_soul_record = content_record(got_soul, "agent_soul", context="agent_soul_get")
-    if got_soul_record.get("content") != soul_content:
-        raise CanaryError("agent_soul_get content did not match upserted content")
+    finalized, finalized_result = client.tool_call(
+        "agent_genesis_finalize",
+        {"registration_id": registration_id, "conversation_id": conversation_id},
+    )
+    require_genesis_text_safety(finalized_result, protected_values)
+    agent_id = genesis_agent_id(finalized, context="agent_genesis_finalize")
     log(
-        "ok agent_soul_get "
-        f"version={safe_identifier(got_soul_record.get('version'))} lifecycle={safe_identifier(got_soul_record.get('lifecycle_state'))} "
-        f"content_sha256_12={sha12(str(got_soul_record.get('content') or ''))} payloadB={client.last_response_bytes}"
-    )
-
-    got_instructions, _ = client.tool_call(
-        "agent_instructions_get", {"agent_id": agent_id, **({"actor_username": actor_username} if actor_username else {})}
-    )
-    got_instructions_record = content_record(got_instructions, "agent_instructions", context="agent_instructions_get")
-    if got_instructions_record.get("content") != instructions_content:
-        raise CanaryError("agent_instructions_get content did not match upserted content")
-    log(
-        "ok agent_instructions_get "
-        f"version={safe_identifier(got_instructions_record.get('version'))} "
-        f"lifecycle={safe_identifier(got_instructions_record.get('lifecycle_state'))} "
-        f"content_sha256_12={sha12(str(got_instructions_record.get('content') or ''))} payloadB={client.last_response_bytes}"
+        "ok agent_genesis_finalize "
+        f"agent_id={safe_identifier(agent_id)} status=published_hosted_offchain "
+        f"payloadB={client.last_response_bytes}"
     )
 
     list_pages = 0
@@ -701,15 +785,13 @@ def main() -> int:
         list_args: dict[str, Any] = {"limit": 20}
         if cursor:
             list_args["cursor"] = cursor
-        listed, _ = client.tool_call("agent_list", list_args)
+        listed, listed_result = client.tool_call("agent_list", list_args)
+        require_genesis_text_safety(listed_result, protected_values)
         list_pages += 1
         agents = listed.get("agents") if isinstance(listed.get("agents"), list) else []
         total_seen += len(agents)
         for item in agents:
-            if not isinstance(item, dict):
-                continue
-            registry = item.get("registry") if isinstance(item.get("registry"), dict) else {}
-            if registry.get("agent_id") == agent_id:
+            if visible_agent_matches(item, agent_id, local_id):
                 seen = True
                 break
         pagination = listed.get("pagination") if isinstance(listed.get("pagination"), dict) else {}
@@ -718,14 +800,17 @@ def main() -> int:
         if seen or not has_more or not cursor or list_pages >= 10:
             break
     if not seen:
-        raise CanaryError("agent_list did not include the created registry entry within 10 pages")
+        raise CanaryError(
+            "agent_list did not expose the Host-published agent within 10 pages; "
+            "check Lesser public-directory propagation after Host finalize"
+        )
     log(
         "ok agent_list "
         f"pages={list_pages} seen_entries={total_seen} has_more={safe_identifier(has_more)} "
-        f"created_agent_present=true payloadB={client.last_response_bytes}"
+        f"host_published_agent_visible=true payloadB={client.last_response_bytes}"
     )
 
-    log("canary passed (Ptah instance-plane tools consumed through AppTheory MCP/RFC 9728 surfaces; output sanitized)")
+    log("canary passed (owner-operated Ptah Host genesis conversation finalized and visible through AppTheory MCP/RFC 9728 surfaces; output sanitized)")
     return 0
 
 

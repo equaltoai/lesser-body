@@ -23,13 +23,10 @@ import (
 const (
 	CapabilityVersionInstanceV1 = "instance-capability/v1"
 
-	CapabilityAgentCreate = "instance:agent_create"
 	CapabilityInstallPlan = "instance:install_plan"
 
-	ResourceAgentCreate = "instance://tools/agent_create"
 	ResourceInstallPlan = "instance://tools/agent_local_install_plan"
 
-	ToolAgentCreate           = "agent_create"
 	ToolAgentLocalInstallPlan = "agent_local_install_plan"
 
 	x402GrantHeader             = "lesser-x402-grant"
@@ -48,8 +45,9 @@ const (
 var soulAgentIDPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{64}$`)
 
 // Requirement describes the host-authored instance capability a body instance
-// tool must consume before side effects. The gate is intentionally local to the
-// instance-plane minting tools; it does not grant OAuth principal authority.
+// tool must consume before side effects. The gate is intentionally local to
+// instance-plane capability-gated tools; it does not grant OAuth principal
+// authority.
 type Requirement struct {
 	Tool       string
 	Capability string
@@ -214,8 +212,6 @@ func normalizeRequirement(req Requirement) Requirement {
 	req.Account = strings.ToLower(strings.TrimSpace(req.Account))
 	if req.Resource == "" {
 		switch req.Tool {
-		case ToolAgentCreate:
-			req.Resource = ResourceAgentCreate
 		case ToolAgentLocalInstallPlan:
 			req.Resource = ResourceInstallPlan
 		}
@@ -224,27 +220,31 @@ func normalizeRequirement(req Requirement) Requirement {
 }
 
 func instanceOperatorExempt(principal *auth.Principal) bool {
+	return IsInstanceOperator(principal)
+}
+
+// IsInstanceOperator reports explicit owner/operator authority for instance
+// tools. A write scope, a delegated_by marker, or an agent token is not an
+// operator claim. This predicate is shared by the x402 exemption and Ptah's
+// Host-backed genesis flow so paid/public OAuth sessions cannot be upgraded
+// into instance-owner authority by inference.
+func IsInstanceOperator(principal *auth.Principal) bool {
 	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || principal.Claims == nil {
 		return false
 	}
 	claims := principal.Claims
+	if claims.IsAgent {
+		return false
+	}
 	for _, scope := range claims.Scopes {
 		if strings.EqualFold(strings.TrimSpace(scope), "admin") {
 			return true
 		}
 	}
-	switch normalizeOperatorClass(claims.ClientClass) {
-	case "operator":
+	if normalizeOperatorClass(claims.ClientClass) == "operator" {
 		return true
 	}
-	if strings.TrimSpace(claims.DelegatedBy) != "" {
-		return true
-	}
-	switch normalizeOperatorClass(claims.AgentType) {
-	case "operator":
-		return true
-	}
-	return false
+	return normalizeOperatorClass(claims.AgentType) == "operator"
 }
 
 func normalizeOperatorClass(value string) string {
