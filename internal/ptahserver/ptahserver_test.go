@@ -26,7 +26,12 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 
 	tools := registry.List()
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive}; strings.Join(got, ",") != strings.Join(want, ",") {
+	for _, tool := range tools {
+		if tool.Name == "agent_create" {
+			t.Fatalf("removed agent_create tool is still advertised: %+v", tool)
+		}
+	}
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisBegin, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
 	def := tools[0]
@@ -57,40 +62,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		t.Fatalf("input schema should advertise optional actor_username mismatch guard")
 	}
 
-	createDef := tools[1]
-	if createDef.Name != toolAgentCreate {
-		t.Fatalf("second tool name = %q, want %q", createDef.Name, toolAgentCreate)
-	}
-	if createDef.Annotations == nil || createDef.Annotations.ReadOnlyHint == nil || *createDef.Annotations.ReadOnlyHint {
-		t.Fatalf("agent_create must not be read-only: %+v", createDef.Annotations)
-	}
-	if createDef.Annotations.DestructiveHint == nil || *createDef.Annotations.DestructiveHint {
-		t.Fatalf("agent_create must be additive/non-destructive in Body registry: %+v", createDef.Annotations)
-	}
-	if createDef.Annotations.IdempotentHint == nil || *createDef.Annotations.IdempotentHint {
-		t.Fatalf("agent_create is not globally idempotent because Lesser delegation mints credentials: %+v", createDef.Annotations)
-	}
-	var createSchema struct {
-		Required []string       `json:"required"`
-		Props    map[string]any `json:"properties"`
-	}
-	if err := json.Unmarshal(createDef.InputSchema, &createSchema); err != nil {
-		t.Fatalf("agent_create input schema invalid json: %v", err)
-	}
-	for _, required := range []string{"agent_username", "scopes"} {
-		if !contains(createSchema.Required, required) {
-			t.Fatalf("agent_create required = %v, missing %s", createSchema.Required, required)
-		}
-	}
-	for _, prop := range []string{"actor_username", "display_name", "bio", "expires_in", "device_label", "agent_info"} {
-		if _, ok := createSchema.Props[prop]; !ok {
-			t.Fatalf("agent_create schema missing %s", prop)
-		}
-	}
-
-	getDef := tools[2]
+	getDef := tools[1]
 	if getDef.Name != toolAgentGet {
-		t.Fatalf("third tool name = %q, want %q", getDef.Name, toolAgentGet)
+		t.Fatalf("second tool name = %q, want %q", getDef.Name, toolAgentGet)
 	}
 	assertReadOnlyToolDef(t, getDef)
 	var getSchema struct {
@@ -107,9 +81,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		t.Fatalf("agent_get schema should advertise optional actor_username mismatch guard")
 	}
 
-	listDef := tools[3]
+	listDef := tools[2]
 	if listDef.Name != toolAgentList {
-		t.Fatalf("fourth tool name = %q, want %q", listDef.Name, toolAgentList)
+		t.Fatalf("third tool name = %q, want %q", listDef.Name, toolAgentList)
 	}
 	assertReadOnlyToolDef(t, listDef)
 	var listSchema struct {
@@ -124,9 +98,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		}
 	}
 
-	soulGetDef := tools[4]
+	soulGetDef := tools[3]
 	if soulGetDef.Name != toolAgentSoulGet {
-		t.Fatalf("fifth tool name = %q, want %q", soulGetDef.Name, toolAgentSoulGet)
+		t.Fatalf("fourth tool name = %q, want %q", soulGetDef.Name, toolAgentSoulGet)
 	}
 	assertReadOnlyToolDef(t, soulGetDef)
 	assertContains(t, soulGetDef.Description, agentSoulProvisionalMarker)
@@ -144,9 +118,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		t.Fatalf("agent_soul_get schema should advertise optional actor_username mismatch guard")
 	}
 
-	soulUpsertDef := tools[5]
+	soulUpsertDef := tools[4]
 	if soulUpsertDef.Name != toolAgentSoulUpsert {
-		t.Fatalf("sixth tool name = %q, want %q", soulUpsertDef.Name, toolAgentSoulUpsert)
+		t.Fatalf("fifth tool name = %q, want %q", soulUpsertDef.Name, toolAgentSoulUpsert)
 	}
 	assertMutationToolDef(t, soulUpsertDef, false)
 	assertContains(t, soulUpsertDef.Description, agentSoulProvisionalMarker)
@@ -168,9 +142,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		}
 	}
 
-	soulArchiveDef := tools[6]
+	soulArchiveDef := tools[5]
 	if soulArchiveDef.Name != toolAgentSoulArchive {
-		t.Fatalf("seventh tool name = %q, want %q", soulArchiveDef.Name, toolAgentSoulArchive)
+		t.Fatalf("sixth tool name = %q, want %q", soulArchiveDef.Name, toolAgentSoulArchive)
 	}
 	assertMutationToolDef(t, soulArchiveDef, true)
 	assertContains(t, soulArchiveDef.Description, agentSoulProvisionalMarker)
@@ -188,9 +162,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		t.Fatalf("agent_soul_archive schema should advertise optional actor_username mismatch guard")
 	}
 
-	instructionsGetDef := tools[7]
+	instructionsGetDef := tools[6]
 	if instructionsGetDef.Name != toolAgentInstructionsGet {
-		t.Fatalf("eighth tool name = %q, want %q", instructionsGetDef.Name, toolAgentInstructionsGet)
+		t.Fatalf("seventh tool name = %q, want %q", instructionsGetDef.Name, toolAgentInstructionsGet)
 	}
 	assertReadOnlyToolDef(t, instructionsGetDef)
 	assertNotContains(t, instructionsGetDef.Description, agentSoulProvisionalMarker)
@@ -208,9 +182,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		t.Fatalf("agent_instructions_get schema should advertise optional actor_username mismatch guard")
 	}
 
-	instructionsUpsertDef := tools[8]
+	instructionsUpsertDef := tools[7]
 	if instructionsUpsertDef.Name != toolAgentInstructionsUpsert {
-		t.Fatalf("ninth tool name = %q, want %q", instructionsUpsertDef.Name, toolAgentInstructionsUpsert)
+		t.Fatalf("eighth tool name = %q, want %q", instructionsUpsertDef.Name, toolAgentInstructionsUpsert)
 	}
 	assertMutationToolDef(t, instructionsUpsertDef, false)
 	assertNotContains(t, instructionsUpsertDef.Description, agentSoulProvisionalMarker)
@@ -232,9 +206,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 		}
 	}
 
-	instructionsArchiveDef := tools[9]
+	instructionsArchiveDef := tools[8]
 	if instructionsArchiveDef.Name != toolAgentInstructionsArchive {
-		t.Fatalf("tenth tool name = %q, want %q", instructionsArchiveDef.Name, toolAgentInstructionsArchive)
+		t.Fatalf("ninth tool name = %q, want %q", instructionsArchiveDef.Name, toolAgentInstructionsArchive)
 	}
 	assertMutationToolDef(t, instructionsArchiveDef, true)
 	assertNotContains(t, instructionsArchiveDef.Description, agentSoulProvisionalMarker)
@@ -370,226 +344,6 @@ func TestAgentBindSoulPreservesLesserAPIErrorStatusAndBody(t *testing.T) {
 	details, _ := errorPayload["details"].(map[string]any)
 	if details["upstreamStatus"] != 409 || !strings.Contains(details["upstreamBody"].(string), "SOUL_BINDING_CONFLICT") {
 		t.Fatalf("details did not preserve Lesser status/body: %+v", details)
-	}
-}
-
-func TestAgentCreateDelegatesWithCallerBearerAndCreatesRegistry(t *testing.T) {
-	client := &fakeAgentDelegateClient{resp: successfulAgentDelegationResponse()}
-	store := &fakeAgentRegistry{agent: &agentregistry.Agent{
-		Account:   "drone-ada",
-		AgentID:   "https://lesser.example/users/ptah_agent",
-		CreatedAt: time.Date(2026, 7, 15, 12, 10, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2026, 7, 15, 12, 10, 0, 0, time.UTC),
-	}}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithAgentDelegateClient(client), WithAgentRegistryStore(store)); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
-
-	result, err := registry.Call(operatorToolContext("Drone-Ada", []string{"read", "write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{
-		"agent_username":"ptah_agent",
-		"actor_username":"drone-ada",
-		"display_name":"Ptah Agent",
-		"bio":"delegated runtime",
-		"scopes":[" read ","write:statuses"],
-		"expires_in":3600,
-		"device_label":"ptah-instance-plane",
-		"agent_info":{"version":"1"}
-	}`))
-	if err != nil {
-		t.Fatalf("Call: %v", err)
-	}
-	if result == nil || result.IsError {
-		t.Fatalf("result = %+v", result)
-	}
-	if client.calls != 1 {
-		t.Fatalf("DelegateAgent calls = %d, want 1", client.calls)
-	}
-	if client.bearer != "owner-oauth-token" {
-		t.Fatalf("DelegateAgent bearer = %q, want caller bearer", client.bearer)
-	}
-	if client.bearer == "integration-secret" {
-		t.Fatalf("agent_create used the dedicated soul-binding bearer")
-	}
-	if client.req.AgentUsername != "ptah_agent" || client.req.DisplayName != "Ptah Agent" || client.req.Bio != "delegated runtime" {
-		t.Fatalf("delegate request identity fields = %+v", client.req)
-	}
-	if got := strings.Join(client.req.Scopes, ","); got != "read,write:statuses" {
-		t.Fatalf("delegate scopes = %q", got)
-	}
-	if client.req.ExpiresIn != 3600 || client.req.DeviceLabel != "ptah-instance-plane" {
-		t.Fatalf("delegate token options = %+v", client.req)
-	}
-	if info, ok := client.req.AgentInfo.(map[string]any); !ok || info["version"] != "1" {
-		t.Fatalf("agent_info = %#v", client.req.AgentInfo)
-	}
-	if store.calls != 1 {
-		t.Fatalf("registry Create calls = %d, want 1", store.calls)
-	}
-	if store.in.Account != "drone-ada" || store.in.AgentID != "https://lesser.example/users/ptah_agent" {
-		t.Fatalf("registry input = %+v", store.in)
-	}
-
-	data := structuredData(t, result)
-	token, _ := data["token"].(map[string]any)
-	if token["access_token"] != "mock-access-token" || token["refresh_token"] != "mock-refresh-token" {
-		t.Fatalf("structured token = %+v", token)
-	}
-	if result.Content == nil || strings.Contains(result.Content[0].Text, "mock-access-token") || strings.Contains(result.Content[0].Text, "mock-refresh-token") {
-		t.Fatalf("text content leaked token credentials: %+v", result.Content)
-	}
-	registrySummary, _ := data["registry"].(map[string]any)
-	if registrySummary["account"] != "drone-ada" || registrySummary["agent_id"] != "https://lesser.example/users/ptah_agent" {
-		t.Fatalf("registry summary = %+v", registrySummary)
-	}
-}
-
-func TestAgentCreateMapsDuplicateRegistryConflictWithoutLeakingCrossAccountState(t *testing.T) {
-	client := &fakeAgentDelegateClient{resp: successfulAgentDelegationResponse()}
-	store := &fakeAgentRegistry{err: fmt.Errorf("%w: hidden account/agent details", agentregistry.ErrAgentAlreadyExists)}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithAgentDelegateClient(client), WithAgentRegistryStore(store)); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
-
-	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
-	if err != nil {
-		t.Fatalf("Call: %v", err)
-	}
-	payload := assertToolError(t, result, "agent_already_exists", 409)
-	if client.calls != 1 || store.calls != 1 {
-		t.Fatalf("calls delegate=%d registry=%d, want 1/1", client.calls, store.calls)
-	}
-	textBytes, _ := json.Marshal(payload)
-	if strings.Contains(string(textBytes), "hidden account/agent details") || strings.Contains(string(textBytes), "mock-access-token") || strings.Contains(string(textBytes), "mock-refresh-token") {
-		t.Fatalf("duplicate error leaked registry details or credentials: %s", string(textBytes))
-	}
-	details, _ := payload["details"].(map[string]any)
-	if details["reconciliationRequired"] != true || details["mintedCredentialsMayExist"] != true {
-		t.Fatalf("duplicate details should document partial mint reconciliation: %+v", details)
-	}
-}
-
-func TestAgentCreateRejectsBeforeSideEffects(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		ctx       context.Context
-		args      string
-		wantCode  string
-		wantState int
-	}{
-		{
-			name:      "insufficient scope",
-			ctx:       toolContext("drone-ada", []string{"read"}, "owner-oauth-token"),
-			args:      `{"agent_username":"ptah_agent","scopes":["read"]}`,
-			wantCode:  "insufficient_scope",
-			wantState: 403,
-		},
-		{
-			name:      "agent principal",
-			ctx:       toolContextWithAgent("drone-ada", []string{"write"}, "agent-runtime-token", true),
-			args:      `{"agent_username":"ptah_agent","scopes":["read"]}`,
-			wantCode:  "forbidden",
-			wantState: 403,
-		},
-		{
-			name:      "missing bearer",
-			ctx:       toolContext("drone-ada", []string{"write"}, ""),
-			args:      `{"agent_username":"ptah_agent","scopes":["read"]}`,
-			wantCode:  "unauthorized",
-			wantState: 401,
-		},
-		{
-			name:      "missing username",
-			ctx:       toolContext("drone-ada", []string{"write"}, "owner-oauth-token"),
-			args:      `{"scopes":["read"]}`,
-			wantCode:  "invalid_request",
-			wantState: 400,
-		},
-		{
-			name:      "missing scopes",
-			ctx:       toolContext("drone-ada", []string{"write"}, "owner-oauth-token"),
-			args:      `{"agent_username":"ptah_agent","scopes":[]}`,
-			wantCode:  "invalid_request",
-			wantState: 400,
-		},
-		{
-			name:      "mismatched actor username",
-			ctx:       toolContext("drone-ada", []string{"write"}, "owner-oauth-token"),
-			args:      `{"agent_username":"ptah_agent","scopes":["read"],"actor_username":"other"}`,
-			wantCode:  "forbidden",
-			wantState: 403,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client := &fakeAgentDelegateClient{resp: successfulAgentDelegationResponse()}
-			store := &fakeAgentRegistry{agent: &agentregistry.Agent{Account: "drone-ada", AgentID: "https://lesser.example/users/ptah_agent"}}
-			registry := mcpruntime.NewToolRegistry()
-			if err := RegisterTools(registry, WithAgentDelegateClient(client), WithAgentRegistryStore(store)); err != nil {
-				t.Fatalf("RegisterTools: %v", err)
-			}
-
-			result, err := registry.Call(tc.ctx, toolAgentCreate, json.RawMessage(tc.args))
-			if err != nil {
-				t.Fatalf("Call: %v", err)
-			}
-			assertToolError(t, result, tc.wantCode, tc.wantState)
-			if client.calls != 0 || store.calls != 0 {
-				t.Fatalf("side effects occurred before rejection: delegate=%d registry=%d", client.calls, store.calls)
-			}
-		})
-	}
-}
-
-func TestAgentCreatePreservesLesserAPIErrorStatusAndDetails(t *testing.T) {
-	client := &fakeAgentDelegateClient{err: &lesserapi.APIError{Status: 503, Body: []byte(`{"error":"agent delegation failed","error_code":"AGENT_DELEGATION_TEST","access_token":"should-redact","refresh_token":"also-redact"}`)}}
-	store := &fakeAgentRegistry{agent: &agentregistry.Agent{Account: "drone-ada", AgentID: "https://lesser.example/users/ptah_agent"}}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithAgentDelegateClient(client), WithAgentRegistryStore(store)); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
-
-	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
-	if err != nil {
-		t.Fatalf("Call: %v", err)
-	}
-	payload := assertToolError(t, result, "upstream_unavailable", 503)
-	if client.calls != 1 || store.calls != 0 {
-		t.Fatalf("calls delegate=%d registry=%d, want 1/0", client.calls, store.calls)
-	}
-	details, _ := payload["details"].(map[string]any)
-	if details["source"] != "lesser_agent_delegate" || details["upstreamStatus"] != 503 {
-		t.Fatalf("details did not preserve status/source: %+v", details)
-	}
-	body := details["upstreamBody"].(string)
-	if !strings.Contains(body, "AGENT_DELEGATION_TEST") || strings.Contains(body, "should-redact") || strings.Contains(body, "also-redact") {
-		t.Fatalf("upstream body did not preserve code with redaction: %s", body)
-	}
-}
-
-func TestAgentCreateDocumentsPartialFailureWhenRegistryCreateFails(t *testing.T) {
-	client := &fakeAgentDelegateClient{resp: successfulAgentDelegationResponse()}
-	store := &fakeAgentRegistry{err: errors.New("registry table unavailable")}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithAgentDelegateClient(client), WithAgentRegistryStore(store)); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
-
-	result, err := registry.Call(operatorToolContext("drone-ada", []string{"write"}, "owner-oauth-token"), toolAgentCreate, json.RawMessage(`{"agent_username":"ptah_agent","scopes":["read"]}`))
-	if err != nil {
-		t.Fatalf("Call: %v", err)
-	}
-	payload := assertToolError(t, result, "agent_registry_error", 500)
-	if client.calls != 1 || store.calls != 1 {
-		t.Fatalf("calls delegate=%d registry=%d, want 1/1", client.calls, store.calls)
-	}
-	encoded, _ := json.Marshal(payload)
-	if strings.Contains(string(encoded), "mock-access-token") || strings.Contains(string(encoded), "mock-refresh-token") {
-		t.Fatalf("partial failure leaked minted credentials: %s", string(encoded))
-	}
-	details, _ := payload["details"].(map[string]any)
-	if details["partialFailure"] != true || details["lesserDelegationSucceeded"] != true || details["reconciliationRequired"] != true {
-		t.Fatalf("partial failure details = %+v", details)
 	}
 }
 
@@ -1548,14 +1302,6 @@ func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrati
 	return f.resp, nil
 }
 
-type fakeAgentDelegateClient struct {
-	calls  int
-	bearer string
-	req    lesserapi.AgentDelegationRequest
-	resp   *lesserapi.AgentDelegationResponse
-	err    error
-}
-
 type fakeAgentLiveClient struct {
 	calls  int
 	agents []lesserapi.AgentDirectoryEntry
@@ -1568,16 +1314,6 @@ func (f *fakeAgentLiveClient) ListAgents(_ context.Context) ([]lesserapi.AgentDi
 		return nil, f.err
 	}
 	return f.agents, nil
-}
-
-func (f *fakeAgentDelegateClient) DelegateAgent(_ context.Context, bearerToken string, req lesserapi.AgentDelegationRequest) (*lesserapi.AgentDelegationResponse, error) {
-	f.calls++
-	f.bearer = bearerToken
-	f.req = req
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.resp, nil
 }
 
 type fakeAgentRegistry struct {
@@ -1840,27 +1576,6 @@ func successfulBindingResponse(replayed bool) *lesserapi.SoulBindingResponse {
 			PayloadHash: "sha256:handler-payload",
 		},
 		Links: &lesserapi.SoulBindingLinks{Status: "/api/v1/souls/bindings/agent-0xabc"},
-	}
-}
-
-func successfulAgentDelegationResponse() *lesserapi.AgentDelegationResponse {
-	return &lesserapi.AgentDelegationResponse{
-		Account: lesserapi.AgentDelegationAccount{
-			ID:          "https://lesser.example/users/ptah_agent",
-			Username:    "ptah_agent",
-			Acct:        "ptah_agent",
-			DisplayName: "Ptah Agent",
-			Bot:         true,
-			URL:         "https://lesser.example/@ptah_agent",
-		},
-		Token: lesserapi.AgentDelegationToken{
-			AccessToken:  "mock-access-token",
-			TokenType:    "Bearer",
-			ExpiresIn:    3600,
-			RefreshToken: "mock-refresh-token",
-			Scope:        "read write:statuses",
-			CreatedAt:    1794744000,
-		},
 	}
 }
 

@@ -48,7 +48,7 @@ func TestListAgentsReadsPublicDirectoryWithoutCallerBearer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newAgentDelegateTestClient(t, server)
+	client := newAgentListTestClient(t, server)
 	agents, err := client.ListAgents(context.Background())
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
@@ -110,7 +110,7 @@ func TestListAgentsReturnsAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newAgentDelegateTestClient(t, server)
+	client := newAgentListTestClient(t, server)
 	_, err := client.ListAgents(context.Background())
 	if err == nil {
 		t.Fatal("ListAgents returned nil error")
@@ -125,4 +125,13 @@ func TestListAgentsReturnsAPIError(t *testing.T) {
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("API error leaked credential: %v", err)
 	}
+}
+
+func newAgentListTestClient(t *testing.T, server *httptest.Server) *Client {
+	t.Helper()
+	base, err := parseBaseURL(server.URL)
+	if err != nil {
+		t.Fatalf("parseBaseURL: %v", err)
+	}
+	return &Client{baseURL: base, http: server.Client()}
 }
