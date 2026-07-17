@@ -26,7 +26,7 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 
 	tools := registry.List()
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentCreate, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisBegin, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
 	def := tools[0]

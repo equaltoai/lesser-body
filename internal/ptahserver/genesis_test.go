@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -83,7 +84,7 @@ func (f *fakeGenesisClient) FinalizeConversation(_ context.Context, bearer strin
 	return f.finalizeResponse, nil
 }
 
-func TestGenesisRejectsOrdinaryWriteOAuthWithoutCallingHost(t *testing.T) {
+func TestGenesisRejectsOrdinaryWriteOAuthAndPaymentEvidenceWithoutCallingHost(t *testing.T) {
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
 	fake := &fakeGenesisClient{}
 	registry := mcpruntime.NewToolRegistry()
@@ -91,7 +92,16 @@ func TestGenesisRejectsOrdinaryWriteOAuthWithoutCallingHost(t *testing.T) {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("owner", []string{"read", "write"}, "ordinary-write-bearer"), toolAgentGenesisBegin, json.RawMessage(`{
+	ctx := auth.InjectToolRequestSnapshot(toolContext("owner", []string{"read", "write"}, "ordinary-write-bearer"), auth.ToolRequestSnapshot{
+		Headers: map[string][]string{
+			"lesser-x402-grant":      {"grant-token-test-only"},
+			"lesser-x402-grant-id":   {"grant-id-test-only"},
+			"lesser-x402-capability": {"instance:agent_create"},
+			"payment-signature":      {"payment-proof-test-only"},
+		},
+		Body: []byte(`{"domain":"example.com","local_id":"new-agent"}`),
+	})
+	result, err := registry.Call(ctx, toolAgentGenesisBegin, json.RawMessage(`{
 		"domain":"example.com",
 		"local_id":"new-agent"
 	}`))

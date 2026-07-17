@@ -20,6 +20,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -87,6 +88,8 @@ type config struct {
 
 	agentDelegateClient  agentDelegateClient
 	agentDelegateFactory func() (agentDelegateClient, error)
+	genesisClient        hostapi.GenesisClient
+	genesisFactory       func() (hostapi.GenesisClient, error)
 	agentRegistry        AgentRegistry
 	agentRegistryFactory func() (AgentRegistry, error)
 	agentLiveClient      AgentLiveClient
@@ -116,6 +119,14 @@ func WithSoulBindingClient(client soulBindingClient) Option {
 func WithAgentDelegateClient(client agentDelegateClient) Option {
 	return func(cfg *config) {
 		cfg.agentDelegateClient = client
+	}
+}
+
+// WithGenesisClient injects the lesser-host registration/mint-conversation
+// client used by the Ptah genesis tools.
+func WithGenesisClient(client hostapi.GenesisClient) Option {
+	return func(cfg *config) {
+		cfg.genesisClient = client
 	}
 }
 
@@ -233,7 +244,28 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentInstructionsUpsertDef(), cfg.handleAgentInstructionsUpsert); err != nil {
 		return err
 	}
-	return r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive)
+	if err := r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisReadDef(), cfg.handleAgentGenesisRead); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisAdvanceDef(), cfg.handleAgentGenesisAdvance); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisRecoverDef(), cfg.handleAgentGenesisRecover); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisCompleteDef(), cfg.handleAgentGenesisComplete); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisFinalizePreflightDef(), cfg.handleAgentGenesisFinalizePreflight); err != nil {
+		return err
+	}
+	return r.RegisterTool(agentGenesisFinalizeDef(), cfg.handleAgentGenesisFinalize)
 }
 
 func defaultConfig() config {
@@ -243,6 +275,9 @@ func defaultConfig() config {
 		},
 		agentDelegateFactory: func() (agentDelegateClient, error) {
 			return lesserapi.Default()
+		},
+		genesisFactory: func() (hostapi.GenesisClient, error) {
+			return hostapi.Default()
 		},
 		agentRegistryFactory: defaultAgentRegistry,
 		agentLiveFactory:     defaultAgentLiveClient,
@@ -1754,6 +1789,16 @@ func (cfg config) agentDelegate() (agentDelegateClient, error) {
 		return nil, fmt.Errorf("agent delegate client is not configured")
 	}
 	return cfg.agentDelegateFactory()
+}
+
+func (cfg config) genesis() (hostapi.GenesisClient, error) {
+	if cfg.genesisClient != nil {
+		return cfg.genesisClient, nil
+	}
+	if cfg.genesisFactory == nil {
+		return nil, fmt.Errorf("Host genesis client is not configured")
+	}
+	return cfg.genesisFactory()
 }
 
 func (cfg config) registry() (AgentRegistry, error) {

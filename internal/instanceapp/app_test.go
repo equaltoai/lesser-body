@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_create", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
