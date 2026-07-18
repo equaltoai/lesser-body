@@ -1,6 +1,7 @@
 package ptahserver
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -48,32 +49,37 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 		t.Fatalf("content summary = %+v with %d files", content, len(files))
 	}
 	var skillMD string
+	var guidanceMap string
 	for _, file := range files {
 		body := file["content"].(string)
 		if file["sha256"] != sha256Hex([]byte(body)) || file["bytes"] != len(body) {
 			t.Fatalf("file entry checksum mismatch: %+v", file)
 		}
-		if file["path"] == "SKILL.md" {
+		switch file["path"] {
+		case "SKILL.md":
 			skillMD = body
+		case "references/genesis-guidance-map.md":
+			guidanceMap = body
 		}
 	}
-	if skillMD == "" {
-		t.Fatal("bundle is missing a SKILL.md entry")
+	if skillMD == "" || guidanceMap == "" {
+		t.Fatalf("bundle is missing expected skill files: SKILL.md=%t guidance_map=%t", skillMD != "", guidanceMap != "")
 	}
 	for _, want := range []string{
 		toolAgentGenesisSkillGet,
 		toolAgentGenesisBegin,
-		"identity, then philosophy, then discipline, then boundaries, then soul",
-		"Persist the Host conversation_id immediately",
+		"staged five bodies identity → philosophy → discipline → boundaries → soul",
+		"Persist `conversation_id` immediately",
+		"after every call",
 		"structuredContent.data.guidance.next_tool",
 		toolAgentGenesisComplete,
-		"you never submit declarations as the source of truth",
-		toolAgentGenesisFinalizePreflight,
+		"never submit declarations as source of truth",
+		"`" + toolAgentGenesisFinalizePreflight + "` then",
 		toolAgentGenesisFinalize,
-		toolAgentGet,
-		"restart_soul_bootstrap",
-		"Do not call `" + toolAgentGenesisRecover + "`",
-		"Host is the source of truth",
+		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
+		"`restart_soul_bootstrap`",
+		"fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"Host is source of truth",
 		"Never fabricate",
 		canonicalGenesisAffirmation(),
 	} {
@@ -81,6 +87,21 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 			t.Fatalf("SKILL.md missing operating directive %q", want)
 		}
 	}
+
+	if len(first.Content) != 1 {
+		t.Fatalf("skill visible content blocks = %d, want 1", len(first.Content))
+	}
+	visible := first.Content[0].Text
+	if first.Content[0].Type != "text" {
+		t.Fatalf("skill visible content type = %q", first.Content[0].Type)
+	}
+	if !strings.Contains(visible, "## File: `SKILL.md`") || !strings.Contains(visible, "## File: `references/genesis-guidance-map.md`") {
+		t.Fatalf("visible skill content does not expose both files: %s", visible)
+	}
+	if !strings.Contains(visible, skillMD) || !strings.Contains(visible, guidanceMap) {
+		t.Fatalf("visible skill content must include complete SKILL.md and guidance map")
+	}
+	assertVisibleGenesisSkillDirectives(t, visible)
 
 	provenance := firstData["provenance"].(map[string]any)
 	if provenance["host_pr"] != fiveBodyHostPR || provenance["host_head_sha"] != fiveBodyHostHeadSHA {
@@ -103,15 +124,34 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 	}
 
 	encoded := mustMarshalGenesisResult(t, first, second)
-	if strings.Contains(encoded, "owner-oauth-bearer-test-only") {
-		t.Fatalf("skill result leaked the caller bearer token: %s", encoded)
+	for _, forbidden := range []string{"owner-oauth-bearer-test-only", "LESSER_HOST_INSTANCE_KEY"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("skill result leaked forbidden token/secret marker %q: %s", forbidden, encoded)
+		}
 	}
-	var text map[string]any
-	if err := json.Unmarshal([]byte(first.Content[0].Text), &text); err != nil {
-		t.Fatalf("skill text summary is not JSON: %v", err)
+	if !strings.Contains(visible, firstData["bundle_id"].(string)) {
+		t.Fatalf("visible skill content missing bundle id %v", firstData["bundle_id"])
 	}
-	if text["bundle_id"] != firstData["bundle_id"] || text["summary"] == nil {
-		t.Fatalf("skill text summary = %+v", text)
+}
+
+func assertVisibleGenesisSkillDirectives(t *testing.T, text string) {
+	t.Helper()
+	for _, want := range []string{
+		toolAgentGenesisBegin,
+		"staged five bodies identity → philosophy → discipline → boundaries → soul",
+		"Persist `conversation_id` immediately and after every call",
+		"Follow `structuredContent.data.guidance.next_tool`",
+		toolAgentGenesisComplete,
+		"never submit declarations as source of truth",
+		"`" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`",
+		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
+		"`restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"Host is source of truth",
+		"never fabricate",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("visible skill content missing operating directive %q", want)
+		}
 	}
 }
 
@@ -159,6 +199,36 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 	files := bundle["files"].([]any)
 	if len(files) != len(genesisSkillFiles()) {
 		t.Fatalf("resource bundle files = %d, want %d", len(files), len(genesisSkillFiles()))
+	}
+
+	contents, err := srv.Resources().Read(context.Background(), fiveBodyResourceURI(resourceGenesisOperatorSkill))
+	if err != nil {
+		t.Fatalf("read visible skill resource: %v", err)
+	}
+	resourceText := contents[0].Text
+	for _, want := range []string{
+		"SKILL.md",
+		"references/genesis-guidance-map.md",
+		toolAgentGenesisBegin,
+		"staged five bodies identity → philosophy → discipline → boundaries → soul",
+		"Persist `conversation_id` immediately",
+		"after every call",
+		"structuredContent.data.guidance.next_tool",
+		toolAgentGenesisComplete,
+		"never submit declarations as source of truth",
+		toolAgentGenesisFinalizePreflight,
+		toolAgentGenesisFinalize,
+		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
+		"fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"Host is source of truth",
+		"Never fabricate",
+	} {
+		if !strings.Contains(resourceText, want) {
+			t.Fatalf("skill resource visible JSON missing %q", want)
+		}
+	}
+	if strings.Contains(resourceText, "LESSER_HOST_INSTANCE_KEY") {
+		t.Fatalf("skill resource leaked secret marker: %s", resourceText)
 	}
 
 	playbook := resourcePayload(t, srv, resourceAgentSideGenesisPlaybook)["playbook"].(map[string]any)

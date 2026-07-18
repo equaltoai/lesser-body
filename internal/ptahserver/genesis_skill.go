@@ -169,23 +169,52 @@ func (cfg config) handleAgentGenesisSkillGet(ctx context.Context, args json.RawM
 	}
 	genesisAudit(ctx, toolAgentGenesisSkillGet, actor, true)
 	data := genesisSkillBundleData()
-	filePaths := make([]string, 0, len(genesisSkillFiles()))
+	return &mcpruntime.ToolResult{
+		Content: []mcpruntime.ContentBlock{{
+			Type: "text",
+			Text: genesisSkillVisibleText(data),
+		}},
+		StructuredContent: map[string]any{"data": data},
+	}, nil
+}
+
+func genesisSkillVisibleText(data map[string]any) string {
+	var text strings.Builder
+	text.WriteString("# Ptah genesis operator skill bundle\n\n")
+	text.WriteString("This is the MCP-visible copy of the genesis operator skill. The identical deterministic bundle remains available at `structuredContent.data` for structured clients.\n\n")
+	text.WriteString("## Bundle identity and provenance\n\n")
+	text.WriteString("- skill_id: `" + genesisSkillID + "`\n")
+	text.WriteString("- skill_name: `" + genesisSkillName + "`\n")
+	text.WriteString("- version: `" + genesisSkillVersion() + "`\n")
+	if bundleID, _ := data["bundle_id"].(string); bundleID != "" {
+		text.WriteString("- bundle_id: `" + bundleID + "`\n")
+	}
+	text.WriteString("- source: `lesser_body_ptah`\n")
+	text.WriteString("- state_authority: Host HostedGenesisSession\n")
+	text.WriteString("- producer: equaltoai/lesser-host PR #" + strconv.Itoa(fiveBodyHostPR) + " head `" + fiveBodyHostHeadSHA + "`\n")
+	text.WriteString("- semantics: read-only skill exposure; install=none; writes=none; materialization=client_decides. Body/Ptah performs no local installation, filesystem write, publish, signing, cloud mutation, or on-chain mutation for this surface.\n\n")
+	text.WriteString("## Operating directives quick check\n\n")
+	text.WriteString("- Fetch `" + toolAgentGenesisSkillGet + "`, then call `" + toolAgentGenesisBegin + "`.\n")
+	text.WriteString("- Interview the staged five bodies identity → philosophy → discipline → boundaries → soul.\n")
+	text.WriteString("- Persist `conversation_id` immediately and after every call.\n")
+	text.WriteString("- Follow `structuredContent.data.guidance.next_tool` from every Host-backed response.\n")
+	text.WriteString("- Call `" + toolAgentGenesisComplete + "`; never submit declarations as source of truth.\n")
+	text.WriteString("- Call `" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`.\n")
+	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
+	text.WriteString("- `restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`.\n")
+	text.WriteString("- Host is source of truth; never fabricate genesis state, declarations, model allowlists, or directory entries.\n\n")
 	for _, file := range genesisSkillFiles() {
-		filePaths = append(filePaths, file.path)
+		text.WriteString("## File: `" + file.path + "`\n\n")
+		text.WriteString("media_type: `" + file.mediaType + "`  \n")
+		text.WriteString("sha256: `" + sha256Hex([]byte(file.content)) + "`\n\n")
+		text.WriteString("```markdown\n")
+		text.WriteString(file.content)
+		if !strings.HasSuffix(file.content, "\n") {
+			text.WriteByte('\n')
+		}
+		text.WriteString("```\n\n")
 	}
-	text := map[string]any{
-		"summary":         "Ptah genesis operator skill bundle is ready; read SKILL.md before agent_genesis_begin",
-		"operation":       "skill_get",
-		"status":          "skill_ready",
-		"source":          "lesser_body_ptah",
-		"state_authority": "Host HostedGenesisSession",
-		"skill":           data["skill"],
-		"bundle_id":       data["bundle_id"],
-		"file_paths":      filePaths,
-		"semantics":       data["semantics"],
-		"guidance":        data["guidance"],
-	}
-	return toolJSONTextResult(text, map[string]any{"data": data})
+	return text.String()
 }
 
 func fiveBodyGenesisOperatorSkillResource(context.Context) ([]mcpruntime.ResourceContent, error) {
@@ -225,32 +254,32 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
    ` + "`ptah://genesis/" + resourceGenesisOperatorSkill + "`" + `) and use this SKILL.md as the operating playbook.
 2. **Begin.** Call ` + "`" + toolAgentGenesisBegin + "`" + ` with the managed instance domain and a new local_id.
    Persist the returned registration_id.
-3. **Interview the five bodies.** Call ` + "`" + toolAgentGenesisAdvance + "`" + ` to run Host's staged interview in
-   order: identity, then philosophy, then discipline, then boundaries, then soul, with capabilities and transparency
-   as satellites. Persist the Host conversation_id immediately when the first advance returns it, and re-persist your
-   registration_id/conversation_id pair after every call.
+3. **Interview the five bodies.** Call ` + "`" + toolAgentGenesisAdvance + "`" + ` to run Host's staged interview:
+   staged five bodies identity → philosophy → discipline → boundaries → soul, with capabilities and transparency as
+   satellites. Persist ` + "`conversation_id`" + ` immediately when the first advance returns it and after every call;
+   also keep the ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair together.
 4. **Read and follow guidance.** Poll ` + "`" + toolAgentGenesisRead + "`" + ` for the durable Host projection and
    always follow ` + "`structuredContent.data.guidance.next_tool`" + ` for the next step; do not improvise ordering.
 5. **Complete.** When Host reports declaration readiness, call ` + "`" + toolAgentGenesisComplete + "`" + `. Host
-   extracts and validates its own produced declarations; you never submit declarations as the source of truth.
-6. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` and, only after Host
+   extracts and validates its own produced declarations; never submit declarations as source of truth.
+6. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` then, only after Host
    readiness, ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
-7. **Verify.** Confirm the minted agent with ` + "`" + toolAgentGet + "`" + ` (or ` + "`" + toolAgentList + "`" + `
-   for the merged registry/live view).
+7. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
+   registry or merged registry/live view.
 
 ## Failure recovery
 
-- If a response carries ` + "`failure.recovery.action=restart_soul_bootstrap`" + `, start a fresh lane with a new
-  ` + "`" + toolAgentGenesisBegin + "`" + ` call. Do not call ` + "`" + toolAgentGenesisRecover + "`" + ` for that
-  action; recover is only for the other typed recoverable states Host names.
+- If a response carries ` + "`failure.recovery.action=restart_soul_bootstrap`" + `, ` + "`restart_soul_bootstrap`" + `
+  means fresh ` + "`" + toolAgentGenesisBegin + "`" + `, not ` + "`" + toolAgentGenesisRecover + "`" + `. Recover is only
+  for the other typed recoverable states Host names.
 - ` + "`" + toolAgentGenesisList + "`" + ` currently returns status=not_available with
   failure.code=producer_contract_missing; use a persisted registration_id/conversation_id with
   ` + "`" + toolAgentGenesisRead + "`" + `, or ` + "`" + toolAgentList + "`" + ` after finalization.
 
 ## Invariants
 
-- Host is the source of truth for genesis state, produced declarations, and validation; Body only relays and
-  registers Host-derived results.
+- Host is source of truth for genesis state, produced declarations, and validation; Body only relays and registers
+  Host-derived results.
 - Never fabricate conversation state, declarations, model allowlists, or directory entries.
 - Before final acceptance Host uses the canonical affirmation exactly: ` + canonicalGenesisAffirmation() + `
 - Consult references/genesis-guidance-map.md for the resource, prompt, and state-to-next-tool map.

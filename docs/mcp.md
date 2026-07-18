@@ -683,8 +683,11 @@ guidance as a client-native skill an LLM client fetches before operating the `ag
 deterministic: a stable skill id/name, a version derived from `soul-five-body-guidance.v2` plus the pinned Host contract
 head, a `bundle_id` computed from the file checksums, `content.mode="inline_files"` with a file-count summary, and
 install-neutral file entries (`SKILL.md` plus a bounded `references/genesis-guidance-map.md`). Provenance points at Host
-PR `#928`/head and Body's mirrored contract checksums. The semantics are explicitly no-write/no-install: Ptah serves
-content only, and the calling client decides whether and how to materialize or use the files.
+PR `#928`/head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
+`agent_genesis_skill_get` also renders deterministic MCP-visible Markdown containing the complete `SKILL.md`, the
+bounded guidance map, bundle identity/provenance, and no-install/no-write semantics. The semantics are explicitly
+no-write/no-install: Ptah serves content only, and the calling client decides whether and how to materialize or use the
+files.
 
 ### Host-backed Ptah genesis minting
 
