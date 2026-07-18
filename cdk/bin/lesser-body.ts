@@ -12,6 +12,7 @@ if (!["dev", "staging", "live"].includes(stage)) {
 
 const baseDomain = contextString(app, "baseDomain").trim().toLowerCase().replace(/\.+$/, "");
 const lesserHostInstanceKeyArn = contextString(app, "lesserHostInstanceKeyArn") || process.env.LESSER_HOST_INSTANCE_KEY_ARN || "";
+const soulBindingIntegrationBearerArn = contextString(app, "soulBindingIntegrationBearerArn") || process.env.LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN || "";
 
 const awsAccount = process.env.CDK_DEFAULT_ACCOUNT?.trim();
 const awsRegion = process.env.CDK_DEFAULT_REGION?.trim() || process.env.AWS_REGION?.trim();
@@ -28,6 +29,7 @@ new LesserBodyStack(app, `${appName}-${stage}-lesser-body`, {
   stage,
   baseDomain,
   lesserHostInstanceKeyArn,
+  soulBindingIntegrationBearerArn,
 });
 
 app.synth();

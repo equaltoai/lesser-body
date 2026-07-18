@@ -16,6 +16,10 @@ Optional:
   --lesser-host-instance-key-arn <arn>
                            Optional exact Secrets Manager ARN for the managed lesser-host instance key.
                            Defaults to $LESSER_HOST_INSTANCE_KEY_ARN when set.
+  --soul-binding-integration-bearer-secret-arn <arn>
+                           Optional exact Secrets Manager ARN for the dedicated Body/Ptah -> Lesser
+                           soul-binding bearer. Defaults to $LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN
+                           when set. Do not pass a raw bearer value.
   --asset-prefix <prefix>  S3 key prefix for staged zip and auxiliary assets (default: releases/lesser-body/<version>)
   --no-execute-changeset   Pass through to aws cloudformation deploy for verification-only change set creation
   --dry-run                Print the AWS commands without executing them
@@ -34,6 +38,7 @@ APP_NAME="lesser"
 STAGE=""
 BASE_DOMAIN=""
 LESSER_HOST_INSTANCE_KEY_ARN="${LESSER_HOST_INSTANCE_KEY_ARN:-}"
+LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN="${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN:-}"
 DRY_RUN=0
 NO_EXECUTE_CHANGESET=0
 
@@ -65,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lesser-host-instance-key-arn)
       LESSER_HOST_INSTANCE_KEY_ARN="$2"
+      shift 2
+      ;;
+    --soul-binding-integration-bearer-secret-arn)
+      LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN="$2"
       shift 2
       ;;
     --dry-run)
@@ -227,6 +236,17 @@ if [[ -n "${LESSER_HOST_INSTANCE_KEY_ARN}" ]]; then
     exit 1
   fi
   parameter_overrides+=("LesserHostInstanceKeyARN=${LESSER_HOST_INSTANCE_KEY_ARN}")
+fi
+if [[ -n "${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN}" ]]; then
+  if [[ "${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN}" == *"*"* || "${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN}" == *"?"* ]]; then
+    echo "--soul-binding-integration-bearer-secret-arn must be an exact Secrets Manager secret ARN without wildcards" >&2
+    exit 1
+  fi
+  if [[ ! "${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN}" =~ ^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]]; then
+    echo "--soul-binding-integration-bearer-secret-arn must be an exact Secrets Manager secret ARN" >&2
+    exit 1
+  fi
+  parameter_overrides+=("LesserSoulBindingIntegrationBearerSecretARN=${LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN}")
 fi
 
 upload_cmd=(
