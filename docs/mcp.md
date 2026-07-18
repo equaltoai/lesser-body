@@ -612,16 +612,16 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor. |
-| `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. |
-| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including the latest bounded conversation turn when available. |
-| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id. |
-| `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. |
-| `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. |
-| `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. |
-| `agent_genesis_finalize` | Write + owner/operator | Ask Host to finalize and publish the new hosted/offchain agent identity. |
-| `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor. |
-| `agent_list` | Read | List Body/Ptah account-scoped registry entries merged with Lesser's public live-agent directory, with cursor pagination. |
+| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
+| `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. Next: `agent_genesis_advance`. |
+| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. |
+| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id; continue until Host reports declaration readiness. |
+| `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. If Host says `restart_soul_bootstrap`, call `agent_genesis_begin` for a fresh lane instead. |
+| `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. Next: `agent_genesis_finalize_preflight`. |
+| `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. Next: `agent_genesis_finalize` after Host readiness. |
+| `agent_genesis_finalize` | Write + owner/operator | Ask Host to finalize/publish the hosted/offchain identity, then idempotently write Body's Host-derived Ptah registry row for `agent_get`/`agent_list` visibility. |
+| `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor, including Host-genesis provenance and content metadata where available. |
+| `agent_list` | Read | List Body/Ptah account-scoped registry entries, including Host-finalized minted agents, merged with Lesser's public live-agent directory, with cursor pagination. |
 | `agent_soul_get` | Read | Read the current account-scoped Ptah `agent_soul` draft/archived record. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
 | `agent_soul_upsert` | Write | Create or update account-scoped Ptah `agent_soul` draft content through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
 | `agent_soul_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_soul` record through `internal/agentcontent.Store`. Schema marker: `provisional_agent_soul_schema_pending_lesser_soul_s1`. |
@@ -653,10 +653,25 @@ The owner-operated sequence is:
    callers cannot provide or replace declaration material.
 5. The owner calls `agent_genesis_finalize_preflight`, then `agent_genesis_finalize`. Instance-trust finalization sends
    an empty request body: Host owns the declaration checkpoint and publishes the hosted/offchain identity without a
-   wallet signature supplied by Body.
-6. The owner verifies the returned Host `agent_id`, then calls `agent_list` and checks the merged Lesser live directory
-   view. The minted agent is usable/visible only after Host publication and normal Lesser directory propagation; Body
-   does not claim visibility from a local registry row alone.
+   wallet signature supplied by Body. After Host returns the finalized identity, Body writes exactly one idempotent
+   `agentregistry` row in the authenticated account partition using Host-derived fields and
+   `provenance.source="host_genesis_finalize"`.
+6. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
+   account-scoped registry view. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a
+   matching live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
+   authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
+
+State → next-tool down-payment exposed in `structuredContent.data.guidance`:
+
+| Host state / signal | Next tool | Caller guidance |
+|---------------------|-----------|-----------------|
+| `agent_genesis_begin` success | `agent_genesis_advance` | Send the first owner/operator message and persist Host's `conversation_id`. |
+| `assistant_turn_ready`, `awaiting_owner`, `needs_owner_turn`, or `in_progress` | `agent_genesis_advance` or `agent_genesis_read` | Continue the Host conversation, or poll before deciding. |
+| `declaration_ready` / ready-for-completion | `agent_genesis_complete` | Let Host extract/validate its durable produced-declarations checkpoint; callers do not supply declarations. |
+| `agent_genesis_complete` success / finalization-ready state | `agent_genesis_finalize_preflight` | Check Host readiness before finalization. |
+| preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |
+| `agent_genesis_finalize` success / `published` / `finalized` | `agent_get` (or `agent_list`) | Verify account-scoped Body/Ptah visibility with registry provenance. |
+| `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. |
 
 Body uses the server-side `LESSER_HOST_INSTANCE_KEY` only for its Host calls; it never forwards the owner OAuth bearer
    as Host instance authentication. Genesis text results are compact, structured results expose only the latest bounded
@@ -677,8 +692,10 @@ implementation.
 
 `agent_get` requires an account-holder OAuth principal with read-capable scope. `read`, `write`, and `admin` are
 read-capable for this instance-plane read surface; agent-delegated principals and non-account-holder principals are
-rejected before the registry is read. The tool calls only the Body-owned `internal/agentregistry.Store.Get` path over the
-`INSTANCE_REGISTRY_TABLE`; it does not call Lesser and does not read `LESSER_TABLE_NAME`.
+rejected before the registry is read. The tool reads only the Body-owned `internal/agentregistry.Store.Get` path over the
+`INSTANCE_REGISTRY_TABLE` for registry state. For content metadata only, it may read the Body-owned
+`internal/agentcontent.Store` over `INSTANCE_CONTENT_TABLE`; it does not call Lesser and does not read
+`LESSER_TABLE_NAME`.
 
 Successful output has `structuredContent.data.registry`:
 
@@ -687,20 +704,53 @@ Successful output has `structuredContent.data.registry`:
   "account": "<authenticated account username>",
   "agent_id": "<agent id>",
   "created_at": "<RFC3339 timestamp>",
-  "updated_at": "<RFC3339 timestamp>"
+  "updated_at": "<RFC3339 timestamp>",
+  "provenance": {
+    "source": "host_genesis_finalize",
+    "authority": "lesser_host",
+    "operation": "agent_genesis_finalize",
+    "registration_id": "<Host registration id>",
+    "conversation_id": "<Host conversation id>",
+    "system_derived": true,
+    "caller_claimed": false,
+    "state_authority": "Host HostedGenesisSession"
+  },
+  "host_identity": {
+    "domain": "<Host-derived domain when returned>",
+    "local_id": "<Host-derived local id when returned>",
+    "authority_model": "instance_trust",
+    "anchor_state": "hosted_offchain",
+    "lifecycle_status": "active",
+    "published_version": 1
+  }
 }
 ```
 
-The current registry record stores only account, agent id, and registry timestamps. It does not yet have a source-backed
-content-version field or content summary. Until a future source-backed field exists, `agent_get` returns explicit
-placeholders:
+For registry-backed agents, `content_version` and `content_summary` are populated from Body's account-scoped
+`agentcontent` records when `agent_soul` and/or `agent_instructions` records exist. The metadata intentionally summarizes
+version, lifecycle, update time, and byte count only; it does not duplicate draft content bodies in `agent_get` or
+`agent_list`.
 
 ```json
 {
-  "content_version": {"status": "not_available", "source": "agentregistry"},
-  "content_summary": {"status": "not_available", "source": "agentregistry"}
+  "content_version": {
+    "status": "available",
+    "source": "agentcontent",
+    "agent_soul": {"version": 3, "lifecycle_state": "draft", "updated_at": "<RFC3339 timestamp>"},
+    "agent_instructions": {"version": 2, "lifecycle_state": "draft", "updated_at": "<RFC3339 timestamp>"}
+  },
+  "content_summary": {
+    "status": "available",
+    "source": "agentcontent",
+    "agent_soul": {"content_bytes": 123, "lifecycle_state": "draft", "updated_at": "<RFC3339 timestamp>"},
+    "agent_instructions": {"content_bytes": 456, "lifecycle_state": "draft", "updated_at": "<RFC3339 timestamp>"}
+  }
 }
 ```
+
+When content does not exist or the content store is unavailable, the fields return `status:"not_available"` with a
+product-safe `reason` naming the missing Body content source. Lesser live-only entries also return
+`status:"not_available"` because Lesser's public live-agent directory does not expose Body/Ptah content metadata.
 
 Missing records and cross-account lookups return tool error code `not_found` with no account/agent detail leakage.
 Malformed input returns `invalid_request`; registry read failures return `agent_registry_error`.
@@ -727,8 +777,8 @@ ordering is stable and the returned cursor is opaque to clients. A live source f
 `agent_live_source_error` rather than returning a partial inventory.
 
 Successful output includes `structuredContent.data.agents`. Registry-backed items retain `registry`, `content_version`,
-and `content_summary` using the same current `not_available` placeholders as `agent_get`. Live-backed items add the
-public `live_agent` summary and source-specific content placeholders. The typed live summary allowlist excludes
+and `content_summary` using the same Body `agentcontent` metadata semantics as `agent_get`. Live-backed items add the
+public `live_agent` summary and source-specific `not_available` content metadata. The typed live summary allowlist excludes
 `agent_owner`, `delegated_scopes`, `identity_semantics.soul_agent_id`, OAuth tokens, and delegated runtime secrets. The
 tool never writes Lesser actor data. Pagination metadata remains:
 
@@ -899,7 +949,9 @@ structured MCP content containing Lesser's response, idempotency/replay metadata
 
 Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
 `SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor
-as `souled` through the existing `internal/soulbinding` read path.
+as `souled` through the existing `internal/soulbinding` read path. For newly minted Host-genesis agents, the
+Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
+caller-supplied binding input.
 
 ### Instance-plane Ba tools
 

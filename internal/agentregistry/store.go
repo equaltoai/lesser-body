@@ -30,6 +30,19 @@ const (
 
 	// MaxListLimit is the largest page size accepted by the registry list API.
 	MaxListLimit = 100
+
+	// SourceHostGenesisFinalize identifies registry rows written by Body after
+	// lesser-host has finalized and published a Host-owned genesis identity.
+	// This is system-derived provenance, not caller-claimed agent creation.
+	SourceHostGenesisFinalize = "host_genesis_finalize"
+
+	// SourceAuthorityLesserHost records that the minted identity came from
+	// lesser-host's HostedGenesisSession/finalization contract.
+	SourceAuthorityLesserHost = "lesser_host"
+
+	// SourceOperationAgentGenesisFinalize is the Ptah MCP operation that
+	// observed the Host-finalized identity and wrote the registry row.
+	SourceOperationAgentGenesisFinalize = "agent_genesis_finalize"
 )
 
 var (
@@ -53,16 +66,43 @@ var (
 
 // Agent is the account-scoped registry projection for a Ptah-created agent.
 type Agent struct {
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Account   string    `json:"account"`
-	AgentID   string    `json:"agent_id"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Account            string    `json:"account"`
+	AgentID            string    `json:"agent_id"`
+	Source             string    `json:"source,omitempty"`
+	SourceAuthority    string    `json:"source_authority,omitempty"`
+	SourceOperation    string    `json:"source_operation,omitempty"`
+	HostRegistrationID string    `json:"host_registration_id,omitempty"`
+	HostConversationID string    `json:"host_conversation_id,omitempty"`
+	Domain             string    `json:"domain,omitempty"`
+	LocalID            string    `json:"local_id,omitempty"`
+	AuthorityModel     string    `json:"authority_model,omitempty"`
+	AnchorState        string    `json:"anchor_state,omitempty"`
+	LifecycleStatus    string    `json:"lifecycle_status,omitempty"`
+	PublishedVersion   int64     `json:"published_version,omitempty"`
 }
 
 // CreateInput describes a new Ptah-created agent registry entry.
 type CreateInput struct {
 	Account string
 	AgentID string
+}
+
+// FinalizedInput describes a Host-finalized minted agent registry projection.
+// All fields must be derived from Host/Lesser responses or server-side
+// invocation context. Callers never supply this struct directly.
+type FinalizedInput struct {
+	Account            string
+	AgentID            string
+	HostRegistrationID string
+	HostConversationID string
+	Domain             string
+	LocalID            string
+	AuthorityModel     string
+	AnchorState        string
+	LifecycleStatus    string
+	PublishedVersion   int64
 }
 
 // ListInput describes an account-scoped registry list request.
@@ -147,6 +187,77 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (*Agent, error) {
 	default:
 		return nil, fmt.Errorf("create agent registry record: %w", err)
 	}
+}
+
+// UpsertFinalized idempotently writes the account-scoped registry row for a
+// Host-finalized minted agent. The identity and provenance are system-derived
+// from lesser-host finalization output; this method is intentionally separate
+// from Create so Ptah cannot blur Host-owned genesis with caller-claimed local
+// creation. The returned boolean is true only when this call created the row.
+func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent registry store is nil")
+	}
+	validated, err := validateFinalizedInput(in)
+	if err != nil {
+		return nil, false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	now := time.Now().UTC()
+	record := s.recordFor(validated.Account, validated.AgentID)
+	record.RegistryCreatedAt = now
+	record.RegistryUpdatedAt = now
+	applyFinalizedFields(record, validated)
+
+	err = s.db.Model(record).WithContext(ctx).IfNotExists().Create()
+	switch {
+	case err == nil:
+		return record.toAgent(), true, nil
+	case !tableerrors.IsConditionFailed(err):
+		return nil, false, fmt.Errorf("create finalized agent registry record: %w", err)
+	}
+
+	updated := s.emptyRecord()
+	builder := s.db.Model(s.emptyRecord()).
+		WithContext(ctx).
+		Where("PK", "=", accountPartitionKey(validated.Account)).
+		Where("SK", "=", agentSortKey(validated.AgentID)).
+		UpdateBuilder().
+		Set("RegistryUpdatedAt", now).
+		Set("Source", SourceHostGenesisFinalize).
+		Set("SourceAuthority", SourceAuthorityLesserHost).
+		Set("SourceOperation", SourceOperationAgentGenesisFinalize)
+	if validated.HostRegistrationID != "" {
+		builder = builder.Set("HostRegistrationID", validated.HostRegistrationID)
+	}
+	if validated.HostConversationID != "" {
+		builder = builder.Set("HostConversationID", validated.HostConversationID)
+	}
+	if validated.Domain != "" {
+		builder = builder.Set("Domain", validated.Domain)
+	}
+	if validated.LocalID != "" {
+		builder = builder.Set("LocalID", validated.LocalID)
+	}
+	if validated.AuthorityModel != "" {
+		builder = builder.Set("AuthorityModel", validated.AuthorityModel)
+	}
+	if validated.AnchorState != "" {
+		builder = builder.Set("AnchorState", validated.AnchorState)
+	}
+	if validated.LifecycleStatus != "" {
+		builder = builder.Set("LifecycleStatus", validated.LifecycleStatus)
+	}
+	if validated.PublishedVersion > 0 {
+		builder = builder.Set("PublishedVersion", validated.PublishedVersion)
+	}
+	if err := builder.ReturnValues("ALL_NEW").ExecuteWithResult(updated); err != nil {
+		return nil, false, fmt.Errorf("update finalized agent registry record: %w", err)
+	}
+	return updated.toAgent(), false, nil
 }
 
 // Get returns the registry record for account and agentID. Looking up an agent
@@ -266,6 +377,18 @@ type agentRecord struct {
 	AgentID           string    `theorydb:"attr:agentId" json:"agent_id"`
 	RegistryCreatedAt time.Time `theorydb:"attr:createdAt" json:"created_at"`
 	RegistryUpdatedAt time.Time `theorydb:"attr:updatedAt" json:"updated_at"`
+
+	Source             string `theorydb:"attr:source" json:"source,omitempty"`
+	SourceAuthority    string `theorydb:"attr:sourceAuthority" json:"source_authority,omitempty"`
+	SourceOperation    string `theorydb:"attr:sourceOperation" json:"source_operation,omitempty"`
+	HostRegistrationID string `theorydb:"attr:hostRegistrationId" json:"host_registration_id,omitempty"`
+	HostConversationID string `theorydb:"attr:hostConversationId" json:"host_conversation_id,omitempty"`
+	Domain             string `theorydb:"attr:domain" json:"domain,omitempty"`
+	LocalID            string `theorydb:"attr:localId" json:"local_id,omitempty"`
+	AuthorityModel     string `theorydb:"attr:authorityModel" json:"authority_model,omitempty"`
+	AnchorState        string `theorydb:"attr:anchorState" json:"anchor_state,omitempty"`
+	LifecycleStatus    string `theorydb:"attr:lifecycleStatus" json:"lifecycle_status,omitempty"`
+	PublishedVersion   int64  `theorydb:"attr:publishedVersion" json:"published_version,omitempty"`
 }
 
 func (r agentRecord) TableName() string {
@@ -280,11 +403,61 @@ func (r *agentRecord) toAgent() *Agent {
 		return nil
 	}
 	return &Agent{
-		Account:   normalizeAccount(r.Account),
-		AgentID:   normalizeAgentID(r.AgentID),
-		CreatedAt: r.RegistryCreatedAt.UTC(),
-		UpdatedAt: r.RegistryUpdatedAt.UTC(),
+		Account:            normalizeAccount(r.Account),
+		AgentID:            normalizeAgentID(r.AgentID),
+		CreatedAt:          r.RegistryCreatedAt.UTC(),
+		UpdatedAt:          r.RegistryUpdatedAt.UTC(),
+		Source:             strings.TrimSpace(r.Source),
+		SourceAuthority:    strings.TrimSpace(r.SourceAuthority),
+		SourceOperation:    strings.TrimSpace(r.SourceOperation),
+		HostRegistrationID: strings.TrimSpace(r.HostRegistrationID),
+		HostConversationID: strings.TrimSpace(r.HostConversationID),
+		Domain:             strings.TrimSpace(r.Domain),
+		LocalID:            strings.TrimSpace(r.LocalID),
+		AuthorityModel:     strings.TrimSpace(r.AuthorityModel),
+		AnchorState:        strings.TrimSpace(r.AnchorState),
+		LifecycleStatus:    strings.TrimSpace(r.LifecycleStatus),
+		PublishedVersion:   r.PublishedVersion,
 	}
+}
+
+func validateFinalizedInput(in FinalizedInput) (FinalizedInput, error) {
+	in.Account = normalizeAccount(in.Account)
+	if in.Account == "" {
+		return FinalizedInput{}, fmt.Errorf("account is required")
+	}
+	in.AgentID = normalizeAgentID(in.AgentID)
+	if in.AgentID == "" {
+		return FinalizedInput{}, fmt.Errorf("agent id is required")
+	}
+	in.HostRegistrationID = strings.TrimSpace(in.HostRegistrationID)
+	in.HostConversationID = strings.TrimSpace(in.HostConversationID)
+	in.Domain = strings.TrimSpace(in.Domain)
+	in.LocalID = strings.TrimSpace(in.LocalID)
+	in.AuthorityModel = strings.TrimSpace(in.AuthorityModel)
+	in.AnchorState = strings.TrimSpace(in.AnchorState)
+	in.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
+	if in.PublishedVersion < 0 {
+		in.PublishedVersion = 0
+	}
+	return in, nil
+}
+
+func applyFinalizedFields(record *agentRecord, in FinalizedInput) {
+	if record == nil {
+		return
+	}
+	record.Source = SourceHostGenesisFinalize
+	record.SourceAuthority = SourceAuthorityLesserHost
+	record.SourceOperation = SourceOperationAgentGenesisFinalize
+	record.HostRegistrationID = in.HostRegistrationID
+	record.HostConversationID = in.HostConversationID
+	record.Domain = in.Domain
+	record.LocalID = in.LocalID
+	record.AuthorityModel = in.AuthorityModel
+	record.AnchorState = in.AnchorState
+	record.LifecycleStatus = in.LifecycleStatus
+	record.PublishedVersion = in.PublishedVersion
 }
 
 func accountPartitionKey(account string) string {
