@@ -608,12 +608,16 @@ Scope key:
 
 Ptah tools are served only from `POST /instance/ptah/mcp` and are not registered on Ka's actor-scoped `/mcp/{actor}`
 surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authenticated Ptah `tools/list` request after
-`initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract.
+`initialize`; the public actor-scoped `/.well-known/mcp.json` discovery document remains the Ka contract. Ptah also
+registers product guidance resources and prompts through AppTheory's `Resources()` and `Prompts()` registries, so
+`initialize` advertises `resources` and `prompts` for `/instance/ptah/mcp` when these registries are non-empty. Body does
+not wrap AppTheory initialize or hard-code product instructions into protocol negotiation.
 
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. Next: `agent_genesis_advance`. |
+| `agent_genesis_list` | Read + owner/operator | Safe discovery/recovery placeholder for durable Host-backed genesis conversations. It does not fabricate local state; until Body adds a checked Host list client surface it returns `status="not_available"` and `failure.code="producer_contract_missing"` with guidance to use `agent_genesis_read` for known ids or `agent_list` after finalization. |
 | `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. |
 | `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id; continue until Host reports declaration readiness. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. If Host says `restart_soul_bootstrap`, call `agent_genesis_begin` for a fresh lane instead. |
@@ -628,6 +632,49 @@ surface or Ba's `/instance/ba/mcp` surface. Clients discover them with an authen
 | `agent_instructions_get` | Read | Read the current account-scoped Ptah `agent_instructions` draft/archived record. |
 | `agent_instructions_upsert` | Write | Create or update account-scoped Ptah `agent_instructions` draft content through `internal/agentcontent.Store`. |
 | `agent_instructions_archive` | Write | Idempotently archive the current account-scoped Ptah `agent_instructions` record through `internal/agentcontent.Store`. |
+
+### Instance-plane Ptah resources and prompts
+
+Ptah guidance resources and prompts are Body's MCP guidance surface for Host-backed five-body genesis. The source
+contract is Host-owned, not Body-owned. Body mirrors the artifacts from `equaltoai/lesser-host` PR `#928` at head
+`8b8bb3014908af3c4838da50d50aa0f72aee3406`, closing Host issue `#927`, and pins:
+
+- `schemaVersion`: `soul-five-body-schema.v2`
+- `guidanceVersion`: `soul-five-body-guidance.v2`
+- Host contract doc SHA-256: `415a078f00c651ad02fcf34427cccdc11f820a1559b5b5e2d397cc2dfbfbc3b0`
+- Host JSON schema SHA-256: `2e021a97eb503184a856ca43f1260ee790ab95b0793060dec9f54a9bcbcb8db1`
+- Host golden example SHA-256: `2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e`
+
+If Host PR `#928` changes before merge, Body's checked fixture and drift tests must be refreshed from the Host-owned
+artifacts. Body must not hand-edit a parallel five-body schema.
+
+Registered Ptah resources:
+
+| Resource name | URI | Description |
+|---------------|-----|-------------|
+| `soul-schema-v2` | `ptah://genesis/soul-schema-v2` | JSON resource containing source metadata, the mirrored Host JSON schema, Host golden example, and Host contract document text. |
+| `genesis-interview-guide` | `ptah://genesis/genesis-interview-guide` | Staged interview guide for identity, philosophy, discipline, boundaries, and soul, with capabilities/transparency as satellites and the canonical final affirmation. |
+| `agent-side-genesis-playbook` | `ptah://genesis/agent-side-genesis-playbook` | Operator/client playbook for using `agent_genesis_*` tools without creating local genesis state or bypassing owner/operator OAuth. |
+| `genesis-rubric` | `ptah://genesis/genesis-rubric` | Review rubric for first-class body presence, refusal floor, cadence rule, canonical affirmation, and Host validation codes. |
+
+Registered Ptah prompts:
+
+| Prompt | Description |
+|--------|-------------|
+| `draft-genesis-turn` | Draft the next owner/operator turn for the Host-owned five-body interview while preserving the staged bodies, refusal floor, cadence rule, and canonical affirmation. |
+| `review-soul-draft` | Review a proposed declaration against Host's five-body schema/guidance, refusal floor, capabilities/transparency satellite rule, and independent-review rubric. |
+
+The five first-class bodies are `identity`, `philosophy`, `discipline`, `boundaries`, and `soul`. `capabilities` and
+`transparency` are satellites; they do not replace any body. The refusal floor requires at least three concrete rows
+with `bypass`, `invariant`, and `closestSafePath`. The cadence rule is to define the named cadence once and carry it as
+a commitment/reference rather than repeating it in every body. The canonical final affirmation remains:
+
+> Do you affirm this declaration as the foundation of your minted soul? If there is anything here you would correct,
+> qualify, or strike before it is inscribed, name it now.
+
+Host PR `#928` records `mintingModel` in declaration evidence but does not publish a Body-consumable model allowlist
+artifact or endpoint. Body therefore does not advertise a model allowlist; callers should use Host-configured models and
+track a Host/Body follow-up if a listable producer contract is required.
 
 ### Host-backed Ptah genesis minting
 
@@ -660,6 +707,14 @@ The owner-operated sequence is:
    account-scoped registry view. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a
    matching live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
+
+`agent_genesis_list` is deliberately not a local-state substitute. Host currently has an instance summary endpoint
+(`GET /api/v1/soul/instance/agents/{agentId}/mint-conversations`), but Body's checked `internal/hostapi.GenesisClient`
+does not yet expose a list method in this milestone. The tool therefore returns a normal structured result with
+`operation="list"`, `status="not_available"`, `conversations=[]`, and
+`failure.code="producer_contract_missing"`. It points callers to `agent_genesis_read` when they have a known
+`registration_id`/`conversation_id`, or `agent_list` after `agent_genesis_finalize` writes Body's Host-derived registry
+row. This preserves recovery semantics without fabricating a local Host conversation index.
 
 State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 

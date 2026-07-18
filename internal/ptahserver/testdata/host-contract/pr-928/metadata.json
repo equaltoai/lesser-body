@@ -1,0 +1,12 @@
+{
+  "source_repository": "equaltoai/lesser-host",
+  "source_pull_request": 928,
+  "source_issue": 927,
+  "source_head_sha": "8b8bb3014908af3c4838da50d50aa0f72aee3406",
+  "schema_version": "soul-five-body-schema.v2",
+  "guidance_version": "soul-five-body-guidance.v2",
+  "contract_doc_sha256": "415a078f00c651ad02fcf34427cccdc11f820a1559b5b5e2d397cc2dfbfbc3b0",
+  "schema_sha256": "2e021a97eb503184a856ca43f1260ee790ab95b0793060dec9f54a9bcbcb8db1",
+  "example_sha256": "2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e",
+  "notes": "Body mirror of Host PR #928 contract artifacts for G5B-4/G5B-5. If Host PR #928 changes, refresh these fixtures and checksums rather than editing a Body-local schema."
+}

@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,6 +67,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 						Name    string `json:"name"`
 						Version string `json:"version"`
 					} `json:"serverInfo"`
+					Capabilities map[string]any `json:"capabilities"`
 				} `json:"result"`
 			}
 			if err := json.Unmarshal(initResp.Body, &initBody); err != nil {
@@ -77,6 +78,15 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 			}
 			if initBody.Result.ServerInfo.Version != "dev" {
 				t.Fatalf("server version = %q, want dev", initBody.Result.ServerInfo.Version)
+			}
+			if tc.name == "ptah" {
+				for _, capability := range []string{"tools", "resources", "prompts"} {
+					if _, ok := initBody.Result.Capabilities[capability]; !ok {
+						t.Fatalf("ptah initialize missing %s capability: %+v", capability, initBody.Result.Capabilities)
+					}
+				}
+			} else if _, ok := initBody.Result.Capabilities["resources"]; ok {
+				t.Fatalf("%s should not advertise resources: %+v", tc.name, initBody.Result.Capabilities)
 			}
 
 			sessionID := firstHeader(initResp.Headers, "mcp-session-id")
@@ -154,6 +164,115 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				instructionsArchiveDef := listBody.Result.Tools[8]
 				if instructionsArchiveDef.Name != "agent_instructions_archive" || instructionsArchiveDef.Annotations == nil || instructionsArchiveDef.Annotations.ReadOnlyHint == nil || *instructionsArchiveDef.Annotations.ReadOnlyHint || instructionsArchiveDef.Annotations.IdempotentHint == nil || !*instructionsArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_archive annotations invalid: %+v", instructionsArchiveDef)
+				}
+				genesisListDef := listBody.Result.Tools[10]
+				if genesisListDef.Name != "agent_genesis_list" || genesisListDef.Annotations == nil || genesisListDef.Annotations.ReadOnlyHint == nil || !*genesisListDef.Annotations.ReadOnlyHint || !strings.Contains(genesisListDef.Description, "producer_contract_missing") || !strings.Contains(string(genesisListDef.OutputSchema), "not_available") {
+					t.Fatalf("agent_genesis_list definition invalid: %+v", genesisListDef)
+				}
+
+				resourcesResp := invokeMCP(t, env, app, tc.path, headers, &mcpruntime.Request{
+					JSONRPC: "2.0",
+					ID:      3,
+					Method:  "resources/list",
+				})
+				if resourcesResp.Status != 200 {
+					t.Fatalf("resources/list status = %d, body = %s", resourcesResp.Status, string(resourcesResp.Body))
+				}
+				var resourcesRPC mcpruntime.Response
+				if err := json.Unmarshal(resourcesResp.Body, &resourcesRPC); err != nil {
+					t.Fatalf("decode resources/list response: %v", err)
+				}
+				if resourcesRPC.Error != nil {
+					t.Fatalf("resources/list error: %+v", resourcesRPC.Error)
+				}
+				var resourcesOut struct {
+					Resources []mcpruntime.ResourceDef `json:"resources"`
+				}
+				{
+					b, _ := json.Marshal(resourcesRPC.Result)
+					_ = json.Unmarshal(b, &resourcesOut)
+				}
+				haveResource := map[string]bool{}
+				for _, res := range resourcesOut.Resources {
+					haveResource[res.Name] = true
+				}
+				for _, name := range []string{"soul-schema-v2", "genesis-interview-guide", "agent-side-genesis-playbook", "genesis-rubric"} {
+					if !haveResource[name] {
+						t.Fatalf("resources/list missing %s: %+v", name, resourcesOut.Resources)
+					}
+				}
+
+				readParams, _ := json.Marshal(map[string]any{"uri": "ptah://genesis/soul-schema-v2"})
+				readResp := invokeMCP(t, env, app, tc.path, headers, &mcpruntime.Request{
+					JSONRPC: "2.0",
+					ID:      4,
+					Method:  "resources/read",
+					Params:  readParams,
+				})
+				if readResp.Status != 200 {
+					t.Fatalf("resources/read status = %d, body = %s", readResp.Status, string(readResp.Body))
+				}
+				var readRPC mcpruntime.Response
+				if err := json.Unmarshal(readResp.Body, &readRPC); err != nil {
+					t.Fatalf("decode resources/read response: %v", err)
+				}
+				if readRPC.Error != nil {
+					t.Fatalf("resources/read error: %+v", readRPC.Error)
+				}
+				readEncoded, _ := json.Marshal(readRPC.Result)
+				if !strings.Contains(string(readEncoded), "soul-five-body-schema.v2") || !strings.Contains(string(readEncoded), "8b8bb3014908af3c4838da50d50aa0f72aee3406") {
+					t.Fatalf("resources/read did not return Host contract metadata: %s", string(readEncoded))
+				}
+
+				promptsResp := invokeMCP(t, env, app, tc.path, headers, &mcpruntime.Request{
+					JSONRPC: "2.0",
+					ID:      5,
+					Method:  "prompts/list",
+				})
+				if promptsResp.Status != 200 {
+					t.Fatalf("prompts/list status = %d, body = %s", promptsResp.Status, string(promptsResp.Body))
+				}
+				var promptsRPC mcpruntime.Response
+				if err := json.Unmarshal(promptsResp.Body, &promptsRPC); err != nil {
+					t.Fatalf("decode prompts/list response: %v", err)
+				}
+				if promptsRPC.Error != nil {
+					t.Fatalf("prompts/list error: %+v", promptsRPC.Error)
+				}
+				var promptsOut struct {
+					Prompts []mcpruntime.PromptDef `json:"prompts"`
+				}
+				{
+					b, _ := json.Marshal(promptsRPC.Result)
+					_ = json.Unmarshal(b, &promptsOut)
+				}
+				if got := promptNames(promptsOut.Prompts); !reflect.DeepEqual(got, []string{"draft-genesis-turn", "review-soul-draft"}) {
+					t.Fatalf("prompts/list names = %v", got)
+				}
+
+				getParams, _ := json.Marshal(map[string]any{
+					"name":      "draft-genesis-turn",
+					"arguments": map[string]any{"phase": "soul", "owner_intent": "finish refusals"},
+				})
+				getResp := invokeMCP(t, env, app, tc.path, headers, &mcpruntime.Request{
+					JSONRPC: "2.0",
+					ID:      6,
+					Method:  "prompts/get",
+					Params:  getParams,
+				})
+				if getResp.Status != 200 {
+					t.Fatalf("prompts/get status = %d, body = %s", getResp.Status, string(getResp.Body))
+				}
+				var getRPC mcpruntime.Response
+				if err := json.Unmarshal(getResp.Body, &getRPC); err != nil {
+					t.Fatalf("decode prompts/get response: %v", err)
+				}
+				if getRPC.Error != nil {
+					t.Fatalf("prompts/get error: %+v", getRPC.Error)
+				}
+				getEncoded, _ := json.Marshal(getRPC.Result)
+				if !strings.Contains(string(getEncoded), "identity, philosophy, discipline, boundaries, and soul") || !strings.Contains(string(getEncoded), "Do you affirm this declaration") {
+					t.Fatalf("prompts/get missing five-body guidance: %s", string(getEncoded))
 				}
 			}
 		})
@@ -961,6 +1080,14 @@ func callMCPTool(t testing.TB, env *testkit.Env, app *apptheory.App, path string
 }
 
 func toolNames(defs []mcpruntime.ToolDef) []string {
+	out := make([]string, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, def.Name)
+	}
+	return out
+}
+
+func promptNames(defs []mcpruntime.PromptDef) []string {
 	out := make([]string, 0, len(defs))
 	for _, def := range defs {
 		out = append(out, def.Name)
