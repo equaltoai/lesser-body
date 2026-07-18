@@ -31,10 +31,16 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 			t.Fatalf("removed agent_create tool is still advertised: %+v", tool)
 		}
 	}
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisBegin, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisSkillGet, toolAgentGenesisBegin, toolAgentGenesisList, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
+	assertReadOnlyToolDef(t, toolDefByName(t, tools, toolAgentGenesisSkillGet))
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisSkillGet).Description, "no local installation")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisSkillGet).Description, toolAgentGenesisBegin)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisBegin).Description, toolAgentGenesisSkillGet)
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisBegin).Description, toolAgentGenesisAdvance)
+	assertReadOnlyToolDef(t, toolDefByName(t, tools, toolAgentGenesisList))
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisList).Description, "producer_contract_missing")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRead).Description, "state to next tool")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "restart_soul_bootstrap")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, toolAgentGenesisBegin)

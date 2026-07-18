@@ -22,6 +22,7 @@ import (
 
 const (
 	toolAgentGenesisBegin             = "agent_genesis_begin"
+	toolAgentGenesisList              = "agent_genesis_list"
 	toolAgentGenesisRead              = "agent_genesis_read"
 	toolAgentGenesisAdvance           = "agent_genesis_advance"
 	toolAgentGenesisRecover           = "agent_genesis_recover"
@@ -57,8 +58,20 @@ func genesisOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
 		"properties":{
-			"data":{"type":"object","description":"Sanitized Host-backed genesis state. Conversation messages, when present, are structured data only."},
-			"error":{"type":"object","description":"Structured tool error when isError=true."}
+			"data":{
+				"type":"object",
+				"description":"Sanitized Host-backed genesis state. Conversation messages, when present, are structured data only.",
+				"properties":{
+					"operation":{"type":"string","enum":["begin","list","read","advance","recover","complete","finalize_preflight","finalize"]},
+					"status":{"type":"string","enum":["begin","not_available","assistant_turn_ready","awaiting_owner","needs_owner_turn","in_progress","declaration_ready","ready_for_completion","complete","completed","finalization_ready","preflight_ok","ready_to_finalize","finalize_ready","published","finalized","active","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
+					"failure":{"type":"object","properties":{
+						"code":{"type":"string","enum":["producer_contract_missing","missing_produced_declarations","invalid_produced_declarations","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
+						"recovery":{"type":"object","properties":{"action":{"type":"string","enum":["restart_soul_bootstrap","retry","wait","contact_operator"]}}}
+					}},
+					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"instruction":{"type":"string"}}}
+				}
+			},
+			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
 		}
 	}`)
 }
@@ -67,7 +80,7 @@ func agentGenesisBeginDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisBegin,
 		Title:       "Begin Host-backed agent genesis",
-		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. Next: call agent_genesis_advance with the returned registration_id and persist the Host conversation_id. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. First fetch the read-only operating playbook with agent_genesis_skill_get. Next: call agent_genesis_advance with the returned registration_id and persist the Host conversation_id. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -80,6 +93,36 @@ func agentGenesisBeginDef() mcpruntime.ToolDef {
 			"additionalProperties":false
 		}`),
 		OutputSchema: genesisOutputSchema(),
+	}
+}
+
+func agentGenesisListDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentGenesisList,
+		Title:       "List Host-backed agent genesis conversations",
+		Description: "Advertise the safe recovery/listing status for Host-backed Ptah genesis conversations. Body does not fabricate a local genesis list. Until Body has a Host list client surface for Host's instance mint-conversation summary endpoint, this tool returns status=not_available with failure.code=producer_contract_missing and directs callers to known registration_id/conversation_id reads or finalized agent registry visibility. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Annotations: readOnlyToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Optional Host/Lesser agent id whose conversations would be listed when a producer client surface exists."},
+				"limit":{"type":"integer","minimum":1,"maximum":50,"description":"Optional future page size; currently accepted only for forward-compatible clients."}
+			},
+			"additionalProperties":false
+		}`),
+		OutputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"data":{"type":"object","properties":{
+					"operation":{"type":"string","enum":["list"]},
+					"status":{"type":"string","enum":["not_available"]},
+					"conversations":{"type":"array","items":{"type":"object"}},
+					"failure":{"type":"object","properties":{"code":{"type":"string","enum":["producer_contract_missing"]}}},
+					"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_read"]},"alternate_next_tool":{"type":"string","enum":["agent_list"]},"instruction":{"type":"string"}}}
+				}},
+				"error":{"type":"object","description":"Structured authorization/input error when isError=true."}
+			}
+		}`),
 	}
 }
 
@@ -200,6 +243,71 @@ func (cfg config) handleAgentGenesisBegin(ctx context.Context, args json.RawMess
 		return genesisToolResultFromError(toolAgentGenesisBegin, err)
 	}
 	return genesisSuccessResult(toolAgentGenesisBegin, "begin", raw)
+}
+
+func (cfg config) handleAgentGenesisList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	actor, result, err := authorizeGenesis(ctx, toolAgentGenesisList, false)
+	if result != nil || err != nil {
+		return result, err
+	}
+	var in struct {
+		AgentID string `json:"agent_id,omitempty"`
+		Limit   *int   `json:"limit,omitempty"`
+	}
+	if result := decodeGenesisInput(args, &in); result != nil {
+		return result, nil
+	}
+	if in.AgentID, err = optionalGenesisString(in.AgentID, "agent_id", genesisMaxPathID); err != nil {
+		return mustToolErrorResult("invalid_request", "agent_genesis_list agent_id is invalid", http.StatusBadRequest, nil), nil
+	}
+	if in.Limit != nil && (*in.Limit < 1 || *in.Limit > 50) {
+		return mustToolErrorResult("invalid_request", "agent_genesis_list limit must be between 1 and 50", http.StatusBadRequest, nil), nil
+	}
+	genesisAudit(ctx, toolAgentGenesisList, actor, true)
+	data := map[string]any{
+		"source":          "lesser_body_ptah",
+		"state_authority": "Host HostedGenesisSession",
+		"flow":            "genesis_conversation",
+		"operation":       "list",
+		"status":          "not_available",
+		"conversations":   []map[string]any{},
+		"failure": map[string]any{
+			"code":   "producer_contract_missing",
+			"source": "lesser_body_hostapi",
+			"reason": "Host exposes an instance mint-conversation summary endpoint, but Body has no checked Host list client surface in this milestone. Body will not fabricate local genesis state.",
+		},
+		"guidance": map[string]any{
+			"next_tool":           toolAgentGenesisRead,
+			"alternate_next_tool": toolAgentList,
+			"instruction":         "Use a known registration_id/conversation_id with agent_genesis_read, or use agent_list after agent_genesis_finalize writes the Host-derived Ptah registry row. Track a follow-up to add a Body Host list client for /api/v1/soul/instance/agents/{agentId}/mint-conversations.",
+		},
+		"producer_contract": map[string]any{
+			"host_pr":          fiveBodyHostPR,
+			"host_head_sha":    fiveBodyHostHeadSHA,
+			"host_endpoint":    "GET /api/v1/soul/instance/agents/{agentId}/mint-conversations",
+			"body_client_gap":  "internal/hostapi.GenesisClient has no list method yet",
+			"safe_behavior":    "not_available_without_local_state",
+			"model_allowlist":  "producer_contract_missing",
+			"schema_version":   fiveBodySchemaVersion,
+			"guidance_version": fiveBodyGuidanceVersion,
+		},
+	}
+	if in.AgentID != "" {
+		data["agent_id"] = in.AgentID
+	}
+	if in.Limit != nil {
+		data["limit"] = *in.Limit
+	}
+	text := map[string]any{
+		"summary":         "Host-backed Ptah genesis list is not yet available through Body",
+		"operation":       "list",
+		"status":          "not_available",
+		"source":          "lesser_body_ptah",
+		"state_authority": "Host HostedGenesisSession",
+		"failure":         data["failure"],
+		"guidance":        data["guidance"],
+	}
+	return toolJSONTextResult(text, map[string]any{"data": data})
 }
 
 func (cfg config) handleAgentGenesisRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -346,6 +454,8 @@ func genesisOperationForTool(toolName string) string {
 	switch toolName {
 	case toolAgentGenesisBegin:
 		return "begin"
+	case toolAgentGenesisList:
+		return "list"
 	case toolAgentGenesisRead:
 		return "read"
 	case toolAgentGenesisAdvance:
@@ -542,8 +652,14 @@ func genesisSuccessResultFromData(toolName string, operation string, data map[st
 	if data == nil {
 		data = map[string]any{}
 	}
+	if _, ok := data["operation"]; !ok {
+		data["operation"] = operation
+	}
 	if guidance := genesisNextToolGuidance(operation, data); len(guidance) > 0 {
 		data["guidance"] = guidance
+	}
+	if strings.TrimSpace(stringValue(data, "status")) == "" {
+		data["status"] = genesisCanonicalStatus(operation, data)
 	}
 	text := map[string]any{
 		"summary":         "Host-backed Ptah genesis state updated",
@@ -577,6 +693,24 @@ func genesisSuccessResultFromData(toolName string, operation string, data map[st
 		text["guidance"] = guidance
 	}
 	return toolJSONTextResult(text, map[string]any{"data": data})
+}
+
+func genesisCanonicalStatus(operation string, data map[string]any) string {
+	if status := strings.TrimSpace(stringValue(data, "status")); status != "" {
+		return strings.ToLower(status)
+	}
+	if status := strings.TrimSpace(nestedString(data, "conversation", "status")); status != "" {
+		return strings.ToLower(status)
+	}
+	if status := strings.TrimSpace(nestedString(data, "registration", "status")); status != "" {
+		return strings.ToLower(status)
+	}
+	if guidance := nestedMap(data, "guidance"); len(guidance) > 0 {
+		if status := strings.TrimSpace(stringValue(guidance, "status")); status != "" {
+			return strings.ToLower(status)
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(firstNonEmpty(operation, "unknown")))
 }
 
 func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor string, in agentGenesisConversationInput, data map[string]any) (*agentregistry.Agent, bool, *mcpruntime.ToolResult, error) {
@@ -925,16 +1059,29 @@ func sanitizeGenesisProducedDeclarations(raw map[string]any) map[string]any {
 	copyStringField(out, "declaration_id", raw, "declaration_id", "declarationId")
 	copyStringField(out, "declaration_hash", raw, "declaration_hash", "declarationHash")
 	copyStringField(out, "produced_at", raw, "produced_at", "producedAt")
+	copyStringField(out, "schema_version", raw, "schema_version", "schemaVersion")
+	copyStringField(out, "guidance_version", raw, "guidance_version", "guidanceVersion")
+	if review := mapValue(raw, "adversarial_review", "adversarialReview"); len(review) > 0 {
+		safeReview := map[string]any{}
+		copyStringField(safeReview, "version", review, "version")
+		copyStringField(safeReview, "reviewer", review, "reviewer")
+		copyStringField(safeReview, "result", review, "result")
+		if len(safeReview) > 0 {
+			out["adversarial_review"] = safeReview
+		}
+	}
 	if evidence := mapValue(raw, "evidence"); len(evidence) > 0 {
 		safeEvidence := map[string]any{}
 		for output, keys := range map[string][]string{
-			"source":          {"source"},
-			"registration_id": {"registration_id", "registrationId"},
-			"conversation_id": {"conversation_id", "conversationId"},
-			"agent_id":        {"agent_id", "agentId"},
-			"message_count":   {"message_count", "messageCount"},
-			"model":           {"model"},
-			"request_id":      {"request_id", "requestId"},
+			"source":           {"source"},
+			"registration_id":  {"registration_id", "registrationId"},
+			"conversation_id":  {"conversation_id", "conversationId"},
+			"agent_id":         {"agent_id", "agentId"},
+			"message_count":    {"message_count", "messageCount"},
+			"model":            {"model"},
+			"request_id":       {"request_id", "requestId"},
+			"schema_version":   {"schema_version", "schemaVersion"},
+			"guidance_version": {"guidance_version", "guidanceVersion"},
 		} {
 			if value, ok := firstField(evidence, keys...); ok && safeScalar(value) {
 				safeEvidence[output] = value
