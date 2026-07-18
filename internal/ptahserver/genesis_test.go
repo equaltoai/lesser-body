@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/equaltoai/lesser-body/internal/agentcontent"
+	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -190,9 +192,10 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 			},
 		},
 	}
+	registryStore := newMemoryAgentRegistry()
 
 	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+	if err := RegisterTools(registry, WithGenesisClient(fake), WithAgentRegistryStore(registryStore)); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 	ctx := operatorToolContext("owner", []string{"read", "write"}, callerBearer)
@@ -229,6 +232,9 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 	if finalizeData["agent_id"] != "agent-123" {
 		t.Fatalf("finalize agent id = %#v", finalizeData["agent_id"])
 	}
+	if registryStore.upsertFinalizedCalls != 1 || len(registryStore.records) != 1 {
+		t.Fatalf("finalize registry writes = calls %d rows %d, want one Host-derived row", registryStore.upsertFinalizedCalls, len(registryStore.records))
+	}
 
 	wantCalls := []string{
 		"begin",
@@ -256,6 +262,155 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 	}
 	if truncated, _ := conversation["messages_truncated"].(bool); !truncated {
 		t.Fatalf("genesis response must mark omitted transcript turns: %#v", conversation)
+	}
+}
+
+func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
+	const hostKey = "host-instance-key-test-only"
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", hostKey)
+	fake := &fakeGenesisClient{
+		finalizeResponse: map[string]any{
+			"agent_id":          "agent-0xabc",
+			"domain":            "example.com",
+			"local_id":          "ada",
+			"authority_model":   "instance_trust",
+			"anchor_state":      "hosted_offchain",
+			"lifecycle_status":  "active",
+			"published_version": 7,
+			"conversation": map[string]any{
+				"registration_id": "reg-123",
+				"conversation_id": "conv-456",
+				"agent_id":        "agent-0xabc",
+				"status":          "published",
+			},
+			"publication": map[string]any{
+				"agent_id":          "agent-0xabc",
+				"registration_id":   "reg-123",
+				"domain":            "example.com",
+				"local_id":          "ada",
+				"authority_model":   "instance_trust",
+				"anchor_state":      "hosted_offchain",
+				"lifecycle_status":  "active",
+				"published_version": 7,
+			},
+		},
+	}
+	registryStore := newMemoryAgentRegistry()
+	contentStore := newVersionedFakeAgentContentStore()
+	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
+		Account:            "owner",
+		AgentID:            "agent-0xabc",
+		Type:               agentcontent.ContentTypeAgentSoul,
+		Content:            "safe soul draft summary source",
+		UpdatedBySubjectID: "subject-writer",
+	}); err != nil {
+		t.Fatalf("seed agent_soul content: %v", err)
+	}
+	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
+		Account:            "owner",
+		AgentID:            "agent-0xabc",
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            "safe instructions summary source",
+		UpdatedBySubjectID: "subject-writer",
+	}); err != nil {
+		t.Fatalf("seed agent_instructions content: %v", err)
+	}
+
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(tools, WithGenesisClient(fake), WithAgentRegistryStore(registryStore), WithAgentContentStore(contentStore), WithAgentLiveClient(&fakeAgentLiveClient{})); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := operatorToolContext("Owner", []string{"read", "write"}, "owner-oauth-bearer-test-only")
+	args := `{"registration_id":"reg-123","conversation_id":"conv-456"}`
+
+	first := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
+	second := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
+	if registryStore.upsertFinalizedCalls != 2 || len(registryStore.records) != 1 {
+		t.Fatalf("double finalize registry writes = calls %d rows %d, want two idempotent calls and one row", registryStore.upsertFinalizedCalls, len(registryStore.records))
+	}
+	firstData := structuredGenesisData(t, first)
+	firstRegistry, _ := firstData["registry"].(map[string]any)
+	provenance, _ := firstRegistry["provenance"].(map[string]any)
+	if provenance["source"] != agentregistry.SourceHostGenesisFinalize || provenance["authority"] != agentregistry.SourceAuthorityLesserHost || provenance["caller_claimed"] != false {
+		t.Fatalf("finalize registry provenance = %+v", provenance)
+	}
+	guidance, _ := firstData["guidance"].(map[string]any)
+	if guidance["next_tool"] != toolAgentGet || guidance["alternate_next_tool"] != toolAgentList {
+		t.Fatalf("finalize guidance = %+v, want agent_get/agent_list", guidance)
+	}
+	secondData := structuredGenesisData(t, second)
+	secondWrite, _ := secondData["registry_write"].(map[string]any)
+	if secondWrite["created"] != false || secondWrite["idempotent"] != true {
+		t.Fatalf("second registry_write = %+v, want idempotent replay", secondWrite)
+	}
+
+	getData := callToolData(t, tools, toolContextWithSubject("owner", []string{"read"}, "owner-oauth-bearer-test-only", "subject-reader"), toolAgentGet, `{"agent_id":"agent-0xabc"}`)
+	getRegistry, _ := getData["registry"].(map[string]any)
+	if getRegistry["agent_id"] != "agent-0xabc" {
+		t.Fatalf("agent_get registry = %+v", getRegistry)
+	}
+	contentVersion, _ := getData["content_version"].(map[string]any)
+	if contentVersion["status"] != "available" || contentVersion["source"] != "agentcontent" || contentVersion["agent_soul"] == nil || contentVersion["agent_instructions"] == nil {
+		t.Fatalf("agent_get content_version = %+v, want source-backed content metadata", contentVersion)
+	}
+
+	crossAccountResult, err := tools.Call(toolContextWithSubject("other", []string{"read"}, "other-oauth-bearer-test-only", "subject-reader"), toolAgentGet, json.RawMessage(`{"agent_id":"agent-0xabc"}`))
+	if err != nil {
+		t.Fatalf("cross-account agent_get: %v", err)
+	}
+	assertToolError(t, crossAccountResult, "not_found", 404)
+
+	listData := callToolData(t, tools, toolContextWithSubject("owner", []string{"read"}, "owner-oauth-bearer-test-only", "subject-reader"), toolAgentList, `{}`)
+	agents, _ := listData["agents"].([]map[string]any)
+	if len(agents) != 1 {
+		t.Fatalf("agent_list agents = %+v, want one minted registry row", listData["agents"])
+	}
+	listRegistry, _ := agents[0]["registry"].(map[string]any)
+	if agents[0]["source"] != agentListRegistrySourceCode || listRegistry["agent_id"] != "agent-0xabc" {
+		t.Fatalf("agent_list minted item = %+v", agents[0])
+	}
+}
+
+func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
+	raw := map[string]any{
+		"conversation": map[string]any{
+			"registration_id": "reg-123",
+			"conversation_id": "conv-456",
+			"agent_id":        "agent-0xabc",
+			"status":          "failed",
+			"failure": map[string]any{
+				"code":      "soul_bootstrap_restart_required",
+				"retryable": true,
+				"recovery": map[string]any{
+					"action":              "restart_soul_bootstrap",
+					"reason":              "Host checkpoint expired before publication",
+					"max_attempts":        1,
+					"retry_after_seconds": 5,
+				},
+			},
+		},
+	}
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	recovery := nestedMap(data, "conversation", "failure", "recovery")
+	if recovery["reason"] != "Host checkpoint expired before publication" {
+		t.Fatalf("recovery = %+v, want safe reason", recovery)
+	}
+	guidance, _ := data["guidance"].(map[string]any)
+	if guidance["next_tool"] != toolAgentGenesisBegin || guidance["fresh_lane"] != true {
+		t.Fatalf("guidance = %+v, want fresh agent_genesis_begin lane", guidance)
+	}
+	if !strings.Contains(result.Content[0].Text, "Do not call agent_genesis_recover") {
+		t.Fatalf("restart guidance should explicitly say recover is not the restart path: %s", result.Content[0].Text)
+	}
+
+	unsafe := sanitizeGenesisFailure(map[string]any{"recovery": map[string]any{"action": "retry", "reason": "private wallet signature leaked"}})
+	unsafeRecovery, _ := unsafe["recovery"].(map[string]any)
+	if _, ok := unsafeRecovery["reason"]; ok {
+		t.Fatalf("unsafe recovery reason was not dropped: %+v", unsafeRecovery)
 	}
 }
 

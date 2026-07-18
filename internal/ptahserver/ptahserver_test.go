@@ -31,9 +31,22 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 			t.Fatalf("removed agent_create tool is still advertised: %+v", tool)
 		}
 	}
-	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisBegin, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := toolDefNames(tools), []string{toolAgentBindSoul, toolAgentGet, toolAgentList, toolAgentSoulGet, toolAgentSoulUpsert, toolAgentSoulArchive, toolAgentInstructionsGet, toolAgentInstructionsUpsert, toolAgentInstructionsArchive, toolAgentGenesisSkillGet, toolAgentGenesisBegin, toolAgentGenesisList, toolAgentGenesisRead, toolAgentGenesisAdvance, toolAgentGenesisRecover, toolAgentGenesisComplete, toolAgentGenesisFinalizePreflight, toolAgentGenesisFinalize}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("registered tool order = %v, want %v", got, want)
 	}
+	assertReadOnlyToolDef(t, toolDefByName(t, tools, toolAgentGenesisSkillGet))
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisSkillGet).Description, "no local installation")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisSkillGet).Description, toolAgentGenesisBegin)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisBegin).Description, toolAgentGenesisSkillGet)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisBegin).Description, toolAgentGenesisAdvance)
+	assertReadOnlyToolDef(t, toolDefByName(t, tools, toolAgentGenesisList))
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisList).Description, "producer_contract_missing")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRead).Description, "state to next tool")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "restart_soul_bootstrap")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, toolAgentGenesisBegin)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisComplete).Description, toolAgentGenesisFinalizePreflight)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisFinalize).Description, "Host-derived Ptah registry row")
+
 	def := tools[0]
 	if def.Name != toolAgentBindSoul {
 		t.Fatalf("tool name = %q, want %q", def.Name, toolAgentBindSoul)
@@ -1322,6 +1335,12 @@ type fakeAgentRegistry struct {
 	agent *agentregistry.Agent
 	err   error
 
+	upsertFinalizedCalls   int
+	upsertFinalizedIn      agentregistry.FinalizedInput
+	upsertFinalizedCreated bool
+	upsertFinalizedAgent   *agentregistry.Agent
+	upsertFinalizedErr     error
+
 	getCalls   int
 	getAccount string
 	getAgentID string
@@ -1361,6 +1380,36 @@ func (f *fakeAgentRegistry) Create(_ context.Context, in agentregistry.CreateInp
 		return nil, f.err
 	}
 	return f.agent, nil
+}
+
+func (f *fakeAgentRegistry) UpsertFinalized(_ context.Context, in agentregistry.FinalizedInput) (*agentregistry.Agent, bool, error) {
+	f.upsertFinalizedCalls++
+	f.upsertFinalizedIn = in
+	if f.upsertFinalizedErr != nil {
+		return nil, false, f.upsertFinalizedErr
+	}
+	if f.upsertFinalizedAgent != nil {
+		return f.upsertFinalizedAgent, f.upsertFinalizedCreated, nil
+	}
+	agent := &agentregistry.Agent{
+		Account:            strings.ToLower(strings.TrimSpace(in.Account)),
+		AgentID:            strings.TrimSpace(in.AgentID),
+		CreatedAt:          time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:          time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		Source:             agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority:    agentregistry.SourceAuthorityLesserHost,
+		SourceOperation:    agentregistry.SourceOperationAgentGenesisFinalize,
+		HostRegistrationID: strings.TrimSpace(in.HostRegistrationID),
+		HostConversationID: strings.TrimSpace(in.HostConversationID),
+		Domain:             strings.TrimSpace(in.Domain),
+		LocalID:            strings.TrimSpace(in.LocalID),
+		AuthorityModel:     strings.TrimSpace(in.AuthorityModel),
+		AnchorState:        strings.TrimSpace(in.AnchorState),
+		LifecycleStatus:    strings.TrimSpace(in.LifecycleStatus),
+		PublishedVersion:   in.PublishedVersion,
+	}
+	f.agent = agent
+	return agent, f.upsertFinalizedCreated, nil
 }
 
 func (f *fakeAgentRegistry) Get(_ context.Context, account string, agentID string) (*agentregistry.Agent, error) {
@@ -1432,6 +1481,97 @@ type agentContentTestKey struct {
 	account string
 	agentID string
 	typ     agentcontent.ContentType
+}
+
+type memoryAgentRegistry struct {
+	records map[string]*agentregistry.Agent
+
+	upsertFinalizedCalls int
+}
+
+func newMemoryAgentRegistry() *memoryAgentRegistry {
+	return &memoryAgentRegistry{records: map[string]*agentregistry.Agent{}}
+}
+
+func (m *memoryAgentRegistry) Create(_ context.Context, in agentregistry.CreateInput) (*agentregistry.Agent, error) {
+	if m.records == nil {
+		m.records = map[string]*agentregistry.Agent{}
+	}
+	key := memoryAgentRegistryKey(in.Account, in.AgentID)
+	if _, ok := m.records[key]; ok {
+		return nil, agentregistry.ErrAgentAlreadyExists
+	}
+	agent := &agentregistry.Agent{
+		Account:   strings.ToLower(strings.TrimSpace(in.Account)),
+		AgentID:   strings.TrimSpace(in.AgentID),
+		CreatedAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+	}
+	m.records[key] = cloneRegistryAgent(agent)
+	return agent, nil
+}
+
+func (m *memoryAgentRegistry) UpsertFinalized(_ context.Context, in agentregistry.FinalizedInput) (*agentregistry.Agent, bool, error) {
+	if m.records == nil {
+		m.records = map[string]*agentregistry.Agent{}
+	}
+	m.upsertFinalizedCalls++
+	key := memoryAgentRegistryKey(in.Account, in.AgentID)
+	created := false
+	agent := m.records[key]
+	if agent == nil {
+		created = true
+		agent = &agentregistry.Agent{
+			CreatedAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		}
+	}
+	agent.Account = strings.ToLower(strings.TrimSpace(in.Account))
+	agent.AgentID = strings.TrimSpace(in.AgentID)
+	agent.UpdatedAt = time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC).Add(time.Duration(m.upsertFinalizedCalls) * time.Minute)
+	agent.Source = agentregistry.SourceHostGenesisFinalize
+	agent.SourceAuthority = agentregistry.SourceAuthorityLesserHost
+	agent.SourceOperation = agentregistry.SourceOperationAgentGenesisFinalize
+	agent.HostRegistrationID = strings.TrimSpace(in.HostRegistrationID)
+	agent.HostConversationID = strings.TrimSpace(in.HostConversationID)
+	agent.Domain = strings.TrimSpace(in.Domain)
+	agent.LocalID = strings.TrimSpace(in.LocalID)
+	agent.AuthorityModel = strings.TrimSpace(in.AuthorityModel)
+	agent.AnchorState = strings.TrimSpace(in.AnchorState)
+	agent.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
+	agent.PublishedVersion = in.PublishedVersion
+	m.records[key] = cloneRegistryAgent(agent)
+	return cloneRegistryAgent(agent), created, nil
+}
+
+func (m *memoryAgentRegistry) Get(_ context.Context, account string, agentID string) (*agentregistry.Agent, error) {
+	agent := m.records[memoryAgentRegistryKey(account, agentID)]
+	if agent == nil {
+		return nil, agentregistry.ErrAgentNotFound
+	}
+	return cloneRegistryAgent(agent), nil
+}
+
+func (m *memoryAgentRegistry) List(_ context.Context, in agentregistry.ListInput) (*agentregistry.ListResult, error) {
+	account := strings.ToLower(strings.TrimSpace(in.Account))
+	agents := make([]*agentregistry.Agent, 0)
+	for _, agent := range m.records {
+		if agent != nil && strings.ToLower(strings.TrimSpace(agent.Account)) == account {
+			agents = append(agents, cloneRegistryAgent(agent))
+		}
+	}
+	return &agentregistry.ListResult{Agents: agents, Count: len(agents)}, nil
+}
+
+func memoryAgentRegistryKey(account string, agentID string) string {
+	return strings.ToLower(strings.TrimSpace(account)) + "\x00" + strings.TrimSpace(agentID)
+}
+
+func cloneRegistryAgent(agent *agentregistry.Agent) *agentregistry.Agent {
+	if agent == nil {
+		return nil
+	}
+	clone := *agent
+	return &clone
 }
 
 type versionedFakeAgentContentStore struct {
@@ -1624,6 +1764,17 @@ func toolDefNames(defs []mcpruntime.ToolDef) []string {
 		out = append(out, def.Name)
 	}
 	return out
+}
+
+func toolDefByName(t testing.TB, defs []mcpruntime.ToolDef, name string) mcpruntime.ToolDef {
+	t.Helper()
+	for _, def := range defs {
+		if def.Name == name {
+			return def
+		}
+	}
+	t.Fatalf("tool %s not found in %v", name, toolDefNames(defs))
+	return mcpruntime.ToolDef{}
 }
 
 func contains(values []string, want string) bool {

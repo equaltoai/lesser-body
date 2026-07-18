@@ -36,6 +36,12 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 	if err := ptahserver.RegisterTools(ptah.Registry()); err != nil {
 		return nil, err
 	}
+	if err := ptahserver.RegisterResources(ptah); err != nil {
+		return nil, err
+	}
+	if err := ptahserver.RegisterPrompts(ptah); err != nil {
+		return nil, err
+	}
 	ba := newPlaneServer(name, version, SurfaceBa)
 	if err := baserver.RegisterTools(ba.Registry(), opts.baToolOptions...); err != nil {
 		return nil, err
@@ -55,12 +61,17 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 }
 
 func newPlaneServer(appName, version, surface string) *mcpruntime.Server {
+	capabilities := mcpruntime.CapabilityConfig{
+		Tools: true,
+	}
+	if surface == SurfacePtah {
+		capabilities.Resources = true
+		capabilities.Prompts = true
+	}
 	return mcpruntime.NewServer(
 		appName+"-"+surface,
 		strings.TrimSpace(version),
-		mcpruntime.WithCapabilityConfig(mcpruntime.CapabilityConfig{
-			Tools: true,
-		}),
+		mcpruntime.WithCapabilityConfig(capabilities),
 	)
 }
 

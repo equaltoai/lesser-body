@@ -64,6 +64,7 @@ type AgentContentStore interface {
 // a TableTheory-backed fake store without changing instanceapp behavior.
 type AgentRegistry interface {
 	Create(ctx context.Context, in agentregistry.CreateInput) (*agentregistry.Agent, error)
+	UpsertFinalized(ctx context.Context, in agentregistry.FinalizedInput) (*agentregistry.Agent, bool, error)
 	Get(ctx context.Context, account string, agentID string) (*agentregistry.Agent, error)
 	List(ctx context.Context, in agentregistry.ListInput) (*agentregistry.ListResult, error)
 }
@@ -227,7 +228,13 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
 		return err
 	}
+	if err := r.RegisterTool(agentGenesisSkillGetDef(), cfg.handleAgentGenesisSkillGet); err != nil {
+		return err
+	}
 	if err := r.RegisterTool(agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
+		return err
+	}
+	if err := r.RegisterTool(agentGenesisListDef(), cfg.handleAgentGenesisList); err != nil {
 		return err
 	}
 	if err := r.RegisterTool(agentGenesisReadDef(), cfg.handleAgentGenesisRead); err != nil {
@@ -291,7 +298,7 @@ func agentBindSoulDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentBindSoul,
 		Title:       "Bind agent soul",
-		Description: "Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder principal. Requires write scope and delegates all binding state writes to Lesser.",
+		Description: "Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder principal. Requires write scope and delegates all binding state writes to Lesser. For a newly minted Host-genesis agent, call agent_genesis_finalize first so Body can write the Host-derived Ptah registry row, then use agent_get or agent_list to verify visibility.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -326,7 +333,7 @@ func agentGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGet,
 		Title:       "Get registered agent",
-		Description: "Read a Body/Ptah account-scoped agent registry entry for the authenticated account-holder principal. Requires read scope.",
+		Description: "Read a Body/Ptah account-scoped agent registry entry for the authenticated account-holder principal, including Host-genesis provenance and account-scoped content version/summary metadata when available. Requires read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -340,7 +347,7 @@ func agentGetDef() mcpruntime.ToolDef {
 		OutputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"data":{"type":"object","description":"Account-scoped registry summary plus source-truth content-version/content-summary availability placeholders."},
+				"data":{"type":"object","description":"Account-scoped registry summary, Host-derived provenance, and source-backed content-version/content-summary metadata when available."},
 				"error":{"type":"object","description":"Structured tool error when isError=true."}
 			}
 		}`),
@@ -351,7 +358,7 @@ func agentListDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentList,
 		Title:       "List registered agents",
-		Description: "List the authenticated account-holder's Body/Ptah registry entries merged with Lesser's public live-agent directory. Requires read scope; live entries contain public metadata only.",
+		Description: "List the authenticated account-holder's Body/Ptah registry entries, including Host-finalized minted agents, merged with Lesser's public live-agent directory. Requires read scope; live entries contain public metadata only and wallet-less Host-genesis visibility comes from Body's Host-derived registry row unless Lesser adds a separate minted-agent listing surface.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(fmt.Sprintf(`{
 			"type":"object",
@@ -735,7 +742,9 @@ func (cfg config) handleAgentGet(ctx context.Context, args json.RawMessage) (*mc
 			"source": "agent_registry",
 		})
 	}
-	return agentGetSuccessResult(actorUsername, agent)
+	contentStore, unavailableReason := cfg.contentStoreForMetadata()
+	contentMetadata := loadAgentContentMetadata(ctx, contentStore, unavailableReason, actorUsername, agent.AgentID)
+	return agentGetSuccessResult(actorUsername, agent, contentMetadata)
 }
 
 func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -836,7 +845,7 @@ func (cfg config) handleAgentList(ctx context.Context, args json.RawMessage) (*m
 	if hasMore && len(pageEntries) > 0 {
 		nextCursor = encodeAgentListCursor(pageEntries[len(pageEntries)-1].Key)
 	}
-	return agentListSuccessResult(actorUsername, limit, pageEntries, nextCursor, hasMore)
+	return cfg.agentListSuccessResult(ctx, actorUsername, limit, pageEntries, nextCursor, hasMore)
 }
 
 func listAllAgentRegistryEntries(ctx context.Context, registry AgentRegistry, account string, startCursor string) ([]*agentregistry.Agent, error) {
@@ -1664,42 +1673,41 @@ func soulBindingSuccessResult(actorUsername string, idempotencyKey string, resp 
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
 
-func agentGetSuccessResult(actorUsername string, agent *agentregistry.Agent) (*mcpruntime.ToolResult, error) {
+func agentGetSuccessResult(actorUsername string, agent *agentregistry.Agent, contentMetadata agentContentMetadata) (*mcpruntime.ToolResult, error) {
 	registrySummary := registryAgentSummary(agent)
-	contentVersion := unavailableContentVersion()
-	contentSummary := unavailableContentSummary()
 	data := map[string]any{
 		"actor_username":  actorUsername,
 		"registry":        registrySummary,
-		"content_version": contentVersion,
-		"content_summary": contentSummary,
+		"content_version": contentMetadata.Version,
+		"content_summary": contentMetadata.Summary,
 	}
 
 	text := map[string]any{
 		"summary":         "Ptah registry entry read",
 		"registry":        registrySummary,
-		"content_version": contentVersion,
-		"content_summary": contentSummary,
+		"content_version": contentMetadata.Version,
+		"content_summary": contentMetadata.Summary,
 		"data":            map[string]any{"location": "structuredContent.data"},
 	}
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
 
-func agentListSuccessResult(actorUsername string, limit int, entries []mergedAgentListEntry, nextCursor string, hasMore bool) (*mcpruntime.ToolResult, error) {
+func (cfg config) agentListSuccessResult(ctx context.Context, actorUsername string, limit int, entries []mergedAgentListEntry, nextCursor string, hasMore bool) (*mcpruntime.ToolResult, error) {
 	items := make([]map[string]any, 0, len(entries))
+	contentStore, unavailableReason := cfg.contentStoreForMetadata()
 	for _, entry := range entries {
 		source := agentListLiveSourceCode
-		contentSource := agentListLiveSourceCode
+		contentMetadata := unavailableContentMetadataForSource(agentListLiveSourceCode)
 		if entry.Registry != nil && entry.Live != nil {
 			source = agentListMergedSourceCode
-			contentSource = "agentregistry"
+			contentMetadata = loadAgentContentMetadata(ctx, contentStore, unavailableReason, actorUsername, entry.Registry.AgentID)
 		} else if entry.Registry != nil {
 			source = agentListRegistrySourceCode
-			contentSource = "agentregistry"
+			contentMetadata = loadAgentContentMetadata(ctx, contentStore, unavailableReason, actorUsername, entry.Registry.AgentID)
 		}
 		item := map[string]any{
-			"content_version": unavailableContentVersionForSource(contentSource),
-			"content_summary": unavailableContentSummaryForSource(contentSource),
+			"content_version": contentMetadata.Version,
+			"content_summary": contentMetadata.Summary,
 			"source":          source,
 		}
 		if entry.Registry != nil {
@@ -2012,22 +2020,170 @@ func registryAgentSummary(agent *agentregistry.Agent) map[string]any {
 	if agent == nil {
 		return map[string]any{}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"account":    agent.Account,
 		"agent_id":   agent.AgentID,
 		"created_at": formatTime(agent.CreatedAt),
 		"updated_at": formatTime(agent.UpdatedAt),
 	}
+	if provenance := registryProvenanceSummary(agent); len(provenance) > 0 {
+		out["provenance"] = provenance
+	}
+	if hostIdentity := registryHostIdentitySummary(agent); len(hostIdentity) > 0 {
+		out["host_identity"] = hostIdentity
+	}
+	return out
 }
 
-func unavailableContentVersion() map[string]any {
-	return unavailableContentVersionForSource("agentregistry")
+func registryProvenanceSummary(agent *agentregistry.Agent) map[string]any {
+	if agent == nil {
+		return nil
+	}
+	source := strings.TrimSpace(agent.Source)
+	if source == "" {
+		return nil
+	}
+	out := map[string]any{"source": source}
+	if authority := strings.TrimSpace(agent.SourceAuthority); authority != "" {
+		out["authority"] = authority
+	}
+	if operation := strings.TrimSpace(agent.SourceOperation); operation != "" {
+		out["operation"] = operation
+	}
+	if registrationID := strings.TrimSpace(agent.HostRegistrationID); registrationID != "" {
+		out["registration_id"] = registrationID
+	}
+	if conversationID := strings.TrimSpace(agent.HostConversationID); conversationID != "" {
+		out["conversation_id"] = conversationID
+	}
+	if source == agentregistry.SourceHostGenesisFinalize {
+		out["system_derived"] = true
+		out["caller_claimed"] = false
+		out["state_authority"] = "Host HostedGenesisSession"
+	}
+	return out
 }
 
-func unavailableContentVersionForSource(source string) map[string]any {
-	reason := "Body/Ptah registry records do not currently store source-backed content version metadata."
+func registryHostIdentitySummary(agent *agentregistry.Agent) map[string]any {
+	if agent == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for key, value := range map[string]any{
+		"domain":            agent.Domain,
+		"local_id":          agent.LocalID,
+		"authority_model":   agent.AuthorityModel,
+		"anchor_state":      agent.AnchorState,
+		"lifecycle_status":  agent.LifecycleStatus,
+		"published_version": agent.PublishedVersion,
+	} {
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				out[key] = strings.TrimSpace(typed)
+			}
+		case int64:
+			if typed > 0 {
+				out[key] = typed
+			}
+		}
+	}
+	return out
+}
+
+type agentContentMetadata struct {
+	Version map[string]any
+	Summary map[string]any
+}
+
+func (cfg config) contentStoreForMetadata() (AgentContentStore, string) {
+	store, err := cfg.content()
+	if err != nil || store == nil {
+		return nil, "Body/Ptah content metadata is unavailable because the account-scoped agent content store is not configured."
+	}
+	return store, ""
+}
+
+func loadAgentContentMetadata(ctx context.Context, store AgentContentStore, unavailableReason string, account string, agentID string) agentContentMetadata {
+	if store == nil {
+		return unavailableContentMetadataForSourceReason("agentcontent", unavailableReason)
+	}
+
+	records := make([]*agentcontent.Record, 0, 2)
+	for _, contentType := range []agentcontent.ContentType{agentcontent.ContentTypeAgentSoul, agentcontent.ContentTypeAgentInstructions} {
+		record, err := store.Get(ctx, account, agentID, contentType)
+		switch {
+		case err == nil && record != nil:
+			records = append(records, record)
+		case err == nil || errors.Is(err, agentcontent.ErrContentNotFound):
+			continue
+		default:
+			slog.WarnContext(ctx, "ptah agent content metadata read failed",
+				"source", "agentcontent",
+				"content_type", string(contentType),
+				"error", "metadata read failed",
+			)
+			return unavailableContentMetadataForSourceReason("agentcontent", "Body/Ptah content metadata is unavailable because the content record could not be read safely.")
+		}
+	}
+	if len(records) == 0 {
+		return unavailableContentMetadataForSourceReason("agentcontent", "No account-scoped Body/Ptah agent_soul or agent_instructions content records are available for this agent.")
+	}
+	return availableContentMetadata(records)
+}
+
+func availableContentMetadata(records []*agentcontent.Record) agentContentMetadata {
+	status := "available"
+	if len(records) == 1 {
+		status = "partial"
+	}
+	version := map[string]any{
+		"status": status,
+		"source": "agentcontent",
+	}
+	summary := map[string]any{
+		"status": status,
+		"source": "agentcontent",
+	}
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		key := string(record.Type)
+		if key == "" {
+			continue
+		}
+		version[key] = map[string]any{
+			"version":         record.Version,
+			"lifecycle_state": string(record.LifecycleState),
+			"updated_at":      formatTime(record.UpdatedAt),
+		}
+		summary[key] = map[string]any{
+			"content_bytes":   len([]byte(record.Content)),
+			"lifecycle_state": string(record.LifecycleState),
+			"updated_at":      formatTime(record.UpdatedAt),
+		}
+	}
+	return agentContentMetadata{Version: version, Summary: summary}
+}
+
+func unavailableContentMetadataForSource(source string) agentContentMetadata {
+	return unavailableContentMetadataForSourceReason(source, "")
+}
+
+func unavailableContentMetadataForSourceReason(source string, reason string) agentContentMetadata {
+	return agentContentMetadata{
+		Version: unavailableContentVersionForSourceReason(source, reason),
+		Summary: unavailableContentSummaryForSourceReason(source, reason),
+	}
+}
+
+func unavailableContentVersionForSourceReason(source string, reason string) map[string]any {
+	if strings.TrimSpace(reason) == "" {
+		reason = "Body/Ptah content version metadata is not available from this source."
+	}
 	if source == agentListLiveSourceCode {
-		reason = "Lesser's public live-agent directory does not expose Body/Ptah content version metadata."
+		reason = "Lesser's public live-agent directory does not expose Body/Ptah content version metadata; a separate Lesser minted-agent listing contract is required for wallet-less Host-genesis agents if Lesser is to be the listing source."
 	}
 	return map[string]any{
 		"status": "not_available",
@@ -2036,14 +2192,12 @@ func unavailableContentVersionForSource(source string) map[string]any {
 	}
 }
 
-func unavailableContentSummary() map[string]any {
-	return unavailableContentSummaryForSource("agentregistry")
-}
-
-func unavailableContentSummaryForSource(source string) map[string]any {
-	reason := "Body/Ptah registry records do not currently store source-backed content summary metadata."
+func unavailableContentSummaryForSourceReason(source string, reason string) map[string]any {
+	if strings.TrimSpace(reason) == "" {
+		reason = "Body/Ptah content summary metadata is not available from this source."
+	}
 	if source == agentListLiveSourceCode {
-		reason = "Lesser's public live-agent directory does not expose Body/Ptah content summary metadata."
+		reason = "Lesser's public live-agent directory does not expose Body/Ptah content summary metadata; a separate Lesser minted-agent listing contract is required for wallet-less Host-genesis agents if Lesser is to be the listing source."
 	}
 	return map[string]any{
 		"status": "not_available",
