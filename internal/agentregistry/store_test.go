@@ -53,6 +53,49 @@ func TestDuplicateCreateMapsAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestUpsertFinalizedCreatesAndReplaysHostDerivedRow(t *testing.T) {
+	store, fake := newTestStore(t)
+	ctx := context.Background()
+	in := FinalizedInput{
+		Account:            " Drone-Ada ",
+		AgentID:            " agent-0xabc ",
+		HostRegistrationID: "reg-123",
+		HostConversationID: "conv-456",
+		Domain:             "example.com",
+		LocalID:            "ada",
+		AuthorityModel:     "instance_trust",
+		AnchorState:        "hosted_offchain",
+		LifecycleStatus:    "active",
+		PublishedVersion:   7,
+	}
+
+	created, didCreate, err := store.UpsertFinalized(ctx, in)
+	if err != nil {
+		t.Fatalf("UpsertFinalized(create) error = %v", err)
+	}
+	if !didCreate {
+		t.Fatal("UpsertFinalized(create) didCreate = false, want true")
+	}
+	assertHostFinalizedAgent(t, created)
+
+	replayed, didCreate, err := store.UpsertFinalized(ctx, in)
+	if err != nil {
+		t.Fatalf("UpsertFinalized(replay) error = %v", err)
+	}
+	if didCreate {
+		t.Fatal("UpsertFinalized(replay) didCreate = true, want false")
+	}
+	assertHostFinalizedAgent(t, replayed)
+	if replayed.CreatedAt.IsZero() || replayed.UpdatedAt.Before(replayed.CreatedAt) {
+		t.Fatalf("replayed timestamps = created %s updated %s", replayed.CreatedAt, replayed.UpdatedAt)
+	}
+
+	items := fake.Items(os.Getenv(EnvInstanceRegistryTable))
+	if len(items) != 1 {
+		t.Fatalf("registry table items = %d, want exactly one idempotent row", len(items))
+	}
+}
+
 func TestCrossAccountGetReturnsNotFound(t *testing.T) {
 	store, _ := newTestStore(t)
 	if _, err := store.Create(context.Background(), CreateInput{Account: "account-a", AgentID: "agent-123"}); err != nil {
@@ -197,4 +240,23 @@ func agentIDs(agents []*Agent) []string {
 		out = append(out, agent.AgentID)
 	}
 	return out
+}
+
+func assertHostFinalizedAgent(t testing.TB, got *Agent) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("agent is nil")
+	}
+	if got.Account != "drone-ada" || got.AgentID != "agent-0xabc" {
+		t.Fatalf("agent scope = %+v, want normalized account/agent", got)
+	}
+	if got.Source != SourceHostGenesisFinalize || got.SourceAuthority != SourceAuthorityLesserHost || got.SourceOperation != SourceOperationAgentGenesisFinalize {
+		t.Fatalf("provenance = source %q authority %q operation %q", got.Source, got.SourceAuthority, got.SourceOperation)
+	}
+	if got.HostRegistrationID != "reg-123" || got.HostConversationID != "conv-456" {
+		t.Fatalf("host ids = %q/%q", got.HostRegistrationID, got.HostConversationID)
+	}
+	if got.Domain != "example.com" || got.LocalID != "ada" || got.AuthorityModel != "instance_trust" || got.AnchorState != "hosted_offchain" || got.LifecycleStatus != "active" || got.PublishedVersion != 7 {
+		t.Fatalf("host identity fields = %+v", got)
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
@@ -66,7 +67,7 @@ func agentGenesisBeginDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisBegin,
 		Title:       "Begin Host-backed agent genesis",
-		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. Next: call agent_genesis_advance with the returned registration_id and persist the Host conversation_id. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -86,7 +87,7 @@ func agentGenesisReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisRead,
 		Title:        "Read Host-backed agent genesis",
-		Description:  "Read the durable lesser-host HostedGenesisSession projection for an in-progress or completed Ptah genesis conversation. Requires explicit instance owner/operator OAuth authority and read scope; the Host projection is the source of truth.",
+		Description:  "Read the durable lesser-host HostedGenesisSession projection for an in-progress or completed Ptah genesis conversation. Follow structuredContent.data.guidance for state to next tool: advance, complete, preflight, finalize, or fresh begin. Requires explicit instance owner/operator OAuth authority and read scope; the Host projection is the source of truth.",
 		Annotations:  readOnlyToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -97,7 +98,7 @@ func agentGenesisAdvanceDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisAdvance,
 		Title:       "Advance Host-backed agent genesis",
-		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation. Persist and reuse the Host conversation_id returned by the first call; this is a new-agent genesis flow, not existing-agent delegation. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation. Persist and reuse the Host conversation_id returned by the first call; this is a new-agent genesis flow, not existing-agent delegation. Next states: continue advance/read while in progress, call agent_genesis_complete when Host reports declaration_ready. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -120,7 +121,7 @@ func agentGenesisRecoverDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisRecover,
 		Title:        "Recover Host-backed agent genesis",
-		Description:  "Ask lesser-host to reconcile or safely retry a typed recovery state for the durable genesis conversation. Host owns the recovery state machine; Body never reruns or substitutes the conversation locally. Requires explicit instance owner/operator OAuth authority and write scope.",
+		Description:  "Ask lesser-host to reconcile or safely retry a typed recovery state for the durable genesis conversation. Host owns the recovery state machine; Body never reruns or substitutes the conversation locally. If Host returns failure.recovery.action=restart_soul_bootstrap, do not call recover; call agent_genesis_begin again for a fresh lane. Requires explicit instance owner/operator OAuth authority and write scope.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -131,7 +132,7 @@ func agentGenesisCompleteDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisComplete,
 		Title:        "Complete Host-backed agent genesis",
-		Description:  "Ask lesser-host to perform the durable declaration-extraction handoff for the genesis conversation. Body sends no caller-supplied declarations; Host's produced_declarations checkpoint remains authoritative. Requires explicit instance owner/operator OAuth authority and write scope.",
+		Description:  "Ask lesser-host to perform the durable declaration-extraction handoff for the genesis conversation. Body sends no caller-supplied declarations; Host's produced_declarations checkpoint remains authoritative. Next: call agent_genesis_finalize_preflight, then agent_genesis_finalize after Host readiness. Requires explicit instance owner/operator OAuth authority and write scope.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -142,7 +143,7 @@ func agentGenesisFinalizePreflightDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisFinalizePreflight,
 		Title:        "Preflight Host-backed agent genesis finalization",
-		Description:  "Read lesser-host's finalization readiness for a declaration-ready genesis conversation. Instance-trust finalization does not require a wallet signature or self-attestation. Requires explicit instance owner/operator OAuth authority and write scope.",
+		Description:  "Read lesser-host's finalization readiness for a declaration-ready genesis conversation. Instance-trust finalization does not require a wallet signature or self-attestation. Next: call agent_genesis_finalize only after Host readiness. Requires explicit instance owner/operator OAuth authority and write scope.",
 		Annotations:  idempotentMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -153,7 +154,7 @@ func agentGenesisFinalizeDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisFinalize,
 		Title:        "Finalize Host-backed agent genesis",
-		Description:  "Finalize and publish the Host-owned instance-trust genesis result. Host publishes the new agent identity; Body does not sign a wallet, accept a private declaration, or delegate an existing Lesser account. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description:  "Finalize and publish the Host-owned instance-trust genesis result. Host publishes the new agent identity; Body then idempotently writes a Host-derived Ptah registry row for agent_get/agent_list visibility. Body does not sign a wallet, accept a private declaration, or delegate an existing Lesser account. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -277,9 +278,41 @@ func (cfg config) handleAgentGenesisFinalizePreflight(ctx context.Context, args 
 }
 
 func (cfg config) handleAgentGenesisFinalize(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
-	return cfg.handleGenesisConversationAction(ctx, args, toolAgentGenesisFinalize, func(client hostapi.GenesisClient, bearer string, in agentGenesisConversationInput) (map[string]any, error) {
-		return client.FinalizeConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
-	})
+	actor, result, err := authorizeGenesis(ctx, toolAgentGenesisFinalize, true)
+	if result != nil || err != nil {
+		return result, err
+	}
+	in, result, err := parseAgentGenesisConversationInput(args)
+	if result != nil || err != nil {
+		return result, err
+	}
+	client, result, err := cfg.genesisClientForTool(toolAgentGenesisFinalize)
+	if result != nil || err != nil {
+		return result, err
+	}
+	bearer, result, err := hostGenesisBearer(ctx, toolAgentGenesisFinalize)
+	if result != nil || err != nil {
+		return result, err
+	}
+	genesisAudit(ctx, toolAgentGenesisFinalize, actor, true)
+	raw, err := client.FinalizeConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
+	if err != nil {
+		return genesisToolResultFromError(toolAgentGenesisFinalize, err)
+	}
+	data := sanitizeGenesisResponse("finalize", raw)
+	registryAgent, created, result, err := cfg.registerFinalizedGenesisAgent(ctx, actor, in, data)
+	if result != nil || err != nil {
+		return result, err
+	}
+	if registryAgent != nil {
+		data["registry"] = registryAgentSummary(registryAgent)
+		data["registry_write"] = map[string]any{
+			"source":     "agent_registry",
+			"created":    created,
+			"idempotent": true,
+		}
+	}
+	return genesisSuccessResultFromData(toolAgentGenesisFinalize, "finalize", data)
 }
 
 type genesisConversationAction func(client hostapi.GenesisClient, bearer string, in agentGenesisConversationInput) (map[string]any, error)
@@ -502,6 +535,16 @@ func requiredGenesisMessage(value string) (string, error) {
 
 func genesisSuccessResult(toolName string, operation string, raw map[string]any) (*mcpruntime.ToolResult, error) {
 	data := sanitizeGenesisResponse(operation, raw)
+	return genesisSuccessResultFromData(toolName, operation, data)
+}
+
+func genesisSuccessResultFromData(toolName string, operation string, data map[string]any) (*mcpruntime.ToolResult, error) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	if guidance := genesisNextToolGuidance(operation, data); len(guidance) > 0 {
+		data["guidance"] = guidance
+	}
 	text := map[string]any{
 		"summary":         "Host-backed Ptah genesis state updated",
 		"operation":       operation,
@@ -527,7 +570,146 @@ func genesisSuccessResult(toolName string, operation string, raw map[string]any)
 	if agentID, ok := data["agent_id"].(string); ok && agentID != "" {
 		text["agent_id"] = agentID
 	}
+	if registry, ok := data["registry"].(map[string]any); ok && len(registry) > 0 {
+		text["registry"] = registry
+	}
+	if guidance, ok := data["guidance"].(map[string]any); ok && len(guidance) > 0 {
+		text["guidance"] = guidance
+	}
 	return toolJSONTextResult(text, map[string]any{"data": data})
+}
+
+func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor string, in agentGenesisConversationInput, data map[string]any) (*agentregistry.Agent, bool, *mcpruntime.ToolResult, error) {
+	agentID := finalizedGenesisAgentID(data)
+	if agentID == "" {
+		return nil, false, mustToolErrorResult("host_genesis_projection_invalid", "lesser-host finalized genesis response did not include a safe agent_id for registry visibility", http.StatusBadGateway, map[string]any{
+			"source": "lesser_host_genesis",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+	registry, err := cfg.registry()
+	if err != nil || registry == nil {
+		return nil, false, mustToolErrorResult("not_configured", "Body/Ptah agent registry is required to expose Host-finalized minted agents", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+
+	registrationID := firstNonEmpty(
+		in.RegistrationID,
+		nestedString(data, "conversation", "registration_id"),
+		nestedString(data, "publication", "registration_id"),
+		nestedString(data, "promotion", "registration_id"),
+		stringValue(data, "registration_id"),
+	)
+	conversationID := firstNonEmpty(
+		in.ConversationID,
+		nestedString(data, "conversation", "conversation_id"),
+		nestedString(data, "publication", "latest_conversation_id"),
+		nestedString(data, "promotion", "latest_conversation_id"),
+	)
+
+	agent, created, err := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
+		Account:            actor,
+		AgentID:            agentID,
+		HostRegistrationID: registrationID,
+		HostConversationID: conversationID,
+		Domain:             firstNonEmpty(nestedString(data, "publication", "domain"), nestedString(data, "promotion", "domain"), stringValue(data, "domain")),
+		LocalID:            firstNonEmpty(nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id")),
+		AuthorityModel:     firstNonEmpty(nestedString(data, "publication", "authority_model"), nestedString(data, "promotion", "authority_model"), stringValue(data, "authority_model")),
+		AnchorState:        firstNonEmpty(nestedString(data, "publication", "anchor_state"), nestedString(data, "promotion", "anchor_state"), stringValue(data, "anchor_state")),
+		LifecycleStatus:    firstNonEmpty(nestedString(data, "publication", "lifecycle_status"), nestedString(data, "promotion", "lifecycle_status"), stringValue(data, "lifecycle_status")),
+		PublishedVersion:   firstNonZeroInt64(nestedInt64(data, "publication", "published_version"), nestedInt64(data, "promotion", "published_version"), int64Value(data["published_version"])),
+	})
+	if err != nil {
+		if errors.Is(err, agentregistry.ErrAgentAlreadyExists) {
+			existing, getErr := registry.Get(ctx, actor, agentID)
+			if getErr == nil {
+				return existing, false, nil, nil
+			}
+		}
+		slog.WarnContext(ctx, "ptah genesis finalized registry write failed",
+			"tool", toolAgentGenesisFinalize,
+			"source", "agent_registry",
+			"error", "registry write failed",
+		)
+		return nil, false, mustToolErrorResult("agent_registry_error", "Host finalized the genesis agent, but Body failed to write the account-scoped Ptah registry row; retry agent_genesis_finalize to repair visibility", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+	return agent, created, nil, nil
+}
+
+func finalizedGenesisAgentID(data map[string]any) string {
+	return firstNonEmpty(
+		stringValue(data, "agent_id"),
+		nestedString(data, "conversation", "agent_id"),
+		nestedString(data, "publication", "agent_id"),
+		nestedString(data, "promotion", "agent_id"),
+	)
+}
+
+func genesisNextToolGuidance(operation string, data map[string]any) map[string]any {
+	if guidance := restartSoulBootstrapGuidance(data); len(guidance) > 0 {
+		return guidance
+	}
+	status := strings.ToLower(firstNonEmpty(
+		nestedString(data, "conversation", "status"),
+		nestedString(data, "publication", "latest_conversation_status"),
+		nestedString(data, "promotion", "latest_conversation_status"),
+		stringValue(data, "status"),
+	))
+	guidance := map[string]any{
+		"status":     firstNonEmpty(status, operation),
+		"fresh_lane": false,
+	}
+	switch {
+	case operation == "begin":
+		guidance["next_tool"] = toolAgentGenesisAdvance
+		guidance["instruction"] = "Call agent_genesis_advance with the returned registration_id and the first owner/operator message; persist the returned conversation_id."
+	case status == "assistant_turn_ready" || status == "awaiting_owner" || status == "needs_owner_turn" || status == "in_progress":
+		guidance["next_tool"] = toolAgentGenesisAdvance
+		guidance["instruction"] = "Continue the Host-owned mint conversation with agent_genesis_advance, or poll with agent_genesis_read before deciding."
+	case status == "declaration_ready" || status == "ready_for_completion":
+		guidance["next_tool"] = toolAgentGenesisComplete
+		guidance["instruction"] = "Call agent_genesis_complete so Host extracts and validates its durable produced_declarations checkpoint."
+	case operation == "complete" || status == "complete" || status == "completed" || status == "finalization_ready":
+		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
+		guidance["instruction"] = "Call agent_genesis_finalize_preflight, then agent_genesis_finalize only after Host reports readiness."
+	case operation == "finalize_preflight" || status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
+		guidance["next_tool"] = toolAgentGenesisFinalize
+		guidance["instruction"] = "Call agent_genesis_finalize; Body will write a Host-derived Ptah registry row after Host publishes the identity."
+	case operation == "finalize" || status == "published" || status == "finalized" || status == "active":
+		guidance["next_tool"] = toolAgentGet
+		guidance["alternate_next_tool"] = toolAgentList
+		guidance["instruction"] = "Verify the minted agent with agent_get for the returned agent_id, or agent_list for the account-scoped registry view."
+	default:
+		guidance["next_tool"] = toolAgentGenesisRead
+		guidance["instruction"] = "Poll agent_genesis_read and follow the Host status; Body does not substitute a local genesis state machine."
+	}
+	return guidance
+}
+
+func restartSoulBootstrapGuidance(data map[string]any) map[string]any {
+	recovery := nestedMap(data, "conversation", "failure", "recovery")
+	if len(recovery) == 0 {
+		recovery = nestedMap(data, "failure", "recovery")
+	}
+	action := strings.ToLower(stringValue(recovery, "action"))
+	if action != "restart_soul_bootstrap" {
+		return nil
+	}
+	out := map[string]any{
+		"status":      "restart_soul_bootstrap",
+		"next_tool":   toolAgentGenesisBegin,
+		"fresh_lane":  true,
+		"instruction": "Host requested restart_soul_bootstrap: call agent_genesis_begin again for a fresh genesis lane using the intended domain/local_id. Do not call agent_genesis_recover for this action.",
+	}
+	if reason := stringValue(recovery, "reason"); reason != "" {
+		out["reason"] = reason
+	}
+	return out
 }
 
 func genesisToolResultFromError(toolName string, err error) (*mcpruntime.ToolResult, error) {
@@ -646,12 +828,16 @@ func sanitizeGenesisPromotion(raw map[string]any) map[string]any {
 	for output, keys := range map[string][]string{
 		"agent_id":                   {"agent_id", "agentId"},
 		"registration_id":            {"registration_id", "registrationId"},
+		"domain":                     {"domain_normalized", "domain"},
+		"local_id":                   {"local_id", "localId"},
 		"stage":                      {"stage"},
 		"request_status":             {"request_status", "requestStatus"},
 		"review_status":              {"review_status", "reviewStatus"},
 		"readiness_status":           {"readiness_status", "readinessStatus"},
 		"authority_model":            {"authority_model", "authorityModel"},
 		"anchor_state":               {"anchor_state", "anchorState"},
+		"operational_binding":        {"operational_binding", "operationalBinding"},
+		"lifecycle_status":           {"lifecycle_status", "lifecycleStatus", "status"},
 		"latest_conversation_id":     {"latest_conversation_id", "latestConversationId"},
 		"latest_conversation_status": {"latest_conversation_status", "latestConversationStatus"},
 		"published_version":          {"published_version", "publishedVersion"},
@@ -771,6 +957,7 @@ func sanitizeGenesisFailure(raw map[string]any) map[string]any {
 	if recovery := mapValue(raw, "recovery"); len(recovery) > 0 {
 		safeRecovery := map[string]any{}
 		copyStringField(safeRecovery, "action", recovery, "action")
+		copySafeRecoveryReasonField(safeRecovery, recovery)
 		copyIntField(safeRecovery, "max_attempts", recovery, "max_attempts", "maxAttempts")
 		copyIntField(safeRecovery, "retry_after_seconds", recovery, "retry_after_seconds", "retryAfterSeconds")
 		if len(safeRecovery) > 0 {
@@ -823,6 +1010,11 @@ func sanitizeGenesisFinalize(data map[string]any, raw map[string]any) map[string
 	for output, keys := range map[string][]string{
 		"version":           {"version"},
 		"agent_id":          {"agent_id", "agentId"},
+		"domain":            {"domain_normalized", "domain"},
+		"local_id":          {"local_id", "localId"},
+		"authority_model":   {"authority_model", "authorityModel"},
+		"anchor_state":      {"anchor_state", "anchorState"},
+		"lifecycle_status":  {"lifecycle_status", "lifecycleStatus", "status"},
 		"published_version": {"published_version", "publishedVersion"},
 	} {
 		if value, ok := firstField(raw, keys...); ok && safeScalar(value) {
@@ -880,6 +1072,62 @@ func stringValue(m map[string]any, key string) string {
 	return strings.TrimSpace(text)
 }
 
+func nestedString(m map[string]any, keys ...string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	nested := nestedMap(m, keys[:len(keys)-1]...)
+	if len(nested) == 0 {
+		return ""
+	}
+	return stringValue(nested, keys[len(keys)-1])
+}
+
+func nestedInt64(m map[string]any, keys ...string) int64 {
+	if len(keys) == 0 {
+		return 0
+	}
+	nested := nestedMap(m, keys[:len(keys)-1]...)
+	if len(nested) == 0 {
+		return 0
+	}
+	return int64Value(nested[keys[len(keys)-1]])
+}
+
+func nestedMap(m map[string]any, keys ...string) map[string]any {
+	current := m
+	for _, key := range keys {
+		if len(current) == 0 {
+			return nil
+		}
+		next, _ := current[key].(map[string]any)
+		current = next
+	}
+	return current
+}
+
+func int64Value(value any) int64 {
+	switch number := value.(type) {
+	case int:
+		return int64(number)
+	case int64:
+		return number
+	case float64:
+		return int64(number)
+	default:
+		return 0
+	}
+}
+
+func firstNonZeroInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 func copyStringField(out map[string]any, output string, in map[string]any, keys ...string) {
 	if value := firstString(in, keys...); value != "" {
 		out[output] = value
@@ -905,6 +1153,40 @@ func copyIntField(out map[string]any, output string, in map[string]any, keys ...
 			out[output] = int(number)
 		}
 	}
+}
+
+func copySafeRecoveryReasonField(out map[string]any, recovery map[string]any) {
+	reason := firstString(recovery, "reason")
+	if reason == "" {
+		return
+	}
+	if safeRecoveryReason(reason) == "" {
+		return
+	}
+	out["reason"] = safeRecoveryReason(reason)
+}
+
+func safeRecoveryReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || utf8.RuneCountInString(reason) > 256 {
+		return ""
+	}
+	lower := strings.ToLower(reason)
+	for _, forbidden := range []string{
+		"bearer ",
+		"token",
+		"secret",
+		"signature",
+		"transcript",
+		"declaration",
+		"wallet",
+		"private",
+	} {
+		if strings.Contains(lower, forbidden) {
+			return ""
+		}
+	}
+	return reason
 }
 
 func stringSliceField(in map[string]any, key string) []string {
