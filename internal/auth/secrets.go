@@ -71,6 +71,22 @@ func LesserHostInstanceKey(ctx context.Context) (string, error) {
 	return lesserHostInstanceKey(ctx)
 }
 
+// SecretValueFromEnvOrARN resolves a secret-bearing configuration value from a
+// direct environment variable or, when that is absent, from a Secrets Manager
+// ARN environment variable. The direct value is primarily for local/manual
+// runs; managed deployments should prefer the ARN path so raw secrets do not
+// appear in source, templates, logs, or test snapshots.
+func SecretValueFromEnvOrARN(ctx context.Context, valueEnv string, arnEnv string) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(valueEnv)); v != "" {
+		return v, nil
+	}
+	secretID := strings.TrimSpace(os.Getenv(arnEnv))
+	if secretID == "" {
+		return "", nil
+	}
+	return fetchSecretValue(ctx, secretID)
+}
+
 func lesserHostInstanceKeySecretID(ctx context.Context) (string, error) {
 	if secretID := strings.TrimSpace(os.Getenv("LESSER_HOST_INSTANCE_KEY_ARN")); secretID != "" {
 		return secretID, nil

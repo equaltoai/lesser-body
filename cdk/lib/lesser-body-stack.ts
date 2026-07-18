@@ -17,6 +17,7 @@ export interface LesserBodyStackProps extends cdk.StackProps {
   readonly stage: string;
   readonly baseDomain?: string;
   readonly lesserHostInstanceKeyArn?: string;
+  readonly soulBindingIntegrationBearerArn?: string;
 }
 
 export interface LesserBodyDeployTemplateStackProps extends cdk.StackProps {
@@ -38,6 +39,7 @@ interface LesserBodyRuntimeProps {
   readonly jwtSecretKeyParamPath?: string;
   readonly lesserTableParamPath?: string;
   readonly lesserHostInstanceKeyArn?: string;
+  readonly soulBindingIntegrationBearerArn?: string;
 }
 
 const MCP_SESSION_TABLE_LOGICAL_ID = "McpServerSessionTable469EA0FB";
@@ -56,6 +58,7 @@ export class LesserBodyStack extends cdk.Stack {
     const stage = normalizeStageOrDefault(props.stage, "dev");
     const stageDomain = resolvedStageDomain(this, appName, stage, props.baseDomain ?? "");
     const exactInstanceKeyArn = props.lesserHostInstanceKeyArn?.trim() || undefined;
+    const soulBindingIntegrationBearerArn = props.soulBindingIntegrationBearerArn?.trim() || undefined;
 
     configureLesserBodyStack(this, {
       appName,
@@ -68,6 +71,7 @@ export class LesserBodyStack extends cdk.Stack {
       lesserApiBaseUrl: lesserApiBaseUrl(stageDomain),
       allowedOrigins: mcpAllowedOrigins(stageDomain),
       lesserHostInstanceKeyArn: exactInstanceKeyArn,
+      soulBindingIntegrationBearerArn,
     });
   }
 }
@@ -120,6 +124,13 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
       constraintDescription: "Must be empty or an exact AWS Secrets Manager secret ARN without wildcards.",
       description: "Optional exact Secrets Manager ARN for the managed lesser-host instance key. When provided, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and grants direct read access to that secret.",
     });
+    const soulBindingIntegrationBearerArnParam = new cdk.CfnParameter(this, "LesserSoulBindingIntegrationBearerSecretARN", {
+      type: "String",
+      default: "",
+      allowedPattern: String.raw`^$|^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$`,
+      constraintDescription: "Must be empty or an exact AWS Secrets Manager secret ARN without wildcards.",
+      description: "Optional exact Secrets Manager ARN for the dedicated Body/Ptah to Lesser soul-binding integration bearer. When provided, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret.",
+    });
 
     const stageDomain = resolvedStageDomainFromDeployInputs(
       this,
@@ -145,6 +156,7 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
       jwtSecretKeyParamPath: jwtSecretKeyParamPathParam.valueAsString,
       lesserTableParamPath: lesserTableParamPathParam.valueAsString,
       lesserHostInstanceKeyArn: lesserHostInstanceKeyArnParam.valueAsString,
+      soulBindingIntegrationBearerArn: soulBindingIntegrationBearerArnParam.valueAsString,
     });
   }
 }
@@ -349,6 +361,7 @@ function configureInstancePlaneStack(
     handler.addEnvironment("LESSER_API_BASE_URL", props.lesserApiBaseUrl);
   }
   configureLesserHostInstanceKeyAccess(stack, handler, props, exactInstanceKeyArn);
+  configureSoulBindingIntegrationBearerAccess(stack, handler, props.soulBindingIntegrationBearerArn);
   configureLesserTableAccess(stack, handler, lesserTableName, false);
   handler.addToRolePolicy(new iam.PolicyStatement({
     actions: [
@@ -436,6 +449,41 @@ function configureLesserHostInstanceKeyAccess(
   }));
 }
 
+function configureSoulBindingIntegrationBearerAccess(
+  stack: cdk.Stack,
+  handler: lambda.Function,
+  soulBindingIntegrationBearerArn: string | undefined,
+): void {
+  if (soulBindingIntegrationBearerArn === undefined) {
+    return;
+  }
+
+  const hasSoulBindingIntegrationBearerSecretARN = new cdk.CfnCondition(stack, "HasLesserSoulBindingIntegrationBearerSecretARN", {
+    expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(soulBindingIntegrationBearerArn, "")),
+  });
+  handler.addEnvironment("LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN", cdk.Token.asString(cdk.Fn.conditionIf(
+    hasSoulBindingIntegrationBearerSecretARN.logicalId,
+    soulBindingIntegrationBearerArn,
+    cdk.Aws.NO_VALUE,
+  )));
+
+  const policy = new iam.Policy(stack, "SoulBindingIntegrationBearerSecretReadPolicy", {
+    statements: [
+      new iam.PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+        resources: [soulBindingIntegrationBearerArn],
+      }),
+    ],
+  });
+  policy.attachToRole(handler.role!);
+
+  const cfnPolicy = policy.node.defaultChild;
+  if (!(cfnPolicy instanceof iam.CfnPolicy)) {
+    throw new Error("soul-binding integration bearer secret policy is not a CloudFormation policy");
+  }
+  cfnPolicy.cfnOptions.condition = hasSoulBindingIntegrationBearerSecretARN;
+}
+
 function configureLesserTableAccess(
   stack: cdk.Stack,
   handler: lambda.Function,
@@ -454,7 +502,7 @@ function configureLesserTableAccess(
   }));
   const lesserTableReadKeys = includeMemoryWrite
     ? ["LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"]
-    : ["INSTANCE#CONFIG"];
+    : ["SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"];
   handler.addToRolePolicy(new iam.PolicyStatement({
     actions: ["dynamodb:Query", "dynamodb:GetItem"],
     resources: [tableArn],

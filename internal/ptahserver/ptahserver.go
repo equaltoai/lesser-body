@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +28,11 @@ const (
 	// Body/Ptah uses for Lesser's hosted soul/body binding API. It must not be a
 	// caller OAuth token.
 	EnvSoulBindingIntegrationBearer = "LESSER_SOUL_BINDING_INTEGRATION_BEARER"
+	// EnvSoulBindingIntegrationBearerARN points at the Secrets Manager secret
+	// containing EnvSoulBindingIntegrationBearer. Managed deployments should
+	// prefer this ARN-backed path so raw bearer values never appear in templates
+	// or Lambda environment snapshots.
+	EnvSoulBindingIntegrationBearerARN = "LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN"
 
 	toolAgentBindSoul = "agent_bind_soul"
 	toolAgentGet      = "agent_get"
@@ -268,8 +272,8 @@ func defaultConfig() config {
 		agentContentFactory: func() (AgentContentStore, error) {
 			return agentcontent.Default()
 		},
-		integrationBearerFn: func(context.Context) (string, error) {
-			return strings.TrimSpace(os.Getenv(EnvSoulBindingIntegrationBearer)), nil
+		integrationBearerFn: func(ctx context.Context) (string, error) {
+			return auth.SecretValueFromEnvOrARN(ctx, EnvSoulBindingIntegrationBearer, EnvSoulBindingIntegrationBearerARN)
 		},
 	}
 }
@@ -649,11 +653,15 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 
 	integrationBearer, err := cfg.integrationBearer(ctx)
 	if err != nil {
-		return nil, err
+		return toolErrorResult("not_configured", "soul-binding integration bearer could not be resolved", http.StatusInternalServerError, map[string]any{
+			"source":      "lesser_body_ptah",
+			"requiredEnv": []string{EnvSoulBindingIntegrationBearer, EnvSoulBindingIntegrationBearerARN},
+		})
 	}
 	if integrationBearer == "" {
-		return toolErrorResult("not_configured", EnvSoulBindingIntegrationBearer+" is required", http.StatusInternalServerError, map[string]any{
-			"source": "lesser_body_ptah",
+		return toolErrorResult("not_configured", EnvSoulBindingIntegrationBearer+" or "+EnvSoulBindingIntegrationBearerARN+" is required", http.StatusInternalServerError, map[string]any{
+			"source":      "lesser_body_ptah",
+			"requiredEnv": []string{EnvSoulBindingIntegrationBearer, EnvSoulBindingIntegrationBearerARN},
 		})
 	}
 

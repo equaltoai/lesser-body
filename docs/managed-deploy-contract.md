@@ -90,6 +90,7 @@ Each stage-specific template accepts these CloudFormation parameters:
 - `LesserBodyCodeObjectKey`
 - auxiliary asset object-key parameters declared by `lesser-body-deploy.json` `auxiliary_assets[].template_parameter`
 - `LesserHostInstanceKeyARN`
+- `LesserSoulBindingIntegrationBearerSecretARN`
 - `JWTSecretArnParamPath`
 - `JWTSecretKeyArnParamPath`
 - `LesserStageDomainParamPath`
@@ -100,6 +101,9 @@ Template behavior:
 - `AppName` defaults to `lesser`.
 - `BaseDomain` is optional.
 - `LesserHostInstanceKeyARN` is optional and defaults to the empty string.
+- `LesserSoulBindingIntegrationBearerSecretARN` is optional and defaults to the empty string. When provided, it must be
+  an exact Secrets Manager ARN for the dedicated Body/Ptah → Lesser soul-binding bearer; the instance MCP Lambda receives
+  `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` and exact secret-read IAM. Managed consumers must not pass the raw bearer.
 - Every parameter `Default` emitted in the managed templates is a plain string. Intrinsics and object-valued defaults are not
   CloudFormation-legal for this deploy path.
 - `JWTSecretArnParamPath` defaults to `/<app>/shared/secrets/jwt-secret-arn`.
@@ -114,6 +118,10 @@ Template behavior:
   string parameter overrides.
 - The release helper also forwards `--lesser-host-instance-key-arn` (or `$LESSER_HOST_INSTANCE_KEY_ARN` when set) into
   `LesserHostInstanceKeyARN`, so managed runners can keep IAM access aligned with the exact secret ARN they already hold.
+- The release helper also forwards `--soul-binding-integration-bearer-secret-arn` (or
+  `$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` when set) into
+  `LesserSoulBindingIntegrationBearerSecretARN`, so live Ptah binding can use the same dedicated secret value configured
+  on Lesser's `SOUL_BINDING_INTEGRATION_KEY_ARN` receiving side.
 
 ### Deploy manifest schema 2: auxiliary assets
 

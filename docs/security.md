@@ -225,6 +225,9 @@ raw private conversation content.
 At a minimum, the MCP Lambda needs:
 
 - `secretsmanager:GetSecretValue` for `JWT_SECRET_ARN` (and `LESSER_HOST_INSTANCE_KEY_ARN` if used)
+- `secretsmanager:GetSecretValue`/`DescribeSecret` for the exact
+  `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` when Ptah `agent_bind_soul` is enabled; this credential is dedicated to
+  Body/Ptah → Lesser soul binding and must not be replaced by caller OAuth or `LESSER_HOST_INSTANCE_KEY`
 - DynamoDB access on scoped Lesser stage table partition keys used by lesser-body. Read-only access covers
   `LBMEMORY#*` memory events, `SOUL_BODY_BINDING_USERNAME#*` soul-binding records, and `INSTANCE#CONFIG` managed
   trust configuration. Write access is limited to `LBMEMORY#*` memory events. CDK enforces these prefixes with
