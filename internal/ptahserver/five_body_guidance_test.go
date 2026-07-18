@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -137,7 +138,13 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 	// When the sibling lesser-host checkout is available in the delegated factory
 	// workspace, compare against the exact Host PR #928 artifacts. This makes a
 	// Host PR update visibly break the Body mirror instead of silently forking it.
-	hostRoot := filepath.Clean("/home/aron/ai-workspace/codebases/equaltoai/factory/products/lesser-host/docs/contracts")
+	hostRoot, hostRepoRoot, ok := findHostContractDir(t)
+	if !ok {
+		return
+	}
+	if hostRepoRoot != "" {
+		assertHostCheckoutHead(t, hostRepoRoot, fiveBodyHostHeadSHA)
+	}
 	for _, tc := range []struct {
 		name string
 		want string
@@ -160,6 +167,87 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 		if string(live) != string(tc.data) {
 			t.Fatalf("sibling Host artifact %s differs byte-for-byte from Body mirror", tc.name)
 		}
+	}
+}
+
+func findHostContractDir(t *testing.T) (contractsDir string, hostRepoRoot string, ok bool) {
+	t.Helper()
+	if dir := strings.TrimSpace(os.Getenv("LESSER_HOST_CONTRACTS_DIR")); dir != "" {
+		contractsDir = filepath.Clean(dir)
+		mustExistDir(t, "LESSER_HOST_CONTRACTS_DIR", contractsDir)
+		return contractsDir, hostRepoRootForContractsDir(contractsDir), true
+	}
+	if root := strings.TrimSpace(os.Getenv("LESSER_HOST_ROOT")); root != "" {
+		hostRepoRoot = filepath.Clean(root)
+		contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
+		mustExistDir(t, "LESSER_HOST_ROOT docs/contracts", contractsDir)
+		return contractsDir, hostRepoRoot, true
+	}
+
+	bodyRoot, ok := findBodyRepoRoot(t)
+	if !ok {
+		return "", "", false
+	}
+	hostRepoRoot = filepath.Join(filepath.Dir(bodyRoot), "lesser-host")
+	contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
+	if _, err := os.Stat(contractsDir); os.IsNotExist(err) {
+		return "", "", false
+	} else if err != nil {
+		t.Fatalf("stat sibling Host contracts dir %s: %v", contractsDir, err)
+	}
+	return contractsDir, hostRepoRoot, true
+}
+
+func mustExistDir(t *testing.T, label string, dir string) {
+	t.Helper()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s %s: %v", label, dir, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("%s %s is not a directory", label, dir)
+	}
+}
+
+func hostRepoRootForContractsDir(contractsDir string) string {
+	contractsDir = filepath.Clean(contractsDir)
+	if filepath.Base(contractsDir) == "contracts" && filepath.Base(filepath.Dir(contractsDir)) == "docs" {
+		return filepath.Dir(filepath.Dir(contractsDir))
+	}
+	return ""
+}
+
+func findBodyRepoRoot(t *testing.T) (string, bool) {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+func assertHostCheckoutHead(t *testing.T, hostRepoRoot string, want string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(hostRepoRoot, ".git")); os.IsNotExist(err) {
+		return
+	} else if err != nil {
+		t.Fatalf("stat sibling Host .git in %s: %v", hostRepoRoot, err)
+	}
+	out, err := exec.Command("git", "-C", hostRepoRoot, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("read sibling Host checkout head in %s: %v", hostRepoRoot, err)
+	}
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("sibling Host checkout head = %s, want %s; sync Body fixtures against the requested Host PR #928 head", got, want)
 	}
 }
 

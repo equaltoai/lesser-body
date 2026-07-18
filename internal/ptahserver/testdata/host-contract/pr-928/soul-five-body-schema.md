@@ -36,16 +36,19 @@ The v2 declaration has five first-class bodies:
 Satellites:
 
 - `capabilities` — concrete self-declared capabilities only; every item uses
-  `claimLevel: "self-declared"`.
+  `claimLevel: "self-declared"`. Capability validation metadata
+  (`lastValidated`, `validationRef`, `degradesTo`) is optional and may be
+  omitted when Host has no independent validation evidence.
 - `transparency` — model/provider uncertainty, operational notes, and explicit
   self-declared notice.
 
 ## Independent caps
 
-The schema caps each body summary at 2400 characters, each notes array at eight
-items, each note/refusal field at 480 characters, and `soul.refusals` at 3–8
-items. These caps are intentionally independent of capability and transparency
-satellites so a verbose capability list cannot crowd out a body.
+The schema caps each body summary at 2400 characters, each optional notes array
+at eight items, each note/refusal field at 480 characters, and
+`soul.refusals` at 3–8 items. These caps are intentionally independent of
+capability and transparency satellites so a verbose capability list cannot
+crowd out a body.
 
 ## Refusal floor
 

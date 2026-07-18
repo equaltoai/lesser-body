@@ -52,7 +52,6 @@
                     },
                     "required": [
                         "summary",
-                        "notes",
                         "refusals"
                     ]
                 }
@@ -88,25 +87,31 @@
                         "const": "self-declared"
                     },
                     "lastValidated": {
-                        "type": "string",
+                        "type": [
+                            "string",
+                            "null"
+                        ],
                         "maxLength": 64
                     },
                     "validationRef": {
-                        "type": "string",
+                        "type": [
+                            "string",
+                            "null"
+                        ],
                         "maxLength": 256
                     },
                     "degradesTo": {
-                        "type": "string",
+                        "type": [
+                            "string",
+                            "null"
+                        ],
                         "maxLength": 256
                     }
                 },
                 "required": [
                     "capability",
                     "scope",
-                    "claimLevel",
-                    "lastValidated",
-                    "validationRef",
-                    "degradesTo"
+                    "claimLevel"
                 ]
             }
         },
@@ -310,8 +315,7 @@
                 }
             },
             "required": [
-                "summary",
-                "notes"
+                "summary"
             ]
         },
         "notes": {

@@ -17,7 +17,7 @@ const (
 	fiveBodySchemaVersion   = "soul-five-body-schema.v2"
 	fiveBodyGuidanceVersion = "soul-five-body-guidance.v2"
 	fiveBodyHostPR          = 928
-	fiveBodyHostHeadSHA     = "8b8bb3014908af3c4838da50d50aa0f72aee3406"
+	fiveBodyHostHeadSHA     = "e70b1835624724056a099bc96f4f931d0d348cd2"
 
 	resourceSoulSchemaV2              = "soul-schema-v2"
 	resourceGenesisInterviewGuide     = "genesis-interview-guide"

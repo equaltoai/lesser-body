@@ -637,12 +637,12 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 
 Ptah guidance resources and prompts are Body's MCP guidance surface for Host-backed five-body genesis. The source
 contract is Host-owned, not Body-owned. Body mirrors the artifacts from `equaltoai/lesser-host` PR `#928` at head
-`8b8bb3014908af3c4838da50d50aa0f72aee3406`, closing Host issue `#927`, and pins:
+`e70b1835624724056a099bc96f4f931d0d348cd2`, closing Host issue `#927`, and pins:
 
 - `schemaVersion`: `soul-five-body-schema.v2`
 - `guidanceVersion`: `soul-five-body-guidance.v2`
-- Host contract doc SHA-256: `415a078f00c651ad02fcf34427cccdc11f820a1559b5b5e2d397cc2dfbfbc3b0`
-- Host JSON schema SHA-256: `2e021a97eb503184a856ca43f1260ee790ab95b0793060dec9f54a9bcbcb8db1`
+- Host contract doc SHA-256: `d6a0522f5e24d3f50a7272c567ca7f0393cb1c49abdf8bf0e5972531e66994ea`
+- Host JSON schema SHA-256: `4657fc52c01d8186672f72c25fd41cd04296b8e8a7f3de26671ef0833b2c590a`
 - Host golden example SHA-256: `2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e`
 
 If Host PR `#928` changes before merge, Body's checked fixture and drift tests must be refreshed from the Host-owned
