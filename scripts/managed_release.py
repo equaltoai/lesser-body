@@ -302,6 +302,7 @@ def base_script_inputs(version: str) -> list[dict[str, Any]]:
         {"name": "app", "required": False, "default": "lesser", "description": "Lesser app slug used in resource naming and SSM paths."},
         {"name": "base_domain", "required": False, "description": "Optional base domain override. When omitted, the template reads /<app>/<stage>/lesser/exports/v1/domain from SSM."},
         {"name": "lesser_host_instance_key_arn", "required": False, "description": "Optional exact Secrets Manager ARN for the managed lesser-host instance key. When supplied, lesser-body injects LESSER_HOST_INSTANCE_KEY_ARN and also grants direct read access to that secret."},
+        {"name": "soul_binding_integration_bearer_secret_arn", "required": False, "description": "Optional exact Secrets Manager ARN for the dedicated Body/Ptah to Lesser soul-binding bearer. When supplied, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret."},
         {"name": "asset_prefix", "required": False, "default": f"releases/lesser-body/{version}", "description": "Optional S3 key prefix used when staging lesser-body.zip and auxiliary assets."},
         {"name": "no_execute_changeset", "required": False, "default": False, "description": "Optional helper flag that passes --no-execute-changeset to aws cloudformation deploy for verification-only runs."},
     ]
@@ -314,6 +315,7 @@ def base_template_parameters(auxiliary_assets: list[dict[str, Any]]) -> list[dic
         {"name": PRIMARY_BUCKET_PARAMETER, "required": True},
         {"name": PRIMARY_KEY_PARAMETER, "required": True},
         {"name": "LesserHostInstanceKeyARN", "required": False, "default": "", "description": "Optional exact Secrets Manager ARN for the managed lesser-host instance key. The release helper forwards --lesser-host-instance-key-arn (or $LESSER_HOST_INSTANCE_KEY_ARN) into this parameter."},
+        {"name": "LesserSoulBindingIntegrationBearerSecretARN", "required": False, "default": "", "description": "Optional exact Secrets Manager ARN for the dedicated Body/Ptah to Lesser soul-binding bearer. The release helper forwards --soul-binding-integration-bearer-secret-arn (or $LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN) into this parameter."},
         {"name": "JWTSecretArnParamPath", "required": False, "default": "/<app>/shared/secrets/jwt-secret-arn", "description": "SSM parameter path for the shared JWT secret ARN. The release helper derives this from the target app."},
         {"name": "JWTSecretKeyArnParamPath", "required": False, "default": "/<app>/shared/kms/encryption-key-arn", "description": "SSM parameter path for the shared KMS key ARN. The release helper derives this from the target app."},
         {"name": "LesserStageDomainParamPath", "required": False, "default": "/<app>/<stage>/lesser/exports/v1/domain", "description": "SSM parameter path for the Lesser stage domain. The stage-specific template and release helper align on this path."},

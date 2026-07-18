@@ -1014,15 +1014,19 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
   `evidence.declaration_hash`, `evidence.issued_at`.
 
 The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API (`POST /api/v1/souls/bindings`) through
-`internal/lesserapi` using the dedicated `LESSER_SOUL_BINDING_INTEGRATION_BEARER` configuration value and the supplied
-non-empty idempotency key. It never forwards the caller's OAuth token to that server-to-server surface. Body supplies
-Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`, `hosted_bound_soul`) and returns
-structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent summary.
+`internal/lesserapi` using the dedicated `LESSER_SOUL_BINDING_INTEGRATION_BEARER` value, preferably resolved from
+`LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` in managed deployments, and the supplied non-empty idempotency key. It
+never forwards the caller's OAuth token to that server-to-server surface and never substitutes
+`LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
+`hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
+status link, and agent summary.
 
 Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
 `SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor
-as `souled` through the existing `internal/soulbinding` read path. For newly minted Host-genesis agents, the
-Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
+as `souled` through the existing `internal/soulbinding` read path over `SOUL_BODY_BINDING_USERNAME#*` / `SOUL_BODY_BINDING`
+rows. The instance MCP Lambda's Lesser-table read grant is correspondingly limited to `INSTANCE#CONFIG` and
+`SOUL_BODY_BINDING_USERNAME#*`; it does not receive Lesser memory-write access. For newly minted Host-genesis agents,
+the Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
 caller-supplied binding input.
 
 ### Instance-plane Ba tools

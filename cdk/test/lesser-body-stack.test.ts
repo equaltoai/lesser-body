@@ -41,6 +41,32 @@ test("managed template supports an exact lesser-host instance key ARN", () => {
   assert.equal(hasConditionalExactGrant, true);
 });
 
+test("managed template supports Ptah soul-binding bearer secret ARN", () => {
+  const template = synthManagedTemplate();
+  const params = mustRecord(template.Parameters, "template missing Parameters");
+  const param = mustRecord(
+    params.LesserSoulBindingIntegrationBearerSecretARN,
+    "template missing LesserSoulBindingIntegrationBearerSecretARN parameter",
+  );
+
+  assert.equal(param.Default, "");
+  assert.equal(typeof param.AllowedPattern, "string");
+  assert.match(param.AllowedPattern as string, /\^\$\|\^arn:/);
+  assert.match(param.AllowedPattern as string, /secretsmanager/);
+
+  const resources = mustResources(template);
+  const instanceHandler = instanceMcpHandlerLambdaFunction(resources);
+  const vars = lambdaEnvironmentVariables(instanceHandler);
+  assert.match(mustJSON(vars.LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN), /LesserSoulBindingIntegrationBearerSecretARN/);
+  assert.equal(Object.hasOwn(vars, "LESSER_SOUL_BINDING_INTEGRATION_BEARER"), false);
+
+  const statements = policyStatementsForLambda(resources, instanceHandler);
+  const hasConditionalExactGrant = statements.some((statement) =>
+    extractStatementResources(statement).some((resource) => mustJSON(resource).includes("LesserSoulBindingIntegrationBearerSecretARN")),
+  );
+  assert.equal(hasConditionalExactGrant, true);
+});
+
 test("managed template requires app-scoped Lesser parameter paths", () => {
   const template = synthManagedTemplate();
   const params = mustRecord(template.Parameters, "template missing Parameters");
@@ -323,6 +349,8 @@ test("instance-plane lambda receives managed Lesser/Host genesis configuration",
   assert.match(mustJSON(vars.LESSER_TABLE_NAME), /LesserTableNameParamPath|lesser\/exports\/v1\/table_name/);
   assert.match(mustJSON(vars.LESSER_API_BASE_URL), /https:\/\/api\./);
   assert.match(mustJSON(vars.LESSER_HOST_INSTANCE_KEY_ARN), /LesserHostInstanceKeyARN/);
+  assert.match(mustJSON(vars.LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN), /LesserSoulBindingIntegrationBearerSecretARN/);
+  assert.equal(Object.hasOwn(vars, "LESSER_SOUL_BINDING_INTEGRATION_BEARER"), false);
 
   const statements = policyStatementsForLambda(resources, instanceHandler);
   const statementJSON = mustJSON(statements);
@@ -332,16 +360,51 @@ test("instance-plane lambda receives managed Lesser/Host genesis configuration",
     '"dynamodb:Query"',
     '"dynamodb:LeadingKeys"',
     '"INSTANCE#CONFIG"',
+    '"SOUL_BODY_BINDING_USERNAME#*"',
     '"secretsmanager:GetSecretValue"',
     '"secretsmanager:DescribeSecret"',
     "instance-key*",
     "lesser-host/lab/instances",
     "LesserHostInstanceKeyARN",
+    "LesserSoulBindingIntegrationBearerSecretARN",
   ]) {
     assert.equal(statementJSON.includes(want), true, `expected instance policy to contain ${want}: ${statementJSON}`);
   }
-  for (const unwanted of ['"LBMEMORY#*"', '"SOUL_BODY_BINDING_USERNAME#*"']) {
+  for (const unwanted of ['"LBMEMORY#*"']) {
     assert.equal(statementJSON.includes(unwanted), false, `instance trust-config policy must omit ${unwanted}: ${statementJSON}`);
+  }
+});
+
+test("instance-plane Lesser table read includes binding lookup without memory access", () => {
+  const resources = mustResources(synthManagedTemplate());
+  const instanceHandler = instanceMcpHandlerLambdaFunction(resources);
+  const lesserTableStatements = policyStatementsForLambda(resources, instanceHandler).filter((statement) =>
+    mustJSON(extractStatementResources(statement)).includes("LesserTableNameParamPath"),
+  );
+
+  assert.equal(lesserTableStatements.length, 2);
+
+  const statementJSON = mustJSON(lesserTableStatements);
+  for (const want of [
+    '"dynamodb:DescribeTable"',
+    '"dynamodb:GetItem"',
+    '"dynamodb:Query"',
+    '"dynamodb:LeadingKeys"',
+    '"SOUL_BODY_BINDING_USERNAME#*"',
+    '"INSTANCE#CONFIG"',
+  ]) {
+    assert.equal(statementJSON.includes(want), true, `expected instance Lesser-table policy to contain ${want}: ${statementJSON}`);
+  }
+  for (const unwanted of [
+    '"LBMEMORY#*"',
+    '"dynamodb:BatchGetItem"',
+    '"dynamodb:BatchWriteItem"',
+    '"dynamodb:DeleteItem"',
+    '"dynamodb:PutItem"',
+    '"dynamodb:Scan"',
+    '"dynamodb:UpdateItem"',
+  ]) {
+    assert.equal(statementJSON.includes(unwanted), false, `expected instance Lesser-table policy to omit ${unwanted}: ${statementJSON}`);
   }
 });
 

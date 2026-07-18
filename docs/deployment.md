@@ -111,7 +111,8 @@ From repo root:
 cd cdk
 npm ci
 npx cdk deploy --all -c app=lesser -c stage=dev -c baseDomain=example.com \
-  -c lesserHostInstanceKeyArn="$LESSER_HOST_INSTANCE_KEY_ARN"
+  -c lesserHostInstanceKeyArn="$LESSER_HOST_INSTANCE_KEY_ARN" \
+  -c soulBindingIntegrationBearerArn="$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN"
 ```
 
 Notes:
@@ -122,6 +123,9 @@ Notes:
   time.
 - `lesserHostInstanceKeyArn` is optional but recommended for managed instances. If omitted, lesser-body still grants the
   managed `lesser-host/<stage>/instances/<app>/instance-key*` secret namespace and can fall back to `TRUST_CONFIG`.
+- `soulBindingIntegrationBearerArn` is the exact Secrets Manager ARN for the dedicated Body/Ptah → Lesser
+  soul-binding bearer used by `agent_bind_soul`. It must match Lesser's receiving-side
+  `SOUL_BINDING_INTEGRATION_KEY_ARN` secret value and must not be a raw bearer value.
 
 ## Deploy (via `theory app up`)
 
@@ -155,7 +159,8 @@ bash ./deploy-lesser-body-from-release.sh \
   --app lesser \
   --stage dev \
   --base-domain example.com \
-  --lesser-host-instance-key-arn "$LESSER_HOST_INSTANCE_KEY_ARN"
+  --lesser-host-instance-key-arn "$LESSER_HOST_INSTANCE_KEY_ARN" \
+  --soul-binding-integration-bearer-secret-arn "$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN"
 ```
 
 Notes:
@@ -169,6 +174,9 @@ Notes:
   string overrides. The templates no longer rely on intrinsic expressions in parameter defaults.
 - `--lesser-host-instance-key-arn` is optional. If omitted, the helper also checks the shell environment for
   `LESSER_HOST_INSTANCE_KEY_ARN` and forwards it automatically when present.
+- `--soul-binding-integration-bearer-secret-arn` is optional for stages that do not use Ptah binding, but required before
+  live `agent_bind_soul` validation. If omitted, the helper also checks
+  `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN`. Pass only an exact Secrets Manager secret ARN, never the raw bearer.
 - Add `--no-execute-changeset` to exercise the real `aws cloudformation deploy` path without executing the change set.
 - The corrected MCP stream-table baseline is a versioned physical table (`...-mcp-streams-v2`) while the exported SSM
   parameter name remains `mcp_stream_table_name`. Existing durable Lesser actor data is preserved; only transient MCP
@@ -241,6 +249,34 @@ the public Lesser OAuth catalog (`read`, `write`, `follow`, `push`).
 After metadata verification, use an account-holder OAuth token with an audience for the exact instance resource URL,
 send MCP `initialize`, and then call authenticated `tools/list` on the Ptah or Ba endpoint. Do not synthesize local
 OAuth metadata, skip AppTheory initialization, or reuse actor-scoped `/mcp/{actor}` tokens against instance resources.
+
+For hosted soul/body binding rollout, verify the instance Lambda configuration without printing secret values:
+
+```bash
+aws lambda get-function-configuration \
+  --function-name <app>-<stage>-lesser-body-instance-mcp \
+  --query 'contains(keys(Environment.Variables), `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN`)'
+```
+
+Expected: `true`. Do not query or log the variable value. The secret value must match Lesser's
+`SOUL_BINDING_INTEGRATION_KEY_ARN` receiving-side configuration.
+
+Then verify the instance Lambda role can read only the Lesser binding username-index and managed-config leading keys
+needed by runtime policy:
+
+```bash
+ROLE_NAME="$(aws lambda get-function-configuration \
+  --function-name <app>-<stage>-lesser-body-instance-mcp \
+  --query 'Role' --output text | awk -F/ '{print $NF}')"
+aws iam list-role-policies --role-name "$ROLE_NAME"
+aws iam get-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name <inline-policy-name> \
+  --query 'PolicyDocument.Statement[].Condition."ForAllValues:StringLike"."dynamodb:LeadingKeys"'
+```
+
+Expected Lesser table read keys include `INSTANCE#CONFIG` and `SOUL_BODY_BINDING_USERNAME#*` and do not include
+`LBMEMORY#*` for the instance handler.
 
 Project 48 status note: the #364 Ptah/Ba lab canary evidence and M10 rollout/soak remain pending. Do not mark lab soak,
 deploy-stage staging soak, or live rollout complete from the metadata checks above alone.

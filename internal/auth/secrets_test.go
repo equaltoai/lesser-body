@@ -45,3 +45,29 @@ func TestLesserHostInstanceKeySecretID_FailsClosedWhenManagedConfigMissing(t *te
 		t.Fatalf("expected managed trust config error")
 	}
 }
+
+func TestSecretValueFromEnvOrARN_UsesDirectEnv(t *testing.T) {
+	t.Setenv("DIRECT_CONFIG_VALUE", " fixture-value ")
+	t.Setenv("DIRECT_CONFIG_VALUE_ARN", "arn:aws:secretsmanager:us-east-1:123456789012:secret:not-used")
+
+	got, err := SecretValueFromEnvOrARN(context.Background(), "DIRECT_CONFIG_VALUE", "DIRECT_CONFIG_VALUE_ARN")
+	if err != nil {
+		t.Fatalf("SecretValueFromEnvOrARN: %v", err)
+	}
+	if got != "fixture-value" {
+		t.Fatalf("secret value = %q, want trimmed direct value", got)
+	}
+}
+
+func TestSecretValueFromEnvOrARN_MissingConfigReturnsEmpty(t *testing.T) {
+	t.Setenv("DIRECT_CONFIG_VALUE", "")
+	t.Setenv("DIRECT_CONFIG_VALUE_ARN", "")
+
+	got, err := SecretValueFromEnvOrARN(context.Background(), "DIRECT_CONFIG_VALUE", "DIRECT_CONFIG_VALUE_ARN")
+	if err != nil {
+		t.Fatalf("SecretValueFromEnvOrARN: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("secret value = %q, want empty", got)
+	}
+}

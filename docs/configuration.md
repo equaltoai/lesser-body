@@ -53,6 +53,20 @@ Variables:
     record in `LESSER_TABLE_NAME`.
   - Do not remove this just because inbound MCP clients migrate to OAuth; host-backed communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
+- `LESSER_SOUL_BINDING_INTEGRATION_BEARER` (string, optional; local/manual only)
+  - Dedicated Body/Ptah → Lesser server-to-server bearer for `agent_bind_soul`.
+  - This is not caller OAuth, not `LESSER_HOST_INSTANCE_KEY`, and not a lesser-host communication delegation key.
+  - Managed deployments should not inject this raw value directly.
+- `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` (string, optional but required to use `agent_bind_soul` safely in managed Ptah)
+  - Exact AWS Secrets Manager ARN containing the dedicated Body/Ptah → Lesser soul-binding bearer. The secret value may be
+    plaintext or JSON like `{"secret":"..."}`.
+  - CDK can inject this on the instance-plane Lambda through the `soulBindingIntegrationBearerArn` context value or the
+    managed-template `LesserSoulBindingIntegrationBearerSecretARN` parameter; the release helper forwards
+    `--soul-binding-integration-bearer-secret-arn` or `$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN`.
+  - The instance Lambda role receives `secretsmanager:GetSecretValue`/`DescribeSecret` only for that exact ARN.
+  - The resolved value must match Lesser's receiving-side `SOUL_BINDING_INTEGRATION_KEY` /
+    `SOUL_BINDING_INTEGRATION_KEY_ARN` configuration. If neither the direct env nor ARN-backed path resolves,
+    `agent_bind_soul` fails closed with `not_configured`.
 
 ### Instance-plane storage
 
@@ -161,6 +175,9 @@ that runtime only for the current read-only `skill_bundle_get` pilot; task state
 - `LESSER_TABLE_NAME` (string, required for `dynamo`)
   - The Lesser stage DynamoDB table name.
   - Also used to resolve managed trust configuration (`TRUST_CONFIG`) for soul API base URL and instance-key secret ARN.
+  - The instance-plane Lambda receives read-only Lesser-table access for `INSTANCE#CONFIG` and
+    `SOUL_BODY_BINDING_USERNAME#*` so Ptah/Ka can observe Lesser-owned binding rows after `agent_bind_soul` succeeds.
+    It does not receive `LBMEMORY#*` write access.
   - CDK also grants Secrets Manager read access for both the legacy `<app>/instance-key*` path and the current managed
     `lesser-host/<control-plane-stage>/instances/<app>/instance-key*` namespace so host-backed communication tools keep
     working after managed secret-path migrations.

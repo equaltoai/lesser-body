@@ -174,6 +174,7 @@ expected_template_parameters = {
     "LesserBodyCodeBucketName",
     "LesserBodyCodeObjectKey",
     "LesserHostInstanceKeyARN",
+    "LesserSoulBindingIntegrationBearerSecretARN",
     "JWTSecretArnParamPath",
     "JWTSecretKeyArnParamPath",
     "LesserStageDomainParamPath",
@@ -509,12 +510,26 @@ DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN="${RELEASE_ABS_DIR}/deploy-dry-run-dev-with-in
       --base-domain example.com > "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"
 )
 
+DRY_RUN_LOG_WITH_SOUL_BINDING_BEARER_ARN="${RELEASE_ABS_DIR}/deploy-dry-run-dev-with-soul-binding-bearer-arn.log"
+(
+  cd "${OUT_DIR}"
+  LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN="arn:aws:secretsmanager:us-east-1:123456789012:secret:lesser/soul-binding-integration-bearer-example" \
+    bash ./deploy-lesser-body-from-release.sh \
+      --dry-run \
+      --stack-name lesser-dev-lesser-body \
+      --asset-bucket example-artifacts-bucket \
+      --app lesser \
+      --stage dev \
+      --base-domain example.com > "${DRY_RUN_LOG_WITH_SOUL_BINDING_BEARER_ARN}"
+)
+
 all_dry_run_logs=(
   "${DRY_RUN_LOG_DEV}"
   "${DRY_RUN_LOG_STAGING}"
   "${DRY_RUN_LOG_LIVE}"
   "${DRY_RUN_LOG_NO_EXECUTE_CHANGESET}"
   "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"
+  "${DRY_RUN_LOG_WITH_SOUL_BINDING_BEARER_ARN}"
 )
 
 expected_s3_prefix="releases/lesser-body/${VERSION}/templates"
@@ -612,6 +627,10 @@ fi
 
 if ! grep -q -- 'LesserHostInstanceKeyARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:lesser-host/lab/instances/lesser/instance-key-example' "${DRY_RUN_LOG_WITH_INSTANCE_KEY_ARN}"; then
   echo "dry-run output did not forward LESSER_HOST_INSTANCE_KEY_ARN into the managed deploy parameter overrides" >&2
+  exit 1
+fi
+if ! grep -q -- 'LesserSoulBindingIntegrationBearerSecretARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:lesser/soul-binding-integration-bearer-example' "${DRY_RUN_LOG_WITH_SOUL_BINDING_BEARER_ARN}"; then
+  echo "dry-run output did not forward LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN into the managed deploy parameter overrides" >&2
   exit 1
 fi
 
