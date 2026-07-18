@@ -228,6 +228,9 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
 		return err
 	}
+	if err := r.RegisterTool(agentGenesisSkillGetDef(), cfg.handleAgentGenesisSkillGet); err != nil {
+		return err
+	}
 	if err := r.RegisterTool(agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
 		return err
 	}

@@ -69,6 +69,7 @@ func RegisterResources(srv *mcpruntime.Server) error {
 		{def: fiveBodyResourceDef(resourceGenesisInterviewGuide, "Genesis interview guide"), handler: fiveBodyInterviewGuideResource},
 		{def: fiveBodyResourceDef(resourceAgentSideGenesisPlaybook, "Agent-side genesis playbook"), handler: fiveBodyPlaybookResource},
 		{def: fiveBodyResourceDef(resourceGenesisRubric, "Genesis rubric"), handler: fiveBodyRubricResource},
+		{def: fiveBodyResourceDef(resourceGenesisOperatorSkill, "Genesis operator skill bundle"), handler: fiveBodyGenesisOperatorSkillResource},
 	} {
 		if err := r.RegisterResource(res.def, res.handler); err != nil {
 			return err
@@ -209,11 +210,17 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 		"kind":     resourceAgentSideGenesisPlaybook,
 		"contract": fiveBodyContractDescriptor(),
 		"playbook": map[string]any{
+			"skill": map[string]string{
+				"tool":        toolAgentGenesisSkillGet,
+				"resource":    fiveBodyResourceURI(resourceGenesisOperatorSkill),
+				"instruction": "Fetch the client-native genesis operator skill bundle first and use its SKILL.md as the operating playbook. Ptah serves content only; clients decide materialization and Body never installs or writes anything for it.",
+			},
 			"authority": []string{
 				"Use explicit instance owner/operator OAuth only; ordinary read/write tokens and x402 evidence are not owner authority.",
 				"Treat Host HostedGenesisSession as the state authority. Body must not create a local genesis state machine or fabricate Lesser directory entries.",
 			},
 			"tool_sequence": []map[string]string{
+				{"step": "skill", "tool": toolAgentGenesisSkillGet, "instruction": "Fetch and read the read-only genesis operator skill bundle before beginning."},
 				{"step": "begin", "tool": toolAgentGenesisBegin, "instruction": "Start the Host registration lane for the intended managed domain/local_id."},
 				{"step": "interview", "tool": toolAgentGenesisAdvance, "instruction": "Advance identity, philosophy, discipline, boundaries, and soul stages; persist Host conversation_id."},
 				{"step": "read", "tool": toolAgentGenesisRead, "instruction": "Poll Host status and follow structuredContent.data.guidance.next_tool."},

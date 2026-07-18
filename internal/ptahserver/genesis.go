@@ -80,7 +80,7 @@ func agentGenesisBeginDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisBegin,
 		Title:       "Begin Host-backed agent genesis",
-		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. Next: call agent_genesis_advance with the returned registration_id and persist the Host conversation_id. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Begin a new agent registration through lesser-host's instance-trust genesis flow. Host derives the new agent identity; this tool does not delegate or require a pre-existing Lesser agent account. First fetch the read-only operating playbook with agent_genesis_skill_get. Next: call agent_genesis_advance with the returned registration_id and persist the Host conversation_id. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",

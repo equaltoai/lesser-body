@@ -23,7 +23,7 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 	}
 
 	resources := srv.Resources().List()
-	if got, want := resourceNames(resources), []string{resourceSoulSchemaV2, resourceGenesisInterviewGuide, resourceAgentSideGenesisPlaybook, resourceGenesisRubric}; !reflect.DeepEqual(got, want) {
+	if got, want := resourceNames(resources), []string{resourceSoulSchemaV2, resourceGenesisInterviewGuide, resourceAgentSideGenesisPlaybook, resourceGenesisRubric, resourceGenesisOperatorSkill}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("resource names = %v, want %v", got, want)
 	}
 	for _, res := range resources {

@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_skill_get", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,7 +165,11 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				if instructionsArchiveDef.Name != "agent_instructions_archive" || instructionsArchiveDef.Annotations == nil || instructionsArchiveDef.Annotations.ReadOnlyHint == nil || *instructionsArchiveDef.Annotations.ReadOnlyHint || instructionsArchiveDef.Annotations.IdempotentHint == nil || !*instructionsArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_archive annotations invalid: %+v", instructionsArchiveDef)
 				}
-				genesisListDef := listBody.Result.Tools[10]
+				genesisSkillDef := listBody.Result.Tools[9]
+				if genesisSkillDef.Name != "agent_genesis_skill_get" || genesisSkillDef.Annotations == nil || genesisSkillDef.Annotations.ReadOnlyHint == nil || !*genesisSkillDef.Annotations.ReadOnlyHint || !strings.Contains(genesisSkillDef.Description, "no local installation") || !strings.Contains(string(genesisSkillDef.OutputSchema), "bundle_id") {
+					t.Fatalf("agent_genesis_skill_get definition invalid: %+v", genesisSkillDef)
+				}
+				genesisListDef := listBody.Result.Tools[11]
 				if genesisListDef.Name != "agent_genesis_list" || genesisListDef.Annotations == nil || genesisListDef.Annotations.ReadOnlyHint == nil || !*genesisListDef.Annotations.ReadOnlyHint || !strings.Contains(genesisListDef.Description, "producer_contract_missing") || !strings.Contains(string(genesisListDef.OutputSchema), "not_available") {
 					t.Fatalf("agent_genesis_list definition invalid: %+v", genesisListDef)
 				}
@@ -196,7 +200,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 				for _, res := range resourcesOut.Resources {
 					haveResource[res.Name] = true
 				}
-				for _, name := range []string{"soul-schema-v2", "genesis-interview-guide", "agent-side-genesis-playbook", "genesis-rubric"} {
+				for _, name := range []string{"soul-schema-v2", "genesis-interview-guide", "agent-side-genesis-playbook", "genesis-rubric", "genesis-operator-skill"} {
 					if !haveResource[name] {
 						t.Fatalf("resources/list missing %s: %+v", name, resourcesOut.Resources)
 					}
