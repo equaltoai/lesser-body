@@ -13,6 +13,7 @@ import (
 
 type fakeJSONDoer struct {
 	calls []jsonDoerCall
+	resp  any
 	err   error
 }
 
@@ -27,6 +28,9 @@ func (f *fakeJSONDoer) DoJSON(_ context.Context, method string, path string, _ u
 	f.calls = append(f.calls, jsonDoerCall{method: method, path: path, bearer: bearerToken, body: body})
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.resp != nil {
+		return f.resp, nil
 	}
 	return map[string]any{"conversation": map[string]any{"status": "in_progress"}}, nil
 }
@@ -146,5 +150,48 @@ func TestGenesisClientRejectsMissingIdentifiersAndBearer(t *testing.T) {
 	}
 	if _, err := client.AdvanceConversation(context.Background(), "host-key", "reg", MintConversationRequest{}); err == nil {
 		t.Fatal("expected missing conversation message error")
+	}
+}
+
+func TestIdentityClientFetchesPublicSoulAgentIdentityWithoutBearer(t *testing.T) {
+	const agentID = "0x69cca6855f8c36f486cb082a3bcf3d4815e14612f3353b7f71de47b2c63a96e3"
+	doer := &fakeJSONDoer{resp: map[string]any{
+		"version":           "1",
+		"published_version": float64(3),
+		"agent": map[string]any{
+			"agent_id":                 agentID,
+			"domain":                   "theory.greater.website",
+			"local_id":                 "theo-marsh",
+			"authority_model":          "instance_trust",
+			"anchor_state":             "hosted_offchain",
+			"operational_binding":      "hosted_bound_soul",
+			"lifecycle_status":         "active",
+			"status":                   "active",
+			"self_description_version": float64(2),
+		},
+	}}
+
+	identity, err := New(doer).GetAgentIdentity(context.Background(), " "+agentID+" ")
+	if err != nil {
+		t.Fatalf("GetAgentIdentity: %v", err)
+	}
+	if identity.AgentID != agentID || identity.Domain != "theory.greater.website" || identity.LocalID != "theo-marsh" {
+		t.Fatalf("identity core fields = %+v", identity)
+	}
+	if identity.AuthorityModel != "instance_trust" || identity.AnchorState != "hosted_offchain" || identity.OperationalBinding != "hosted_bound_soul" || identity.LifecycleStatus != "active" || identity.Status != "active" {
+		t.Fatalf("identity binding fields = %+v", identity)
+	}
+	if identity.PublishedVersion != 3 || identity.SelfDescriptionVersion != 2 {
+		t.Fatalf("identity publication versions = %+v", identity)
+	}
+	if len(doer.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(doer.calls))
+	}
+	call := doer.calls[0]
+	if call.method != http.MethodGet || call.path != "/api/v1/soul/agents/"+agentID {
+		t.Fatalf("identity call = %s %s", call.method, call.path)
+	}
+	if call.bearer != "" || call.body != nil {
+		t.Fatalf("identity call should not forward bearer/body: %+v", call)
 	}
 }

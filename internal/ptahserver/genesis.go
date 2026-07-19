@@ -744,16 +744,18 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 	)
 
 	agent, created, err := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
-		Account:            actor,
-		AgentID:            agentID,
-		HostRegistrationID: registrationID,
-		HostConversationID: conversationID,
-		Domain:             firstNonEmpty(nestedString(data, "publication", "domain"), nestedString(data, "promotion", "domain"), stringValue(data, "domain")),
-		LocalID:            firstNonEmpty(nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id")),
-		AuthorityModel:     firstNonEmpty(nestedString(data, "publication", "authority_model"), nestedString(data, "promotion", "authority_model"), stringValue(data, "authority_model")),
-		AnchorState:        firstNonEmpty(nestedString(data, "publication", "anchor_state"), nestedString(data, "promotion", "anchor_state"), stringValue(data, "anchor_state")),
-		LifecycleStatus:    firstNonEmpty(nestedString(data, "publication", "lifecycle_status"), nestedString(data, "promotion", "lifecycle_status"), stringValue(data, "lifecycle_status")),
-		PublishedVersion:   firstNonZeroInt64(nestedInt64(data, "publication", "published_version"), nestedInt64(data, "promotion", "published_version"), int64Value(data["published_version"])),
+		Account:                actor,
+		AgentID:                agentID,
+		HostRegistrationID:     registrationID,
+		HostConversationID:     conversationID,
+		Domain:                 firstNonEmpty(nestedString(data, "agent", "domain"), nestedString(data, "registration", "domain"), nestedString(data, "publication", "domain"), nestedString(data, "promotion", "domain"), stringValue(data, "domain")),
+		LocalID:                firstNonEmpty(nestedString(data, "agent", "local_id"), nestedString(data, "agent", "localId"), nestedString(data, "registration", "local_id"), nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id")),
+		AuthorityModel:         firstNonEmpty(nestedString(data, "agent", "authority_model"), nestedString(data, "publication", "authority_model"), nestedString(data, "promotion", "authority_model"), stringValue(data, "authority_model")),
+		AnchorState:            firstNonEmpty(nestedString(data, "agent", "anchor_state"), nestedString(data, "publication", "anchor_state"), nestedString(data, "promotion", "anchor_state"), stringValue(data, "anchor_state")),
+		OperationalBinding:     firstNonEmpty(nestedString(data, "agent", "operational_binding"), nestedString(data, "publication", "operational_binding"), nestedString(data, "promotion", "operational_binding"), stringValue(data, "operational_binding")),
+		LifecycleStatus:        firstNonEmpty(nestedString(data, "agent", "lifecycle_status"), nestedString(data, "agent", "status"), nestedString(data, "publication", "lifecycle_status"), nestedString(data, "promotion", "lifecycle_status"), stringValue(data, "lifecycle_status"), stringValue(data, "status")),
+		PublishedVersion:       firstNonZeroInt64(nestedInt64(data, "publication", "published_version"), nestedInt64(data, "promotion", "published_version"), nestedInt64(data, "agent", "published_version"), int64Value(data["published_version"])),
+		SelfDescriptionVersion: firstNonZeroInt64(nestedInt64(data, "agent", "self_description_version"), nestedInt64(data, "agent", "selfDescriptionVersion"), int64Value(data["self_description_version"])),
 	})
 	if err != nil {
 		if errors.Is(err, agentregistry.ErrAgentAlreadyExists) {
@@ -1155,17 +1157,24 @@ func sanitizeGenesisPreflight(data map[string]any, raw map[string]any) map[strin
 func sanitizeGenesisFinalize(data map[string]any, raw map[string]any) map[string]any {
 	data = cloneMap(data)
 	for output, keys := range map[string][]string{
-		"version":           {"version"},
-		"agent_id":          {"agent_id", "agentId"},
-		"domain":            {"domain_normalized", "domain"},
-		"local_id":          {"local_id", "localId"},
-		"authority_model":   {"authority_model", "authorityModel"},
-		"anchor_state":      {"anchor_state", "anchorState"},
-		"lifecycle_status":  {"lifecycle_status", "lifecycleStatus", "status"},
-		"published_version": {"published_version", "publishedVersion"},
+		"version":             {"version"},
+		"agent_id":            {"agent_id", "agentId"},
+		"domain":              {"domain_normalized", "domain"},
+		"local_id":            {"local_id", "localId"},
+		"authority_model":     {"authority_model", "authorityModel"},
+		"anchor_state":        {"anchor_state", "anchorState"},
+		"operational_binding": {"operational_binding", "operationalBinding"},
+		"lifecycle_status":    {"lifecycle_status", "lifecycleStatus", "status"},
+		"published_version":   {"published_version", "publishedVersion"},
 	} {
 		if value, ok := firstField(raw, keys...); ok && safeScalar(value) {
 			data[output] = value
+		}
+	}
+	if agent := sanitizeGenesisAgentIdentity(mapValue(raw, "agent")); len(agent) > 0 {
+		data["agent"] = agent
+		if id := stringValue(agent, "agent_id"); id != "" {
+			data["agent_id"] = id
 		}
 	}
 	if publication := sanitizeGenesisPromotion(mapValue(raw, "publication")); len(publication) > 0 {
@@ -1175,6 +1184,30 @@ func sanitizeGenesisFinalize(data map[string]any, raw map[string]any) map[string
 		data["promotion"] = promotion
 	}
 	return data
+}
+
+func sanitizeGenesisAgentIdentity(raw map[string]any) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for output, keys := range map[string][]string{
+		"agent_id":                 {"agent_id", "agentId"},
+		"domain":                   {"domain_normalized", "domain"},
+		"local_id":                 {"local_id", "localId"},
+		"authority_model":          {"authority_model", "authorityModel"},
+		"anchor_state":             {"anchor_state", "anchorState"},
+		"operational_binding":      {"operational_binding", "operationalBinding"},
+		"lifecycle_status":         {"lifecycle_status", "lifecycleStatus"},
+		"status":                   {"status"},
+		"published_version":        {"published_version", "publishedVersion"},
+		"self_description_version": {"self_description_version", "selfDescriptionVersion"},
+	} {
+		if value, ok := firstField(raw, keys...); ok && safeScalar(value) {
+			out[output] = value
+		}
+	}
+	return out
 }
 
 func cloneMap(input map[string]any) map[string]any {

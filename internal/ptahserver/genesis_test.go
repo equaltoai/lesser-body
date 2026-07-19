@@ -271,12 +271,18 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	fake := &fakeGenesisClient{
 		finalizeResponse: map[string]any{
 			"agent_id":          "agent-0xabc",
-			"domain":            "example.com",
-			"local_id":          "ada",
-			"authority_model":   "instance_trust",
-			"anchor_state":      "hosted_offchain",
-			"lifecycle_status":  "active",
 			"published_version": 7,
+			"agent": map[string]any{
+				"agent_id":                 "agent-0xabc",
+				"domain":                   "example.com",
+				"local_id":                 "ada",
+				"authority_model":          "instance_trust",
+				"anchor_state":             "hosted_offchain",
+				"operational_binding":      "hosted_bound_soul",
+				"lifecycle_status":         "active",
+				"status":                   "active",
+				"self_description_version": 7,
+			},
 			"conversation": map[string]any{
 				"registration_id": "reg-123",
 				"conversation_id": "conv-456",
@@ -285,13 +291,10 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 			},
 			"publication": map[string]any{
 				"agent_id":          "agent-0xabc",
-				"registration_id":   "reg-123",
-				"domain":            "example.com",
-				"local_id":          "ada",
+				"published_version": 7,
+				"registration_uri":  "s3://host/registration.json",
 				"authority_model":   "instance_trust",
 				"anchor_state":      "hosted_offchain",
-				"lifecycle_status":  "active",
-				"published_version": 7,
 			},
 		},
 	}
@@ -330,6 +333,10 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	}
 	firstData := structuredGenesisData(t, first)
 	firstRegistry, _ := firstData["registry"].(map[string]any)
+	hostIdentity, _ := firstRegistry["host_identity"].(map[string]any)
+	if hostIdentity["domain"] != "example.com" || hostIdentity["local_id"] != "ada" || hostIdentity["operational_binding"] != "hosted_bound_soul" || hostIdentity["lifecycle_status"] != "active" || hostIdentity["published_version"] != int64(7) || hostIdentity["self_description_version"] != int64(7) {
+		t.Fatalf("finalize registry host_identity = %+v, want Host agent/publication fields captured", hostIdentity)
+	}
 	provenance, _ := firstRegistry["provenance"].(map[string]any)
 	if provenance["source"] != agentregistry.SourceHostGenesisFinalize || provenance["authority"] != agentregistry.SourceAuthorityLesserHost || provenance["caller_claimed"] != false {
 		t.Fatalf("finalize registry provenance = %+v", provenance)

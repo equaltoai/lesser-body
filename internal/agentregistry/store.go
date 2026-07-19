@@ -66,21 +66,23 @@ var (
 
 // Agent is the account-scoped registry projection for a Ptah-created agent.
 type Agent struct {
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	Account            string    `json:"account"`
-	AgentID            string    `json:"agent_id"`
-	Source             string    `json:"source,omitempty"`
-	SourceAuthority    string    `json:"source_authority,omitempty"`
-	SourceOperation    string    `json:"source_operation,omitempty"`
-	HostRegistrationID string    `json:"host_registration_id,omitempty"`
-	HostConversationID string    `json:"host_conversation_id,omitempty"`
-	Domain             string    `json:"domain,omitempty"`
-	LocalID            string    `json:"local_id,omitempty"`
-	AuthorityModel     string    `json:"authority_model,omitempty"`
-	AnchorState        string    `json:"anchor_state,omitempty"`
-	LifecycleStatus    string    `json:"lifecycle_status,omitempty"`
-	PublishedVersion   int64     `json:"published_version,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+	Account                string    `json:"account"`
+	AgentID                string    `json:"agent_id"`
+	Source                 string    `json:"source,omitempty"`
+	SourceAuthority        string    `json:"source_authority,omitempty"`
+	SourceOperation        string    `json:"source_operation,omitempty"`
+	HostRegistrationID     string    `json:"host_registration_id,omitempty"`
+	HostConversationID     string    `json:"host_conversation_id,omitempty"`
+	Domain                 string    `json:"domain,omitempty"`
+	LocalID                string    `json:"local_id,omitempty"`
+	AuthorityModel         string    `json:"authority_model,omitempty"`
+	AnchorState            string    `json:"anchor_state,omitempty"`
+	OperationalBinding     string    `json:"operational_binding,omitempty"`
+	LifecycleStatus        string    `json:"lifecycle_status,omitempty"`
+	PublishedVersion       int64     `json:"published_version,omitempty"`
+	SelfDescriptionVersion int64     `json:"self_description_version,omitempty"`
 }
 
 // CreateInput describes a new Ptah-created agent registry entry.
@@ -93,16 +95,18 @@ type CreateInput struct {
 // All fields must be derived from Host/Lesser responses or server-side
 // invocation context. Callers never supply this struct directly.
 type FinalizedInput struct {
-	Account            string
-	AgentID            string
-	HostRegistrationID string
-	HostConversationID string
-	Domain             string
-	LocalID            string
-	AuthorityModel     string
-	AnchorState        string
-	LifecycleStatus    string
-	PublishedVersion   int64
+	Account                string
+	AgentID                string
+	HostRegistrationID     string
+	HostConversationID     string
+	Domain                 string
+	LocalID                string
+	AuthorityModel         string
+	AnchorState            string
+	OperationalBinding     string
+	LifecycleStatus        string
+	PublishedVersion       int64
+	SelfDescriptionVersion int64
 }
 
 // ListInput describes an account-scoped registry list request.
@@ -248,11 +252,17 @@ func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent,
 	if validated.AnchorState != "" {
 		builder = builder.Set("AnchorState", validated.AnchorState)
 	}
+	if validated.OperationalBinding != "" {
+		builder = builder.Set("OperationalBinding", validated.OperationalBinding)
+	}
 	if validated.LifecycleStatus != "" {
 		builder = builder.Set("LifecycleStatus", validated.LifecycleStatus)
 	}
 	if validated.PublishedVersion > 0 {
 		builder = builder.Set("PublishedVersion", validated.PublishedVersion)
+	}
+	if validated.SelfDescriptionVersion > 0 {
+		builder = builder.Set("SelfDescriptionVersion", validated.SelfDescriptionVersion)
 	}
 	if err := builder.ReturnValues("ALL_NEW").ExecuteWithResult(updated); err != nil {
 		return nil, false, fmt.Errorf("update finalized agent registry record: %w", err)
@@ -378,17 +388,19 @@ type agentRecord struct {
 	RegistryCreatedAt time.Time `theorydb:"attr:createdAt" json:"created_at"`
 	RegistryUpdatedAt time.Time `theorydb:"attr:updatedAt" json:"updated_at"`
 
-	Source             string `theorydb:"attr:source" json:"source,omitempty"`
-	SourceAuthority    string `theorydb:"attr:sourceAuthority" json:"source_authority,omitempty"`
-	SourceOperation    string `theorydb:"attr:sourceOperation" json:"source_operation,omitempty"`
-	HostRegistrationID string `theorydb:"attr:hostRegistrationId" json:"host_registration_id,omitempty"`
-	HostConversationID string `theorydb:"attr:hostConversationId" json:"host_conversation_id,omitempty"`
-	Domain             string `theorydb:"attr:domain" json:"domain,omitempty"`
-	LocalID            string `theorydb:"attr:localId" json:"local_id,omitempty"`
-	AuthorityModel     string `theorydb:"attr:authorityModel" json:"authority_model,omitempty"`
-	AnchorState        string `theorydb:"attr:anchorState" json:"anchor_state,omitempty"`
-	LifecycleStatus    string `theorydb:"attr:lifecycleStatus" json:"lifecycle_status,omitempty"`
-	PublishedVersion   int64  `theorydb:"attr:publishedVersion" json:"published_version,omitempty"`
+	Source                 string `theorydb:"attr:source" json:"source,omitempty"`
+	SourceAuthority        string `theorydb:"attr:sourceAuthority" json:"source_authority,omitempty"`
+	SourceOperation        string `theorydb:"attr:sourceOperation" json:"source_operation,omitempty"`
+	HostRegistrationID     string `theorydb:"attr:hostRegistrationId" json:"host_registration_id,omitempty"`
+	HostConversationID     string `theorydb:"attr:hostConversationId" json:"host_conversation_id,omitempty"`
+	Domain                 string `theorydb:"attr:domain" json:"domain,omitempty"`
+	LocalID                string `theorydb:"attr:localId" json:"local_id,omitempty"`
+	AuthorityModel         string `theorydb:"attr:authorityModel" json:"authority_model,omitempty"`
+	AnchorState            string `theorydb:"attr:anchorState" json:"anchor_state,omitempty"`
+	OperationalBinding     string `theorydb:"attr:operationalBinding" json:"operational_binding,omitempty"`
+	LifecycleStatus        string `theorydb:"attr:lifecycleStatus" json:"lifecycle_status,omitempty"`
+	PublishedVersion       int64  `theorydb:"attr:publishedVersion" json:"published_version,omitempty"`
+	SelfDescriptionVersion int64  `theorydb:"attr:selfDescriptionVersion" json:"self_description_version,omitempty"`
 }
 
 func (r agentRecord) TableName() string {
@@ -403,21 +415,23 @@ func (r *agentRecord) toAgent() *Agent {
 		return nil
 	}
 	return &Agent{
-		Account:            normalizeAccount(r.Account),
-		AgentID:            normalizeAgentID(r.AgentID),
-		CreatedAt:          r.RegistryCreatedAt.UTC(),
-		UpdatedAt:          r.RegistryUpdatedAt.UTC(),
-		Source:             strings.TrimSpace(r.Source),
-		SourceAuthority:    strings.TrimSpace(r.SourceAuthority),
-		SourceOperation:    strings.TrimSpace(r.SourceOperation),
-		HostRegistrationID: strings.TrimSpace(r.HostRegistrationID),
-		HostConversationID: strings.TrimSpace(r.HostConversationID),
-		Domain:             strings.TrimSpace(r.Domain),
-		LocalID:            strings.TrimSpace(r.LocalID),
-		AuthorityModel:     strings.TrimSpace(r.AuthorityModel),
-		AnchorState:        strings.TrimSpace(r.AnchorState),
-		LifecycleStatus:    strings.TrimSpace(r.LifecycleStatus),
-		PublishedVersion:   r.PublishedVersion,
+		Account:                normalizeAccount(r.Account),
+		AgentID:                normalizeAgentID(r.AgentID),
+		CreatedAt:              r.RegistryCreatedAt.UTC(),
+		UpdatedAt:              r.RegistryUpdatedAt.UTC(),
+		Source:                 strings.TrimSpace(r.Source),
+		SourceAuthority:        strings.TrimSpace(r.SourceAuthority),
+		SourceOperation:        strings.TrimSpace(r.SourceOperation),
+		HostRegistrationID:     strings.TrimSpace(r.HostRegistrationID),
+		HostConversationID:     strings.TrimSpace(r.HostConversationID),
+		Domain:                 strings.TrimSpace(r.Domain),
+		LocalID:                strings.TrimSpace(r.LocalID),
+		AuthorityModel:         strings.TrimSpace(r.AuthorityModel),
+		AnchorState:            strings.TrimSpace(r.AnchorState),
+		OperationalBinding:     strings.TrimSpace(r.OperationalBinding),
+		LifecycleStatus:        strings.TrimSpace(r.LifecycleStatus),
+		PublishedVersion:       r.PublishedVersion,
+		SelfDescriptionVersion: r.SelfDescriptionVersion,
 	}
 }
 
@@ -436,9 +450,13 @@ func validateFinalizedInput(in FinalizedInput) (FinalizedInput, error) {
 	in.LocalID = strings.TrimSpace(in.LocalID)
 	in.AuthorityModel = strings.TrimSpace(in.AuthorityModel)
 	in.AnchorState = strings.TrimSpace(in.AnchorState)
+	in.OperationalBinding = strings.TrimSpace(in.OperationalBinding)
 	in.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
 	if in.PublishedVersion < 0 {
 		in.PublishedVersion = 0
+	}
+	if in.SelfDescriptionVersion < 0 {
+		in.SelfDescriptionVersion = 0
 	}
 	return in, nil
 }
@@ -456,8 +474,10 @@ func applyFinalizedFields(record *agentRecord, in FinalizedInput) {
 	record.LocalID = in.LocalID
 	record.AuthorityModel = in.AuthorityModel
 	record.AnchorState = in.AnchorState
+	record.OperationalBinding = in.OperationalBinding
 	record.LifecycleStatus = in.LifecycleStatus
 	record.PublishedVersion = in.PublishedVersion
+	record.SelfDescriptionVersion = in.SelfDescriptionVersion
 }
 
 func accountPartitionKey(account string) string {
