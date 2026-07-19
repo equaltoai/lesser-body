@@ -315,6 +315,27 @@ func TestInstancePlaneMCP_AgentBindSoulUsesDedicatedBearerAndReplays(t *testing.
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
 
+	registryStore := newInstanceAgentRegistryStore(t)
+	if _, _, err := registryStore.UpsertFinalized(context.Background(), agentregistry.FinalizedInput{
+		Account:            "agent1",
+		AgentID:            "agent-0xabc",
+		HostRegistrationID: "hreg_123",
+		HostConversationID: "hconv_456",
+		Domain:             "example.com",
+		LocalID:            "agent1",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+		PublishedVersion:   1,
+	}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
+		return registryStore, nil
+	})
+	t.Cleanup(resetRegistry)
+
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -585,6 +606,27 @@ func TestInstancePlaneMCP_AgentBindSoulDoesNotMutateLocalBindingAndKaResolvesSou
 	t.Setenv("LESSER_TABLE_NAME", "lesser-test")
 	auth.ResetForTests()
 	lesserapi.ResetForTests()
+
+	registryStore := newInstanceAgentRegistryStore(t)
+	if _, _, err := registryStore.UpsertFinalized(context.Background(), agentregistry.FinalizedInput{
+		Account:            "agent1",
+		AgentID:            "agent-0xabc",
+		HostRegistrationID: "hreg_123",
+		HostConversationID: "hconv_456",
+		Domain:             "example.com",
+		LocalID:            "agent1",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+		PublishedVersion:   1,
+	}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	resetRegistry := ptahserver.SetAgentRegistryFactoryForTests(func() (ptahserver.AgentRegistry, error) {
+		return registryStore, nil
+	})
+	t.Cleanup(resetRegistry)
 
 	localBindingDB := &instanceBindingDB{
 		agentID:  "agent-0xabc",

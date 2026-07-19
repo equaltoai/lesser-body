@@ -3,8 +3,8 @@ package ptahserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -136,15 +136,53 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 	}
 
 	// When the sibling lesser-host checkout is available in the delegated factory
-	// workspace, compare against the exact Host PR #928 artifacts. This makes a
-	// Host PR update visibly break the Body mirror instead of silently forking it.
-	hostRoot, hostRepoRoot, ok := findHostContractDir(t)
+	// workspace, compare the Host contract artifacts themselves. The checkout may
+	// be on a later Host branch whose unrelated head moved while the PR #928
+	// contract bytes stayed identical; only artifact drift should break Body's
+	// mirror guard. Explicit env-provided Host dirs are stricter and must contain
+	// every mirrored artifact.
+	hostRoot, requireAllArtifacts, ok := findHostContractDir(t)
 	if !ok {
 		return
 	}
-	if hostRepoRoot != "" {
-		assertHostCheckoutHead(t, hostRepoRoot, fiveBodyHostHeadSHA)
+	if err := verifyHostContractArtifacts(hostRoot, requireAllArtifacts, meta); err != nil {
+		t.Fatal(err)
 	}
+}
+
+func TestFiveBodyHostContractArtifactGuardAcceptsMatchingExplicitDir(t *testing.T) {
+	dir := t.TempDir()
+	writeHostContractArtifact(t, dir, "soul-five-body-schema.md", hostFiveBodyContractDoc)
+	writeHostContractArtifact(t, dir, "soul-five-body.schema.v2.json", hostFiveBodySchemaJSON)
+	writeHostContractArtifact(t, dir, "soul-five-body.example.v2.json", hostFiveBodyExampleJSON)
+
+	if err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata()); err != nil {
+		t.Fatalf("verifyHostContractArtifacts: %v", err)
+	}
+}
+
+func TestFiveBodyHostContractArtifactGuardRejectsExplicitMissingArtifact(t *testing.T) {
+	dir := t.TempDir()
+
+	err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata())
+	if err == nil || !strings.Contains(err.Error(), "missing required Host artifact soul-five-body-schema.md") {
+		t.Fatalf("verifyHostContractArtifacts missing artifact error = %v", err)
+	}
+}
+
+func TestFiveBodyHostContractArtifactGuardRejectsArtifactDrift(t *testing.T) {
+	dir := t.TempDir()
+	writeHostContractArtifact(t, dir, "soul-five-body-schema.md", []byte("changed host contract"))
+	writeHostContractArtifact(t, dir, "soul-five-body.schema.v2.json", hostFiveBodySchemaJSON)
+	writeHostContractArtifact(t, dir, "soul-five-body.example.v2.json", hostFiveBodyExampleJSON)
+
+	err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata())
+	if err == nil || !strings.Contains(err.Error(), "sync Host PR #928 before merge") {
+		t.Fatalf("verifyHostContractArtifacts drift error = %v", err)
+	}
+}
+
+func verifyHostContractArtifacts(contractsDir string, requireAllArtifacts bool, meta fiveBodyContractMetadata) error {
 	for _, tc := range []struct {
 		name string
 		want string
@@ -154,48 +192,59 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 		{name: "soul-five-body.schema.v2.json", want: meta.SchemaSHA256, data: hostFiveBodySchemaJSON},
 		{name: "soul-five-body.example.v2.json", want: meta.ExampleSHA256, data: hostFiveBodyExampleJSON},
 	} {
-		live, err := os.ReadFile(filepath.Join(hostRoot, tc.name))
+		live, err := os.ReadFile(filepath.Join(contractsDir, tc.name))
 		if os.IsNotExist(err) {
+			if requireAllArtifacts {
+				return fmt.Errorf("Host contracts dir %s missing required Host artifact %s; set LESSER_HOST_CONTRACTS_DIR/LESSER_HOST_ROOT to a checkout or directory containing Host PR #%d contract artifacts", contractsDir, tc.name, fiveBodyHostPR)
+			}
 			continue
 		}
 		if err != nil {
-			t.Fatalf("read sibling Host artifact %s: %v", tc.name, err)
+			return fmt.Errorf("read Host artifact %s: %w", tc.name, err)
 		}
 		if got := sha256Hex(live); got != tc.want {
-			t.Fatalf("sibling Host artifact %s sha = %s, Body fixture/metadata want %s; sync Host PR #928 before merge", tc.name, got, tc.want)
+			return fmt.Errorf("Host artifact %s sha = %s, Body fixture/metadata want %s; sync Host PR #%d before merge", tc.name, got, tc.want, fiveBodyHostPR)
 		}
 		if string(live) != string(tc.data) {
-			t.Fatalf("sibling Host artifact %s differs byte-for-byte from Body mirror", tc.name)
+			return fmt.Errorf("Host artifact %s differs byte-for-byte from Body mirror", tc.name)
 		}
+	}
+	return nil
+}
+
+func writeHostContractArtifact(t *testing.T, dir string, name string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+		t.Fatalf("write host contract artifact %s: %v", name, err)
 	}
 }
 
-func findHostContractDir(t *testing.T) (contractsDir string, hostRepoRoot string, ok bool) {
+func findHostContractDir(t *testing.T) (contractsDir string, requireAllArtifacts bool, ok bool) {
 	t.Helper()
 	if dir := strings.TrimSpace(os.Getenv("LESSER_HOST_CONTRACTS_DIR")); dir != "" {
 		contractsDir = filepath.Clean(dir)
 		mustExistDir(t, "LESSER_HOST_CONTRACTS_DIR", contractsDir)
-		return contractsDir, hostRepoRootForContractsDir(contractsDir), true
+		return contractsDir, true, true
 	}
 	if root := strings.TrimSpace(os.Getenv("LESSER_HOST_ROOT")); root != "" {
-		hostRepoRoot = filepath.Clean(root)
+		hostRepoRoot := filepath.Clean(root)
 		contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
 		mustExistDir(t, "LESSER_HOST_ROOT docs/contracts", contractsDir)
-		return contractsDir, hostRepoRoot, true
+		return contractsDir, true, true
 	}
 
 	bodyRoot, ok := findBodyRepoRoot(t)
 	if !ok {
-		return "", "", false
+		return "", false, false
 	}
-	hostRepoRoot = filepath.Join(filepath.Dir(bodyRoot), "lesser-host")
+	hostRepoRoot := filepath.Join(filepath.Dir(bodyRoot), "lesser-host")
 	contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
 	if _, err := os.Stat(contractsDir); os.IsNotExist(err) {
-		return "", "", false
+		return "", false, false
 	} else if err != nil {
 		t.Fatalf("stat sibling Host contracts dir %s: %v", contractsDir, err)
 	}
-	return contractsDir, hostRepoRoot, true
+	return contractsDir, false, true
 }
 
 func mustExistDir(t *testing.T, label string, dir string) {
@@ -207,14 +256,6 @@ func mustExistDir(t *testing.T, label string, dir string) {
 	if !info.IsDir() {
 		t.Fatalf("%s %s is not a directory", label, dir)
 	}
-}
-
-func hostRepoRootForContractsDir(contractsDir string) string {
-	contractsDir = filepath.Clean(contractsDir)
-	if filepath.Base(contractsDir) == "contracts" && filepath.Base(filepath.Dir(contractsDir)) == "docs" {
-		return filepath.Dir(filepath.Dir(contractsDir))
-	}
-	return ""
 }
 
 func findBodyRepoRoot(t *testing.T) (string, bool) {
@@ -232,22 +273,6 @@ func findBodyRepoRoot(t *testing.T) (string, bool) {
 			return "", false
 		}
 		dir = parent
-	}
-}
-
-func assertHostCheckoutHead(t *testing.T, hostRepoRoot string, want string) {
-	t.Helper()
-	if _, err := os.Stat(filepath.Join(hostRepoRoot, ".git")); os.IsNotExist(err) {
-		return
-	} else if err != nil {
-		t.Fatalf("stat sibling Host .git in %s: %v", hostRepoRoot, err)
-	}
-	out, err := exec.Command("git", "-C", hostRepoRoot, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("read sibling Host checkout head in %s: %v", hostRepoRoot, err)
-	}
-	if got := strings.TrimSpace(string(out)); got != want {
-		t.Fatalf("sibling Host checkout head = %s, want %s; sync Body fixtures against the requested Host PR #928 head", got, want)
 	}
 }
 

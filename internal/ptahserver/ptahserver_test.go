@@ -14,6 +14,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/golang-jwt/jwt/v5"
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
@@ -240,17 +241,18 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	}
 }
 
-func TestAgentBindSoulCallsLesserWithDedicatedBearerAndCanonicalHints(t *testing.T) {
+func TestAgentBindSoulCallsLesserWithDedicatedBearerAndHostLocalActor(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("theory", "agent-0xabc", "theo-marsh")}
 	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithSoulBindingClient(client), WithIntegrationBearer(" integration-secret ")); err != nil {
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer(" integration-secret ")); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
-	result, err := registry.Call(toolContext("Drone-Ada", []string{"read", "write"}, "user-oauth-token"), toolAgentBindSoul, json.RawMessage(`{
+	result, err := registry.Call(toolContext("Theory", []string{"read", "write"}, "user-oauth-token"), toolAgentBindSoul, json.RawMessage(`{
 		"soul_agent_id":"agent-0xabc",
 		"idempotency_key":"bind-key-1",
-		"actor_username":"drone-ada",
+		"actor_username":"theory",
 		"host_registration_id":"hreg_123",
 		"host_conversation_id":"hconv_456",
 		"principal_address":"0x2222222222222222222222222222222222222222",
@@ -278,10 +280,16 @@ func TestAgentBindSoulCallsLesserWithDedicatedBearerAndCanonicalHints(t *testing
 	if client.idempotencyKey != "bind-key-1" {
 		t.Fatalf("idempotency key = %q", client.idempotencyKey)
 	}
-	if client.req.ActorUsername != "drone-ada" || client.req.SoulAgentID != "agent-0xabc" {
+	if store.getAccount != "theory" || store.getAgentID != "agent-0xabc" {
+		t.Fatalf("registry lookup = account %q agent %q", store.getAccount, store.getAgentID)
+	}
+	if client.req.ActorUsername != "theo-marsh" || client.req.SoulAgentID != "agent-0xabc" {
 		t.Fatalf("required request fields = %+v", client.req)
 	}
-	if client.req.BodyActorID != "body://ptah/drone-ada" {
+	if client.req.ActorUsername == "theory" {
+		t.Fatalf("regression: account-holder username was sent to Lesser as target actor")
+	}
+	if client.req.BodyActorID != "body://ptah/theo-marsh" {
 		t.Fatalf("default body_actor_id = %q", client.req.BodyActorID)
 	}
 	if client.req.HostRegistrationID != "hreg_123" || client.req.HostConversationID != "hconv_456" {
@@ -303,8 +311,132 @@ func TestAgentBindSoulCallsLesserWithDedicatedBearerAndCanonicalHints(t *testing
 		t.Fatalf("idempotency = %+v", idem)
 	}
 	agent, _ := data["agent_summary"].(map[string]any)
-	if agent["agent_id"] != "agent-0xabc" || agent["actor_username"] != "drone-ada" {
+	if agent["agent_id"] != "agent-0xabc" || agent["actor_username"] != "theo-marsh" {
 		t.Fatalf("agent summary = %+v", agent)
+	}
+}
+
+func TestAgentBindSoulAcceptsVerifiedBodyActorIDForms(t *testing.T) {
+	for _, bodyActorID := range []string{"body://ptah/theo-marsh", "theo-marsh"} {
+		t.Run(bodyActorID, func(t *testing.T) {
+			client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+			store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("theory", "agent-0xabc", "theo-marsh")}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(toolContext("theory", []string{"write"}, "user-oauth-token"), toolAgentBindSoul, json.RawMessage(fmt.Sprintf(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1","body_actor_id":%q}`, bodyActorID)))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("result = %+v", result)
+			}
+			if client.calls != 1 || client.req.ActorUsername != "theo-marsh" {
+				t.Fatalf("Lesser call = calls %d request %+v", client.calls, client.req)
+			}
+			if client.req.BodyActorID != "body://ptah/theo-marsh" {
+				t.Fatalf("canonical body_actor_id = %q", client.req.BodyActorID)
+			}
+		})
+	}
+}
+
+func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
+		Account:            "theory",
+		AgentID:            "agent-0xabc",
+		Source:             agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority:    agentregistry.SourceAuthorityLesserHost,
+		SourceOperation:    agentregistry.SourceOperationAgentGenesisFinalize,
+		HostRegistrationID: "reg-123",
+		HostConversationID: "conv-456",
+	}}
+	identity := &fakeHostIdentityClient{identity: &hostapi.AgentIdentity{
+		AgentID:                "agent-0xabc",
+		Domain:                 "theory.greater.website",
+		LocalID:                "theo-marsh",
+		AuthorityModel:         lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:            lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding:     lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:        "active",
+		Status:                 "active",
+		SelfDescriptionVersion: 1,
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithHostIdentityClient(identity), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(toolContext("theory", []string{"write"}, "user-oauth-token"), toolAgentBindSoul, json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1","body_actor_id":"body://ptah/theo-marsh"}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if identity.calls != 1 || identity.agentID != "agent-0xabc" {
+		t.Fatalf("identity refetch = calls %d agent %q", identity.calls, identity.agentID)
+	}
+	if store.upsertFinalizedCalls != 1 {
+		t.Fatalf("registry repair calls = %d, want 1", store.upsertFinalizedCalls)
+	}
+	if store.upsertFinalizedIn.Account != "theory" || store.upsertFinalizedIn.LocalID != "theo-marsh" || store.upsertFinalizedIn.Domain != "theory.greater.website" || store.upsertFinalizedIn.OperationalBinding != lesserapi.SoulOperationalBindingHostedBound || store.upsertFinalizedIn.SelfDescriptionVersion != 1 {
+		t.Fatalf("registry repair input = %+v", store.upsertFinalizedIn)
+	}
+	if client.req.ActorUsername != "theo-marsh" || client.req.BodyActorID != "body://ptah/theo-marsh" {
+		t.Fatalf("Lesser request = %+v", client.req)
+	}
+}
+
+func TestAgentBindSoulFailsClosedForUnverifiedTargetActor(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		store      *fakeAgentRegistry
+		args       string
+		wantCode   string
+		wantStatus int
+	}{
+		{
+			name:       "body_actor_id mismatch",
+			store:      &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("theory", "agent-0xabc", "theo-marsh")},
+			args:       `{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1","body_actor_id":"body://ptah/other"}`,
+			wantCode:   "forbidden",
+			wantStatus: 403,
+		},
+		{
+			name:       "cross account or missing registry row",
+			store:      &fakeAgentRegistry{getErr: agentregistry.ErrAgentNotFound},
+			args:       `{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1","body_actor_id":"body://ptah/theo-marsh"}`,
+			wantCode:   "host_actor_mapping_unavailable",
+			wantStatus: 409,
+		},
+		{
+			name:       "non Host finalized registry row",
+			store:      &fakeAgentRegistry{getAgent: &agentregistry.Agent{Account: "theory", AgentID: "agent-0xabc", LocalID: "theo-marsh"}},
+			args:       `{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`,
+			wantCode:   "host_actor_mapping_unavailable",
+			wantStatus: 409,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(tc.store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(toolContext("theory", []string{"write"}, "user-oauth-token"), toolAgentBindSoul, json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, tc.wantCode, tc.wantStatus)
+			if client.calls != 0 {
+				t.Fatalf("client calls = %d, want 0", client.calls)
+			}
+		})
 	}
 }
 
@@ -344,8 +476,9 @@ func TestAgentBindSoulRejectsMismatchedExplicitActorUsername(t *testing.T) {
 
 func TestAgentBindSoulPreservesLesserAPIErrorStatusAndBody(t *testing.T) {
 	client := &fakeSoulBindingClient{err: &lesserapi.APIError{Status: 409, Body: []byte(`{"error":"conflict","code":"SOUL_BINDING_CONFLICT"}`)}}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("drone-ada", "agent-0xabc", "drone-ada")}
 	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithSoulBindingClient(client), WithIntegrationBearer("integration-secret")); err != nil {
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 
@@ -1315,6 +1448,22 @@ func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrati
 	return f.resp, nil
 }
 
+type fakeHostIdentityClient struct {
+	calls    int
+	agentID  string
+	identity *hostapi.AgentIdentity
+	err      error
+}
+
+func (f *fakeHostIdentityClient) GetAgentIdentity(_ context.Context, agentID string) (*hostapi.AgentIdentity, error) {
+	f.calls++
+	f.agentID = agentID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.identity, nil
+}
+
 type fakeAgentLiveClient struct {
 	calls  int
 	agents []lesserapi.AgentDirectoryEntry
@@ -1327,6 +1476,28 @@ func (f *fakeAgentLiveClient) ListAgents(_ context.Context) ([]lesserapi.AgentDi
 		return nil, f.err
 	}
 	return f.agents, nil
+}
+
+func hostFinalizedRegistryAgent(account string, agentID string, localID string) *agentregistry.Agent {
+	return &agentregistry.Agent{
+		Account:                strings.ToLower(strings.TrimSpace(account)),
+		AgentID:                strings.TrimSpace(agentID),
+		CreatedAt:              time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:              time.Date(2026, 7, 18, 12, 30, 0, 0, time.UTC),
+		Source:                 agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority:        agentregistry.SourceAuthorityLesserHost,
+		SourceOperation:        agentregistry.SourceOperationAgentGenesisFinalize,
+		HostRegistrationID:     "reg-123",
+		HostConversationID:     "conv-456",
+		Domain:                 "theory.greater.website",
+		LocalID:                strings.TrimSpace(localID),
+		AuthorityModel:         lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:            lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding:     lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:        "active",
+		PublishedVersion:       1,
+		SelfDescriptionVersion: 1,
+	}
 }
 
 type fakeAgentRegistry struct {
@@ -1392,21 +1563,23 @@ func (f *fakeAgentRegistry) UpsertFinalized(_ context.Context, in agentregistry.
 		return f.upsertFinalizedAgent, f.upsertFinalizedCreated, nil
 	}
 	agent := &agentregistry.Agent{
-		Account:            strings.ToLower(strings.TrimSpace(in.Account)),
-		AgentID:            strings.TrimSpace(in.AgentID),
-		CreatedAt:          time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
-		UpdatedAt:          time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
-		Source:             agentregistry.SourceHostGenesisFinalize,
-		SourceAuthority:    agentregistry.SourceAuthorityLesserHost,
-		SourceOperation:    agentregistry.SourceOperationAgentGenesisFinalize,
-		HostRegistrationID: strings.TrimSpace(in.HostRegistrationID),
-		HostConversationID: strings.TrimSpace(in.HostConversationID),
-		Domain:             strings.TrimSpace(in.Domain),
-		LocalID:            strings.TrimSpace(in.LocalID),
-		AuthorityModel:     strings.TrimSpace(in.AuthorityModel),
-		AnchorState:        strings.TrimSpace(in.AnchorState),
-		LifecycleStatus:    strings.TrimSpace(in.LifecycleStatus),
-		PublishedVersion:   in.PublishedVersion,
+		Account:                strings.ToLower(strings.TrimSpace(in.Account)),
+		AgentID:                strings.TrimSpace(in.AgentID),
+		CreatedAt:              time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:              time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		Source:                 agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority:        agentregistry.SourceAuthorityLesserHost,
+		SourceOperation:        agentregistry.SourceOperationAgentGenesisFinalize,
+		HostRegistrationID:     strings.TrimSpace(in.HostRegistrationID),
+		HostConversationID:     strings.TrimSpace(in.HostConversationID),
+		Domain:                 strings.TrimSpace(in.Domain),
+		LocalID:                strings.TrimSpace(in.LocalID),
+		AuthorityModel:         strings.TrimSpace(in.AuthorityModel),
+		AnchorState:            strings.TrimSpace(in.AnchorState),
+		OperationalBinding:     strings.TrimSpace(in.OperationalBinding),
+		LifecycleStatus:        strings.TrimSpace(in.LifecycleStatus),
+		PublishedVersion:       in.PublishedVersion,
+		SelfDescriptionVersion: in.SelfDescriptionVersion,
 	}
 	f.agent = agent
 	return agent, f.upsertFinalizedCreated, nil
@@ -1537,8 +1710,10 @@ func (m *memoryAgentRegistry) UpsertFinalized(_ context.Context, in agentregistr
 	agent.LocalID = strings.TrimSpace(in.LocalID)
 	agent.AuthorityModel = strings.TrimSpace(in.AuthorityModel)
 	agent.AnchorState = strings.TrimSpace(in.AnchorState)
+	agent.OperationalBinding = strings.TrimSpace(in.OperationalBinding)
 	agent.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
 	agent.PublishedVersion = in.PublishedVersion
+	agent.SelfDescriptionVersion = in.SelfDescriptionVersion
 	m.records[key] = cloneRegistryAgent(agent)
 	return cloneRegistryAgent(agent), created, nil
 }
