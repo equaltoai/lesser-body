@@ -421,6 +421,101 @@ func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 	}
 }
 
+func TestGenesisProcessingStatesAreWaitOnlyGuidance(t *testing.T) {
+	for _, status := range []string{"in_progress", "declaration_extraction_pending"} {
+		status := status
+		t.Run(status, func(t *testing.T) {
+			raw := map[string]any{
+				"conversation": map[string]any{
+					"registration_id":     "reg-123",
+					"conversation_id":     "conv-456",
+					"agent_id":            "agent-123",
+					"status":              status,
+					"poll_after_seconds":  7,
+					"progress":            "host_processing",
+					"private_transcript":  "must-not-return",
+					"wallet_signature":    "must-not-return",
+					"producedDeclaration": "must-not-return",
+				},
+			}
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			data := structuredGenesisData(t, result)
+			conversation := data["conversation"].(map[string]any)
+			if conversation["poll_after_seconds"] != 7 {
+				t.Fatalf("conversation poll_after_seconds = %#v, want 7", conversation["poll_after_seconds"])
+			}
+			guidance := data["guidance"].(map[string]any)
+			if guidance["next_tool"] != toolAgentGenesisRead {
+				t.Fatalf("processing guidance next_tool = %+v, want %s", guidance, toolAgentGenesisRead)
+			}
+			if guidance["wait"] != true {
+				t.Fatalf("processing guidance wait = %+v, want true", guidance)
+			}
+			if guidance["forbidden_next_tool"] != toolAgentGenesisAdvance {
+				t.Fatalf("processing guidance forbidden_next_tool = %+v, want %s", guidance, toolAgentGenesisAdvance)
+			}
+			if guidance["poll_after_seconds"] != 7 || guidance["expected_wait_seconds"] != 7 {
+				t.Fatalf("processing guidance wait fields = %+v, want poll/expected wait 7", guidance)
+			}
+			if guidance["progress"] != "host_processing" {
+				t.Fatalf("processing guidance progress = %+v", guidance)
+			}
+			instruction, _ := guidance["instruction"].(string)
+			for _, want := range []string{
+				"Host is processing",
+				"Do not call " + toolAgentGenesisAdvance + " again",
+				"do not nudge",
+				"wait poll_after_seconds=7 seconds",
+				"then call " + toolAgentGenesisRead,
+				"Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn",
+			} {
+				if !strings.Contains(instruction, want) {
+					t.Fatalf("processing instruction missing %q: %s", want, instruction)
+				}
+			}
+			if strings.Contains(instruction, "Continue the Host-owned mint conversation with "+toolAgentGenesisAdvance) {
+				t.Fatalf("processing instruction still suggests advance: %s", instruction)
+			}
+			visible := result.Content[0].Text
+			if !strings.Contains(visible, "Do not call "+toolAgentGenesisAdvance+" again") || !strings.Contains(visible, "do not nudge") || !strings.Contains(visible, "wait poll_after_seconds=7 seconds") {
+				t.Fatalf("visible processing guidance missing no-nudge wait text: %s", visible)
+			}
+			encoded := mustMarshalGenesisResult(t, result)
+			for _, forbidden := range []string{"must-not-return", "private_transcript", "wallet_signature", "producedDeclaration"} {
+				if strings.Contains(encoded, forbidden) {
+					t.Fatalf("processing result leaked forbidden marker %q: %s", forbidden, encoded)
+				}
+			}
+		})
+	}
+}
+
+func TestGenesisOwnerInputStatesStillAdvanceGuidance(t *testing.T) {
+	for _, status := range []string{"assistant_turn_ready", "awaiting_owner", "needs_owner_turn"} {
+		status := status
+		t.Run(status, func(t *testing.T) {
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", genesisConversationResponse(status, "private-transcript-must-not-return"))
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			guidance := structuredGenesisData(t, result)["guidance"].(map[string]any)
+			if guidance["next_tool"] != toolAgentGenesisAdvance {
+				t.Fatalf("owner-input guidance = %+v, want %s", guidance, toolAgentGenesisAdvance)
+			}
+			if guidance["wait"] == true || guidance["forbidden_next_tool"] == toolAgentGenesisAdvance {
+				t.Fatalf("owner-input guidance should not be wait-only: %+v", guidance)
+			}
+			instruction, _ := guidance["instruction"].(string)
+			if !strings.Contains(instruction, "Host is waiting for owner/operator input") || !strings.Contains(instruction, toolAgentGenesisAdvance) {
+				t.Fatalf("owner-input instruction = %q", instruction)
+			}
+		})
+	}
+}
+
 func genesisConversationResponse(status string, oldTranscript string) map[string]any {
 	return map[string]any{
 		"conversation": map[string]any{

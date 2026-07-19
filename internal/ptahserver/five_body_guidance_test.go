@@ -75,6 +75,18 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 		t.Fatalf("refusal floor = %+v", refusalFloor)
 	}
 
+	playbook := resourcePayload(t, srv, resourceAgentSideGenesisPlaybook)["playbook"].(map[string]any)
+	waitOnly := playbook["wait_only_processing_states"].(map[string]any)
+	if waitOnly["next_tool"] != toolAgentGenesisRead || waitOnly["forbidden_next_tool"] != toolAgentGenesisAdvance || waitOnly["wait"] != true {
+		t.Fatalf("wait-only processing guidance = %+v", waitOnly)
+	}
+	if !containsAnyString(waitOnly["states"], "in_progress") || !containsAnyString(waitOnly["states"], "declaration_extraction_pending") {
+		t.Fatalf("wait-only processing states = %+v", waitOnly["states"])
+	}
+	if instruction := waitOnly["instruction"].(string); !strings.Contains(instruction, "Do not call "+toolAgentGenesisAdvance+" again") || !strings.Contains(instruction, "do not nudge") || !strings.Contains(instruction, "poll_after_seconds") {
+		t.Fatalf("wait-only processing instruction = %q", instruction)
+	}
+
 	prompts := srv.Prompts().List()
 	if got, want := promptNames(prompts), []string{promptDraftGenesisTurn, promptReviewSoulDraft}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("prompt names = %v, want %v", got, want)
@@ -329,8 +341,14 @@ func TestAgentGenesisListRequiresOwnerOperatorReadAuthority(t *testing.T) {
 
 func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "not_available")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "declaration_extraction_pending")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "producer_contract_missing")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "restart_soul_bootstrap")
+	for _, wantField := range []string{"forbidden_next_tool", "wait", "poll_after_seconds", "expected_wait_seconds"} {
+		if !strings.Contains(string(genesisOutputSchema()), wantField) {
+			t.Fatalf("genesis output schema missing guidance field %q: %s", wantField, string(genesisOutputSchema()))
+		}
+	}
 	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "not_available")
 	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "producer_contract_missing")
 }

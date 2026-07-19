@@ -63,12 +63,12 @@ func genesisOutputSchema() json.RawMessage {
 				"description":"Sanitized Host-backed genesis state. Conversation messages, when present, are structured data only.",
 				"properties":{
 					"operation":{"type":"string","enum":["begin","list","read","advance","recover","complete","finalize_preflight","finalize"]},
-					"status":{"type":"string","enum":["begin","not_available","assistant_turn_ready","awaiting_owner","needs_owner_turn","in_progress","declaration_ready","ready_for_completion","complete","completed","finalization_ready","preflight_ok","ready_to_finalize","finalize_ready","published","finalized","active","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
+					"status":{"type":"string","enum":["begin","not_available","assistant_turn_ready","awaiting_owner","needs_owner_turn","in_progress","declaration_extraction_pending","declaration_ready","ready_for_completion","complete","completed","finalization_ready","preflight_ok","ready_to_finalize","finalize_ready","published","finalized","active","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
 					"failure":{"type":"object","properties":{
 						"code":{"type":"string","enum":["producer_contract_missing","missing_produced_declarations","invalid_produced_declarations","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
 						"recovery":{"type":"object","properties":{"action":{"type":"string","enum":["restart_soul_bootstrap","retry","wait","contact_operator"]}}}
 					}},
-					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"instruction":{"type":"string"}}}
+					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"forbidden_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"wait":{"type":"boolean"},"poll_after_seconds":{"type":"integer"},"expected_wait_seconds":{"type":"integer"},"progress":{"type":"string"},"progress_percent":{"type":"integer"},"instruction":{"type":"string"}}}
 				}
 			},
 			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
@@ -130,7 +130,7 @@ func agentGenesisReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisRead,
 		Title:        "Read Host-backed agent genesis",
-		Description:  "Read the durable lesser-host HostedGenesisSession projection for an in-progress or completed Ptah genesis conversation. Follow structuredContent.data.guidance for state to next tool: advance, complete, preflight, finalize, or fresh begin. Requires explicit instance owner/operator OAuth authority and read scope; the Host projection is the source of truth.",
+		Description:  "Read the durable lesser-host HostedGenesisSession projection for an in-progress or completed Ptah genesis conversation. Follow structuredContent.data.guidance for state to next tool. When guidance.wait=true or Host status is in_progress/declaration_extraction_pending, do not call agent_genesis_advance to nudge; wait the returned poll_after_seconds when present, then read again. Requires explicit instance owner/operator OAuth authority and read scope; the Host projection is the source of truth.",
 		Annotations:  readOnlyToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -141,7 +141,7 @@ func agentGenesisAdvanceDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisAdvance,
 		Title:       "Advance Host-backed agent genesis",
-		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation. Persist and reuse the Host conversation_id returned by the first call; this is a new-agent genesis flow, not existing-agent delegation. Next states: continue advance/read while in progress, call agent_genesis_complete when Host reports declaration_ready. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation only when Host is waiting for owner/operator input: assistant_turn_ready, awaiting_owner, or needs_owner_turn. Persist and reuse the Host conversation_id returned by the first call; this is a new-agent genesis flow, not existing-agent delegation. If Host reports in_progress or declaration_extraction_pending, do not call this tool again and do not nudge; wait poll_after_seconds when present, then call agent_genesis_read. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -804,9 +804,25 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 	case operation == "begin":
 		guidance["next_tool"] = toolAgentGenesisAdvance
 		guidance["instruction"] = "Call agent_genesis_advance with the returned registration_id and the first owner/operator message; persist the returned conversation_id."
-	case status == "assistant_turn_ready" || status == "awaiting_owner" || status == "needs_owner_turn" || status == "in_progress":
+	case genesisProcessingWaitStatus(status):
+		guidance["next_tool"] = toolAgentGenesisRead
+		guidance["wait"] = true
+		guidance["forbidden_next_tool"] = toolAgentGenesisAdvance
+		if pollAfter, ok := genesisPollAfterSeconds(data); ok {
+			guidance["poll_after_seconds"] = pollAfter
+			guidance["expected_wait_seconds"] = pollAfter
+		}
+		if progress := firstNonEmpty(nestedString(data, "conversation", "progress"), stringValue(data, "progress")); progress != "" {
+			guidance["progress"] = progress
+		}
+		if progressPercent, ok := genesisProgressPercent(data); ok {
+			guidance["progress_percent"] = progressPercent
+		}
+		guidance["instruction"] = genesisProcessingWaitInstruction(data)
+	case genesisOwnerInputStatus(status):
 		guidance["next_tool"] = toolAgentGenesisAdvance
-		guidance["instruction"] = "Continue the Host-owned mint conversation with agent_genesis_advance, or poll with agent_genesis_read before deciding."
+		guidance["alternate_next_tool"] = toolAgentGenesisRead
+		guidance["instruction"] = "Host is waiting for owner/operator input. Call agent_genesis_advance with the next owner/operator message; optionally call agent_genesis_read first to refresh the Host projection."
 	case status == "declaration_ready" || status == "ready_for_completion":
 		guidance["next_tool"] = toolAgentGenesisComplete
 		guidance["instruction"] = "Call agent_genesis_complete so Host extracts and validates its durable produced_declarations checkpoint."
@@ -825,6 +841,86 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 		guidance["instruction"] = "Poll agent_genesis_read and follow the Host status; Body does not substitute a local genesis state machine."
 	}
 	return guidance
+}
+
+func genesisProcessingWaitStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "in_progress", "declaration_extraction_pending":
+		return true
+	default:
+		return false
+	}
+}
+
+func genesisOwnerInputStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "assistant_turn_ready", "awaiting_owner", "needs_owner_turn":
+		return true
+	default:
+		return false
+	}
+}
+
+func genesisProcessingWaitInstruction(data map[string]any) string {
+	waitText := "wait for Host's expected delay"
+	if pollAfter, ok := genesisPollAfterSeconds(data); ok {
+		waitText = fmt.Sprintf("wait poll_after_seconds=%d seconds", pollAfter)
+	}
+	return "Host is processing. Do not call " + toolAgentGenesisAdvance + " again and do not nudge; " + waitText + ", then call " + toolAgentGenesisRead + ". Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn."
+}
+
+func genesisPollAfterSeconds(data map[string]any) (int, bool) {
+	for _, candidate := range []map[string]any{nestedMap(data, "conversation"), data} {
+		if len(candidate) == 0 {
+			continue
+		}
+		value, ok := firstField(candidate, "poll_after_seconds", "pollAfterSeconds")
+		if !ok {
+			continue
+		}
+		switch number := value.(type) {
+		case int:
+			if number >= 0 {
+				return number, true
+			}
+		case int64:
+			if number >= 0 {
+				return int(number), true
+			}
+		case float64:
+			if number >= 0 {
+				return int(number), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func genesisProgressPercent(data map[string]any) (int, bool) {
+	for _, candidate := range []map[string]any{nestedMap(data, "conversation"), data} {
+		if len(candidate) == 0 {
+			continue
+		}
+		value, ok := firstField(candidate, "progress_percent", "progressPercent")
+		if !ok {
+			continue
+		}
+		switch number := value.(type) {
+		case int:
+			if number >= 0 {
+				return number, true
+			}
+		case int64:
+			if number >= 0 {
+				return int(number), true
+			}
+		case float64:
+			if number >= 0 {
+				return int(number), true
+			}
+		}
+	}
+	return 0, false
 }
 
 func restartSoulBootstrapGuidance(data map[string]any) map[string]any {
@@ -1000,6 +1096,7 @@ func sanitizeGenesisConversation(raw map[string]any) map[string]any {
 		"messages_truncated": {"messages_truncated", "messagesTruncated"},
 		"request_id":         {"request_id", "requestId"},
 		"poll_after_seconds": {"poll_after_seconds", "pollAfterSeconds"},
+		"progress_percent":   {"progress_percent", "progressPercent"},
 		"created_at":         {"created_at", "createdAt"},
 		"updated_at":         {"updated_at", "updatedAt"},
 		"completed_at":       {"completed_at", "completedAt"},
@@ -1008,6 +1105,7 @@ func sanitizeGenesisConversation(raw map[string]any) map[string]any {
 			out[output] = value
 		}
 	}
+	copyStringField(out, "progress", raw, "progress")
 	if messages, truncated := sanitizeGenesisMessages(raw["messages"]); len(messages) > 0 {
 		out["messages"] = messages
 		if truncated {

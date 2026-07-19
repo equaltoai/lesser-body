@@ -619,8 +619,8 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#928` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Safe discovery/recovery placeholder for durable Host-backed genesis conversations. It does not fabricate local state; until Body adds a checked Host list client surface it returns `status="not_available"` and `failure.code="producer_contract_missing"` with guidance to use `agent_genesis_read` for known ids or `agent_list` after finalization. |
-| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. |
-| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id; continue until Host reports declaration readiness. |
+| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. When Host reports `in_progress` / `declaration_extraction_pending`, guidance is wait-only: do not call `agent_genesis_advance` to nudge; wait `poll_after_seconds` when present, then read again. |
+| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation only when Host is waiting for owner/operator input (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`) and persist the returned conversation id. Do not call this tool while Host is `in_progress` / `declaration_extraction_pending`; wait/read instead. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. If Host says `restart_soul_bootstrap`, call `agent_genesis_begin` for a fresh lane instead. |
 | `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. Next: `agent_genesis_finalize_preflight`. |
 | `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. Next: `agent_genesis_finalize` after Host readiness. |
@@ -709,8 +709,11 @@ The owner-operated sequence is:
    `POST /api/v1/soul/instance/agents/register/begin`. Host creates the registration and derives the new agent
    identity; Body does not look up or require an existing agent and does not create a local genesis record.
 4. The owner calls `agent_genesis_advance` for the first turn with a model and message, then continues the conversation
-   using the `registration_id` and Host-issued `conversation_id`. `agent_genesis_read` polls the durable Host
-   projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal.
+   using the `registration_id` and Host-issued `conversation_id` only when Host is waiting for owner/operator input
+   (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`). `agent_genesis_read` polls the durable Host
+   projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal. If Host reports
+   `in_progress` or `declaration_extraction_pending`, wait `poll_after_seconds` when present, then call
+   `agent_genesis_read`; do not call `agent_genesis_advance` again just to nudge the assistant forward.
 5. If Host returns a typed recoverable failure, the owner calls `agent_genesis_recover` and resumes with the Host's
    checkpoint. When the conversation is ready, `agent_genesis_complete` asks Host to extract its own declarations;
    callers cannot provide or replace declaration material.
@@ -738,7 +741,8 @@ State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 |---------------------|-----------|-----------------|
 | no genesis lane yet (before any genesis call) | `agent_genesis_skill_get` | Fetch the read-only operator skill bundle and use `SKILL.md` as the operating playbook; then call `agent_genesis_begin`. |
 | `agent_genesis_begin` success | `agent_genesis_advance` | Send the first owner/operator message and persist Host's `conversation_id`. |
-| `assistant_turn_ready`, `awaiting_owner`, `needs_owner_turn`, or `in_progress` | `agent_genesis_advance` or `agent_genesis_read` | Continue the Host conversation, or poll before deciding. |
+| `assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn` | `agent_genesis_advance` | Host is waiting for owner/operator input; submit the next owner/operator message, optionally after a read refresh. |
+| `in_progress` or `declaration_extraction_pending` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and `poll_after_seconds` / `expected_wait_seconds` when Host provides a delay. Do not call `agent_genesis_advance` again and do not nudge; wait the expected delay, then read. |
 | `declaration_ready` / ready-for-completion | `agent_genesis_complete` | Let Host extract/validate its durable produced-declarations checkpoint; callers do not supply declarations. |
 | `agent_genesis_complete` success / finalization-ready state | `agent_genesis_finalize_preflight` | Check Host readiness before finalization. |
 | preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |

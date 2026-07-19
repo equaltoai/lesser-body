@@ -198,6 +198,7 @@ func genesisSkillVisibleText(data map[string]any) string {
 	text.WriteString("- Interview the staged five bodies identity → philosophy → discipline → boundaries → soul.\n")
 	text.WriteString("- Persist `conversation_id` immediately and after every call.\n")
 	text.WriteString("- Follow `structuredContent.data.guidance.next_tool` from every Host-backed response.\n")
+	text.WriteString("- `in_progress` and `declaration_extraction_pending` are wait-only: Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge; wait `poll_after_seconds` when present, then call `" + toolAgentGenesisRead + "`.\n")
 	text.WriteString("- Call `" + toolAgentGenesisComplete + "`; never submit declarations as source of truth.\n")
 	text.WriteString("- Call `" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`.\n")
 	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
@@ -260,6 +261,10 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
    also keep the ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair together.
 4. **Read and follow guidance.** Poll ` + "`" + toolAgentGenesisRead + "`" + ` for the durable Host projection and
    always follow ` + "`structuredContent.data.guidance.next_tool`" + ` for the next step; do not improvise ordering.
+   ` + "`in_progress`" + ` and ` + "`declaration_extraction_pending`" + ` are Host-processing states, not owner-input
+   states. When status is one of those states or guidance has ` + "`wait=true`" + `, do not treat it as owner input.
+   Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` again and do not nudge while Host is processing; wait for ` + "`poll_after_seconds`" + ` when present, then call ` + "`" + toolAgentGenesisRead + "`" + `. Only advance after Host reports
+   ` + "`assistant_turn_ready`" + `, ` + "`awaiting_owner`" + `, or ` + "`needs_owner_turn`" + `.
 5. **Complete.** When Host reports declaration readiness, call ` + "`" + toolAgentGenesisComplete + "`" + `. Host
    extracts and validates its own produced declarations; never submit declarations as source of truth.
 6. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` then, only after Host
@@ -316,7 +321,8 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | before any genesis call | ` + toolAgentGenesisSkillGet + ` |
 | skill fetched | ` + toolAgentGenesisBegin + ` |
 | begin success | ` + toolAgentGenesisAdvance + ` (persist conversation_id) |
-| assistant_turn_ready / awaiting_owner / needs_owner_turn / in_progress | ` + toolAgentGenesisAdvance + ` or ` + toolAgentGenesisRead + ` |
+| assistant_turn_ready / awaiting_owner / needs_owner_turn | ` + toolAgentGenesisAdvance + ` |
+| in_progress / declaration_extraction_pending | ` + toolAgentGenesisRead + ` (wait-only; never ` + toolAgentGenesisAdvance + ` to nudge) |
 | declaration_ready | ` + toolAgentGenesisComplete + ` |
 | complete success / finalization-ready | ` + toolAgentGenesisFinalizePreflight + ` |
 | preflight-ready | ` + toolAgentGenesisFinalize + ` |
@@ -325,6 +331,8 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | other typed recoverable failure | ` + toolAgentGenesisRecover + ` |
 
 Always prefer the live ` + "`structuredContent.data.guidance.next_tool`" + ` from the latest Host-backed response
-over this static table.
+over this static table. If live guidance has ` + "`wait=true`" + `, use any ` + "`poll_after_seconds`" + ` /
+` + "`expected_wait_seconds`" + ` value as the expected delay, call ` + "`" + toolAgentGenesisRead + "`" + ` after that
+delay, and do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports an owner-input state.
 `
 }
