@@ -615,7 +615,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder actor; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
+| `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
 | `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#928` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Safe discovery/recovery placeholder for durable Host-backed genesis conversations. It does not fabricate local state; until Body adds a checked Host list client surface it returns `status="not_available"` and `failure.code="producer_contract_missing"` with guidance to use `agent_genesis_read` for known ids or `agent_list` after finalization. |
@@ -1007,10 +1007,17 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
 `agent_bind_soul` input:
 
 - Required: `soul_agent_id`, `idempotency_key`.
-- Derived: `actor_username` is taken from the authenticated account-holder OAuth principal. If supplied explicitly, it
-  must match that principal after normalization or the tool fails closed.
-- Optional correlation/evidence: `body_actor_id` (defaults to `body://ptah/{actor_username}`), `host_registration_id`,
-  `host_conversation_id`, `principal_address`, and nested `evidence.host_request_id`,
+- Derived: the account-holder/operator authority is taken from the authenticated OAuth principal. Optional
+  `actor_username`, when supplied, must match that principal after normalization or the tool fails closed; it is not the
+  Lesser binding target.
+- Derived target: Body reads the authenticated account's Host-finalized Ptah registry row for `soul_agent_id` and uses
+  Host-derived `local_id` as Lesser `actor_username`. If the account-scoped row exists but lacks the local mapping, Body
+  may refetch Host public identity `GET /api/v1/soul/agents/{agentId}` and repair the registry from that source truth.
+  If no verified local actor mapping is available, the tool fails closed and does not fall back to the account-holder
+  username.
+- Optional correlation/evidence: `body_actor_id` accepts `body://ptah/{local_id}` or `{local_id}` only when it matches
+  the Host-derived local actor for the supplied `soul_agent_id`; Body forwards the canonical
+  `body://ptah/{local_id}`. Also accepted: `host_registration_id`, `host_conversation_id`, `principal_address`, and nested `evidence.host_request_id`,
   `evidence.declaration_hash`, `evidence.issued_at`.
 
 The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API (`POST /api/v1/souls/bindings`) through
@@ -1020,6 +1027,10 @@ never forwards the caller's OAuth token to that server-to-server surface and nev
 `LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
 `hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
 status link, and agent summary.
+
+Cross-account or arbitrary target actor binding fails before Body calls Lesser: the target local actor must come from the
+authenticated account's Host-derived Ptah registry row or from a Host public identity refetch for that same
+account-scoped `soul_agent_id`.
 
 Lesser remains the sole writer of soul/body binding state. `agent_bind_soul` does not create, update, delete, or store
 `SOUL_BODY_BINDING` records in Body. After Lesser-owned binding state appears in the Lesser table, Ka resolves the actor

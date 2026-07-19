@@ -57,16 +57,18 @@ func TestUpsertFinalizedCreatesAndReplaysHostDerivedRow(t *testing.T) {
 	store, fake := newTestStore(t)
 	ctx := context.Background()
 	in := FinalizedInput{
-		Account:            " Drone-Ada ",
-		AgentID:            " agent-0xabc ",
-		HostRegistrationID: "reg-123",
-		HostConversationID: "conv-456",
-		Domain:             "example.com",
-		LocalID:            "ada",
-		AuthorityModel:     "instance_trust",
-		AnchorState:        "hosted_offchain",
-		LifecycleStatus:    "active",
-		PublishedVersion:   7,
+		Account:                " Drone-Ada ",
+		AgentID:                " agent-0xabc ",
+		HostRegistrationID:     "reg-123",
+		HostConversationID:     "conv-456",
+		Domain:                 "example.com",
+		LocalID:                "ada",
+		AuthorityModel:         "instance_trust",
+		AnchorState:            "hosted_offchain",
+		OperationalBinding:     "hosted_bound_soul",
+		LifecycleStatus:        "active",
+		PublishedVersion:       7,
+		SelfDescriptionVersion: 8,
 	}
 
 	created, didCreate, err := store.UpsertFinalized(ctx, in)
@@ -256,7 +258,7 @@ func assertHostFinalizedAgent(t testing.TB, got *Agent) {
 	if got.HostRegistrationID != "reg-123" || got.HostConversationID != "conv-456" {
 		t.Fatalf("host ids = %q/%q", got.HostRegistrationID, got.HostConversationID)
 	}
-	if got.Domain != "example.com" || got.LocalID != "ada" || got.AuthorityModel != "instance_trust" || got.AnchorState != "hosted_offchain" || got.LifecycleStatus != "active" || got.PublishedVersion != 7 {
+	if got.Domain != "example.com" || got.LocalID != "ada" || got.AuthorityModel != "instance_trust" || got.AnchorState != "hosted_offchain" || got.OperationalBinding != "hosted_bound_soul" || got.LifecycleStatus != "active" || got.PublishedVersion != 7 || got.SelfDescriptionVersion != 8 {
 		t.Fatalf("host identity fields = %+v", got)
 	}
 }

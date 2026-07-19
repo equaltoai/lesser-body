@@ -54,6 +54,10 @@ type soulBindingClient interface {
 	InitiateSoulBinding(ctx context.Context, integrationBearer string, idempotencyKey string, req lesserapi.SoulBindingRequest) (*lesserapi.SoulBindingResponse, error)
 }
 
+type hostIdentityClient interface {
+	GetAgentIdentity(ctx context.Context, agentID string) (*hostapi.AgentIdentity, error)
+}
+
 // AgentContentStore is the body-owned Ptah content dependency used by Ptah
 // authoring tools. The production implementation is internal/agentcontent.Store,
 // which is TableTheory-backed over INSTANCE_CONTENT_TABLE.
@@ -86,6 +90,8 @@ type config struct {
 
 	genesisClient        hostapi.GenesisClient
 	genesisFactory       func() (hostapi.GenesisClient, error)
+	hostIdentityClient   hostIdentityClient
+	hostIdentityFactory  func() (hostIdentityClient, error)
 	agentRegistry        AgentRegistry
 	agentRegistryFactory func() (AgentRegistry, error)
 	agentLiveClient      AgentLiveClient
@@ -115,6 +121,14 @@ func WithSoulBindingClient(client soulBindingClient) Option {
 func WithGenesisClient(client hostapi.GenesisClient) Option {
 	return func(cfg *config) {
 		cfg.genesisClient = client
+	}
+}
+
+// WithHostIdentityClient injects the lesser-host public identity client used by
+// agent_bind_soul to repair/verify Host-derived local actor mappings.
+func WithHostIdentityClient(client hostIdentityClient) Option {
+	return func(cfg *config) {
+		cfg.hostIdentityClient = client
 	}
 }
 
@@ -267,6 +281,9 @@ func defaultConfig() config {
 		genesisFactory: func() (hostapi.GenesisClient, error) {
 			return hostapi.Default()
 		},
+		hostIdentityFactory: func() (hostIdentityClient, error) {
+			return hostapi.Default()
+		},
 		agentRegistryFactory: defaultAgentRegistry,
 		agentLiveFactory:     defaultAgentLiveClient,
 		agentContentFactory: func() (AgentContentStore, error) {
@@ -302,15 +319,15 @@ func agentBindSoulDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentBindSoul,
 		Title:       "Bind agent soul",
-		Description: "Orchestrate Lesser's hosted soul/body binding ceremony for the authenticated account-holder principal. Requires write scope and delegates all binding state writes to Lesser. For a newly minted Host-genesis agent, call agent_genesis_finalize first so Body can write the Host-derived Ptah registry row, then use agent_get or agent_list to verify visibility.",
+		Description: "Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder principal. Requires write scope, resolves the target actor from Host-derived Ptah registry/identity state, and delegates all binding state writes to Lesser. For a newly minted Host-genesis agent, call agent_genesis_finalize first so Body can write the Host-derived Ptah registry row, then use agent_get or agent_list to verify visibility.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"soul_agent_id":{"type":"string","description":"Full Lesser Soul agent identifier to bind to the authenticated account-holder actor."},
+				"soul_agent_id":{"type":"string","description":"Full Lesser Soul agent identifier whose Host-derived local_id selects the Lesser agent actor to bind."},
 				"idempotency_key":{"type":"string","description":"Caller-supplied replay key forwarded as Lesser's Idempotency-Key header."},
-				"actor_username":{"type":"string","description":"Optional explicit actor username. When supplied it must match the authenticated account-holder principal."},
-				"body_actor_id":{"type":"string","description":"Optional Body/Ptah actor correlation id. Defaults to body://ptah/{actor_username}."},
+				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal; it is not the Lesser binding target."},
+				"body_actor_id":{"type":"string","description":"Optional Body/Ptah target actor correlation id. Accepts body://ptah/{local_id} or {local_id} only when it matches Host-derived registry/identity state. Defaults to body://ptah/{local_id}."},
 				"host_registration_id":{"type":"string","description":"Optional Host registration id for ceremony correlation."},
 				"host_conversation_id":{"type":"string","description":"Optional Host conversation id for ceremony correlation."},
 				"principal_address":{"type":"string","description":"Optional principal wallet/address evidence already verified by Host/Lesser."},
@@ -635,7 +652,7 @@ type agentInstructionsArchiveInput struct {
 
 func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	principal := auth.PrincipalFromToolContext(ctx)
-	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentBindSoul)
+	accountActor, errResult, err := authenticatedAccountHolderActor(principal, toolAgentBindSoul)
 	if errResult != nil || err != nil {
 		return errResult, err
 	}
@@ -646,7 +663,12 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 		})
 	}
 
-	in, errResult, err := parseAgentBindSoulInput(args, actorUsername)
+	in, errResult, err := parseAgentBindSoulInput(args, accountActor)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+
+	bindingActor, errResult, err := cfg.resolveSoulBindingActor(ctx, accountActor, &in)
 	if errResult != nil || err != nil {
 		return errResult, err
 	}
@@ -674,13 +696,13 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 
 	slog.InfoContext(ctx, "ptah tool invocation",
 		"tool", toolAgentBindSoul,
-		"actor_username", actorUsername,
+		"actor_username", bindingActor,
 		"soul_agent_id", in.SoulAgentID,
 		"idempotency_key_present", in.IdempotencyKey != "",
 	)
 
 	req := lesserapi.SoulBindingRequest{
-		ActorUsername:      actorUsername,
+		ActorUsername:      bindingActor,
 		SoulAgentID:        in.SoulAgentID,
 		BodyActorID:        in.BodyActorID,
 		HostRegistrationID: in.HostRegistrationID,
@@ -701,7 +723,7 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 	if err != nil {
 		return soulBindingToolResultFromError(err)
 	}
-	return soulBindingSuccessResult(actorUsername, in.IdempotencyKey, resp)
+	return soulBindingSuccessResult(bindingActor, in.IdempotencyKey, resp)
 }
 
 func (cfg config) handleAgentGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1348,10 +1370,175 @@ func parseAgentBindSoulInput(args json.RawMessage, actorUsername string) (agentB
 			"source": "lesser_body_ptah",
 		}), nil
 	}
-	if in.BodyActorID == "" {
-		in.BodyActorID = "body://ptah/" + actorUsername
-	}
 	return in, nil, nil
+}
+
+func (cfg config) resolveSoulBindingActor(ctx context.Context, accountActor string, in *agentBindSoulInput) (string, *mcpruntime.ToolResult, error) {
+	accountActor = normalizeActorUsername(accountActor)
+	if in == nil || strings.TrimSpace(in.SoulAgentID) == "" {
+		return "", mustToolErrorResult("invalid_request", "soul_agent_id is required", http.StatusBadRequest, nil), nil
+	}
+
+	registry, err := cfg.registry()
+	if err != nil || registry == nil {
+		return "", mustToolErrorResult("not_configured", "Body/Ptah agent registry is required to verify Host-derived local actor mapping", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+			"tool":   toolAgentBindSoul,
+		}), nil
+	}
+
+	agent, err := registry.Get(ctx, accountActor, in.SoulAgentID)
+	if err != nil {
+		if errors.Is(err, agentregistry.ErrAgentNotFound) {
+			return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable for this account-scoped soul_agent_id; call agent_genesis_finalize first or retry after Host finalization is visible", "agent_registry"), nil
+		}
+		return "", mustToolErrorResult("agent_registry_error", "Body failed to read the account-scoped Ptah registry row before soul binding", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+			"tool":   toolAgentBindSoul,
+		}), nil
+	}
+	if agent == nil || normalizeActorUsername(agent.Account) != accountActor || strings.TrimSpace(agent.AgentID) != strings.TrimSpace(in.SoulAgentID) {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable for this account-scoped soul_agent_id", "agent_registry"), nil
+	}
+	if strings.TrimSpace(agent.Source) != agentregistry.SourceHostGenesisFinalize {
+		return "", hostActorMappingUnavailableResult("agent_bind_soul requires a Host-finalized Ptah registry row for the supplied soul_agent_id", "agent_registry"), nil
+	}
+
+	localActor := normalizeSoulBindingLocalActor(agent.LocalID)
+	if localActor == "" {
+		var errResult *mcpruntime.ToolResult
+		agent, localActor, errResult, err = cfg.refetchSoulBindingActorFromHost(ctx, accountActor, registry, agent)
+		if errResult != nil || err != nil {
+			return "", errResult, err
+		}
+		if agent == nil || localActor == "" {
+			return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable for this soul_agent_id", "lesser_host_identity"), nil
+		}
+	}
+
+	if in.BodyActorID != "" {
+		claimedLocalActor, parseErr := normalizeBodyActorIDLocalActor(in.BodyActorID)
+		if parseErr != nil {
+			return "", mustToolErrorResult("invalid_request", parseErr.Error(), http.StatusBadRequest, map[string]any{
+				"source": "lesser_body_ptah",
+				"field":  "body_actor_id",
+			}), nil
+		}
+		if claimedLocalActor != localActor {
+			return "", mustToolErrorResult("forbidden", "body_actor_id does not match the Host-derived local actor for this account-scoped soul_agent_id", http.StatusForbidden, map[string]any{
+				"source": "agent_registry",
+				"tool":   toolAgentBindSoul,
+			}), nil
+		}
+	}
+	in.BodyActorID = canonicalBodyActorID(localActor)
+	return localActor, nil, nil
+}
+
+func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountActor string, registry AgentRegistry, existing *agentregistry.Agent) (*agentregistry.Agent, string, *mcpruntime.ToolResult, error) {
+	client, err := cfg.hostIdentity()
+	if err != nil || client == nil {
+		return nil, "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable because lesser-host identity lookup is not configured", "lesser_host_identity"), nil
+	}
+	identity, err := client.GetAgentIdentity(ctx, existing.AgentID)
+	if err != nil {
+		return nil, "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; Body could not refetch lesser-host public identity for this soul_agent_id", "lesser_host_identity"), nil
+	}
+	localActor, errResult := verifiedLocalActorFromHostIdentity(existing.AgentID, identity)
+	if errResult != nil {
+		return nil, "", errResult, nil
+	}
+
+	updated, _, updateErr := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
+		Account:                accountActor,
+		AgentID:                existing.AgentID,
+		HostRegistrationID:     existing.HostRegistrationID,
+		HostConversationID:     existing.HostConversationID,
+		Domain:                 identity.Domain,
+		LocalID:                identity.LocalID,
+		AuthorityModel:         identity.AuthorityModel,
+		AnchorState:            identity.AnchorState,
+		OperationalBinding:     identity.OperationalBinding,
+		LifecycleStatus:        firstNonEmpty(identity.LifecycleStatus, identity.Status),
+		PublishedVersion:       firstNonZeroInt64(identity.PublishedVersion, existing.PublishedVersion),
+		SelfDescriptionVersion: firstNonZeroInt64(identity.SelfDescriptionVersion, existing.SelfDescriptionVersion),
+	})
+	if updateErr != nil {
+		slog.WarnContext(ctx, "ptah soul binding Host identity registry repair failed",
+			"tool", toolAgentBindSoul,
+			"source", "agent_registry",
+			"error", "registry update failed",
+		)
+		return existing, localActor, nil, nil
+	}
+	if updated == nil {
+		return existing, localActor, nil, nil
+	}
+	return updated, localActor, nil, nil
+}
+
+func verifiedLocalActorFromHostIdentity(agentID string, identity *hostapi.AgentIdentity) (string, *mcpruntime.ToolResult) {
+	if identity == nil {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; lesser-host identity response was empty", "lesser_host_identity")
+	}
+	if !strings.EqualFold(strings.TrimSpace(identity.AgentID), strings.TrimSpace(agentID)) {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; lesser-host identity did not match the supplied soul_agent_id", "lesser_host_identity")
+	}
+	localActor := normalizeSoulBindingLocalActor(identity.LocalID)
+	if localActor == "" {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; lesser-host identity did not include a valid local_id", "lesser_host_identity")
+	}
+	if strings.TrimSpace(identity.AuthorityModel) != lesserapi.SoulAuthorityModelInstanceTrust ||
+		strings.TrimSpace(identity.AnchorState) != lesserapi.SoulAnchorStateHostedOffchain ||
+		strings.TrimSpace(identity.OperationalBinding) != lesserapi.SoulOperationalBindingHostedBound {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; lesser-host identity is not an active hosted/offchain bound soul", "lesser_host_identity")
+	}
+	if status := strings.ToLower(strings.TrimSpace(firstNonEmpty(identity.LifecycleStatus, identity.Status))); status != "active" {
+		return "", hostActorMappingUnavailableResult("Host-derived local actor mapping is unavailable; lesser-host identity is not active", "lesser_host_identity")
+	}
+	return localActor, nil
+}
+
+func hostActorMappingUnavailableResult(message string, source string) *mcpruntime.ToolResult {
+	return mustToolErrorResult("host_actor_mapping_unavailable", message, http.StatusConflict, map[string]any{
+		"source": source,
+		"tool":   toolAgentBindSoul,
+	})
+}
+
+func normalizeSoulBindingLocalActor(value string) string {
+	value = normalizeActorUsername(value)
+	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") {
+		return ""
+	}
+	return value
+}
+
+func normalizeBodyActorIDLocalActor(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("body_actor_id is empty")
+	}
+	local := raw
+	if strings.HasPrefix(strings.ToLower(raw), "body://") {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed == nil || parsed.Scheme != "body" || parsed.Host != "ptah" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("body_actor_id must be body://ptah/{local_id} or a local_id")
+		}
+		local = strings.Trim(parsed.Path, "/")
+		if strings.Contains(local, "/") {
+			return "", fmt.Errorf("body_actor_id must identify exactly one local actor")
+		}
+	}
+	local = normalizeSoulBindingLocalActor(local)
+	if local == "" {
+		return "", fmt.Errorf("body_actor_id must be body://ptah/{local_id} or a valid local_id")
+	}
+	return local, nil
+}
+
+func canonicalBodyActorID(localActor string) string {
+	return "body://ptah/" + normalizeSoulBindingLocalActor(localActor)
 }
 
 func parseAgentGetInput(args json.RawMessage, actorUsername string) (agentGetInput, *mcpruntime.ToolResult, error) {
@@ -1578,6 +1765,16 @@ func (cfg config) genesis() (hostapi.GenesisClient, error) {
 		return nil, fmt.Errorf("Host genesis client is not configured")
 	}
 	return cfg.genesisFactory()
+}
+
+func (cfg config) hostIdentity() (hostIdentityClient, error) {
+	if cfg.hostIdentityClient != nil {
+		return cfg.hostIdentityClient, nil
+	}
+	if cfg.hostIdentityFactory == nil {
+		return nil, fmt.Errorf("Host identity client is not configured")
+	}
+	return cfg.hostIdentityFactory()
 }
 
 func (cfg config) registry() (AgentRegistry, error) {
@@ -2078,12 +2275,14 @@ func registryHostIdentitySummary(agent *agentregistry.Agent) map[string]any {
 	}
 	out := map[string]any{}
 	for key, value := range map[string]any{
-		"domain":            agent.Domain,
-		"local_id":          agent.LocalID,
-		"authority_model":   agent.AuthorityModel,
-		"anchor_state":      agent.AnchorState,
-		"lifecycle_status":  agent.LifecycleStatus,
-		"published_version": agent.PublishedVersion,
+		"domain":                   agent.Domain,
+		"local_id":                 agent.LocalID,
+		"authority_model":          agent.AuthorityModel,
+		"anchor_state":             agent.AnchorState,
+		"operational_binding":      agent.OperationalBinding,
+		"lifecycle_status":         agent.LifecycleStatus,
+		"published_version":        agent.PublishedVersion,
+		"self_description_version": agent.SelfDescriptionVersion,
 	} {
 		switch typed := value.(type) {
 		case string:
