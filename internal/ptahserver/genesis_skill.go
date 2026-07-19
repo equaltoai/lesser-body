@@ -198,6 +198,7 @@ func genesisSkillVisibleText(data map[string]any) string {
 	text.WriteString("- Interview the staged five bodies identity → philosophy → discipline → boundaries → soul.\n")
 	text.WriteString("- Persist `conversation_id` immediately and after every call.\n")
 	text.WriteString("- Follow `structuredContent.data.guidance.next_tool` from every Host-backed response.\n")
+	text.WriteString("- `in_progress` and `declaration_extraction_pending` are wait-only: Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge; wait `poll_after_seconds` when present, then call `" + toolAgentGenesisRead + "`.\n")
 	text.WriteString("- Call `" + toolAgentGenesisComplete + "`; never submit declarations as source of truth.\n")
 	text.WriteString("- Call `" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`.\n")
 	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
@@ -258,13 +259,21 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
    staged five bodies identity → philosophy → discipline → boundaries → soul, with capabilities and transparency as
    satellites. Persist ` + "`conversation_id`" + ` immediately when the first advance returns it and after every call;
    also keep the ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair together.
-4. **Read and follow guidance.** Poll ` + "`" + toolAgentGenesisRead + "`" + ` for the durable Host projection and
+4. **Recover/navigation index when ids are unclear.** If you are resuming, see multiple stuck/broken lanes, or do not
+   know the current ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair, call ` + "`" + toolAgentGenesisList + "`" + ` with
+   the ` + "`agent_id`" + ` first. Follow ` + "`structuredContent.data.recommended_start`" + ` exactly; it includes the next tool and
+   arguments. The list is Host summary-only and does not expose transcripts or declarations.
+5. **Read and follow guidance.** Poll ` + "`" + toolAgentGenesisRead + "`" + ` for the durable Host projection and
    always follow ` + "`structuredContent.data.guidance.next_tool`" + ` for the next step; do not improvise ordering.
-5. **Complete.** When Host reports declaration readiness, call ` + "`" + toolAgentGenesisComplete + "`" + `. Host
+   ` + "`in_progress`" + ` and ` + "`declaration_extraction_pending`" + ` are Host-processing states, not owner-input
+   states. When status is one of those states or guidance has ` + "`wait=true`" + `, do not treat it as owner input.
+   Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` again and do not nudge while Host is processing; wait for ` + "`poll_after_seconds`" + ` when present, then call ` + "`" + toolAgentGenesisRead + "`" + `. Only advance after Host reports
+   ` + "`assistant_turn_ready`" + `, ` + "`awaiting_owner`" + `, or ` + "`needs_owner_turn`" + `.
+6. **Complete.** When Host reports declaration readiness, call ` + "`" + toolAgentGenesisComplete + "`" + `. Host
    extracts and validates its own produced declarations; never submit declarations as source of truth.
-6. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` then, only after Host
+7. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` then, only after Host
    readiness, ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
-7. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
+8. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
    registry or merged registry/live view.
 
 ## Failure recovery
@@ -272,9 +281,9 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
 - If a response carries ` + "`failure.recovery.action=restart_soul_bootstrap`" + `, ` + "`restart_soul_bootstrap`" + `
   means fresh ` + "`" + toolAgentGenesisBegin + "`" + `, not ` + "`" + toolAgentGenesisRecover + "`" + `. Recover is only
   for the other typed recoverable states Host names.
-- ` + "`" + toolAgentGenesisList + "`" + ` currently returns status=not_available with
-  failure.code=producer_contract_missing; use a persisted registration_id/conversation_id with
-  ` + "`" + toolAgentGenesisRead + "`" + `, or ` + "`" + toolAgentList + "`" + ` after finalization.
+- Start with ` + "`" + toolAgentGenesisList + "`" + ` whenever ids are unclear. It returns Host-backed summaries,
+  ` + "`recommended_start`" + `, exact next-tool arguments, and failed-lane instructions. For ` + "`failed`" + ` summaries,
+  read first to load typed ` + "`failure.recovery`" + `; do not guess recover vs restart from list output alone.
 
 ## Invariants
 
@@ -315,8 +324,10 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | --- | --- |
 | before any genesis call | ` + toolAgentGenesisSkillGet + ` |
 | skill fetched | ` + toolAgentGenesisBegin + ` |
+| resuming / ids unclear / multiple lanes | ` + toolAgentGenesisList + ` (then follow recommended_start) |
 | begin success | ` + toolAgentGenesisAdvance + ` (persist conversation_id) |
-| assistant_turn_ready / awaiting_owner / needs_owner_turn / in_progress | ` + toolAgentGenesisAdvance + ` or ` + toolAgentGenesisRead + ` |
+| assistant_turn_ready / awaiting_owner / needs_owner_turn | ` + toolAgentGenesisAdvance + ` |
+| in_progress / declaration_extraction_pending | ` + toolAgentGenesisRead + ` (wait-only; never ` + toolAgentGenesisAdvance + ` to nudge) |
 | declaration_ready | ` + toolAgentGenesisComplete + ` |
 | complete success / finalization-ready | ` + toolAgentGenesisFinalizePreflight + ` |
 | preflight-ready | ` + toolAgentGenesisFinalize + ` |
@@ -325,6 +336,8 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | other typed recoverable failure | ` + toolAgentGenesisRecover + ` |
 
 Always prefer the live ` + "`structuredContent.data.guidance.next_tool`" + ` from the latest Host-backed response
-over this static table.
+over this static table. If live guidance has ` + "`wait=true`" + `, use any ` + "`poll_after_seconds`" + ` /
+` + "`expected_wait_seconds`" + ` value as the expected delay, call ` + "`" + toolAgentGenesisRead + "`" + ` after that
+delay, and do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports an owner-input state.
 `
 }

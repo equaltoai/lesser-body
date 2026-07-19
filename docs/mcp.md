@@ -618,9 +618,9 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
 | `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#928` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
-| `agent_genesis_list` | Read + owner/operator | Safe discovery/recovery placeholder for durable Host-backed genesis conversations. It does not fabricate local state; until Body adds a checked Host list client surface it returns `status="not_available"` and `failure.code="producer_contract_missing"` with guidance to use `agent_genesis_read` for known ids or `agent_list` after finalization. |
-| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. |
-| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation and persist the returned conversation id; continue until Host reports declaration readiness. |
+| `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
+| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. When Host reports `in_progress` / `declaration_extraction_pending`, guidance is wait-only: do not call `agent_genesis_advance` to nudge; wait `poll_after_seconds` when present, then read again. |
+| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation only when Host is waiting for owner/operator input (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`) and persist the returned conversation id. Do not call this tool while Host is `in_progress` / `declaration_extraction_pending`; wait/read instead. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. If Host says `restart_soul_bootstrap`, call `agent_genesis_begin` for a fresh lane instead. |
 | `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. Next: `agent_genesis_finalize_preflight`. |
 | `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. Next: `agent_genesis_finalize` after Host readiness. |
@@ -709,8 +709,11 @@ The owner-operated sequence is:
    `POST /api/v1/soul/instance/agents/register/begin`. Host creates the registration and derives the new agent
    identity; Body does not look up or require an existing agent and does not create a local genesis record.
 4. The owner calls `agent_genesis_advance` for the first turn with a model and message, then continues the conversation
-   using the `registration_id` and Host-issued `conversation_id`. `agent_genesis_read` polls the durable Host
-   projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal.
+   using the `registration_id` and Host-issued `conversation_id` only when Host is waiting for owner/operator input
+   (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`). `agent_genesis_read` polls the durable Host
+   projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal. If Host reports
+   `in_progress` or `declaration_extraction_pending`, wait `poll_after_seconds` when present, then call
+   `agent_genesis_read`; do not call `agent_genesis_advance` again just to nudge the assistant forward.
 5. If Host returns a typed recoverable failure, the owner calls `agent_genesis_recover` and resumes with the Host's
    checkpoint. When the conversation is ready, `agent_genesis_complete` asks Host to extract its own declarations;
    callers cannot provide or replace declaration material.
@@ -724,25 +727,35 @@ The owner-operated sequence is:
    matching live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
 
-`agent_genesis_list` is deliberately not a local-state substitute. Host currently has an instance summary endpoint
-(`GET /api/v1/soul/instance/agents/{agentId}/mint-conversations`), but Body's checked `internal/hostapi.GenesisClient`
-does not yet expose a list method in this milestone. The tool therefore returns a normal structured result with
-`operation="list"`, `status="not_available"`, `conversations=[]`, and
-`failure.code="producer_contract_missing"`. It points callers to `agent_genesis_read` when they have a known
-`registration_id`/`conversation_id`, or `agent_list` after `agent_genesis_finalize` writes Body's Host-derived registry
-row. This preserves recovery semantics without fabricating a local Host conversation index.
+`agent_genesis_list` is deliberately not a local-state substitute. Body calls Host's instance summary endpoint
+(`GET /api/v1/soul/instance/agents/{agentId}/mint-conversations`) with the server-side
+`LESSER_HOST_INSTANCE_KEY`, consumes Host's HostedGenesisSession summaries as the source of truth, and returns a normal
+structured result with `operation="list"`, `status="ok"`, `agent_id`, sanitized `conversations[]`,
+`recommended_start`, `start_here`, and `guidance`. Each conversation entry includes the Host identifiers
+(`registration_id`, `conversation_id`), status, latest turn id when present, message count, timestamps, a
+`recommended_next_tool`, exact `recommended_arguments`, and an instruction. The list response never includes private
+`messages`, raw prompts, transcripts, or `produced_declarations`; failed lanes point first to `agent_genesis_read` so
+the client can load typed `failure.recovery` without guessing hidden failure details.
+
+When `registration_id` / `conversation_id` are unclear, clients should call `agent_genesis_list` first, then follow
+`structuredContent.data.recommended_start.recommended_next_tool` with
+`structuredContent.data.recommended_start.recommended_arguments`. If no actionable non-terminal lane exists, `start_here`
+explains that finalized agents should be verified with `agent_get` / `agent_list`, while a new lane requires
+`agent_genesis_begin` with the intended domain/local_id.
 
 State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 
 | Host state / signal | Next tool | Caller guidance |
 |---------------------|-----------|-----------------|
 | no genesis lane yet (before any genesis call) | `agent_genesis_skill_get` | Fetch the read-only operator skill bundle and use `SKILL.md` as the operating playbook; then call `agent_genesis_begin`. |
+| resuming / ids unclear / multiple lanes | `agent_genesis_list` | Start with the Host-backed recovery index. Follow `recommended_start` exactly; it includes the next tool and exact `registration_id` / `conversation_id` arguments when a non-terminal lane exists. |
 | `agent_genesis_begin` success | `agent_genesis_advance` | Send the first owner/operator message and persist Host's `conversation_id`. |
-| `assistant_turn_ready`, `awaiting_owner`, `needs_owner_turn`, or `in_progress` | `agent_genesis_advance` or `agent_genesis_read` | Continue the Host conversation, or poll before deciding. |
+| `assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn` | `agent_genesis_advance` | Host is waiting for owner/operator input; submit the next owner/operator message, optionally after a read refresh. |
+| `in_progress` or `declaration_extraction_pending` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and `poll_after_seconds` / `expected_wait_seconds` when Host provides a delay. Do not call `agent_genesis_advance` again and do not nudge; wait the expected delay, then read. |
 | `declaration_ready` / ready-for-completion | `agent_genesis_complete` | Let Host extract/validate its durable produced-declarations checkpoint; callers do not supply declarations. |
 | `agent_genesis_complete` success / finalization-ready state | `agent_genesis_finalize_preflight` | Check Host readiness before finalization. |
 | preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |
-| `agent_genesis_finalize` success / `published` / `finalized` | `agent_get` (or `agent_list`) | Verify account-scoped Body/Ptah visibility with registry provenance. |
+| `agent_genesis_finalize` success / `published` / `finalized` / `active` / terminal `complete` | `agent_get` (or `agent_list`) | Verify account-scoped Body/Ptah visibility with registry provenance; do not recover or advance terminal lanes. |
 | `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. |
 
 Body uses the server-side `LESSER_HOST_INSTANCE_KEY` only for its Host calls; it never forwards the owner OAuth bearer

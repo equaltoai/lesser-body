@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -471,7 +472,7 @@ func HashToken(rawToken string) (string, error) {
 	h := sha256.New()
 	_, _ = h.Write([]byte(tokenHashDomainBytes))
 	_, _ = h.Write([]byte(rawToken))
-	return "sha256:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // GenerateToken returns a high-entropy opaque token suitable for one-time
@@ -483,11 +484,11 @@ func GenerateToken() (string, error) {
 // GenerateGrantID returns an opaque grant identifier. Grant IDs are safe to
 // include in sanitized diagnostics.
 func GenerateGrantID() (string, error) {
-	random, err := randomBase64(grantIDRandomBytes)
-	if err != nil {
+	buf := make([]byte, grantIDRandomBytes)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
 	}
-	return grantIDPrefix + random, nil
+	return grantIDPrefix + hex.EncodeToString(buf), nil
 }
 
 func randomBase64(size int) (string, error) {

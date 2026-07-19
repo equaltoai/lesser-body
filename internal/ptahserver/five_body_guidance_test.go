@@ -75,6 +75,18 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 		t.Fatalf("refusal floor = %+v", refusalFloor)
 	}
 
+	playbook := resourcePayload(t, srv, resourceAgentSideGenesisPlaybook)["playbook"].(map[string]any)
+	waitOnly := playbook["wait_only_processing_states"].(map[string]any)
+	if waitOnly["next_tool"] != toolAgentGenesisRead || waitOnly["forbidden_next_tool"] != toolAgentGenesisAdvance || waitOnly["wait"] != true {
+		t.Fatalf("wait-only processing guidance = %+v", waitOnly)
+	}
+	if !containsAnyString(waitOnly["states"], "in_progress") || !containsAnyString(waitOnly["states"], "declaration_extraction_pending") {
+		t.Fatalf("wait-only processing states = %+v", waitOnly["states"])
+	}
+	if instruction := waitOnly["instruction"].(string); !strings.Contains(instruction, "Do not call "+toolAgentGenesisAdvance+" again") || !strings.Contains(instruction, "do not nudge") || !strings.Contains(instruction, "poll_after_seconds") {
+		t.Fatalf("wait-only processing instruction = %q", instruction)
+	}
+
 	prompts := srv.Prompts().List()
 	if got, want := promptNames(prompts), []string{promptDraftGenesisTurn, promptReviewSoulDraft}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("prompt names = %v, want %v", got, want)
@@ -276,36 +288,108 @@ func findBodyRepoRoot(t *testing.T) (string, bool) {
 	}
 }
 
-func TestAgentGenesisListReturnsSafeProducerContractMissing(t *testing.T) {
-	fake := &fakeGenesisClient{}
+func TestAgentGenesisListReturnsHostBackedRecoveryIndex(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	const agentID = "0xabc"
+	fake := &fakeGenesisClient{listResponse: map[string]any{
+		"conversations": []any{
+			map[string]any{
+				"registration_id":       "reg-terminal",
+				"conversation_id":       "conv-terminal",
+				"status":                "published",
+				"latest_turn_id":        "turn-terminal",
+				"message_count":         float64(4),
+				"created_at":            "2026-07-19T14:00:00Z",
+				"updated_at":            "2026-07-19T14:06:00Z",
+				"messages":              []any{map[string]any{"content": "private terminal transcript"}},
+				"produced_declarations": map[string]any{"declaration": "private declaration"},
+			},
+			map[string]any{
+				"registration_id":       "reg-failed",
+				"conversation_id":       "conv-failed",
+				"status":                "failed",
+				"latest_turn_id":        "turn-failed",
+				"message_count":         float64(3),
+				"created_at":            "2026-07-19T14:00:00Z",
+				"updated_at":            "2026-07-19T14:05:00Z",
+				"messages":              []any{map[string]any{"content": "private failed transcript"}},
+				"produced_declarations": map[string]any{"declaration": "private failed declaration"},
+				"failure":               map[string]any{"recovery": map[string]any{"action": "restart_soul_bootstrap"}},
+			},
+			map[string]any{
+				"registration_id": "reg-wait",
+				"conversation_id": "conv-wait",
+				"status":          "in_progress",
+				"latest_turn_id":  "turn-wait",
+				"message_count":   float64(2),
+				"created_at":      "2026-07-19T14:00:00Z",
+				"updated_at":      "2026-07-19T14:04:00Z",
+			},
+			map[string]any{
+				"registration_id": "reg-owner",
+				"conversation_id": "conv-owner",
+				"status":          "assistant_turn_ready",
+				"latest_turn_id":  "turn-owner",
+				"message_count":   float64(2),
+				"created_at":      "2026-07-19T14:00:00Z",
+				"updated_at":      "2026-07-19T14:03:00Z",
+			},
+		},
+	}}
 	registry := mcpruntime.NewToolRegistry()
 	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
-	result, err := registry.Call(operatorToolContext("owner", []string{"read"}, "owner-oauth-bearer-test-only"), toolAgentGenesisList, json.RawMessage(`{"agent_id":"agent-0xabc","limit":5}`))
+	result, err := registry.Call(operatorToolContext("owner", []string{"read"}, "owner-oauth-bearer-test-only"), toolAgentGenesisList, json.RawMessage(`{"agent_id":"`+agentID+`","limit":5}`))
 	if err != nil {
 		t.Fatalf("agent_genesis_list: %v", err)
 	}
 	if result == nil || result.IsError {
 		t.Fatalf("agent_genesis_list returned error: %+v", result)
 	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("agent_genesis_list must not call Host without a checked list client surface: %v", fake.calls)
+	if strings.Join(fake.calls, ",") != "list:"+agentID || fake.listAgentID != agentID || fake.listLimit != 5 || fake.bearer != "host-instance-key-test-only" {
+		t.Fatalf("agent_genesis_list Host call = calls %v agent %q limit %d bearer %q", fake.calls, fake.listAgentID, fake.listLimit, fake.bearer)
 	}
 	data := structuredGenesisData(t, result)
-	if data["operation"] != "list" || data["status"] != "not_available" {
+	if data["operation"] != "list" || data["status"] != "ok" || data["agent_id"] != agentID {
 		t.Fatalf("list data = %+v", data)
 	}
-	failure := data["failure"].(map[string]any)
-	if failure["code"] != "producer_contract_missing" || !strings.Contains(failure["reason"].(string), "will not fabricate") {
-		t.Fatalf("failure = %+v", failure)
+	conversations := data["conversations"].([]map[string]any)
+	if len(conversations) != 4 {
+		t.Fatalf("conversations = %+v", conversations)
 	}
-	producer := data["producer_contract"].(map[string]any)
-	if producer["host_pr"] != fiveBodyHostPR || producer["host_head_sha"] != fiveBodyHostHeadSHA || producer["schema_version"] != fiveBodySchemaVersion {
-		t.Fatalf("producer contract = %+v", producer)
+	start := data["recommended_start"].(map[string]any)
+	if start["registration_id"] != "reg-failed" || start["conversation_id"] != "conv-failed" || start["recommended_next_tool"] != toolAgentGenesisRead {
+		t.Fatalf("recommended_start = %+v, want newest non-terminal failed lane directed to read", start)
+	}
+	args := start["recommended_arguments"].(map[string]any)
+	if args["registration_id"] != "reg-failed" || args["conversation_id"] != "conv-failed" {
+		t.Fatalf("recommended_start args = %+v", args)
+	}
+	failed := conversations[1]
+	if failed["recommended_next_tool"] != toolAgentGenesisRead || failed["recoverable_hint"] != "unknown_until_read" || failed["restart_hint"] != "unknown_until_read" || !strings.Contains(failed["instruction"].(string), "do not guess") {
+		t.Fatalf("failed guidance = %+v", failed)
+	}
+	waiting := conversations[2]
+	if waiting["recommended_next_tool"] != toolAgentGenesisRead || waiting["wait"] != true || waiting["forbidden_next_tool"] != toolAgentGenesisAdvance || !strings.Contains(waiting["instruction"].(string), "does not include exact poll timing") {
+		t.Fatalf("waiting guidance = %+v", waiting)
+	}
+	owner := conversations[3]
+	if owner["recommended_next_tool"] != toolAgentGenesisRead || owner["alternate_next_tool"] != toolAgentGenesisAdvance || !strings.Contains(owner["instruction"].(string), "load the bounded latest prompt/context") {
+		t.Fatalf("owner-input guidance = %+v", owner)
+	}
+	terminal := conversations[0]
+	if terminal["terminal"] != true || terminal["recommended_next_tool"] != toolAgentGet || terminal["alternate_next_tool"] != toolAgentList {
+		t.Fatalf("terminal guidance = %+v", terminal)
+	}
+	encoded := mustMarshalGenesisResult(t, result)
+	for _, forbidden := range []string{"messages", "produced_declarations", "private terminal transcript", "private failed transcript", "private declaration"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("agent_genesis_list leaked %q in output: %s", forbidden, encoded)
+		}
 	}
 	guidance := data["guidance"].(map[string]any)
-	if guidance["next_tool"] != toolAgentGenesisRead || guidance["alternate_next_tool"] != toolAgentList {
+	if guidance["next_tool"] != toolAgentGenesisRead || !strings.Contains(guidance["instruction"].(string), "start with agent_genesis_list") || !strings.Contains(guidance["instruction"].(string), "recommended_start") {
 		t.Fatalf("guidance = %+v", guidance)
 	}
 }
@@ -329,10 +413,20 @@ func TestAgentGenesisListRequiresOwnerOperatorReadAuthority(t *testing.T) {
 
 func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "not_available")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "declaration_extraction_pending")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "producer_contract_missing")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "restart_soul_bootstrap")
-	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "not_available")
-	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "producer_contract_missing")
+	for _, wantField := range []string{"forbidden_next_tool", "wait", "poll_after_seconds", "expected_wait_seconds"} {
+		if !strings.Contains(string(genesisOutputSchema()), wantField) {
+			t.Fatalf("genesis output schema missing guidance field %q: %s", wantField, string(genesisOutputSchema()))
+		}
+	}
+	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "ok")
+	for _, wantField := range []string{"recommended_start", "recommended_next_tool", "recommended_arguments", "terminal", "recoverable_hint", "restart_hint"} {
+		if !strings.Contains(string(agentGenesisListDef().OutputSchema), wantField) {
+			t.Fatalf("agent_genesis_list output schema missing field %q: %s", wantField, string(agentGenesisListDef().OutputSchema))
+		}
+	}
 }
 
 func TestGenesisSanitizesFiveBodyContractEvidence(t *testing.T) {

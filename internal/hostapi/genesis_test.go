@@ -20,12 +20,13 @@ type fakeJSONDoer struct {
 type jsonDoerCall struct {
 	method string
 	path   string
+	query  url.Values
 	bearer string
 	body   any
 }
 
-func (f *fakeJSONDoer) DoJSON(_ context.Context, method string, path string, _ url.Values, bearerToken string, body any) (any, error) {
-	f.calls = append(f.calls, jsonDoerCall{method: method, path: path, bearer: bearerToken, body: body})
+func (f *fakeJSONDoer) DoJSON(_ context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, error) {
+	f.calls = append(f.calls, jsonDoerCall{method: method, path: path, query: query, bearer: bearerToken, body: body})
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -33,6 +34,29 @@ func (f *fakeJSONDoer) DoJSON(_ context.Context, method string, path string, _ u
 		return f.resp, nil
 	}
 	return map[string]any{"conversation": map[string]any{"status": "in_progress"}}, nil
+}
+
+func TestGenesisClientListsMintConversationSummaries(t *testing.T) {
+	doer := &fakeJSONDoer{resp: map[string]any{"conversations": []any{}}}
+	client := New(doer)
+	const hostKey = "host-instance-key-test-only"
+
+	if _, err := client.ListConversations(context.Background(), hostKey, "0xabc123", 7); err != nil {
+		t.Fatalf("ListConversations: %v", err)
+	}
+	if len(doer.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(doer.calls))
+	}
+	call := doer.calls[0]
+	if call.method != http.MethodGet || call.path != "/api/v1/soul/instance/agents/0xabc123/mint-conversations" {
+		t.Fatalf("list call = %s %s, want GET /api/v1/soul/instance/agents/{agentId}/mint-conversations", call.method, call.path)
+	}
+	if got := call.query.Encode(); got != "limit=7" {
+		t.Fatalf("list query = %q, want limit=7", got)
+	}
+	if call.bearer != hostKey || call.body != nil {
+		t.Fatalf("list auth/body = bearer %q body %#v, want Host instance key and no body", call.bearer, call.body)
+	}
 }
 
 func TestGenesisClientUsesInstanceTrustHostRoutesAndKey(t *testing.T) {
