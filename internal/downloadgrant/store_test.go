@@ -16,6 +16,7 @@ import (
 	"github.com/theory-cloud/tabletheory/v2"
 	"github.com/theory-cloud/tabletheory/v2/pkg/session"
 	"github.com/theory-cloud/tabletheory/v2/pkg/testing/fakedb"
+	"github.com/theory-cloud/tabletheory/v2/pkg/validation"
 )
 
 func TestIssuePersistsTokenHashOnlyAndTTL(t *testing.T) {
@@ -93,6 +94,36 @@ func TestHashTokenIsDeterministicAndDomainSeparated(t *testing.T) {
 	}
 	if _, err := HashToken(" "); !errors.Is(err, ErrRawTokenRequired) {
 		t.Fatalf("HashToken(blank) error = %v, want ErrRawTokenRequired", err)
+	}
+}
+
+func TestGeneratedGrantValuesAreTableTheoryConditionSafe(t *testing.T) {
+	// This public fixture's previous base64url SHA-256 rendering contained a
+	// double hyphen, which TableTheory flags as unsafe for condition
+	// values. Download grants compare token hashes and grant PKs in conditional
+	// expressions, so generated values must use a condition-safe alphabet.
+	hash, err := HashToken("public-fixture-value-48")
+	if err != nil {
+		t.Fatalf("HashToken() error = %v", err)
+	}
+	if err := validation.ValidateValue(hash); err != nil {
+		t.Fatalf("HashToken produced a TableTheory-unsafe condition value: %v", err)
+	}
+	if payload := strings.TrimPrefix(hash, "sha256:"); len(payload) != 64 || !isLowerHex(payload) {
+		t.Fatal("HashToken payload is not lowercase SHA-256 hex")
+	}
+
+	for i := 0; i < 128; i++ {
+		grantID, err := GenerateGrantID()
+		if err != nil {
+			t.Fatalf("GenerateGrantID() error = %v", err)
+		}
+		if err := validation.ValidateValue(grantPartitionKey(grantID)); err != nil {
+			t.Fatalf("GenerateGrantID produced a TableTheory-unsafe partition key: %v", err)
+		}
+		if payload := strings.TrimPrefix(grantID, grantIDPrefix); len(payload) != grantIDRandomBytes*2 || !isLowerHex(payload) {
+			t.Fatal("GenerateGrantID payload is not lowercase hex")
+		}
 	}
 }
 
@@ -373,4 +404,17 @@ func sortedKeys(item map[string]types.AttributeValue) []string {
 		}
 	}
 	return keys
+}
+
+func isLowerHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
