@@ -3,6 +3,7 @@ package ptahserver
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -18,10 +19,14 @@ type fakeGenesisClient struct {
 	calls  []string
 
 	beginRequest      hostapi.RegistrationBeginRequest
+	listAgentID       string
+	listLimit         int
 	advanceRequest    hostapi.MintConversationRequest
 	registrationID    string
 	conversationID    string
 	beginResponse     map[string]any
+	listResponse      map[string]any
+	listErr           error
 	advanceResponse   map[string]any
 	readResponse      map[string]any
 	recoverResponse   map[string]any
@@ -35,6 +40,17 @@ func (f *fakeGenesisClient) BeginRegistration(_ context.Context, bearer string, 
 	f.calls = append(f.calls, "begin")
 	f.beginRequest = req
 	return f.beginResponse, nil
+}
+
+func (f *fakeGenesisClient) ListConversations(_ context.Context, bearer string, agentID string, limit int) (map[string]any, error) {
+	f.bearer = bearer
+	f.calls = append(f.calls, "list:"+agentID)
+	f.listAgentID = agentID
+	f.listLimit = limit
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listResponse, nil
 }
 
 func (f *fakeGenesisClient) AdvanceConversation(_ context.Context, bearer string, registrationID string, req hostapi.MintConversationRequest) (map[string]any, error) {
@@ -133,6 +149,53 @@ func TestGenesisRejectsOrdinaryOAuthAndPaymentEvidenceWithoutCallingHost(t *test
 				t.Fatalf("ordinary OAuth token reached Host: %v", fake.calls)
 			}
 		})
+	}
+}
+
+func TestGenesisListRecommendationsCoverCompletionAndFinalizationStates(t *testing.T) {
+	const agentID = "0xagent"
+	conversations := sanitizeGenesisConversationSummaries([]any{
+		map[string]any{"registration_id": "reg-ready", "conversation_id": "conv-ready", "status": "declaration_ready", "message_count": 2},
+		map[string]any{"registration_id": "reg-preflight", "conversation_id": "conv-preflight", "status": "finalization_ready", "message_count": 3},
+		map[string]any{"registration_id": "reg-finalize", "conversation_id": "conv-finalize", "status": "ready_to_finalize", "message_count": 4},
+		map[string]any{"registration_id": "reg-complete", "conversation_id": "conv-complete", "status": "complete", "message_count": 5},
+	}, agentID)
+	if len(conversations) != 4 {
+		t.Fatalf("conversations = %+v", conversations)
+	}
+	if conversations[0]["recommended_next_tool"] != toolAgentGenesisComplete {
+		t.Fatalf("declaration_ready recommendation = %+v", conversations[0])
+	}
+	if conversations[1]["recommended_next_tool"] != toolAgentGenesisFinalizePreflight {
+		t.Fatalf("finalization_ready recommendation = %+v", conversations[1])
+	}
+	if conversations[2]["recommended_next_tool"] != toolAgentGenesisFinalize {
+		t.Fatalf("ready_to_finalize recommendation = %+v", conversations[2])
+	}
+	if conversations[3]["terminal"] != true || conversations[3]["recommended_next_tool"] != toolAgentGet || conversations[3]["alternate_next_tool"] != toolAgentList {
+		t.Fatalf("complete terminal recommendation = %+v", conversations[3])
+	}
+	start := genesisListStartHere(conversations, agentID)
+	if start["recommended_next_tool"] != toolAgentGenesisComplete || start["registration_id"] != "reg-ready" {
+		t.Fatalf("start = %+v, want newest actionable non-terminal declaration_ready lane", start)
+	}
+}
+
+func TestAgentGenesisListReturnsSanitizedHostError(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{listErr: &hostapi.APIError{Status: http.StatusForbidden, Code: "soul_instance.forbidden"}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result, err := registry.Call(operatorToolContext("owner", []string{"read"}, "owner-oauth-bearer-test-only"), toolAgentGenesisList, json.RawMessage(`{"agent_id":"0xabc","limit":3}`))
+	if err != nil {
+		t.Fatalf("agent_genesis_list: %v", err)
+	}
+	payload := assertToolError(t, result, "forbidden", http.StatusForbidden)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "owner-oauth-bearer") || strings.Contains(string(encoded), "host-instance-key") {
+		t.Fatalf("host error leaked credential material: %s", string(encoded))
 	}
 }
 

@@ -100,14 +100,15 @@ func agentGenesisListDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisList,
 		Title:       "List Host-backed agent genesis conversations",
-		Description: "Advertise the safe recovery/listing status for Host-backed Ptah genesis conversations. Body does not fabricate a local genesis list. Until Body has a Host list client surface for Host's instance mint-conversation summary endpoint, this tool returns status=not_available with failure.code=producer_contract_missing and directs callers to known registration_id/conversation_id reads or finalized agent registry visibility. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Description: "List Host-backed Ptah genesis conversation summaries for one agent and return a deterministic recovery/navigation index. Body consumes Host's HostedGenesisSession summary endpoint, sanitizes summary-only fields, selects the newest actionable non-terminal lane as recommended_start, and gives exact next-tool arguments. Start here when registration_id/conversation_id are unclear. This replaces the former producer_contract_missing placeholder without fabricating local state. Requires explicit instance owner/operator OAuth authority and read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"agent_id":{"type":"string","description":"Optional Host/Lesser agent id whose conversations would be listed when a producer client surface exists."},
-				"limit":{"type":"integer","minimum":1,"maximum":50,"description":"Optional future page size; currently accepted only for forward-compatible clients."}
+				"agent_id":{"type":"string","description":"Host/Lesser agent id whose Host HostedGenesisSession conversation summaries should be listed."},
+				"limit":{"type":"integer","minimum":1,"maximum":50,"description":"Optional Host summary page size."}
 			},
+			"required":["agent_id"],
 			"additionalProperties":false
 		}`),
 		OutputSchema: json.RawMessage(`{
@@ -115,10 +116,26 @@ func agentGenesisListDef() mcpruntime.ToolDef {
 			"properties":{
 				"data":{"type":"object","properties":{
 					"operation":{"type":"string","enum":["list"]},
-					"status":{"type":"string","enum":["not_available"]},
-					"conversations":{"type":"array","items":{"type":"object"}},
-					"failure":{"type":"object","properties":{"code":{"type":"string","enum":["producer_contract_missing"]}}},
-					"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_read"]},"alternate_next_tool":{"type":"string","enum":["agent_list"]},"instruction":{"type":"string"}}}
+					"status":{"type":"string","enum":["ok","not_available"]},
+					"agent_id":{"type":"string"},
+					"conversations":{"type":"array","items":{"type":"object","properties":{
+						"registration_id":{"type":"string"},
+						"conversation_id":{"type":"string"},
+						"status":{"type":"string"},
+						"latest_turn_id":{"type":"string"},
+						"message_count":{"type":"integer"},
+						"created_at":{"type":"string"},
+						"updated_at":{"type":"string"},
+						"recommended_next_tool":{"type":"string"},
+						"recommended_arguments":{"type":"object"},
+						"instruction":{"type":"string"},
+						"terminal":{"type":"boolean"},
+						"recoverable_hint":{"type":"string"},
+						"restart_hint":{"type":"string"}
+					}}},
+					"recommended_start":{"type":"object"},
+					"start_here":{"type":"object"},
+					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"instruction":{"type":"string"}}}
 				}},
 				"error":{"type":"object","description":"Structured authorization/input error when isError=true."}
 			}
@@ -257,55 +274,41 @@ func (cfg config) handleAgentGenesisList(ctx context.Context, args json.RawMessa
 	if result := decodeGenesisInput(args, &in); result != nil {
 		return result, nil
 	}
-	if in.AgentID, err = optionalGenesisString(in.AgentID, "agent_id", genesisMaxPathID); err != nil {
+	if in.AgentID, err = requiredGenesisString(in.AgentID, "agent_id", genesisMaxPathID); err != nil {
 		return mustToolErrorResult("invalid_request", "agent_genesis_list agent_id is invalid", http.StatusBadRequest, nil), nil
 	}
 	if in.Limit != nil && (*in.Limit < 1 || *in.Limit > 50) {
 		return mustToolErrorResult("invalid_request", "agent_genesis_list limit must be between 1 and 50", http.StatusBadRequest, nil), nil
 	}
+	client, result, err := cfg.genesisClientForTool(toolAgentGenesisList)
+	if result != nil || err != nil {
+		return result, err
+	}
+	bearer, result, err := hostGenesisBearer(ctx, toolAgentGenesisList)
+	if result != nil || err != nil {
+		return result, err
+	}
 	genesisAudit(ctx, toolAgentGenesisList, actor, true)
-	data := map[string]any{
-		"source":          "lesser_body_ptah",
-		"state_authority": "Host HostedGenesisSession",
-		"flow":            "genesis_conversation",
-		"operation":       "list",
-		"status":          "not_available",
-		"conversations":   []map[string]any{},
-		"failure": map[string]any{
-			"code":   "producer_contract_missing",
-			"source": "lesser_body_hostapi",
-			"reason": "Host exposes an instance mint-conversation summary endpoint, but Body has no checked Host list client surface in this milestone. Body will not fabricate local genesis state.",
-		},
-		"guidance": map[string]any{
-			"next_tool":           toolAgentGenesisRead,
-			"alternate_next_tool": toolAgentList,
-			"instruction":         "Use a known registration_id/conversation_id with agent_genesis_read, or use agent_list after agent_genesis_finalize writes the Host-derived Ptah registry row. Track a follow-up to add a Body Host list client for /api/v1/soul/instance/agents/{agentId}/mint-conversations.",
-		},
-		"producer_contract": map[string]any{
-			"host_pr":          fiveBodyHostPR,
-			"host_head_sha":    fiveBodyHostHeadSHA,
-			"host_endpoint":    "GET /api/v1/soul/instance/agents/{agentId}/mint-conversations",
-			"body_client_gap":  "internal/hostapi.GenesisClient has no list method yet",
-			"safe_behavior":    "not_available_without_local_state",
-			"model_allowlist":  "producer_contract_missing",
-			"schema_version":   fiveBodySchemaVersion,
-			"guidance_version": fiveBodyGuidanceVersion,
-		},
-	}
-	if in.AgentID != "" {
-		data["agent_id"] = in.AgentID
-	}
+	limit := 0
 	if in.Limit != nil {
-		data["limit"] = *in.Limit
+		limit = *in.Limit
 	}
+	raw, err := client.ListConversations(ctx, bearer, in.AgentID, limit)
+	if err != nil {
+		return genesisToolResultFromError(toolAgentGenesisList, err)
+	}
+	data := sanitizeGenesisListResponse(in.AgentID, limit, raw)
 	text := map[string]any{
-		"summary":         "Host-backed Ptah genesis list is not yet available through Body",
+		"summary":         "Host-backed Ptah genesis recovery index",
 		"operation":       "list",
-		"status":          "not_available",
-		"source":          "lesser_body_ptah",
+		"status":          "ok",
+		"agent_id":        in.AgentID,
+		"source":          "lesser_host",
 		"state_authority": "Host HostedGenesisSession",
-		"failure":         data["failure"],
 		"guidance":        data["guidance"],
+	}
+	if start, ok := data["recommended_start"].(map[string]any); ok && len(start) > 0 {
+		text["recommended_start"] = start
 	}
 	return toolJSONTextResult(text, map[string]any{"data": data})
 }
@@ -1031,6 +1034,198 @@ func sanitizeGenesisResponse(operation string, raw map[string]any) map[string]an
 		}
 	}
 	return data
+}
+
+func sanitizeGenesisListResponse(agentID string, limit int, raw map[string]any) map[string]any {
+	conversations := sanitizeGenesisConversationSummaries(raw["conversations"], agentID)
+	start := genesisListStartHere(conversations, agentID)
+	guidance := map[string]any{
+		"instruction": "When registration_id or conversation_id are unclear, start with agent_genesis_list for the Host-backed recovery index, then follow recommended_start.recommended_next_tool with recommended_start.recommended_arguments. Do not guess hidden Host failure details from list summaries.",
+	}
+	if nextTool := stringValue(start, "recommended_next_tool"); nextTool != "" {
+		guidance["next_tool"] = nextTool
+	}
+	data := map[string]any{
+		"source":            "lesser_host",
+		"state_authority":   "Host HostedGenesisSession",
+		"flow":              "genesis_conversation",
+		"operation":         "list",
+		"status":            "ok",
+		"agent_id":          agentID,
+		"conversations":     conversations,
+		"recommended_start": start,
+		"start_here":        start,
+		"guidance":          guidance,
+		"producer_contract": map[string]any{
+			"host_pr":          fiveBodyHostPR,
+			"host_head_sha":    fiveBodyHostHeadSHA,
+			"host_endpoint":    "GET /api/v1/soul/instance/agents/{agentId}/mint-conversations",
+			"safe_behavior":    "summary_only_hosted_genesis_session_index",
+			"schema_version":   fiveBodySchemaVersion,
+			"guidance_version": fiveBodyGuidanceVersion,
+		},
+	}
+	if limit > 0 {
+		data["limit"] = limit
+	}
+	copyIntField(data, "count", raw, "count")
+	if version := firstString(raw, "version"); version != "" {
+		data["version"] = version
+	}
+	return data
+}
+
+func sanitizeGenesisConversationSummaries(raw any, agentID string) []map[string]any {
+	items, _ := raw.([]any)
+	if len(items) == 0 {
+		if typed, ok := raw.([]map[string]any); ok {
+			items = make([]any, 0, len(typed))
+			for _, item := range typed {
+				items = append(items, item)
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		summary := sanitizeGenesisConversationSummary(mapValue(item), agentID)
+		if len(summary) > 0 {
+			out = append(out, summary)
+		}
+	}
+	return out
+}
+
+func sanitizeGenesisConversationSummary(raw map[string]any, agentID string) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for output, keys := range map[string][]string{
+		"registration_id": {"registration_id", "registrationId"},
+		"conversation_id": {"conversation_id", "conversationId"},
+		"status":          {"status"},
+		"latest_turn_id":  {"latest_turn_id", "latestTurnId"},
+		"created_at":      {"created_at", "createdAt"},
+		"updated_at":      {"updated_at", "updatedAt"},
+	} {
+		copyStringField(out, output, raw, keys...)
+	}
+	copyIntField(out, "message_count", raw, "message_count", "messageCount")
+	if len(out) == 0 {
+		return nil
+	}
+	genesisApplyListRecommendation(out, agentID)
+	return out
+}
+
+func genesisApplyListRecommendation(summary map[string]any, agentID string) {
+	status := strings.ToLower(strings.TrimSpace(stringValue(summary, "status")))
+	registrationID := stringValue(summary, "registration_id")
+	conversationID := stringValue(summary, "conversation_id")
+	genesisArgs := func() map[string]any {
+		args := map[string]any{}
+		if registrationID != "" {
+			args["registration_id"] = registrationID
+		}
+		if conversationID != "" {
+			args["conversation_id"] = conversationID
+		}
+		return args
+	}
+	agentArgs := func() map[string]any {
+		args := map[string]any{}
+		if agentID != "" {
+			args["agent_id"] = agentID
+		}
+		return args
+	}
+	setGenesis := func(toolName string, instruction string) {
+		summary["recommended_next_tool"] = toolName
+		summary["recommended_arguments"] = genesisArgs()
+		summary["instruction"] = instruction
+	}
+	summary["terminal"] = false
+	switch {
+	case genesisProcessingWaitStatus(status) || status == "created":
+		setGenesis(toolAgentGenesisRead, "Host is processing this lane. This list summary does not include exact poll timing; call agent_genesis_read with the listed ids to get poll_after_seconds when Host provides it, then wait/read only. Do not call agent_genesis_advance again and do not nudge while status remains in_progress or declaration_extraction_pending.")
+		summary["wait"] = true
+		summary["forbidden_next_tool"] = toolAgentGenesisAdvance
+		summary["recoverable_hint"] = "processing_wait_read_only"
+	case genesisOwnerInputStatus(status):
+		setGenesis(toolAgentGenesisRead, "Host appears to be waiting for owner/operator input. Call agent_genesis_read first with the listed ids to load the bounded latest prompt/context, then call agent_genesis_advance with the next owner/operator message if the read response still reports an owner-input state.")
+		summary["alternate_next_tool"] = toolAgentGenesisAdvance
+		summary["alternate_arguments"] = genesisArgs()
+	case status == "failed":
+		setGenesis(toolAgentGenesisRead, "This lane failed, but list summaries intentionally do not include typed failure.recovery details. Call agent_genesis_read with the listed ids first, then follow the read response's failure.recovery action; do not guess recover vs restart from the list.")
+		summary["recoverable_hint"] = "unknown_until_read"
+		summary["restart_hint"] = "unknown_until_read"
+	case status == "declaration_ready" || status == "ready_for_completion":
+		setGenesis(toolAgentGenesisComplete, "Host has declaration-ready state for this lane. Call agent_genesis_complete with the listed ids so Host validates and advances its durable declaration checkpoint.")
+		summary["recoverable_hint"] = "completion_ready"
+	case status == "finalization_ready" || status == "ready_for_finalization":
+		setGenesis(toolAgentGenesisFinalizePreflight, "Host reports finalization-ready state. Call agent_genesis_finalize_preflight with the listed ids before finalization.")
+	case status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
+		setGenesis(toolAgentGenesisFinalize, "Host preflight/finalize readiness is present. Call agent_genesis_finalize with the listed ids; Body writes registry visibility only after Host publishes.")
+	case genesisTerminalListStatus(status):
+		summary["recommended_next_tool"] = toolAgentGet
+		summary["alternate_next_tool"] = toolAgentList
+		summary["recommended_arguments"] = agentArgs()
+		summary["terminal"] = true
+		summary["recoverable_hint"] = "not_applicable_terminal"
+		summary["restart_hint"] = "not_applicable_terminal"
+		summary["instruction"] = "This lane is terminal/finalized for list recovery. Do not recover or advance it; verify the minted agent with agent_get for agent_id, or use agent_list for the account-scoped registry view."
+	default:
+		setGenesis(toolAgentGenesisRead, "Status is not enough to safely choose a mutating tool from the list summary. Call agent_genesis_read with the listed ids and follow the Host-backed read guidance.")
+		summary["recoverable_hint"] = "read_required"
+	}
+}
+
+func genesisTerminalListStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "finalized", "published", "active", "complete", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func genesisListStartHere(conversations []map[string]any, agentID string) map[string]any {
+	for _, conversation := range conversations {
+		terminal, _ := conversation["terminal"].(bool)
+		if terminal {
+			continue
+		}
+		nextTool := stringValue(conversation, "recommended_next_tool")
+		args, _ := conversation["recommended_arguments"].(map[string]any)
+		if nextTool == "" || len(args) == 0 {
+			continue
+		}
+		start := map[string]any{
+			"registration_id":           stringValue(conversation, "registration_id"),
+			"conversation_id":           stringValue(conversation, "conversation_id"),
+			"status":                    stringValue(conversation, "status"),
+			"recommended_next_tool":     nextTool,
+			"recommended_arguments":     args,
+			"instruction":               stringValue(conversation, "instruction"),
+			"selection":                 "newest_actionable_non_terminal",
+			"state_authority":           "Host HostedGenesisSession",
+			"do_not_guess_hidden_state": true,
+		}
+		if latestTurnID := stringValue(conversation, "latest_turn_id"); latestTurnID != "" {
+			start["latest_turn_id"] = latestTurnID
+		}
+		if alternate := stringValue(conversation, "alternate_next_tool"); alternate != "" {
+			start["alternate_next_tool"] = alternate
+		}
+		return start
+	}
+	return map[string]any{
+		"status":                "no_actionable_lane",
+		"recommended_next_tool": toolAgentGenesisBegin,
+		"recommended_arguments": map[string]any{},
+		"agent_id":              agentID,
+		"instruction":           "No actionable non-terminal Host genesis lane was returned for this agent_id. For finalized agents use agent_get/agent_list; to create a fresh genesis lane call agent_genesis_begin with the intended domain/local_id. Do not invent registration_id/conversation_id values.",
+	}
 }
 
 func sanitizeGenesisRegistration(raw map[string]any) map[string]any {

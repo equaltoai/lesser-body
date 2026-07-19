@@ -230,6 +230,7 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 			"tool_sequence": []map[string]string{
 				{"step": "skill", "tool": toolAgentGenesisSkillGet, "instruction": "Fetch and read the read-only genesis operator skill bundle before beginning."},
 				{"step": "begin", "tool": toolAgentGenesisBegin, "instruction": "Start the Host registration lane for the intended managed domain/local_id."},
+				{"step": "list", "tool": toolAgentGenesisList, "instruction": "When resuming or ids are unclear, list Host-backed summaries and follow recommended_start exactly."},
 				{"step": "interview", "tool": toolAgentGenesisAdvance, "instruction": "Advance identity, philosophy, discipline, boundaries, and soul stages only when Host is waiting for owner/operator input; persist Host conversation_id."},
 				{"step": "read", "tool": toolAgentGenesisRead, "instruction": "Poll Host status and follow structuredContent.data.guidance.next_tool; if guidance.wait=true, wait poll_after_seconds when present and never nudge with agent_genesis_advance."},
 				{"step": "complete", "tool": toolAgentGenesisComplete, "instruction": "Ask Host to extract and validate produced declarations; callers do not submit declarations."},
@@ -239,8 +240,9 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 			},
 			"recovery": "If Host returns failure.recovery.action=restart_soul_bootstrap, start a fresh lane with agent_genesis_begin; do not call recover for that action.",
 			"listing": map[string]string{
-				"tool":   toolAgentGenesisList,
-				"status": "not_available until Body grows a Host list client surface for the Host instance mint-conversation summary endpoint.",
+				"tool":        toolAgentGenesisList,
+				"status":      "Host-backed summary-only recovery index.",
+				"instruction": "Start with list when registration_id/conversation_id are unclear, then follow recommended_start.recommended_next_tool and recommended_arguments. Failed lanes must be read first for typed failure.recovery; list output does not expose transcripts or produced declarations.",
 			},
 			"model_guidance": "Host PR #928 records mintingModel in declaration evidence but does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models and watch Host contract follow-up.",
 		},

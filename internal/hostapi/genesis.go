@@ -20,6 +20,7 @@ const (
 
 	instanceRegistrationBeginPath = "/api/v1/soul/instance/agents/register/begin"
 	instanceRegistrationPath      = "/api/v1/soul/instance/agents/register/"
+	instanceAgentPath             = "/api/v1/soul/instance/agents/"
 )
 
 // JSONDoer is the small subset of the Soul/Host HTTP client needed by this
@@ -34,6 +35,7 @@ type JSONDoer interface {
 // must apply an output allowlist before returning them to an MCP client.
 type GenesisClient interface {
 	BeginRegistration(ctx context.Context, bearerToken string, req RegistrationBeginRequest) (map[string]any, error)
+	ListConversations(ctx context.Context, bearerToken string, agentID string, limit int) (map[string]any, error)
 	AdvanceConversation(ctx context.Context, bearerToken string, registrationID string, req MintConversationRequest) (map[string]any, error)
 	ReadConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
 	RecoverConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
@@ -129,6 +131,21 @@ func (c *Client) BeginRegistration(ctx context.Context, bearerToken string, req 
 	return c.do(ctx, http.MethodPost, instanceRegistrationBeginPath, bearerToken, body)
 }
 
+func (c *Client) ListConversations(ctx context.Context, bearerToken string, agentID string, limit int) (map[string]any, error) {
+	agentID, err := normalizePathID(agentID, "agent id")
+	if err != nil {
+		return nil, err
+	}
+	if limit < 0 || limit > 50 {
+		return nil, errors.New("host genesis conversation list limit must be between 1 and 50")
+	}
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	return c.doQuery(ctx, http.MethodGet, instanceAgentPath+url.PathEscape(agentID)+"/mint-conversations", query, bearerToken, nil)
+}
+
 func (c *Client) AdvanceConversation(ctx context.Context, bearerToken string, registrationID string, req MintConversationRequest) (map[string]any, error) {
 	registrationID, err := normalizePathID(registrationID, "registration id")
 	if err != nil {
@@ -185,6 +202,10 @@ func (c *Client) FinalizeConversation(ctx context.Context, bearerToken string, r
 }
 
 func (c *Client) do(ctx context.Context, method string, path string, bearerToken string, body any) (map[string]any, error) {
+	return c.doQuery(ctx, method, path, nil, bearerToken, body)
+}
+
+func (c *Client) doQuery(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (map[string]any, error) {
 	if c == nil || c.client == nil {
 		return nil, errors.New("host genesis client is not configured")
 	}
@@ -192,7 +213,7 @@ func (c *Client) do(ctx context.Context, method string, path string, bearerToken
 	if bearerToken == "" {
 		return nil, errors.New("lesser-host instance key is required for genesis")
 	}
-	raw, err := c.client.DoJSON(ctx, method, path, nil, bearerToken, body)
+	raw, err := c.client.DoJSON(ctx, method, path, query, bearerToken, body)
 	if err != nil {
 		return nil, sanitizeError(err)
 	}
