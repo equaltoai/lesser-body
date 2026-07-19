@@ -3,6 +3,7 @@ package ptahserver
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -18,10 +19,14 @@ type fakeGenesisClient struct {
 	calls  []string
 
 	beginRequest      hostapi.RegistrationBeginRequest
+	listAgentID       string
+	listLimit         int
 	advanceRequest    hostapi.MintConversationRequest
 	registrationID    string
 	conversationID    string
 	beginResponse     map[string]any
+	listResponse      map[string]any
+	listErr           error
 	advanceResponse   map[string]any
 	readResponse      map[string]any
 	recoverResponse   map[string]any
@@ -35,6 +40,17 @@ func (f *fakeGenesisClient) BeginRegistration(_ context.Context, bearer string, 
 	f.calls = append(f.calls, "begin")
 	f.beginRequest = req
 	return f.beginResponse, nil
+}
+
+func (f *fakeGenesisClient) ListConversations(_ context.Context, bearer string, agentID string, limit int) (map[string]any, error) {
+	f.bearer = bearer
+	f.calls = append(f.calls, "list:"+agentID)
+	f.listAgentID = agentID
+	f.listLimit = limit
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listResponse, nil
 }
 
 func (f *fakeGenesisClient) AdvanceConversation(_ context.Context, bearer string, registrationID string, req hostapi.MintConversationRequest) (map[string]any, error) {
@@ -133,6 +149,53 @@ func TestGenesisRejectsOrdinaryOAuthAndPaymentEvidenceWithoutCallingHost(t *test
 				t.Fatalf("ordinary OAuth token reached Host: %v", fake.calls)
 			}
 		})
+	}
+}
+
+func TestGenesisListRecommendationsCoverCompletionAndFinalizationStates(t *testing.T) {
+	const agentID = "0xagent"
+	conversations := sanitizeGenesisConversationSummaries([]any{
+		map[string]any{"registration_id": "reg-ready", "conversation_id": "conv-ready", "status": "declaration_ready", "message_count": 2},
+		map[string]any{"registration_id": "reg-preflight", "conversation_id": "conv-preflight", "status": "finalization_ready", "message_count": 3},
+		map[string]any{"registration_id": "reg-finalize", "conversation_id": "conv-finalize", "status": "ready_to_finalize", "message_count": 4},
+		map[string]any{"registration_id": "reg-complete", "conversation_id": "conv-complete", "status": "complete", "message_count": 5},
+	}, agentID)
+	if len(conversations) != 4 {
+		t.Fatalf("conversations = %+v", conversations)
+	}
+	if conversations[0]["recommended_next_tool"] != toolAgentGenesisComplete {
+		t.Fatalf("declaration_ready recommendation = %+v", conversations[0])
+	}
+	if conversations[1]["recommended_next_tool"] != toolAgentGenesisFinalizePreflight {
+		t.Fatalf("finalization_ready recommendation = %+v", conversations[1])
+	}
+	if conversations[2]["recommended_next_tool"] != toolAgentGenesisFinalize {
+		t.Fatalf("ready_to_finalize recommendation = %+v", conversations[2])
+	}
+	if conversations[3]["terminal"] != true || conversations[3]["recommended_next_tool"] != toolAgentGet || conversations[3]["alternate_next_tool"] != toolAgentList {
+		t.Fatalf("complete terminal recommendation = %+v", conversations[3])
+	}
+	start := genesisListStartHere(conversations, agentID)
+	if start["recommended_next_tool"] != toolAgentGenesisComplete || start["registration_id"] != "reg-ready" {
+		t.Fatalf("start = %+v, want newest actionable non-terminal declaration_ready lane", start)
+	}
+}
+
+func TestAgentGenesisListReturnsSanitizedHostError(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{listErr: &hostapi.APIError{Status: http.StatusForbidden, Code: "soul_instance.forbidden"}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result, err := registry.Call(operatorToolContext("owner", []string{"read"}, "owner-oauth-bearer-test-only"), toolAgentGenesisList, json.RawMessage(`{"agent_id":"0xabc","limit":3}`))
+	if err != nil {
+		t.Fatalf("agent_genesis_list: %v", err)
+	}
+	payload := assertToolError(t, result, "forbidden", http.StatusForbidden)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "owner-oauth-bearer") || strings.Contains(string(encoded), "host-instance-key") {
+		t.Fatalf("host error leaked credential material: %s", string(encoded))
 	}
 }
 
@@ -418,6 +481,101 @@ func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 	unsafeRecovery, _ := unsafe["recovery"].(map[string]any)
 	if _, ok := unsafeRecovery["reason"]; ok {
 		t.Fatalf("unsafe recovery reason was not dropped: %+v", unsafeRecovery)
+	}
+}
+
+func TestGenesisProcessingStatesAreWaitOnlyGuidance(t *testing.T) {
+	for _, status := range []string{"in_progress", "declaration_extraction_pending"} {
+		status := status
+		t.Run(status, func(t *testing.T) {
+			raw := map[string]any{
+				"conversation": map[string]any{
+					"registration_id":     "reg-123",
+					"conversation_id":     "conv-456",
+					"agent_id":            "agent-123",
+					"status":              status,
+					"poll_after_seconds":  7,
+					"progress":            "host_processing",
+					"private_transcript":  "must-not-return",
+					"wallet_signature":    "must-not-return",
+					"producedDeclaration": "must-not-return",
+				},
+			}
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			data := structuredGenesisData(t, result)
+			conversation := data["conversation"].(map[string]any)
+			if conversation["poll_after_seconds"] != 7 {
+				t.Fatalf("conversation poll_after_seconds = %#v, want 7", conversation["poll_after_seconds"])
+			}
+			guidance := data["guidance"].(map[string]any)
+			if guidance["next_tool"] != toolAgentGenesisRead {
+				t.Fatalf("processing guidance next_tool = %+v, want %s", guidance, toolAgentGenesisRead)
+			}
+			if guidance["wait"] != true {
+				t.Fatalf("processing guidance wait = %+v, want true", guidance)
+			}
+			if guidance["forbidden_next_tool"] != toolAgentGenesisAdvance {
+				t.Fatalf("processing guidance forbidden_next_tool = %+v, want %s", guidance, toolAgentGenesisAdvance)
+			}
+			if guidance["poll_after_seconds"] != 7 || guidance["expected_wait_seconds"] != 7 {
+				t.Fatalf("processing guidance wait fields = %+v, want poll/expected wait 7", guidance)
+			}
+			if guidance["progress"] != "host_processing" {
+				t.Fatalf("processing guidance progress = %+v", guidance)
+			}
+			instruction, _ := guidance["instruction"].(string)
+			for _, want := range []string{
+				"Host is processing",
+				"Do not call " + toolAgentGenesisAdvance + " again",
+				"do not nudge",
+				"wait poll_after_seconds=7 seconds",
+				"then call " + toolAgentGenesisRead,
+				"Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn",
+			} {
+				if !strings.Contains(instruction, want) {
+					t.Fatalf("processing instruction missing %q: %s", want, instruction)
+				}
+			}
+			if strings.Contains(instruction, "Continue the Host-owned mint conversation with "+toolAgentGenesisAdvance) {
+				t.Fatalf("processing instruction still suggests advance: %s", instruction)
+			}
+			visible := result.Content[0].Text
+			if !strings.Contains(visible, "Do not call "+toolAgentGenesisAdvance+" again") || !strings.Contains(visible, "do not nudge") || !strings.Contains(visible, "wait poll_after_seconds=7 seconds") {
+				t.Fatalf("visible processing guidance missing no-nudge wait text: %s", visible)
+			}
+			encoded := mustMarshalGenesisResult(t, result)
+			for _, forbidden := range []string{"must-not-return", "private_transcript", "wallet_signature", "producedDeclaration"} {
+				if strings.Contains(encoded, forbidden) {
+					t.Fatalf("processing result leaked forbidden marker %q: %s", forbidden, encoded)
+				}
+			}
+		})
+	}
+}
+
+func TestGenesisOwnerInputStatesStillAdvanceGuidance(t *testing.T) {
+	for _, status := range []string{"assistant_turn_ready", "awaiting_owner", "needs_owner_turn"} {
+		status := status
+		t.Run(status, func(t *testing.T) {
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", genesisConversationResponse(status, "private-transcript-must-not-return"))
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			guidance := structuredGenesisData(t, result)["guidance"].(map[string]any)
+			if guidance["next_tool"] != toolAgentGenesisAdvance {
+				t.Fatalf("owner-input guidance = %+v, want %s", guidance, toolAgentGenesisAdvance)
+			}
+			if guidance["wait"] == true || guidance["forbidden_next_tool"] == toolAgentGenesisAdvance {
+				t.Fatalf("owner-input guidance should not be wait-only: %+v", guidance)
+			}
+			instruction, _ := guidance["instruction"].(string)
+			if !strings.Contains(instruction, "Host is waiting for owner/operator input") || !strings.Contains(instruction, toolAgentGenesisAdvance) {
+				t.Fatalf("owner-input instruction = %q", instruction)
+			}
+		})
 	}
 }
 

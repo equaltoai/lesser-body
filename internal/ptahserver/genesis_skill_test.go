@@ -72,6 +72,9 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 		"Persist `conversation_id` immediately",
 		"after every call",
 		"structuredContent.data.guidance.next_tool",
+		"`in_progress` and `declaration_extraction_pending` are Host-processing states",
+		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
+		"`poll_after_seconds`",
 		toolAgentGenesisComplete,
 		"never submit declarations as source of truth",
 		"`" + toolAgentGenesisFinalizePreflight + "` then",
@@ -141,6 +144,8 @@ func assertVisibleGenesisSkillDirectives(t *testing.T, text string) {
 		"staged five bodies identity → philosophy → discipline → boundaries → soul",
 		"Persist `conversation_id` immediately and after every call",
 		"Follow `structuredContent.data.guidance.next_tool`",
+		"`in_progress` and `declaration_extraction_pending` are wait-only",
+		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
 		toolAgentGenesisComplete,
 		"never submit declarations as source of truth",
 		"`" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`",
@@ -214,6 +219,8 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		"Persist `conversation_id` immediately",
 		"after every call",
 		"structuredContent.data.guidance.next_tool",
+		"`in_progress` and `declaration_extraction_pending` are Host-processing states",
+		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
 		toolAgentGenesisComplete,
 		"never submit declarations as source of truth",
 		toolAgentGenesisFinalizePreflight,
@@ -254,6 +261,8 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		promptDraftGenesisTurn,
 		promptReviewSoulDraft,
 		fiveBodyHostHeadSHA,
+		"in_progress / declaration_extraction_pending",
+		"wait-only; never " + toolAgentGenesisAdvance,
 	} {
 		if !strings.Contains(guidanceMap, want) {
 			t.Fatalf("guidance map missing %q", want)
