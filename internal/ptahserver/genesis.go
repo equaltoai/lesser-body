@@ -826,13 +826,19 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 		guidance["next_tool"] = toolAgentGenesisAdvance
 		guidance["alternate_next_tool"] = toolAgentGenesisRead
 		guidance["instruction"] = "Host is waiting for owner/operator input. Call agent_genesis_advance with the next owner/operator message; optionally call agent_genesis_read first to refresh the Host projection."
+	case operation == "complete":
+		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
+		guidance["instruction"] = "Call agent_genesis_finalize_preflight, then agent_genesis_finalize only after Host reports readiness."
+	case operation == "finalize_preflight":
+		guidance["next_tool"] = toolAgentGenesisFinalize
+		guidance["instruction"] = "Call agent_genesis_finalize; Body will write a Host-derived Ptah registry row after Host publishes the identity."
 	case status == "declaration_ready" || status == "ready_for_completion":
 		guidance["next_tool"] = toolAgentGenesisComplete
 		guidance["instruction"] = "Call agent_genesis_complete so Host extracts and validates its durable produced_declarations checkpoint."
-	case operation == "complete" || status == "complete" || status == "completed" || status == "finalization_ready":
+	case status == "complete" || status == "completed" || status == "finalization_ready":
 		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
 		guidance["instruction"] = "Call agent_genesis_finalize_preflight, then agent_genesis_finalize only after Host reports readiness."
-	case operation == "finalize_preflight" || status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
+	case status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
 		guidance["next_tool"] = toolAgentGenesisFinalize
 		guidance["instruction"] = "Call agent_genesis_finalize; Body will write a Host-derived Ptah registry row after Host publishes the identity."
 	case operation == "finalize" || status == "published" || status == "finalized" || status == "active":

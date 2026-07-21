@@ -579,6 +579,34 @@ func TestGenesisOwnerInputStatesStillAdvanceGuidance(t *testing.T) {
 	}
 }
 
+func TestGenesisDeclarationReadyGuidanceUsesSuccessfulOperation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		toolName  string
+		operation string
+		wantTool  string
+	}{
+		{name: "read", toolName: toolAgentGenesisRead, operation: "read", wantTool: toolAgentGenesisComplete},
+		{name: "complete", toolName: toolAgentGenesisComplete, operation: "complete", wantTool: toolAgentGenesisFinalizePreflight},
+		{name: "finalize_preflight", toolName: toolAgentGenesisFinalizePreflight, operation: "finalize_preflight", wantTool: toolAgentGenesisFinalize},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := genesisSuccessResult(tc.toolName, tc.operation, genesisConversationResponse("declaration_ready", "private-transcript-must-not-return"))
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			guidance := structuredGenesisData(t, result)["guidance"].(map[string]any)
+			if guidance["next_tool"] != tc.wantTool {
+				t.Fatalf("%s declaration_ready guidance = %+v, want %s", tc.operation, guidance, tc.wantTool)
+			}
+			if !strings.Contains(result.Content[0].Text, tc.wantTool) {
+				t.Fatalf("%s MCP-visible guidance missing %s: %s", tc.operation, tc.wantTool, result.Content[0].Text)
+			}
+		})
+	}
+}
+
 func genesisConversationResponse(status string, oldTranscript string) map[string]any {
 	return map[string]any{
 		"conversation": map[string]any{
