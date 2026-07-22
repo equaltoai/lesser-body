@@ -24,7 +24,7 @@ type genesisSkillFile struct {
 }
 
 // genesisSkillVersion derives the stable skill version from the Host-owned
-// guidance version and the pinned Host contract head. A Host PR #928 refresh
+// guidance version and the pinned Host contract head. A Host PR #975 refresh
 // changes this version and the bundle id together with the mirrored fixtures.
 func genesisSkillVersion() string {
 	head := fiveBodyHostHeadSHA
@@ -113,7 +113,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisSkillGet,
 		Title:       "Get Ptah genesis operator skill",
-		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns deterministic structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to the mirrored Host PR #928 five-body contract. Ptah serves content only: no local installation, no filesystem write, no publish, and no cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns deterministic structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to the mirrored Host PR #975 five-body contract. Ptah serves content only: no local installation, no filesystem write, no publish, and no cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -147,7 +147,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 							"sha256":{"type":"string"},
 							"content":{"type":"string"}
 						}}},
-						"provenance":{"type":"object","description":"Host PR #928 head plus Body's mirrored contract versions and checksums."},
+						"provenance":{"type":"object","description":"Host PR #975 head plus Body's mirrored contract versions and checksums."},
 						"semantics":{"type":"object","description":"Explicit no-write/no-install semantics: Ptah serves content only; clients decide materialization."},
 						"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_begin"]},"status":{"type":"string"},"instruction":{"type":"string"}}}
 					}
@@ -203,6 +203,9 @@ func genesisSkillVisibleText(data map[string]any) string {
 	text.WriteString("- Call `" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`.\n")
 	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
 	text.WriteString("- `restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`.\n")
+	text.WriteString("- `retry_same_step` means wait `retry_after_seconds` when present, then call `" + toolAgentGenesisRecover + "` exactly once on the same lane.\n")
+	text.WriteString("- `refresh_state` means call `" + toolAgentGenesisRead + "` exactly once; do not write or poll endlessly.\n")
+	text.WriteString("- `operator_action` means stop automatic Genesis tool calls and contact the instance operator; no automatic write is selected.\n")
 	text.WriteString("- Host is source of truth; never fabricate genesis state, declarations, model allowlists, or directory entries.\n\n")
 	for _, file := range genesisSkillFiles() {
 		text.WriteString("## File: `" + file.path + "`\n\n")
@@ -278,9 +281,16 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
 
 ## Failure recovery
 
-- If a response carries ` + "`failure.recovery.action=restart_soul_bootstrap`" + `, ` + "`restart_soul_bootstrap`" + `
-  means fresh ` + "`" + toolAgentGenesisBegin + "`" + `, not ` + "`" + toolAgentGenesisRecover + "`" + `. Recover is only
-  for the other typed recoverable states Host names.
+- Treat Host's recovery action as an exact enum. Never normalize ` + "`refresh_state`" + `, ` + "`retry_same_step`" + `,
+  ` + "`restart_soul_bootstrap`" + `, or ` + "`operator_action`" + ` into a generic retry/wait/contact state.
+- ` + "`retry_same_step`" + ` means wait ` + "`retry_after_seconds`" + ` when present, then call ` + "`" + toolAgentGenesisRecover + "`" + ` exactly once
+  with the same registration_id/conversation_id. Keep ` + "`fresh_lane=false`" + `; do not start a new lane or poll read instead.
+- ` + "`restart_soul_bootstrap`" + ` means fresh ` + "`" + toolAgentGenesisBegin + "`" + `, not ` + "`" + toolAgentGenesisRecover + "`" + `.
+  Recover is explicitly forbidden for that action.
+- ` + "`refresh_state`" + ` means call ` + "`" + toolAgentGenesisRead + "`" + ` exactly once, then follow the newly returned Host
+  status/recovery action. Do not write and do not turn refresh into an endless read loop.
+- ` + "`operator_action`" + ` means stop automatic Genesis tool calls and contact the instance operator with the safe Host reason
+  when present. Do not choose an automatic write or continue polling.
 - Start with ` + "`" + toolAgentGenesisList + "`" + ` whenever ids are unclear. It returns Host-backed summaries,
   ` + "`recommended_start`" + `, exact next-tool arguments, and failed-lane instructions. For ` + "`failed`" + ` summaries,
   read first to load typed ` + "`failure.recovery`" + `; do not guess recover vs restart from list output alone.
@@ -332,12 +342,15 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | complete success / finalization-ready | ` + toolAgentGenesisFinalizePreflight + ` |
 | preflight-ready | ` + toolAgentGenesisFinalize + ` |
 | finalize success / published / finalized | ` + toolAgentGet + ` or ` + toolAgentList + ` |
+| failure.recovery.action=retry_same_step | ` + toolAgentGenesisRecover + ` exactly once after retry_after_seconds when present; same lane |
 | failure.recovery.action=restart_soul_bootstrap | ` + toolAgentGenesisBegin + ` (fresh lane; never ` + toolAgentGenesisRecover + `) |
-| other typed recoverable failure | ` + toolAgentGenesisRecover + ` |
+| failure.recovery.action=refresh_state | ` + toolAgentGenesisRead + ` exactly once; no write or endless read loop |
+| failure.recovery.action=operator_action | no automatic next tool; stop and contact the instance operator |
 
 Always prefer the live ` + "`structuredContent.data.guidance.next_tool`" + ` from the latest Host-backed response
-over this static table. If live guidance has ` + "`wait=true`" + `, use any ` + "`poll_after_seconds`" + ` /
-` + "`expected_wait_seconds`" + ` value as the expected delay, call ` + "`" + toolAgentGenesisRead + "`" + ` after that
-delay, and do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports an owner-input state.
+over this static table. For ` + "`in_progress`" + ` / ` + "`declaration_extraction_pending`" + ` processing guidance, use any
+` + "`poll_after_seconds`" + ` / ` + "`expected_wait_seconds`" + ` value as the delay and then call ` + "`" + toolAgentGenesisRead + "`" + `.
+For ` + "`retry_same_step`" + ` guidance, the same delay fields precede exactly one ` + "`" + toolAgentGenesisRecover + "`" + ` call instead.
+Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports an owner-input state.
 `
 }

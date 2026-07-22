@@ -82,6 +82,12 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
 		"`restart_soul_bootstrap`",
 		"fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"`retry_same_step`",
+		"call `" + toolAgentGenesisRecover + "` exactly once",
+		"`refresh_state`",
+		"call `" + toolAgentGenesisRead + "` exactly once",
+		"`operator_action`",
+		"contact the instance operator",
 		"Host is source of truth",
 		"Never fabricate",
 		canonicalGenesisAffirmation(),
@@ -151,6 +157,10 @@ func assertVisibleGenesisSkillDirectives(t *testing.T, text string) {
 		"`" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`",
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
 		"`restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"`retry_same_step` means wait",
+		"call `" + toolAgentGenesisRecover + "` exactly once",
+		"`refresh_state` means call `" + toolAgentGenesisRead + "` exactly once",
+		"`operator_action` means stop automatic Genesis tool calls",
 		"Host is source of truth",
 		"never fabricate",
 	} {
@@ -227,6 +237,10 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		toolAgentGenesisFinalize,
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
 		"fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
+		"`retry_same_step`",
+		"call `" + toolAgentGenesisRecover + "` exactly once",
+		"`refresh_state`",
+		"`operator_action`",
 		"Host is source of truth",
 		"Never fabricate",
 	} {
@@ -248,6 +262,25 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 	if firstStep["step"] != "skill" || firstStep["tool"] != toolAgentGenesisSkillGet {
 		t.Fatalf("playbook first step = %+v, want the skill fetch step", firstStep)
 	}
+	recoveryActions := playbook["recovery_actions"].(map[string]any)
+	for action, wantTool := range map[string]string{
+		"retry_same_step":        toolAgentGenesisRecover,
+		"restart_soul_bootstrap": toolAgentGenesisBegin,
+		"refresh_state":          toolAgentGenesisRead,
+	} {
+		actionGuidance := recoveryActions[action].(map[string]any)
+		if actionGuidance["next_tool"] != wantTool {
+			t.Fatalf("playbook recovery action %s = %+v, want next_tool %s", action, actionGuidance, wantTool)
+		}
+	}
+	operatorGuidance := recoveryActions["operator_action"].(map[string]any)
+	if _, ok := operatorGuidance["next_tool"]; ok {
+		t.Fatalf("playbook operator_action must not choose an automatic tool: %+v", operatorGuidance)
+	}
+	restartGuidance := recoveryActions["restart_soul_bootstrap"].(map[string]any)
+	if restartGuidance["fresh_lane"] != true || restartGuidance["forbidden_next_tool"] != toolAgentGenesisRecover {
+		t.Fatalf("playbook restart_soul_bootstrap guidance = %+v", restartGuidance)
+	}
 
 	guidanceMap := ""
 	for _, file := range genesisSkillFiles() {
@@ -263,6 +296,9 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		fiveBodyHostHeadSHA,
 		"in_progress / declaration_extraction_pending",
 		"wait-only; never " + toolAgentGenesisAdvance,
+		"failure.recovery.action=retry_same_step",
+		"failure.recovery.action=refresh_state",
+		"failure.recovery.action=operator_action",
 	} {
 		if !strings.Contains(guidanceMap, want) {
 			t.Fatalf("guidance map missing %q", want)

@@ -477,10 +477,191 @@ func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 		t.Fatalf("restart guidance should explicitly say recover is not the restart path: %s", result.Content[0].Text)
 	}
 
-	unsafe := sanitizeGenesisFailure(map[string]any{"recovery": map[string]any{"action": "retry", "reason": "private wallet signature leaked"}})
+	unsafe := sanitizeGenesisFailure(map[string]any{"recovery": map[string]any{"action": "retry_same_step", "reason": "private wallet signature leaked"}})
 	unsafeRecovery, _ := unsafe["recovery"].(map[string]any)
 	if _, ok := unsafeRecovery["reason"]; ok {
 		t.Fatalf("unsafe recovery reason was not dropped: %+v", unsafeRecovery)
+	}
+}
+
+func TestGenesisRetrySameStepRuntimePayloadGuidance(t *testing.T) {
+	raw := map[string]any{
+		"conversation": map[string]any{
+			"registration_id": "Qh6JQOmy0KXO0bm5XNXsyg",
+			"conversation_id": "K-JYArykVuog3gq-2lHBJw",
+			"status":          "failed",
+			"failure": map[string]any{
+				"code":      "microvm_unavailable",
+				"retryable": true,
+				"recovery": map[string]any{
+					"action":              "retry_same_step",
+					"max_attempts":        3,
+					"retry_after_seconds": 5,
+					"reason":              "microvm_unavailable",
+				},
+			},
+		},
+	}
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	if data["status"] != "failed" {
+		t.Fatalf("runtime payload status = %v, want failed", data["status"])
+	}
+	recovery := nestedMap(data, "conversation", "failure", "recovery")
+	if recovery["action"] != "retry_same_step" || recovery["max_attempts"] != 3 || recovery["retry_after_seconds"] != 5 {
+		t.Fatalf("runtime recovery projection = %+v", recovery)
+	}
+	guidance := data["guidance"].(map[string]any)
+	if guidance["next_tool"] != toolAgentGenesisRecover || guidance["fresh_lane"] != false {
+		t.Fatalf("retry_same_step guidance = %+v, want recover on the same lane", guidance)
+	}
+	if guidance["poll_after_seconds"] != 5 || guidance["expected_wait_seconds"] != 5 || guidance["wait"] != true {
+		t.Fatalf("retry_same_step delay guidance = %+v, want bounded 5-second wait", guidance)
+	}
+	instruction, _ := guidance["instruction"].(string)
+	for _, want := range []string{"retry_same_step", "wait retry_after_seconds=5 seconds", "call " + toolAgentGenesisRecover + " exactly once"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("retry_same_step instruction missing %q: %s", want, instruction)
+		}
+	}
+	if strings.Contains(instruction, "Poll "+toolAgentGenesisRead) {
+		t.Fatalf("retry_same_step instruction still loops on read: %s", instruction)
+	}
+	if !strings.Contains(result.Content[0].Text, toolAgentGenesisRecover) || !strings.Contains(result.Content[0].Text, "retry_after_seconds=5") {
+		t.Fatalf("MCP-visible runtime guidance missing recover/delay: %s", result.Content[0].Text)
+	}
+}
+
+func TestGenesisHostRecoveryActionsMapDeterministically(t *testing.T) {
+	cases := []struct {
+		action               string
+		wantNextTool         string
+		wantFreshLane        bool
+		wantInstructionParts []string
+		wantNoNextTool       bool
+	}{
+		{
+			action:               "retry_same_step",
+			wantNextTool:         toolAgentGenesisRecover,
+			wantInstructionParts: []string{"wait retry_after_seconds=5 seconds", "call " + toolAgentGenesisRecover + " exactly once"},
+		},
+		{
+			action:               "restart_soul_bootstrap",
+			wantNextTool:         toolAgentGenesisBegin,
+			wantFreshLane:        true,
+			wantInstructionParts: []string{"fresh genesis lane", "Do not call " + toolAgentGenesisRecover},
+		},
+		{
+			action:               "refresh_state",
+			wantNextTool:         toolAgentGenesisRead,
+			wantInstructionParts: []string{"refresh_state", "call " + toolAgentGenesisRead + " exactly once", "Do not call a Genesis write tool"},
+		},
+		{
+			action:               "operator_action",
+			wantNoNextTool:       true,
+			wantInstructionParts: []string{"operator_action", "contact the instance operator", "Stop automatic Genesis tool calls"},
+		},
+	}
+	shapes := []struct {
+		name string
+		raw  func(map[string]any) map[string]any
+	}{
+		{
+			name: "nested_conversation_failure",
+			raw: func(failure map[string]any) map[string]any {
+				return map[string]any{"conversation": map[string]any{"status": "failed", "failure": failure}}
+			},
+		},
+		{
+			name: "top_level_failure",
+			raw: func(failure map[string]any) map[string]any {
+				return map[string]any{"status": "failed", "failure": failure}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		for _, shape := range shapes {
+			shape := shape
+			t.Run(tc.action+"/"+shape.name, func(t *testing.T) {
+				failure := map[string]any{
+					"code":      "microvm_unavailable",
+					"retryable": tc.action == "retry_same_step",
+					"recovery": map[string]any{
+						"action":              tc.action,
+						"max_attempts":        3,
+						"retry_after_seconds": 5,
+						"reason":              "microvm_unavailable",
+					},
+				}
+				result, err := genesisSuccessResult(toolAgentGenesisRead, "read", shape.raw(failure))
+				if err != nil {
+					t.Fatalf("genesisSuccessResult: %v", err)
+				}
+				data := structuredGenesisData(t, result)
+				recovery := nestedMap(data, "conversation", "failure", "recovery")
+				if recovery["action"] != tc.action {
+					t.Fatalf("Host recovery action was normalized: %+v", recovery)
+				}
+				guidance := data["guidance"].(map[string]any)
+				nextTool, hasNextTool := guidance["next_tool"]
+				if tc.wantNoNextTool {
+					if hasNextTool {
+						t.Fatalf("%s guidance must not choose an automatic tool: %+v", tc.action, guidance)
+					}
+				} else if nextTool != tc.wantNextTool {
+					t.Fatalf("%s next_tool = %v, want %s: %+v", tc.action, nextTool, tc.wantNextTool, guidance)
+				}
+				if guidance["fresh_lane"] != tc.wantFreshLane {
+					t.Fatalf("%s fresh_lane = %v, want %t", tc.action, guidance["fresh_lane"], tc.wantFreshLane)
+				}
+				instruction, _ := guidance["instruction"].(string)
+				for _, want := range tc.wantInstructionParts {
+					if !strings.Contains(instruction, want) {
+						t.Fatalf("%s instruction missing %q: %s", tc.action, want, instruction)
+					}
+				}
+				if tc.action == "operator_action" && strings.Contains(instruction, "Poll "+toolAgentGenesisRead) {
+					t.Fatalf("operator_action instruction must not prescribe endless reads: %s", instruction)
+				}
+			})
+		}
+	}
+}
+
+func TestGenesisUnknownRecoveryActionFailsClosedWithoutNormalization(t *testing.T) {
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", map[string]any{
+		"conversation": map[string]any{
+			"status": "failed",
+			"failure": map[string]any{
+				"code": "microvm_unavailable",
+				"recovery": map[string]any{
+					"action": "future_host_action",
+					"reason": "microvm_unavailable",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	if got := nestedString(data, "conversation", "failure", "recovery", "action"); got != "future_host_action" {
+		t.Fatalf("unknown Host action = %q, want preserved source value", got)
+	}
+	guidance := data["guidance"].(map[string]any)
+	if _, ok := guidance["next_tool"]; ok {
+		t.Fatalf("unknown Host action must not select a fallback tool: %+v", guidance)
+	}
+	instruction, _ := guidance["instruction"].(string)
+	for _, want := range []string{"unrecognized failure.recovery.action", "Stop automatic Genesis tool calls", "will not normalize", "contact the instance operator"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("unknown Host action guidance missing %q: %s", want, instruction)
+		}
 	}
 }
 
