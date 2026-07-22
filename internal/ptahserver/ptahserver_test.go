@@ -46,6 +46,9 @@ func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRead).Description, "state to next tool")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "restart_soul_bootstrap")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, toolAgentGenesisBegin)
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "retry_same_step")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "refresh_state")
+	assertContains(t, toolDefByName(t, tools, toolAgentGenesisRecover).Description, "operator_action")
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisComplete).Description, toolAgentGenesisFinalizePreflight)
 	assertContains(t, toolDefByName(t, tools, toolAgentGenesisFinalize).Description, "Host-derived Ptah registry row")
 

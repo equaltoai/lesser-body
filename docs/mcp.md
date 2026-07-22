@@ -621,7 +621,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
 | `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. When Host reports `in_progress` / `declaration_extraction_pending`, guidance is wait-only: do not call `agent_genesis_advance` to nudge; wait `poll_after_seconds` when present, then read again. |
 | `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation only when Host is waiting for owner/operator input (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`) and persist the returned conversation id. Do not call this tool while Host is `in_progress` / `declaration_extraction_pending`; wait/read instead. |
-| `agent_genesis_recover` | Write + owner/operator | Ask Host to reconcile a typed recovery state; Body does not retry or replace the Host state machine locally. If Host says `restart_soul_bootstrap`, call `agent_genesis_begin` for a fresh lane instead. |
+| `agent_genesis_recover` | Write + owner/operator | Ask Host to retry the same durable step only when `failure.recovery.action="retry_same_step"`; wait the bounded `retry_after_seconds` when present, then call recover exactly once on the same lane. `refresh_state` maps to one read, `restart_soul_bootstrap` maps to a fresh begin and forbids recover, and `operator_action` stops automation for operator contact. Body does not retry or replace the Host state machine locally. |
 | `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. Next: `agent_genesis_finalize_preflight`. |
 | `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. Next: `agent_genesis_finalize` after Host readiness. |
 | `agent_genesis_finalize` | Write + owner/operator | Ask Host to finalize/publish the hosted/offchain identity, then idempotently write Body's Host-derived Ptah registry row for `agent_get`/`agent_list` visibility. |
@@ -714,9 +714,13 @@ The owner-operated sequence is:
    projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal. If Host reports
    `in_progress` or `declaration_extraction_pending`, wait `poll_after_seconds` when present, then call
    `agent_genesis_read`; do not call `agent_genesis_advance` again just to nudge the assistant forward.
-5. If Host returns a typed recoverable failure, the owner calls `agent_genesis_recover` and resumes with the Host's
-   checkpoint. When the conversation is ready, `agent_genesis_complete` asks Host to extract its own declarations;
-   callers cannot provide or replace declaration material.
+5. If Host returns a typed failed recovery action, follow the exact Host vocabulary: `retry_same_step` waits the
+   bounded `retry_after_seconds` when present and then calls `agent_genesis_recover` exactly once on the same lane;
+   `refresh_state` calls `agent_genesis_read` exactly once; `restart_soul_bootstrap` starts a fresh lane with
+   `agent_genesis_begin` and explicitly forbids recover; and `operator_action` stops automatic Genesis calls for
+   explicit instance-operator contact. Do not normalize these values into generic retry/wait/contact behavior. When
+   the conversation is ready, `agent_genesis_complete` asks Host to extract its own declarations; callers cannot
+   provide or replace declaration material.
 6. The owner calls `agent_genesis_finalize_preflight`, then `agent_genesis_finalize`. Instance-trust finalization sends
    an empty request body: Host owns the declaration checkpoint and publishes the hosted/offchain identity without a
    wallet signature supplied by Body. After Host returns the finalized identity, Body writes exactly one idempotent
@@ -756,7 +760,10 @@ State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 | `agent_genesis_complete` success / finalization-ready state | `agent_genesis_finalize_preflight` | Check Host readiness before finalization. |
 | preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |
 | `agent_genesis_finalize` success / `published` / `finalized` / `active` / terminal `complete` | `agent_get` (or `agent_list`) | Verify account-scoped Body/Ptah visibility with registry provenance; do not recover or advance terminal lanes. |
+| `failure.recovery.action="retry_same_step"` | `agent_genesis_recover` | Keep `fresh_lane=false`. Wait the bounded `retry_after_seconds` when present (also projected as `poll_after_seconds` / `expected_wait_seconds`), then call recover exactly once for the same registration/conversation ids; do not poll the terminal read instead. |
 | `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. |
+| `failure.recovery.action="refresh_state"` | `agent_genesis_read` | Keep `fresh_lane=false`. Read exactly once to refresh Host state, then follow the newly returned status/recovery action; do not write or create an endless read loop. |
+| `failure.recovery.action="operator_action"` | none (operator contact) | Keep `fresh_lane=false`. Stop automatic Genesis calls and contact the instance operator with the safe Host reason when present; Body selects no automatic write and does not prescribe endless reads. |
 
 Body uses the server-side `LESSER_HOST_INSTANCE_KEY` only for its Host calls; it never forwards the owner OAuth bearer
    as Host instance authentication. Genesis text results are compact, structured results expose only the latest bounded

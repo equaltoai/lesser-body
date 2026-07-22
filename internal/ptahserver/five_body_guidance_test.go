@@ -415,7 +415,38 @@ func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "not_available")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "declaration_extraction_pending")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "producer_contract_missing")
-	assertSchemaContainsEnum(t, genesisOutputSchema(), "restart_soul_bootstrap")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "microvm_unavailable")
+	var schema map[string]any
+	if err := json.Unmarshal(genesisOutputSchema(), &schema); err != nil {
+		t.Fatalf("genesis output schema invalid JSON: %v", err)
+	}
+	dataSchema := schema["properties"].(map[string]any)["data"].(map[string]any)
+	properties := dataSchema["properties"].(map[string]any)
+	topLevelFailureSchema := properties["failure"].(map[string]any)
+	conversationSchema := properties["conversation"].(map[string]any)
+	nestedFailureSchema := conversationSchema["properties"].(map[string]any)["failure"].(map[string]any)
+	for name, failureSchema := range map[string]map[string]any{
+		"top_level":           topLevelFailureSchema,
+		"nested_conversation": nestedFailureSchema,
+	} {
+		recoverySchema := failureSchema["properties"].(map[string]any)["recovery"].(map[string]any)
+		actionSchema := recoverySchema["properties"].(map[string]any)["action"].(map[string]any)
+		actionEnum := actionSchema["enum"].([]any)
+		if got, want := actionEnum, []any{"refresh_state", "retry_same_step", "restart_soul_bootstrap", "operator_action"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s genesis recovery action enum = %v, want exact Host vocabulary %v", name, got, want)
+		}
+		for field, bounds := range map[string]map[string]any{
+			"max_attempts":        {"minimum": float64(0), "maximum": float64(10)},
+			"retry_after_seconds": {"minimum": float64(0), "maximum": float64(3600)},
+		} {
+			fieldSchema := recoverySchema["properties"].(map[string]any)[field].(map[string]any)
+			for bound, want := range bounds {
+				if fieldSchema[bound] != want {
+					t.Fatalf("%s recovery schema %s.%s = %v, want %v", name, field, bound, fieldSchema[bound], want)
+				}
+			}
+		}
+	}
 	for _, wantField := range []string{"forbidden_next_tool", "wait", "poll_after_seconds", "expected_wait_seconds"} {
 		if !strings.Contains(string(genesisOutputSchema()), wantField) {
 			t.Fatalf("genesis output schema missing guidance field %q: %s", wantField, string(genesisOutputSchema()))

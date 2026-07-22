@@ -32,6 +32,11 @@ const (
 
 	genesisMaxMessageRunes = 8192
 	genesisMaxPathID       = 128
+
+	// lesser-host HostedGenesisSession Failure.Validate bounds retry guidance
+	// to one hour. Body preserves valid Host values and never clamps them into
+	// a different recovery instruction.
+	genesisMaxRecoveryRetryAfterSeconds = 3600
 )
 
 type agentGenesisBeginInput struct {
@@ -65,10 +70,26 @@ func genesisOutputSchema() json.RawMessage {
 					"operation":{"type":"string","enum":["begin","list","read","advance","recover","complete","finalize_preflight","finalize"]},
 					"status":{"type":"string","enum":["begin","not_available","assistant_turn_ready","awaiting_owner","needs_owner_turn","in_progress","declaration_extraction_pending","declaration_ready","ready_for_completion","complete","completed","finalization_ready","preflight_ok","ready_to_finalize","finalize_ready","published","finalized","active","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
 					"failure":{"type":"object","properties":{
-						"code":{"type":"string","enum":["producer_contract_missing","missing_produced_declarations","invalid_produced_declarations","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
-						"recovery":{"type":"object","properties":{"action":{"type":"string","enum":["restart_soul_bootstrap","retry","wait","contact_operator"]}}}
+						"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","declaration_extraction_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
+						"recovery":{"type":"object","properties":{
+							"action":{"type":"string","enum":["refresh_state","retry_same_step","restart_soul_bootstrap","operator_action"]},
+							"max_attempts":{"type":"integer","minimum":0,"maximum":10},
+							"retry_after_seconds":{"type":"integer","minimum":0,"maximum":3600},
+							"reason":{"type":"string","maxLength":256}
+						}}
 					}},
-					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"forbidden_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"wait":{"type":"boolean"},"poll_after_seconds":{"type":"integer"},"expected_wait_seconds":{"type":"integer"},"progress":{"type":"string"},"progress_percent":{"type":"integer"},"instruction":{"type":"string"}}}
+					"conversation":{"type":"object","description":"Sanitized compact Host HostedGenesisSession projection.","properties":{
+						"failure":{"type":"object","properties":{
+							"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","declaration_extraction_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required"]},
+							"recovery":{"type":"object","properties":{
+								"action":{"type":"string","enum":["refresh_state","retry_same_step","restart_soul_bootstrap","operator_action"]},
+								"max_attempts":{"type":"integer","minimum":0,"maximum":10},
+								"retry_after_seconds":{"type":"integer","minimum":0,"maximum":3600},
+								"reason":{"type":"string","maxLength":256}
+							}}
+						}}
+					}},
+					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"forbidden_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"wait":{"type":"boolean"},"poll_after_seconds":{"type":"integer"},"expected_wait_seconds":{"type":"integer"},"progress":{"type":"string"},"progress_percent":{"type":"integer"},"reason":{"type":"string","maxLength":256},"instruction":{"type":"string"}}}
 				}
 			},
 			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
@@ -181,7 +202,7 @@ func agentGenesisRecoverDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisRecover,
 		Title:        "Recover Host-backed agent genesis",
-		Description:  "Ask lesser-host to reconcile or safely retry a typed recovery state for the durable genesis conversation. Host owns the recovery state machine; Body never reruns or substitutes the conversation locally. If Host returns failure.recovery.action=restart_soul_bootstrap, do not call recover; call agent_genesis_begin again for a fresh lane. Requires explicit instance owner/operator OAuth authority and write scope.",
+		Description:  "Ask lesser-host to reconcile or safely retry a typed recovery state for the durable genesis conversation only when Host returns failure.recovery.action=retry_same_step. Wait Host's bounded retry_after_seconds when present, then call this tool exactly once. Host owns the recovery state machine; refresh_state maps to one agent_genesis_read, restart_soul_bootstrap maps to a fresh agent_genesis_begin lane, and operator_action requires operator contact with no automatic write. Body never reruns or substitutes the conversation locally. Requires explicit instance owner/operator OAuth authority and write scope.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -790,7 +811,7 @@ func finalizedGenesisAgentID(data map[string]any) string {
 }
 
 func genesisNextToolGuidance(operation string, data map[string]any) map[string]any {
-	if guidance := restartSoulBootstrapGuidance(data); len(guidance) > 0 {
+	if guidance := genesisRecoveryActionGuidance(data); len(guidance) > 0 {
 		return guidance
 	}
 	status := strings.ToLower(firstNonEmpty(
@@ -932,25 +953,80 @@ func genesisProgressPercent(data map[string]any) (int, bool) {
 	return 0, false
 }
 
-func restartSoulBootstrapGuidance(data map[string]any) map[string]any {
+// genesisRecoveryActionGuidance projects lesser-host's exact RecoveryAction
+// vocabulary. Host remains state authority; Body chooses no fallback write for
+// unknown or operator-owned actions.
+func genesisRecoveryActionGuidance(data map[string]any) map[string]any {
 	recovery := nestedMap(data, "conversation", "failure", "recovery")
 	if len(recovery) == 0 {
 		recovery = nestedMap(data, "failure", "recovery")
 	}
-	action := strings.ToLower(stringValue(recovery, "action"))
-	if action != "restart_soul_bootstrap" {
+	action := strings.ToLower(strings.TrimSpace(stringValue(recovery, "action")))
+	if action == "" {
 		return nil
 	}
 	out := map[string]any{
-		"status":      "restart_soul_bootstrap",
-		"next_tool":   toolAgentGenesisBegin,
-		"fresh_lane":  true,
-		"instruction": "Host requested restart_soul_bootstrap: call agent_genesis_begin again for a fresh genesis lane using the intended domain/local_id. Do not call agent_genesis_recover for this action.",
+		"status": firstNonEmpty(
+			nestedString(data, "conversation", "status"),
+			stringValue(data, "status"),
+			"failed",
+		),
+		"fresh_lane": false,
+	}
+	switch action {
+	case "retry_same_step":
+		out["next_tool"] = toolAgentGenesisRecover
+		if retryAfter, ok := genesisRecoveryRetryAfterSeconds(recovery); ok {
+			out["wait"] = true
+			out["poll_after_seconds"] = retryAfter
+			out["expected_wait_seconds"] = retryAfter
+			out["instruction"] = fmt.Sprintf("Host requested retry_same_step: wait retry_after_seconds=%d seconds, then call %s exactly once for this registration_id/conversation_id. Keep the same lane; do not start a fresh lane or poll %s instead.", retryAfter, toolAgentGenesisRecover, toolAgentGenesisRead)
+		} else {
+			out["instruction"] = "Host requested retry_same_step: call " + toolAgentGenesisRecover + " exactly once for this registration_id/conversation_id. Keep the same lane; do not start a fresh lane or poll " + toolAgentGenesisRead + " instead."
+		}
+	case "restart_soul_bootstrap":
+		out["status"] = "restart_soul_bootstrap"
+		out["next_tool"] = toolAgentGenesisBegin
+		out["forbidden_next_tool"] = toolAgentGenesisRecover
+		out["fresh_lane"] = true
+		out["instruction"] = "Host requested restart_soul_bootstrap: call agent_genesis_begin again for a fresh genesis lane using the intended domain/local_id. Do not call agent_genesis_recover for this action."
+	case "refresh_state":
+		out["next_tool"] = toolAgentGenesisRead
+		out["instruction"] = "Host requested refresh_state: call " + toolAgentGenesisRead + " exactly once to refresh this lane, then follow the newly returned Host status and recovery action. Do not call a Genesis write tool for refresh_state and do not poll endlessly."
+	case "operator_action":
+		out["instruction"] = "Host requested operator_action: Stop automatic Genesis tool calls and contact the instance operator with the Host-provided safe recovery reason when present. Do not call a Genesis write tool and do not poll " + toolAgentGenesisRead + " endlessly."
+	default:
+		out["instruction"] = "Host returned an unrecognized failure.recovery.action: Stop automatic Genesis tool calls and contact the instance operator. Body will not normalize the Host value or select a fallback read/write tool."
 	}
 	if reason := stringValue(recovery, "reason"); reason != "" {
 		out["reason"] = reason
 	}
 	return out
+}
+
+func genesisRecoveryRetryAfterSeconds(recovery map[string]any) (int, bool) {
+	value, ok := firstField(recovery, "retry_after_seconds", "retryAfterSeconds")
+	if !ok {
+		return 0, false
+	}
+	var seconds int64
+	switch number := value.(type) {
+	case int:
+		seconds = int64(number)
+	case int64:
+		seconds = number
+	case float64:
+		if number != float64(int64(number)) {
+			return 0, false
+		}
+		seconds = int64(number)
+	default:
+		return 0, false
+	}
+	if seconds < 0 || seconds > genesisMaxRecoveryRetryAfterSeconds {
+		return 0, false
+	}
+	return int(seconds), true
 }
 
 func genesisToolResultFromError(toolName string, err error) (*mcpruntime.ToolResult, error) {
