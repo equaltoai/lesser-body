@@ -16,8 +16,8 @@ import (
 const (
 	fiveBodySchemaVersion   = "soul-five-body-schema.v2"
 	fiveBodyGuidanceVersion = "soul-five-body-guidance.v2"
-	fiveBodyHostPR          = 928
-	fiveBodyHostHeadSHA     = "e70b1835624724056a099bc96f4f931d0d348cd2"
+	fiveBodyHostPR          = 975
+	fiveBodyHostHeadSHA     = "5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b"
 
 	resourceSoulSchemaV2              = "soul-schema-v2"
 	resourceGenesisInterviewGuide     = "genesis-interview-guide"
@@ -28,16 +28,16 @@ const (
 	ptahGenesisGuidanceResourcePrefix = "ptah://genesis/"
 )
 
-//go:embed testdata/host-contract/pr-928/soul-five-body-schema.md
+//go:embed testdata/host-contract/pr-975/soul-five-body-schema.md
 var hostFiveBodyContractDoc []byte
 
-//go:embed testdata/host-contract/pr-928/soul-five-body.schema.v2.json
+//go:embed testdata/host-contract/pr-975/soul-five-body.schema.v2.json
 var hostFiveBodySchemaJSON []byte
 
-//go:embed testdata/host-contract/pr-928/soul-five-body.example.v2.json
+//go:embed testdata/host-contract/pr-975/soul-five-body.example.v2.json
 var hostFiveBodyExampleJSON []byte
 
-//go:embed testdata/host-contract/pr-928/metadata.json
+//go:embed testdata/host-contract/pr-975/metadata.json
 var hostFiveBodyMetadataJSON []byte
 
 type fiveBodyContractMetadata struct {
@@ -54,7 +54,7 @@ type fiveBodyContractMetadata struct {
 }
 
 // RegisterResources registers Ptah's static AppTheory MCP guidance resources.
-// The content mirrors Host PR #928 contract artifacts; Body renders guidance
+// The content mirrors Host PR #975 contract artifacts; Body renders guidance
 // from the pinned Host contract instead of defining a competing schema.
 func RegisterResources(srv *mcpruntime.Server) error {
 	if srv == nil || srv.Resources() == nil {
@@ -238,13 +238,35 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 				{"step": "finalize", "tool": toolAgentGenesisFinalize, "instruction": "Finalize through Host; Body writes a Host-derived Ptah registry row only after Host publication."},
 				{"step": "verify", "tool": toolAgentGet, "instruction": "Verify account-scoped Body/Ptah registry visibility; use agent_list for the merged registry/live view."},
 			},
-			"recovery": "If Host returns failure.recovery.action=restart_soul_bootstrap, start a fresh lane with agent_genesis_begin; do not call recover for that action.",
+			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover; operator_action stops automatic calls and requires operator contact.",
+			"recovery_actions": map[string]any{
+				"retry_same_step": map[string]any{
+					"next_tool":   toolAgentGenesisRecover,
+					"fresh_lane":  false,
+					"instruction": "Wait retry_after_seconds when present, then call agent_genesis_recover exactly once for the same registration_id/conversation_id.",
+				},
+				"restart_soul_bootstrap": map[string]any{
+					"next_tool":           toolAgentGenesisBegin,
+					"forbidden_next_tool": toolAgentGenesisRecover,
+					"fresh_lane":          true,
+					"instruction":         "Start a fresh lane with agent_genesis_begin; never call agent_genesis_recover for this action.",
+				},
+				"refresh_state": map[string]any{
+					"next_tool":   toolAgentGenesisRead,
+					"fresh_lane":  false,
+					"instruction": "Call agent_genesis_read exactly once, then follow the newly returned Host status/recovery action; do not write or poll endlessly.",
+				},
+				"operator_action": map[string]any{
+					"fresh_lane":  false,
+					"instruction": "Stop automatic Genesis tool calls and contact the instance operator; no next write tool is selected.",
+				},
+			},
 			"listing": map[string]string{
 				"tool":        toolAgentGenesisList,
 				"status":      "Host-backed summary-only recovery index.",
 				"instruction": "Start with list when registration_id/conversation_id are unclear, then follow recommended_start.recommended_next_tool and recommended_arguments. Failed lanes must be read first for typed failure.recovery; list output does not expose transcripts or produced declarations.",
 			},
-			"model_guidance": "Host PR #928 records mintingModel in declaration evidence but does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models and watch Host contract follow-up.",
+			"model_guidance": "Host PR #975 records mintingModel in declaration evidence but does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models and watch Host contract follow-up.",
 		},
 	})
 }
@@ -278,7 +300,7 @@ func fiveBodyRubricResource(context.Context) ([]mcpruntime.ResourceContent, erro
 				"required_fields": []string{"bypass", "invariant", "closestSafePath"},
 				"reject_generic":  []string{"unsafe requests", "policy violations", "bad things", "be safe", "n/a"},
 			},
-			"fail_closed": "If Host PR #928 changes schema/guidance versions or checksums, Body fixtures/tests fail and must be synchronized before deploy proof.",
+			"fail_closed": "If Host PR #975 changes schema/guidance versions or checksums, Body fixtures/tests fail and must be synchronized before deploy proof.",
 		},
 	})
 }
