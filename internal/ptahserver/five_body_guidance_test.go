@@ -149,7 +149,7 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 
 	// When the sibling lesser-host checkout is available in the delegated factory
 	// workspace, compare the Host contract artifacts themselves. The checkout may
-	// be on a later Host branch whose unrelated head moved while the PR #928
+	// be on a later Host branch whose unrelated head moved while the PR #975
 	// contract bytes stayed identical; only artifact drift should break Body's
 	// mirror guard. Explicit env-provided Host dirs are stricter and must contain
 	// every mirrored artifact.
@@ -189,7 +189,7 @@ func TestFiveBodyHostContractArtifactGuardRejectsArtifactDrift(t *testing.T) {
 	writeHostContractArtifact(t, dir, "soul-five-body.example.v2.json", hostFiveBodyExampleJSON)
 
 	err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata())
-	if err == nil || !strings.Contains(err.Error(), "sync Host PR #928 before merge") {
+	if err == nil || !strings.Contains(err.Error(), "sync Host PR #975 before merge") {
 		t.Fatalf("verifyHostContractArtifacts drift error = %v", err)
 	}
 }

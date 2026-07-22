@@ -616,7 +616,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
-| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#928` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
+| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#975` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
 | `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. When Host reports `in_progress` / `declaration_extraction_pending`, guidance is wait-only: do not call `agent_genesis_advance` to nudge; wait `poll_after_seconds` when present, then read again. |
@@ -637,16 +637,16 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 ### Instance-plane Ptah resources and prompts
 
 Ptah guidance resources and prompts are Body's MCP guidance surface for Host-backed five-body genesis. The source
-contract is Host-owned, not Body-owned. Body mirrors the artifacts from `equaltoai/lesser-host` PR `#928` at head
-`e70b1835624724056a099bc96f4f931d0d348cd2`, closing Host issue `#927`, and pins:
+contract is Host-owned, not Body-owned. Body mirrors the artifacts from `equaltoai/lesser-host` PR `#975` at head
+`5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b`, closing Host issue `#974`, and pins:
 
 - `schemaVersion`: `soul-five-body-schema.v2`
 - `guidanceVersion`: `soul-five-body-guidance.v2`
-- Host contract doc SHA-256: `d6a0522f5e24d3f50a7272c567ca7f0393cb1c49abdf8bf0e5972531e66994ea`
-- Host JSON schema SHA-256: `4657fc52c01d8186672f72c25fd41cd04296b8e8a7f3de26671ef0833b2c590a`
+- Host contract doc SHA-256: `0d17d526aee1671d963549fde150364816fa1057bd5744d0348050b9639297db`
+- Host JSON schema SHA-256: `4926ea5c44601ab606c24cf7a61b7b3f221b5e2ca871efee54935bfec25a7511`
 - Host golden example SHA-256: `2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e`
 
-If Host PR `#928` changes before merge, Body's checked fixture and drift tests must be refreshed from the Host-owned
+If Host PR `#975` changes before merge, Body's checked fixture and drift tests must be refreshed from the Host-owned
 artifacts. Body must not hand-edit a parallel five-body schema.
 
 Registered Ptah resources:
@@ -674,7 +674,7 @@ a commitment/reference rather than repeating it in every body. The canonical fin
 > Do you affirm this declaration as the foundation of your minted soul? If there is anything here you would correct,
 > qualify, or strike before it is inscribed, name it now.
 
-Host PR `#928` records `mintingModel` in declaration evidence but does not publish a Body-consumable model allowlist
+Host PR `#975` records `mintingModel` in declaration evidence but does not publish a Body-consumable model allowlist
 artifact or endpoint. Body therefore does not advertise a model allowlist; callers should use Host-configured models and
 track a Host/Body follow-up if a listable producer contract is required.
 
@@ -683,7 +683,7 @@ guidance as a client-native skill an LLM client fetches before operating the `ag
 deterministic: a stable skill id/name, a version derived from `soul-five-body-guidance.v2` plus the pinned Host contract
 head, a `bundle_id` computed from the file checksums, `content.mode="inline_files"` with a file-count summary, and
 install-neutral file entries (`SKILL.md` plus a bounded `references/genesis-guidance-map.md`). Provenance points at Host
-PR `#928`/head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
+PR `#975`/head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
 `agent_genesis_skill_get` also renders deterministic MCP-visible Markdown containing the complete `SKILL.md`, the
 bounded guidance map, bundle identity/provenance, and no-install/no-write semantics. The semantics are explicitly
 no-write/no-install: Ptah serves content only, and the calling client decides whether and how to materialize or use the

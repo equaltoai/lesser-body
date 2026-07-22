@@ -224,7 +224,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 					t.Fatalf("resources/read error: %+v", readRPC.Error)
 				}
 				readEncoded, _ := json.Marshal(readRPC.Result)
-				if !strings.Contains(string(readEncoded), "soul-five-body-schema.v2") || !strings.Contains(string(readEncoded), "e70b1835624724056a099bc96f4f931d0d348cd2") {
+				if !strings.Contains(string(readEncoded), "soul-five-body-schema.v2") || !strings.Contains(string(readEncoded), "5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b") {
 					t.Fatalf("resources/read did not return Host contract metadata: %s", string(readEncoded))
 				}
 

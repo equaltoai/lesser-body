@@ -36,9 +36,12 @@ The v2 declaration has five first-class bodies:
 Satellites:
 
 - `capabilities` — concrete self-declared capabilities only; every item uses
-  `claimLevel: "self-declared"`. Capability validation metadata
-  (`lastValidated`, `validationRef`, `degradesTo`) is optional and may be
-  omitted when Host has no independent validation evidence.
+  `claimLevel: "self-declared"`. Host translates short human-readable provider
+  evidence into a canonical 1–64 character lowercase identifier using ASCII
+  letters/digits plus `.`, `_`, or `-`; scope is non-empty and bounded to 480
+  characters. `lastValidated`, when present, is RFC3339. Capability validation
+  metadata (`lastValidated`, `validationRef`, `degradesTo`) is optional and may
+  be omitted when Host has no independent validation evidence.
 - `transparency` — model/provider uncertainty, operational notes, and explicit
   self-declared notice.
 

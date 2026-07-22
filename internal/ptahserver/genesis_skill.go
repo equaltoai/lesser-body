@@ -24,7 +24,7 @@ type genesisSkillFile struct {
 }
 
 // genesisSkillVersion derives the stable skill version from the Host-owned
-// guidance version and the pinned Host contract head. A Host PR #928 refresh
+// guidance version and the pinned Host contract head. A Host PR #975 refresh
 // changes this version and the bundle id together with the mirrored fixtures.
 func genesisSkillVersion() string {
 	head := fiveBodyHostHeadSHA
@@ -113,7 +113,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisSkillGet,
 		Title:       "Get Ptah genesis operator skill",
-		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns deterministic structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to the mirrored Host PR #928 five-body contract. Ptah serves content only: no local installation, no filesystem write, no publish, and no cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns deterministic structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to the mirrored Host PR #975 five-body contract. Ptah serves content only: no local installation, no filesystem write, no publish, and no cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -147,7 +147,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 							"sha256":{"type":"string"},
 							"content":{"type":"string"}
 						}}},
-						"provenance":{"type":"object","description":"Host PR #928 head plus Body's mirrored contract versions and checksums."},
+						"provenance":{"type":"object","description":"Host PR #975 head plus Body's mirrored contract versions and checksums."},
 						"semantics":{"type":"object","description":"Explicit no-write/no-install semantics: Ptah serves content only; clients decide materialization."},
 						"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_begin"]},"status":{"type":"string"},"instruction":{"type":"string"}}}
 					}
