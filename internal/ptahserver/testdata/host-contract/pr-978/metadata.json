@@ -1,8 +1,8 @@
 {
   "source_repository": "equaltoai/lesser-host",
-  "source_pull_request": 978,
+  "source_pull_request": 980,
   "source_issue": 977,
-  "source_head_sha": "2339acffe646c49fb951e7a7164f55174d841770",
+  "source_head_sha": "5f873e184ba70e662ed2c945a71357385ac196bc",
   "schema_version": "soul-five-body-schema.v2",
   "guidance_version": "soul-five-body-guidance.v2",
   "artifacts": [
@@ -24,7 +24,7 @@
     {
       "source_path": "docs/contracts/hosted-genesis-conversation.md",
       "mirror_file": "hosted-genesis-conversation.md",
-      "sha256": "0f6f9f745de7e2438bbab20cc03baee6a9a151d0cc09f7d42747d0d67340a5ff"
+      "sha256": "5bc7b76f9d8fb3bc40c336aef99183980325a35c06309b75534358bcbf878875"
     },
     {
       "source_path": "docs/contracts/openapi.yaml",
@@ -62,5 +62,5 @@
       "sha256": "3ccd491745aabb9fa45b97c36b0c9af18df32f2cd26c1c32ec25630431fe6ba0"
     }
   ],
-  "notes": "Body mirror of Host PR #978 exact accepted head. Refresh every artifact and checksum from Host-owned source; never edit a Body-local declaration protocol."
+  "notes": "Body mirror of the Host PR #978 typed-candidate contract as repaired by authoritative PR #980 at deployed staging merge commit 5f873e184ba70e662ed2c945a71357385ac196bc. Refresh every artifact and checksum from Host-owned source; never edit a Body-local declaration protocol."
 }

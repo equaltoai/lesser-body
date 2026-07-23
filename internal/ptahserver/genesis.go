@@ -934,7 +934,14 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 	case genesisOwnerInputStatus(status):
 		guidance["next_tool"] = toolAgentGenesisAdvance
 		guidance["alternate_next_tool"] = toolAgentGenesisRead
-		guidance["instruction"] = "Host candidate phase is section. Call agent_genesis_advance with the next normal owner message for current_section; Host's five provider declaration tools remain inside its AppTheory MicroVM and are never Body-local tools. Optionally read first to refresh the Host projection."
+		candidate := nestedMap(data, "conversation", "declaration_candidate")
+		completed, _ := candidate["completed_sections"].([]any)
+		currentSection := stringValue(candidate, "current_section")
+		if len(completed) == len(genesisDeclarationSections) {
+			guidance["instruction"] = "Host reopened current_section=" + currentSection + " after review. Call agent_genesis_advance with a normal owner revision message for this exact current_section; Host's five provider declaration tools remain inside its AppTheory MicroVM and are never Body-local tools. Optionally read first to refresh the Host projection."
+		} else {
+			guidance["instruction"] = "Host candidate phase is section. Call agent_genesis_advance with the next normal owner message for current_section; Host's five provider declaration tools remain inside its AppTheory MicroVM and are never Body-local tools. Optionally read first to refresh the Host projection."
+		}
 	default:
 		guidance["next_tool"] = toolAgentGenesisRead
 		guidance["instruction"] = "Poll agent_genesis_read and follow the Host status; Body does not substitute a local genesis state machine."
@@ -1700,10 +1707,10 @@ func sanitizeDeclarationCandidate(raw map[string]any) (map[string]any, error) {
 	}
 	switch phase {
 	case "section":
-		if currentSection == "" || review != nil || len(completed) >= len(genesisDeclarationSections) {
+		if currentSection == "" || review != nil {
 			return nil, errors.New("host declaration candidate section phase is inconsistent")
 		}
-		if currentSection != genesisDeclarationSections[len(completed)] {
+		if len(completed) < len(genesisDeclarationSections) && currentSection != genesisDeclarationSections[len(completed)] {
 			return nil, errors.New("host declaration candidate section order is inconsistent")
 		}
 	case "review", "affirmed", "finalized":
