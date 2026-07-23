@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_skill_get", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_complete", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_skill_get", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 					t.Fatalf("resources/read error: %+v", readRPC.Error)
 				}
 				readEncoded, _ := json.Marshal(readRPC.Result)
-				if !strings.Contains(string(readEncoded), "soul-five-body-schema.v2") || !strings.Contains(string(readEncoded), "5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b") {
+				if !strings.Contains(string(readEncoded), "soul-five-body-schema.v2") || !strings.Contains(string(readEncoded), "2339acffe646c49fb951e7a7164f55174d841770") {
 					t.Fatalf("resources/read did not return Host contract metadata: %s", string(readEncoded))
 				}
 
@@ -250,7 +250,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 					b, _ := json.Marshal(promptsRPC.Result)
 					_ = json.Unmarshal(b, &promptsOut)
 				}
-				if got := promptNames(promptsOut.Prompts); !reflect.DeepEqual(got, []string{"draft-genesis-turn", "review-soul-draft"}) {
+				if got := promptNames(promptsOut.Prompts); !reflect.DeepEqual(got, []string{"draft-genesis-turn", "review-genesis-candidate"}) {
 					t.Fatalf("prompts/list names = %v", got)
 				}
 
@@ -275,7 +275,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 					t.Fatalf("prompts/get error: %+v", getRPC.Error)
 				}
 				getEncoded, _ := json.Marshal(getRPC.Result)
-				if !strings.Contains(string(getEncoded), "identity, philosophy, discipline, boundaries, and soul") || !strings.Contains(string(getEncoded), "Do you affirm this declaration") {
+				if !strings.Contains(string(getEncoded), "identity, philosophy, discipline, boundaries, and soul") || !strings.Contains(string(getEncoded), "structural candidate_action") || !strings.Contains(string(getEncoded), "exact revision and hashes") {
 					t.Fatalf("prompts/get missing five-body guidance: %s", string(getEncoded))
 				}
 			}

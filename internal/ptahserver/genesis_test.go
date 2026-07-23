@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
@@ -30,7 +32,6 @@ type fakeGenesisClient struct {
 	advanceResponse   map[string]any
 	readResponse      map[string]any
 	recoverResponse   map[string]any
-	completeResponse  map[string]any
 	preflightResponse map[string]any
 	finalizeResponse  map[string]any
 }
@@ -76,14 +77,6 @@ func (f *fakeGenesisClient) RecoverConversation(_ context.Context, bearer string
 	f.registrationID = registrationID
 	f.conversationID = conversationID
 	return f.recoverResponse, nil
-}
-
-func (f *fakeGenesisClient) CompleteConversation(_ context.Context, bearer string, registrationID string, conversationID string) (map[string]any, error) {
-	f.bearer = bearer
-	f.calls = append(f.calls, "complete:"+registrationID+":"+conversationID)
-	f.registrationID = registrationID
-	f.conversationID = conversationID
-	return f.completeResponse, nil
 }
 
 func (f *fakeGenesisClient) FinalizePreflight(_ context.Context, bearer string, registrationID string, conversationID string) (map[string]any, error) {
@@ -152,31 +145,31 @@ func TestGenesisRejectsOrdinaryOAuthAndPaymentEvidenceWithoutCallingHost(t *test
 	}
 }
 
-func TestGenesisListRecommendationsCoverCompletionAndFinalizationStates(t *testing.T) {
+func TestGenesisListRecommendationsUseOnlyCurrentHostStatuses(t *testing.T) {
 	const agentID = "0xagent"
 	conversations := sanitizeGenesisConversationSummaries([]any{
 		map[string]any{"registration_id": "reg-ready", "conversation_id": "conv-ready", "status": "declaration_ready", "message_count": 2},
-		map[string]any{"registration_id": "reg-preflight", "conversation_id": "conv-preflight", "status": "finalization_ready", "message_count": 3},
-		map[string]any{"registration_id": "reg-finalize", "conversation_id": "conv-finalize", "status": "ready_to_finalize", "message_count": 4},
-		map[string]any{"registration_id": "reg-complete", "conversation_id": "conv-complete", "status": "complete", "message_count": 5},
+		map[string]any{"registration_id": "reg-owner", "conversation_id": "conv-owner", "status": "assistant_turn_ready", "message_count": 3},
+		map[string]any{"registration_id": "reg-processing", "conversation_id": "conv-processing", "status": "in_progress", "message_count": 4},
+		map[string]any{"registration_id": "reg-published", "conversation_id": "conv-published", "status": "published", "message_count": 5},
 	}, agentID)
 	if len(conversations) != 4 {
 		t.Fatalf("conversations = %+v", conversations)
 	}
-	if conversations[0]["recommended_next_tool"] != toolAgentGenesisComplete {
+	if conversations[0]["recommended_next_tool"] != toolAgentGenesisFinalizePreflight {
 		t.Fatalf("declaration_ready recommendation = %+v", conversations[0])
 	}
-	if conversations[1]["recommended_next_tool"] != toolAgentGenesisFinalizePreflight {
-		t.Fatalf("finalization_ready recommendation = %+v", conversations[1])
+	if conversations[1]["recommended_next_tool"] != toolAgentGenesisRead || conversations[1]["alternate_next_tool"] != toolAgentGenesisAdvance {
+		t.Fatalf("assistant_turn_ready recommendation = %+v", conversations[1])
 	}
-	if conversations[2]["recommended_next_tool"] != toolAgentGenesisFinalize {
-		t.Fatalf("ready_to_finalize recommendation = %+v", conversations[2])
+	if conversations[2]["recommended_next_tool"] != toolAgentGenesisRead || conversations[2]["wait"] != true {
+		t.Fatalf("in_progress recommendation = %+v", conversations[2])
 	}
 	if conversations[3]["terminal"] != true || conversations[3]["recommended_next_tool"] != toolAgentGet || conversations[3]["alternate_next_tool"] != toolAgentList {
-		t.Fatalf("complete terminal recommendation = %+v", conversations[3])
+		t.Fatalf("published terminal recommendation = %+v", conversations[3])
 	}
 	start := genesisListStartHere(conversations, agentID)
-	if start["recommended_next_tool"] != toolAgentGenesisComplete || start["registration_id"] != "reg-ready" {
+	if start["recommended_next_tool"] != toolAgentGenesisFinalizePreflight || start["registration_id"] != "reg-ready" {
 		t.Fatalf("start = %+v, want newest actionable non-terminal declaration_ready lane", start)
 	}
 }
@@ -223,25 +216,11 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 		advanceResponse: genesisConversationResponse("assistant_turn_ready", oldTranscript),
 		readResponse:    genesisConversationResponse("assistant_turn_ready", oldTranscript),
 		recoverResponse: genesisConversationResponse("assistant_turn_ready", oldTranscript),
-		completeResponse: map[string]any{
-			"conversation": map[string]any{
-				"registration_id": "reg-123",
-				"conversation_id": "conv-456",
-				"agent_id":        "agent-123",
-				"status":          "declaration_ready",
-				"messages": []any{
-					map[string]any{"role": "user", "content": oldTranscript},
-					map[string]any{"role": "assistant", "content": "The declaration checkpoint is ready."},
-				},
-				"produced_declarations": map[string]any{
-					"declaration_id":   "decl-123",
-					"declaration":      privateDeclare,
-					"declaration_hash": "sha256:declaration",
-				},
-			},
-		},
 		preflightResponse: map[string]any{
-			"conversation":        map[string]any{"registration_id": "reg-123", "conversation_id": "conv-456", "status": "declaration_ready"},
+			"conversation": map[string]any{
+				"registration_id": "reg-123", "conversation_id": "conv-456", "status": "declaration_ready",
+				"declaration_candidate": genesisFinalizedCandidateProjection("preflight owner review"),
+			},
 			"authority_model":     "instance_trust",
 			"declaration_preview": privateDeclare,
 		},
@@ -288,7 +267,6 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 
 	read := callGenesisTool(t, registry, ctx, toolAgentGenesisRead, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
 	recover := callGenesisTool(t, registry, ctx, toolAgentGenesisRecover, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
-	complete := callGenesisTool(t, registry, ctx, toolAgentGenesisComplete, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
 	preflight := callGenesisTool(t, registry, ctx, toolAgentGenesisFinalizePreflight, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
 	finalize := callGenesisTool(t, registry, ctx, toolAgentGenesisFinalize, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
 	finalizeData := structuredGenesisData(t, finalize)
@@ -304,7 +282,6 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 		"advance:reg-123",
 		"read:reg-123:conv-456",
 		"recover:reg-123:conv-456",
-		"complete:reg-123:conv-456",
 		"preflight:reg-123:conv-456",
 		"finalize:reg-123:conv-456",
 	}
@@ -312,7 +289,7 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 		t.Fatalf("Host state-machine calls = %v, want %v", fake.calls, wantCalls)
 	}
 
-	encoded := mustMarshalGenesisResult(t, begin, advance, read, recover, complete, preflight, finalize)
+	encoded := mustMarshalGenesisResult(t, begin, advance, read, recover, preflight, finalize)
 	for _, secret := range []string{hostKey, callerBearer, oldTranscript, privateDeclare, walletSecret} {
 		if strings.Contains(encoded, secret) {
 			t.Fatalf("genesis result leaked %q: %s", secret, encoded)
@@ -347,10 +324,11 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 				"self_description_version": 7,
 			},
 			"conversation": map[string]any{
-				"registration_id": "reg-123",
-				"conversation_id": "conv-456",
-				"agent_id":        "agent-0xabc",
-				"status":          "published",
+				"registration_id":       "reg-123",
+				"conversation_id":       "conv-456",
+				"agent_id":              "agent-0xabc",
+				"status":                "published",
+				"declaration_candidate": genesisFinalizedCandidateProjection("published owner review"),
 			},
 			"publication": map[string]any{
 				"agent_id":          "agent-0xabc",
@@ -444,10 +422,11 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 	raw := map[string]any{
 		"conversation": map[string]any{
-			"registration_id": "reg-123",
-			"conversation_id": "conv-456",
-			"agent_id":        "agent-0xabc",
-			"status":          "failed",
+			"registration_id":       "reg-123",
+			"conversation_id":       "conv-456",
+			"agent_id":              "agent-0xabc",
+			"status":                "failed",
+			"declaration_candidate": genesisSectionCandidateProjection(),
 			"failure": map[string]any{
 				"code":      "soul_bootstrap_restart_required",
 				"retryable": true,
@@ -484,12 +463,38 @@ func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 	}
 }
 
+func TestAgentGenesisReadRelaysHostHardCutNoCandidateRestart(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	raw := hostNoCandidateRestartConversationResponse()
+	assertNoCandidateRestartFixtureMatchesMirroredHostSchema(t, raw)
+
+	fake := &fakeGenesisClient{readResponse: raw}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result := callGenesisTool(t, registry, operatorToolContext("owner", []string{"read"}, "owner-token"), toolAgentGenesisRead, `{"registration_id":"reg-legacy","conversation_id":"conv-legacy"}`)
+	data := structuredGenesisData(t, result)
+	conversation := nestedMap(data, "conversation")
+	if _, present := conversation["declaration_candidate"]; present {
+		t.Fatalf("hard-cut restart invented declaration_candidate: %#v", conversation)
+	}
+	guidance := nestedMap(data, "guidance")
+	if guidance["next_tool"] != toolAgentGenesisBegin || guidance["fresh_lane"] != true || guidance["forbidden_next_tool"] != toolAgentGenesisRecover {
+		t.Fatalf("hard-cut restart guidance = %#v", guidance)
+	}
+	if strings.Contains(mustMarshalGenesisResult(t, result), "host_genesis_projection_invalid") {
+		t.Fatalf("Host-valid hard-cut restart was collapsed into a projection error: %#v", result)
+	}
+}
+
 func TestGenesisRetrySameStepRuntimePayloadGuidance(t *testing.T) {
 	raw := map[string]any{
 		"conversation": map[string]any{
-			"registration_id": "Qh6JQOmy0KXO0bm5XNXsyg",
-			"conversation_id": "K-JYArykVuog3gq-2lHBJw",
-			"status":          "failed",
+			"registration_id":       "Qh6JQOmy0KXO0bm5XNXsyg",
+			"conversation_id":       "K-JYArykVuog3gq-2lHBJw",
+			"status":                "failed",
+			"declaration_candidate": genesisSectionCandidateProjection(),
 			"failure": map[string]any{
 				"code":      "microvm_unavailable",
 				"retryable": true,
@@ -572,7 +577,7 @@ func TestGenesisHostRecoveryActionsMapDeterministically(t *testing.T) {
 		{
 			name: "nested_conversation_failure",
 			raw: func(failure map[string]any) map[string]any {
-				return map[string]any{"conversation": map[string]any{"status": "failed", "failure": failure}}
+				return map[string]any{"conversation": map[string]any{"status": "failed", "failure": failure, "declaration_candidate": genesisSectionCandidateProjection()}}
 			},
 		},
 		{
@@ -636,7 +641,8 @@ func TestGenesisHostRecoveryActionsMapDeterministically(t *testing.T) {
 func TestGenesisUnknownRecoveryActionFailsClosedWithoutNormalization(t *testing.T) {
 	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", map[string]any{
 		"conversation": map[string]any{
-			"status": "failed",
+			"status":                "failed",
+			"declaration_candidate": genesisSectionCandidateProjection(),
 			"failure": map[string]any{
 				"code": "microvm_unavailable",
 				"recovery": map[string]any{
@@ -666,20 +672,21 @@ func TestGenesisUnknownRecoveryActionFailsClosedWithoutNormalization(t *testing.
 }
 
 func TestGenesisProcessingStatesAreWaitOnlyGuidance(t *testing.T) {
-	for _, status := range []string{"in_progress", "declaration_extraction_pending"} {
+	for _, status := range []string{"in_progress"} {
 		status := status
 		t.Run(status, func(t *testing.T) {
 			raw := map[string]any{
 				"conversation": map[string]any{
-					"registration_id":     "reg-123",
-					"conversation_id":     "conv-456",
-					"agent_id":            "agent-123",
-					"status":              status,
-					"poll_after_seconds":  7,
-					"progress":            "host_processing",
-					"private_transcript":  "must-not-return",
-					"wallet_signature":    "must-not-return",
-					"producedDeclaration": "must-not-return",
+					"registration_id":       "reg-123",
+					"conversation_id":       "conv-456",
+					"agent_id":              "agent-123",
+					"status":                status,
+					"declaration_candidate": genesisSectionCandidateProjection(),
+					"poll_after_seconds":    7,
+					"progress":              "host_processing",
+					"private_transcript":    "must-not-return",
+					"wallet_signature":      "must-not-return",
+					"producedDeclaration":   "must-not-return",
 				},
 			}
 			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
@@ -714,7 +721,7 @@ func TestGenesisProcessingStatesAreWaitOnlyGuidance(t *testing.T) {
 				"do not nudge",
 				"wait poll_after_seconds=7 seconds",
 				"then call " + toolAgentGenesisRead,
-				"Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn",
+				"Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready",
 			} {
 				if !strings.Contains(instruction, want) {
 					t.Fatalf("processing instruction missing %q: %s", want, instruction)
@@ -738,7 +745,7 @@ func TestGenesisProcessingStatesAreWaitOnlyGuidance(t *testing.T) {
 }
 
 func TestGenesisOwnerInputStatesStillAdvanceGuidance(t *testing.T) {
-	for _, status := range []string{"assistant_turn_ready", "awaiting_owner", "needs_owner_turn"} {
+	for _, status := range []string{"assistant_turn_ready"} {
 		status := status
 		t.Run(status, func(t *testing.T) {
 			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", genesisConversationResponse(status, "private-transcript-must-not-return"))
@@ -753,7 +760,7 @@ func TestGenesisOwnerInputStatesStillAdvanceGuidance(t *testing.T) {
 				t.Fatalf("owner-input guidance should not be wait-only: %+v", guidance)
 			}
 			instruction, _ := guidance["instruction"].(string)
-			if !strings.Contains(instruction, "Host is waiting for owner/operator input") || !strings.Contains(instruction, toolAgentGenesisAdvance) {
+			if !strings.Contains(instruction, "candidate phase is section") || !strings.Contains(instruction, toolAgentGenesisAdvance) {
 				t.Fatalf("owner-input instruction = %q", instruction)
 			}
 		})
@@ -767,8 +774,7 @@ func TestGenesisDeclarationReadyGuidanceUsesSuccessfulOperation(t *testing.T) {
 		operation string
 		wantTool  string
 	}{
-		{name: "read", toolName: toolAgentGenesisRead, operation: "read", wantTool: toolAgentGenesisComplete},
-		{name: "complete", toolName: toolAgentGenesisComplete, operation: "complete", wantTool: toolAgentGenesisFinalizePreflight},
+		{name: "read", toolName: toolAgentGenesisRead, operation: "read", wantTool: toolAgentGenesisFinalizePreflight},
 		{name: "finalize_preflight", toolName: toolAgentGenesisFinalizePreflight, operation: "finalize_preflight", wantTool: toolAgentGenesisFinalize},
 	} {
 		tc := tc
@@ -788,17 +794,466 @@ func TestGenesisDeclarationReadyGuidanceUsesSuccessfulOperation(t *testing.T) {
 	}
 }
 
-func genesisConversationResponse(status string, oldTranscript string) map[string]any {
+func TestAgentGenesisAdvanceRelaysStructuralCandidateActionUnchanged(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{advanceResponse: genesisCandidateConversationResponse("review", "exact owner review")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	candidateHash := "sha256:" + strings.Repeat("a", 64)
+	reviewText := "exact owner review"
+	reviewHash := "sha256:" + sha256Hex([]byte(reviewText))
+	args := `{"registration_id":"reg-123","conversation_id":"conv-456","message":"Revise the boundaries refusal floor.","candidate_action":{"action":"edit","section":"boundaries","candidate_revision":9,"candidate_hash":"` + candidateHash + `","review_hash":"` + reviewHash + `"}}`
+	callGenesisTool(t, registry, operatorToolContext("owner", []string{"write"}, "owner-token"), toolAgentGenesisAdvance, args)
+	got := fake.advanceRequest.CandidateAction
+	if got == nil || got.Action != "edit" || got.Section != "boundaries" || got.CandidateRevision != 9 || got.CandidateHash != candidateHash || got.ReviewHash != reviewHash {
+		t.Fatalf("Host candidate_action changed: %#v", got)
+	}
+	affirmArgs := `{"registration_id":"reg-123","conversation_id":"conv-456","message":"Owner decision recorded structurally.","candidate_action":{"action":"affirm","candidate_revision":9,"candidate_hash":"` + candidateHash + `","review_hash":"` + reviewHash + `"}}`
+	callGenesisTool(t, registry, operatorToolContext("owner", []string{"write"}, "owner-token"), toolAgentGenesisAdvance, affirmArgs)
+	got = fake.advanceRequest.CandidateAction
+	if got == nil || got.Action != "affirm" || got.Section != "" || got.CandidateRevision != 9 || got.CandidateHash != candidateHash || got.ReviewHash != reviewHash {
+		t.Fatalf("Host affirm candidate_action changed: %#v", got)
+	}
+}
+
+func TestAgentGenesisAdvanceRejectsInvalidCandidateActionBeforeHost(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	candidateHash := "sha256:" + strings.Repeat("a", 64)
+	reviewHash := "sha256:" + strings.Repeat("b", 64)
+	tests := []struct {
+		name   string
+		action string
+	}{
+		{name: "null", action: `null`},
+		{name: "affirm section forbidden", action: `{"action":"affirm","section":"identity","candidate_revision":1,"candidate_hash":"` + candidateHash + `","review_hash":"` + reviewHash + `"}`},
+		{name: "edit section missing", action: `{"action":"edit","candidate_revision":1,"candidate_hash":"` + candidateHash + `","review_hash":"` + reviewHash + `"}`},
+		{name: "unknown field", action: `{"action":"affirm","candidate_revision":1,"candidate_hash":"` + candidateHash + `","review_hash":"` + reviewHash + `","legacy":true}`},
+		{name: "malformed hash", action: `{"action":"affirm","candidate_revision":1,"candidate_hash":"sha256:bad","review_hash":"` + reviewHash + `"}`},
+		{name: "missing binding", action: `{"action":"affirm","candidate_revision":1,"candidate_hash":"` + candidateHash + `"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &fakeGenesisClient{}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+			result, err := registry.Call(operatorToolContext("owner", []string{"write"}, "owner-token"), toolAgentGenesisAdvance, json.RawMessage(`{"registration_id":"reg-123","conversation_id":"conv-456","message":"owner decision","candidate_action":`+test.action+`}`))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, "invalid_request", http.StatusBadRequest)
+			if len(fake.calls) != 0 {
+				t.Fatalf("invalid candidate action reached Host: %v", fake.calls)
+			}
+		})
+	}
+}
+
+func TestGenesisCandidateProjectionIsLosslessAndReviewGuidanceIsStructural(t *testing.T) {
+	reviewText := strings.Repeat("R", genesisMaxReviewRunes)
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", genesisCandidateConversationResponse("review", reviewText))
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	candidate := nestedMap(data, "conversation", "declaration_candidate")
+	review := nestedMap(candidate, "review")
+	if review["review_text"] != reviewText || utf8.RuneCountInString(review["review_text"].(string)) != genesisMaxReviewRunes {
+		t.Fatalf("lossless review length = %d", utf8.RuneCountInString(review["review_text"].(string)))
+	}
+	if candidate["version"] != "hosted-genesis-declaration-candidate.v1" || candidate["phase"] != "review" || candidate["revision"] != int64(9) || candidate["candidate_hash"] != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("candidate projection = %#v", candidate)
+	}
+	completed, ok := candidate["completed_sections"].([]any)
+	if !ok || len(completed) != 5 {
+		t.Fatalf("completed_sections = %#v", candidate["completed_sections"])
+	}
+	guidance := data["guidance"].(map[string]any)
+	if guidance["next_tool"] != toolAgentGenesisAdvance || guidance["candidate_revision"] != int64(9) || guidance["candidate_hash"] != candidate["candidate_hash"] || guidance["review_hash"] != review["review_hash"] {
+		t.Fatalf("review guidance bindings = %#v", guidance)
+	}
+	actions, ok := guidance["candidate_actions"].([]any)
+	if !ok || len(actions) != 6 {
+		t.Fatalf("review candidate_actions = %#v, want affirm plus five edits", guidance["candidate_actions"])
+	}
+	for index, advertised := range actions {
+		entry, ok := advertised.(map[string]any)
+		if !ok {
+			t.Fatalf("review candidate_actions[%d] = %#v", index, advertised)
+		}
+		action, ok := entry["candidate_action"].(map[string]any)
+		if !ok {
+			t.Fatalf("review candidate_actions[%d].candidate_action = %#v", index, entry["candidate_action"])
+		}
+		if action["candidate_revision"] != int64(9) || action["candidate_hash"] != candidate["candidate_hash"] || action["review_hash"] != review["review_hash"] {
+			t.Fatalf("review candidate_actions[%d] bindings = %#v", index, action)
+		}
+	}
+	instruction := guidance["instruction"].(string)
+	for _, want := range []string{"exact lossless", "affirm forbids section", "edit requires one exact section", "phrases have zero authority"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("review guidance missing %q: %s", want, instruction)
+		}
+	}
+	if strings.Contains(result.Content[0].Text, reviewText[:256]) {
+		t.Fatal("full review leaked into text content instead of StructuredContent")
+	}
+}
+
+func TestGenesisCandidateReviewGuidanceEveryAdvertisedActionRoundTripsThroughRegistry(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	reviewText := "exact owner review"
+	fake := &fakeGenesisClient{
+		readResponse:    genesisCandidateConversationResponse("review", reviewText),
+		advanceResponse: genesisCandidateConversationResponse("review", reviewText),
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := operatorToolContext("owner", []string{"read", "write"}, "owner-token")
+	read := callGenesisTool(t, registry, ctx, toolAgentGenesisRead, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
+	actions, ok := nestedMap(structuredGenesisData(t, read), "guidance")["candidate_actions"].([]any)
+	if !ok || len(actions) != 6 {
+		t.Fatalf("advertised candidate actions = %#v, want six", actions)
+	}
+
+	wantSections := map[string]bool{"identity": false, "philosophy": false, "discipline": false, "boundaries": false, "soul": false}
+	affirmCount := 0
+	for index, advertised := range actions {
+		entry, ok := advertised.(map[string]any)
+		if !ok {
+			t.Fatalf("candidate_actions[%d] = %#v", index, advertised)
+		}
+		action, ok := entry["candidate_action"].(map[string]any)
+		if !ok {
+			t.Fatalf("candidate_actions[%d].candidate_action = %#v", index, entry["candidate_action"])
+		}
+		allowedKeys := map[string]bool{"action": true, "section": true, "candidate_revision": true, "candidate_hash": true, "review_hash": true}
+		for key := range action {
+			if !allowedKeys[key] {
+				t.Fatalf("candidate_actions[%d] advertised unknown submitted key %q: %#v", index, key, action)
+			}
+		}
+		switch action["action"] {
+		case "affirm":
+			affirmCount++
+			if _, present := action["section"]; present {
+				t.Fatalf("affirm action advertised forbidden section: %#v", action)
+			}
+		case "edit":
+			section, ok := action["section"].(string)
+			if !ok {
+				t.Fatalf("edit action omitted required section: %#v", action)
+			}
+			if _, expected := wantSections[section]; !expected || wantSections[section] {
+				t.Fatalf("edit action section is unknown or duplicated: %#v", action)
+			}
+			wantSections[section] = true
+		default:
+			t.Fatalf("candidate action has invalid action: %#v", action)
+		}
+
+		arguments, err := json.Marshal(map[string]any{
+			"registration_id":  "reg-123",
+			"conversation_id":  "conv-456",
+			"message":          "Owner decision for advertised action.",
+			"candidate_action": action,
+		})
+		if err != nil {
+			t.Fatalf("marshal advertised action %d: %v", index, err)
+		}
+		result, err := registry.Call(ctx, toolAgentGenesisAdvance, arguments)
+		if err != nil {
+			t.Fatalf("registry.Call advertised action %d: %v", index, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("advertised action %d was not directly callable through the registered parser: args=%s result=%#v", index, arguments, result)
+		}
+		gotBytes, err := json.Marshal(fake.advanceRequest.CandidateAction)
+		if err != nil {
+			t.Fatalf("marshal Host candidate action %d: %v", index, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(gotBytes, &got); err != nil {
+			t.Fatalf("decode Host candidate action %d: %v", index, err)
+		}
+		var want map[string]any
+		wantBytes, _ := json.Marshal(action)
+		if err := json.Unmarshal(wantBytes, &want); err != nil {
+			t.Fatalf("decode advertised candidate action %d: %v", index, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("advertised candidate_action %d changed before Host: got=%#v want=%#v", index, got, want)
+		}
+	}
+	if affirmCount != 1 {
+		t.Fatalf("affirm action count = %d, want 1", affirmCount)
+	}
+	for section, seen := range wantSections {
+		if !seen {
+			t.Fatalf("missing directly callable edit action for %s", section)
+		}
+	}
+}
+
+func TestGenesisCandidateProjectionFailsClosed(t *testing.T) {
+	t.Run("missing candidate", func(t *testing.T) {
+		raw := genesisCandidateConversationResponse("review", "exact owner review")
+		delete(nestedMap(raw, "conversation"), "declaration_candidate")
+		result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+		if err != nil {
+			t.Fatalf("genesisSuccessResult: %v", err)
+		}
+		assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+	})
+	t.Run("missing status", func(t *testing.T) {
+		raw := genesisCandidateConversationResponse("review", "exact owner review")
+		delete(nestedMap(raw, "conversation"), "status")
+		result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+		if err != nil {
+			t.Fatalf("genesisSuccessResult: %v", err)
+		}
+		assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+	})
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "oversize review", mutate: func(c map[string]any) {
+			review := c["review"].(map[string]any)
+			review["review_text"] = strings.Repeat("x", genesisMaxReviewRunes+1)
+			review["review_hash"] = "sha256:" + sha256Hex([]byte(review["review_text"].(string)))
+		}},
+		{name: "unknown candidate field", mutate: func(c map[string]any) { c["canonical_json"] = `{"secret":true}` }},
+		{name: "unknown review field", mutate: func(c map[string]any) { c["review"].(map[string]any)["provider_payload"] = "secret" }},
+		{name: "malformed candidate hash", mutate: func(c map[string]any) { c["candidate_hash"] = "sha256:BAD" }},
+		{name: "revision binding mismatch", mutate: func(c map[string]any) { c["review"].(map[string]any)["candidate_revision"] = float64(8) }},
+		{name: "candidate hash binding mismatch", mutate: func(c map[string]any) {
+			c["review"].(map[string]any)["candidate_hash"] = "sha256:" + strings.Repeat("b", 64)
+		}},
+		{name: "review hash mismatch", mutate: func(c map[string]any) {
+			c["review"].(map[string]any)["review_hash"] = "sha256:" + strings.Repeat("c", 64)
+		}},
+		{name: "missing review", mutate: func(c map[string]any) { delete(c, "review") }},
+		{name: "unknown phase", mutate: func(c map[string]any) { c["phase"] = "legacy" }},
+		{name: "null completed sections", mutate: func(c map[string]any) { c["completed_sections"] = nil }},
+		{name: "out of order sections", mutate: func(c map[string]any) { c["completed_sections"] = []any{"philosophy", "identity"} }},
+		{name: "review current section forbidden", mutate: func(c map[string]any) { c["current_section"] = "soul" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := genesisCandidateConversationResponse("review", "exact owner review")
+			candidate := nestedMap(raw, "conversation", "declaration_candidate")
+			test.mutate(candidate)
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			payload := assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+			encoded, _ := json.Marshal(payload)
+			if strings.Contains(string(encoded), "canonical_json") || strings.Contains(string(encoded), "provider_payload") || strings.Contains(string(encoded), "exact owner review") {
+				t.Fatalf("contract error leaked candidate internals: %s", encoded)
+			}
+		})
+	}
+}
+
+func TestGenesisMissingCandidateFailsClosedOutsideExactHardCutRestart(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]any
+	}{
+		{name: "created", raw: genesisConversationResponse("created", "private")},
+		{name: "in progress", raw: genesisConversationResponse("in_progress", "private")},
+		{name: "assistant turn ready", raw: genesisConversationResponse("assistant_turn_ready", "private")},
+		{name: "declaration ready", raw: genesisConversationResponse("declaration_ready", "private")},
+		{name: "published", raw: genesisConversationResponse("published", "private")},
+		{name: "failed retry", raw: hostNoCandidateRestartConversationResponse()},
+		{name: "malformed restart failure", raw: hostNoCandidateRestartConversationResponse()},
+	}
+	nestedMap(tests[5].raw, "conversation", "failure", "recovery")["action"] = "retry_same_step"
+	delete(nestedMap(tests[6].raw, "conversation", "failure"), "message")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			delete(nestedMap(test.raw, "conversation"), "declaration_candidate")
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", test.raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+		})
+	}
+}
+
+func TestGenesisCandidateSectionGuidanceUsesNormalOwnerMessage(t *testing.T) {
+	raw := genesisConversationResponse("assistant_turn_ready", "private transcript")
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	candidate := nestedMap(data, "conversation", "declaration_candidate")
+	if candidate["phase"] != "section" || candidate["current_section"] != "identity" {
+		t.Fatalf("section candidate = %#v", candidate)
+	}
+	guidance := data["guidance"].(map[string]any)
+	if guidance["next_tool"] != toolAgentGenesisAdvance {
+		t.Fatalf("section guidance = %#v", guidance)
+	}
+	instruction := guidance["instruction"].(string)
+	for _, want := range []string{"candidate phase is section", "normal owner message", "current_section", "AppTheory MicroVM", "never Body-local tools"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("section guidance missing %q: %s", want, instruction)
+		}
+	}
+}
+
+func TestGenesisCandidateSectionRejectsCompletedReviewShape(t *testing.T) {
+	raw := genesisConversationResponse("assistant_turn_ready", "private transcript")
+	candidate := nestedMap(raw, "conversation", "declaration_candidate")
+	candidate["completed_sections"] = []any{"identity", "philosophy", "discipline", "boundaries", "soul"}
+	candidate["current_section"] = "soul"
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+}
+
+func genesisCandidateConversationResponse(phase string, reviewText string) map[string]any {
+	candidateHash := "sha256:" + strings.Repeat("a", 64)
+	reviewHash := "sha256:" + sha256Hex([]byte(reviewText))
 	return map[string]any{
 		"conversation": map[string]any{
-			"registration_id": "reg-123",
-			"conversation_id": "conv-456",
-			"agent_id":        "agent-123",
-			"status":          status,
+			"registration_id": "reg-123", "conversation_id": "conv-456", "agent_id": "agent-123",
+			"status": "assistant_turn_ready", "message_count": float64(2), "request_id": "req-123",
+			"messages": []any{map[string]any{"id": "msg_000002", "role": "assistant", "content": "Review the exact candidate.", "order": float64(2)}},
+			"declaration_candidate": map[string]any{
+				"version": "hosted-genesis-declaration-candidate.v1", "phase": phase,
+				"completed_sections": []any{"identity", "philosophy", "discipline", "boundaries", "soul"},
+				"revision":           float64(9), "candidate_hash": candidateHash,
+				"review": map[string]any{
+					"renderer_version": "hosted-genesis-owner-review.v1", "candidate_revision": float64(9),
+					"candidate_hash": candidateHash, "review_hash": reviewHash, "review_text": reviewText,
+				},
+			},
+		},
+	}
+}
+
+func hostNoCandidateRestartConversationResponse() map[string]any {
+	return map[string]any{
+		"version":    "1",
+		"request_id": "req-hard-cut-restart",
+		"conversation": map[string]any{
+			"registration_id": "reg-legacy",
+			"conversation_id": "conv-legacy",
+			"agent_id":        "0x" + strings.Repeat("42", 32),
+			"status":          "failed",
+			"message_count":   float64(1),
+			"failure": map[string]any{
+				"code":      "invalid_completion_state",
+				"message":   "Conversation cannot be completed from the migrated state.",
+				"retryable": false,
+				"recovery": map[string]any{
+					"action": "restart_soul_bootstrap",
+					"reason": "invalid_completion_state",
+				},
+			},
+			"request_id":   "req-hard-cut-restart",
+			"created_at":   "2026-07-22T19:33:23Z",
+			"updated_at":   "2026-07-22T19:33:23Z",
+			"completed_at": "2026-07-22T19:33:23Z",
+		},
+	}
+}
+
+func assertNoCandidateRestartFixtureMatchesMirroredHostSchema(t *testing.T, raw map[string]any) {
+	t.Helper()
+	schemaBytes, err := hostContractMirrorFS.ReadFile("testdata/host-contract/pr-978/hosted-genesis.conversation.response.schema.json")
+	if err != nil {
+		t.Fatalf("read mirrored Host response schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		t.Fatalf("decode mirrored Host response schema: %v", err)
+	}
+	defs := nestedMap(schema, "$defs")
+	conversationSchema := nestedMap(defs, "conversation")
+	required, ok := conversationSchema["required"].([]any)
+	if !ok || containsAnyString(required, "declaration_candidate") {
+		t.Fatalf("mirrored Host schema unexpectedly requires declaration_candidate: %#v", required)
+	}
+	conversation := nestedMap(raw, "conversation")
+	for _, field := range required {
+		name, _ := field.(string)
+		if _, present := conversation[name]; name == "" || !present {
+			t.Fatalf("producer-derived no-candidate fixture omits Host-required conversation field %q", name)
+		}
+	}
+	failureSchema := nestedMap(defs, "failure")
+	failureRequired, ok := failureSchema["required"].([]any)
+	if !ok {
+		t.Fatalf("mirrored Host failure schema has no required fields: %#v", failureSchema)
+	}
+	failure := nestedMap(conversation, "failure")
+	for _, field := range failureRequired {
+		name, _ := field.(string)
+		if _, present := failure[name]; name == "" || !present {
+			t.Fatalf("producer-derived no-candidate fixture omits Host-required failure field %q", name)
+		}
+	}
+	recovery := nestedMap(failure, "recovery")
+	if recovery["action"] != "restart_soul_bootstrap" {
+		t.Fatalf("producer-derived no-candidate fixture recovery = %#v", recovery)
+	}
+	actionSchema := nestedMap(nestedMap(nestedMap(failureSchema, "properties"), "recovery"), "properties", "action")
+	if !containsAnyString(actionSchema["enum"], "restart_soul_bootstrap") {
+		t.Fatalf("mirrored Host schema does not authorize restart_soul_bootstrap: %#v", actionSchema)
+	}
+}
+
+func genesisConversationResponse(status string, oldTranscript string) map[string]any {
+	candidate := genesisSectionCandidateProjection()
+	if status == "declaration_ready" || status == "published" {
+		candidate = genesisFinalizedCandidateProjection("finalized owner review")
+	}
+	return map[string]any{
+		"conversation": map[string]any{
+			"registration_id":       "reg-123",
+			"conversation_id":       "conv-456",
+			"agent_id":              "agent-123",
+			"status":                status,
+			"declaration_candidate": candidate,
 			"messages": []any{
 				map[string]any{"id": "m-old", "role": "user", "content": oldTranscript},
 				map[string]any{"id": "m-new", "role": "assistant", "content": "The latest Host genesis turn."},
 			},
+		},
+	}
+}
+
+func genesisSectionCandidateProjection() map[string]any {
+	return map[string]any{
+		"version": "hosted-genesis-declaration-candidate.v1",
+		"phase":   "section", "current_section": "identity", "completed_sections": []any{},
+		"revision": float64(0), "candidate_hash": "sha256:" + strings.Repeat("0", 64),
+	}
+}
+
+func genesisFinalizedCandidateProjection(reviewText string) map[string]any {
+	candidateHash := "sha256:" + strings.Repeat("a", 64)
+	return map[string]any{
+		"version": "hosted-genesis-declaration-candidate.v1", "phase": "finalized",
+		"completed_sections": []any{"identity", "philosophy", "discipline", "boundaries", "soul"},
+		"revision":           float64(9), "candidate_hash": candidateHash,
+		"review": map[string]any{
+			"renderer_version": "hosted-genesis-owner-review.v1", "candidate_revision": float64(9),
+			"candidate_hash": candidateHash, "review_hash": "sha256:" + sha256Hex([]byte(reviewText)), "review_text": reviewText,
 		},
 	}
 }

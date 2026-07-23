@@ -24,7 +24,7 @@ Optional environment:
   PTAH_GENESIS_IDEMPOTENCY_KEY           Optional first-turn idempotency key; otherwise a canary key is generated.
 
 The canary consumes the published RFC 9728 protected-resource metadata and AppTheory MCP tools/list surface, then proves
-owner connects to Ptah -> Host-backed genesis begin/advance/read/recover/complete -> finalize -> agent_list visibility.
+owner connects to Ptah -> Host-backed genesis begin/advance/read/structural candidate review -> finalize -> agent_list visibility.
 Minting is represented only by that Host-backed genesis conversation; the canary refuses authenticated redirects,
 redacts bearer tokens, never prints owner messages, Host declarations, wallet material, raw RPC payloads, or upstream
 error bodies, and emits only bounded statuses, sizes, hashes, and opaque ids.
@@ -62,6 +62,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 NO_REDIRECT_OPENER = urllib.request.build_opener(NoRedirectHandler)
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{0,255}$")
+SHA256_IDENTIFIER_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 FORBIDDEN_CREDENTIAL_FIELD_RE = re.compile(
     r"(?<![A-Za-z0-9_])(access_token|refresh_token)(?![A-Za-z0-9_])",
     re.IGNORECASE,
@@ -437,6 +438,43 @@ def genesis_agent_id(data: dict[str, Any], *, context: str) -> str:
     return required_string(agent_id, context=f"{context} agent_id")
 
 
+def genesis_affirm_candidate_action(data: dict[str, Any]) -> dict[str, Any]:
+    guidance = data.get("guidance")
+    if not isinstance(guidance, dict):
+        raise CanaryError("candidate review missing structured guidance")
+    advertised = guidance.get("candidate_actions")
+    if not isinstance(advertised, list) or len(advertised) != 6:
+        raise CanaryError("candidate review must advertise exactly one affirm and five edit actions")
+
+    affirm: dict[str, Any] | None = None
+    for entry in advertised:
+        if not isinstance(entry, dict) or not isinstance(entry.get("candidate_action"), dict):
+            raise CanaryError("candidate review advertised a malformed candidate_action entry")
+        action = entry["candidate_action"]
+        if action.get("action") != "affirm":
+            continue
+        if affirm is not None:
+            raise CanaryError("candidate review advertised more than one affirm action")
+        affirm = dict(action)
+    if affirm is None:
+        raise CanaryError("candidate review did not advertise an affirm action")
+
+    if set(affirm) != {"action", "candidate_revision", "candidate_hash", "review_hash"}:
+        raise CanaryError("advertised affirm action is not an exact callable payload")
+    revision = affirm.get("candidate_revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise CanaryError("advertised affirm action has an invalid candidate_revision")
+    for field in ("candidate_hash", "review_hash"):
+        value = affirm.get(field)
+        if not isinstance(value, str) or not SHA256_IDENTIFIER_RE.fullmatch(value):
+            raise CanaryError(f"advertised affirm action has an invalid {field}")
+        if guidance.get(field) != value:
+            raise CanaryError(f"advertised affirm action changed the guidance {field} binding")
+    if guidance.get("candidate_revision") != revision:
+        raise CanaryError("advertised affirm action changed the guidance candidate_revision binding")
+    return affirm
+
+
 FORBIDDEN_GENESIS_TEXT_FIELDS = frozenset(
     {
         "access_token",
@@ -561,6 +599,14 @@ def poll_genesis(
             f"conversation_sha256_12={sha12(conversation_id)} payloadB={client.last_response_bytes}"
         )
         if status == "failed":
+            guidance = data.get("guidance") if isinstance(data.get("guidance"), dict) else {}
+            next_tool = str(guidance.get("next_tool") or "").strip()
+            forbidden_next_tool = str(guidance.get("forbidden_next_tool") or "").strip()
+            if next_tool != "agent_genesis_recover" or forbidden_next_tool == "agent_genesis_recover":
+                raise CanaryError(
+                    f"{context} failed with non-recoverable Host guidance "
+                    f"next_tool={safe_identifier(next_tool)}; a fresh bootstrap or operator action is required"
+                )
             recovered, recovery_result = client.tool_call(
                 "agent_genesis_recover",
                 {"registration_id": registration_id, "conversation_id": conversation_id},
@@ -665,7 +711,6 @@ def main() -> int:
         "agent_genesis_read",
         "agent_genesis_advance",
         "agent_genesis_recover",
-        "agent_genesis_complete",
         "agent_genesis_finalize_preflight",
         "agent_genesis_finalize",
         "agent_list",
@@ -693,6 +738,7 @@ def main() -> int:
 
     conversation_id = ""
     current_status = ""
+    checkpoint_data: dict[str, Any] = {}
     for index, message in enumerate(messages):
         advance_args: dict[str, Any] = {
             "registration_id": registration_id,
@@ -706,7 +752,7 @@ def main() -> int:
         advance, advance_result = client.tool_call("agent_genesis_advance", advance_args)
         require_genesis_text_safety(advance_result, protected_values)
         conversation_id = genesis_conversation_id(advance, context=f"agent_genesis_advance turn {index + 1}")
-        _, current_status = poll_genesis(
+        checkpoint_data, current_status = poll_genesis(
             client,
             registration_id,
             conversation_id,
@@ -726,30 +772,41 @@ def main() -> int:
     if not conversation_id:
         raise CanaryError("Host did not return a conversation_id")
     if current_status != "declaration_ready":
-        complete, complete_result = client.tool_call(
-            "agent_genesis_complete",
-            {"registration_id": registration_id, "conversation_id": conversation_id},
+        if current_status != "assistant_turn_ready":
+            raise CanaryError(
+                "Host did not reach candidate review after the supplied owner messages; "
+                "add the next required message to PTAH_GENESIS_MESSAGES_JSON"
+            )
+        candidate_action = genesis_affirm_candidate_action(checkpoint_data)
+        reviewed, reviewed_result = client.tool_call(
+            "agent_genesis_advance",
+            {
+                "registration_id": registration_id,
+                "conversation_id": conversation_id,
+                "message": "Approve the exact reviewed declaration candidate.",
+                "candidate_action": candidate_action,
+                "idempotency_key": f"ptah-canary-affirm-{sha12(idempotency_key + ':' + conversation_id)}",
+            },
         )
-        require_genesis_text_safety(complete_result, protected_values)
-        complete_conversation_id = genesis_conversation_id(complete, context="agent_genesis_complete")
-        if complete_conversation_id != conversation_id:
-            conversation_id = complete_conversation_id
-        _, current_status = poll_genesis(
+        require_genesis_text_safety(reviewed_result, protected_values)
+        reviewed_conversation_id = genesis_conversation_id(reviewed, context="agent_genesis_advance candidate affirm")
+        if reviewed_conversation_id != conversation_id:
+            conversation_id = reviewed_conversation_id
+        checkpoint_data, current_status = poll_genesis(
             client,
             registration_id,
             conversation_id,
             max_polls=max_polls,
             poll_seconds=poll_seconds,
             protected_values=protected_values,
-            context="agent_genesis_complete",
+            context="agent_genesis_advance candidate affirm",
         )
         if current_status != "declaration_ready":
             raise CanaryError(
-                "Host did not reach declaration_ready after the supplied owner messages; "
-                "add the next required message to PTAH_GENESIS_MESSAGES_JSON"
+                "Host did not reach declaration_ready after the exact structural affirm action"
             )
     log(
-        "ok agent_genesis_complete "
+        "ok agent_genesis_advance candidate_action=affirm "
         f"status={safe_identifier(current_status)} conversation_sha256_12={sha12(conversation_id)} "
         f"payloadB={client.last_response_bytes}"
     )

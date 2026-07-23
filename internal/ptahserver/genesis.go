@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -26,11 +28,11 @@ const (
 	toolAgentGenesisRead              = "agent_genesis_read"
 	toolAgentGenesisAdvance           = "agent_genesis_advance"
 	toolAgentGenesisRecover           = "agent_genesis_recover"
-	toolAgentGenesisComplete          = "agent_genesis_complete"
 	toolAgentGenesisFinalizePreflight = "agent_genesis_finalize_preflight"
 	toolAgentGenesisFinalize          = "agent_genesis_finalize"
 
 	genesisMaxMessageRunes = 8192
+	genesisMaxReviewRunes  = 65536
 	genesisMaxPathID       = 128
 
 	// lesser-host HostedGenesisSession Failure.Validate bounds retry guidance
@@ -46,12 +48,13 @@ type agentGenesisBeginInput struct {
 }
 
 type agentGenesisAdvanceInput struct {
-	RegistrationID string `json:"registration_id"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Message        string `json:"message"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	CorrelationID  string `json:"correlation_id,omitempty"`
+	RegistrationID  string                              `json:"registration_id"`
+	ConversationID  string                              `json:"conversation_id,omitempty"`
+	Model           string                              `json:"model,omitempty"`
+	Message         string                              `json:"message"`
+	CandidateAction *hostapi.DeclarationCandidateAction `json:"candidate_action,omitempty"`
+	IdempotencyKey  string                              `json:"idempotency_key,omitempty"`
+	CorrelationID   string                              `json:"correlation_id,omitempty"`
 }
 
 type agentGenesisConversationInput struct {
@@ -67,10 +70,10 @@ func genesisOutputSchema() json.RawMessage {
 				"type":"object",
 				"description":"Sanitized Host-backed genesis state. Conversation messages, when present, are structured data only.",
 				"properties":{
-					"operation":{"type":"string","enum":["begin","list","read","advance","recover","complete","finalize_preflight","finalize"]},
-					"status":{"type":"string","enum":["begin","not_available","assistant_turn_ready","awaiting_owner","needs_owner_turn","in_progress","declaration_extraction_pending","declaration_ready","ready_for_completion","complete","completed","finalization_ready","preflight_ok","ready_to_finalize","finalize_ready","published","finalized","active","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
+					"operation":{"type":"string","enum":["begin","list","read","advance","recover","finalize_preflight","finalize"]},
+					"status":{"type":"string","enum":["begin","not_available","created","assistant_turn_ready","in_progress","declaration_ready","published","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
 					"failure":{"type":"object","properties":{
-						"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","declaration_extraction_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
+						"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
 						"recovery":{"type":"object","properties":{
 							"action":{"type":"string","enum":["refresh_state","retry_same_step","restart_soul_bootstrap","operator_action"]},
 							"max_attempts":{"type":"integer","minimum":0,"maximum":10},
@@ -80,16 +83,73 @@ func genesisOutputSchema() json.RawMessage {
 					}},
 					"conversation":{"type":"object","description":"Sanitized compact Host HostedGenesisSession projection.","properties":{
 						"failure":{"type":"object","properties":{
-							"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","declaration_extraction_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required"]},
+							"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable"]},
 							"recovery":{"type":"object","properties":{
 								"action":{"type":"string","enum":["refresh_state","retry_same_step","restart_soul_bootstrap","operator_action"]},
 								"max_attempts":{"type":"integer","minimum":0,"maximum":10},
 								"retry_after_seconds":{"type":"integer","minimum":0,"maximum":3600},
 								"reason":{"type":"string","maxLength":256}
 							}}
-						}}
+						}},
+						"declaration_candidate":{"type":"object","additionalProperties":false,"properties":{
+							"version":{"type":"string","const":"hosted-genesis-declaration-candidate.v1"},
+							"phase":{"type":"string","enum":["section","review","affirmed","finalized"]},
+							"current_section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+							"completed_sections":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]}},
+							"revision":{"type":"integer","minimum":0},
+							"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+							"review":{"type":"object","additionalProperties":false,"properties":{
+								"renderer_version":{"type":"string","const":"hosted-genesis-owner-review.v1"},
+								"candidate_revision":{"type":"integer","minimum":0},
+								"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+								"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+								"review_text":{"type":"string","minLength":1,"maxLength":65536}
+							},"required":["renderer_version","candidate_revision","candidate_hash","review_hash","review_text"]}
+						},"required":["version","phase","revision","candidate_hash"]}
 					}},
-					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"forbidden_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"wait":{"type":"boolean"},"poll_after_seconds":{"type":"integer"},"expected_wait_seconds":{"type":"integer"},"progress":{"type":"string"},"progress_percent":{"type":"integer"},"reason":{"type":"string","maxLength":256},"instruction":{"type":"string"}}}
+					"guidance":{"type":"object","additionalProperties":false,"properties":{
+						"next_tool":{"type":"string"},
+						"alternate_next_tool":{"type":"string"},
+						"forbidden_next_tool":{"type":"string"},
+						"status":{"type":"string"},
+						"fresh_lane":{"type":"boolean"},
+						"wait":{"type":"boolean"},
+						"poll_after_seconds":{"type":"integer"},
+						"expected_wait_seconds":{"type":"integer"},
+						"progress":{"type":"string"},
+						"progress_percent":{"type":"integer"},
+						"reason":{"type":"string","maxLength":256},
+						"recovery_action":{"type":"string"},
+						"instruction":{"type":"string"},
+						"candidate_revision":{"type":"integer","minimum":0},
+						"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+						"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+						"allowed_actions":{"type":"array","items":{"type":"string","enum":["affirm","edit"]}},
+						"candidate_actions":{"type":"array","minItems":6,"maxItems":6,"uniqueItems":true,"items":{
+							"type":"object","additionalProperties":false,
+							"properties":{
+								"intent":{"type":"string","enum":["affirm","edit"]},
+								"section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+								"description":{"type":"string"},
+								"message_guidance":{"type":"string"},
+								"candidate_action":{"type":"object","additionalProperties":false,"properties":{
+									"action":{"type":"string","enum":["affirm","edit"]},
+									"section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+									"candidate_revision":{"type":"integer","minimum":0},
+									"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+									"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}
+								},"required":["action","candidate_revision","candidate_hash","review_hash"],"allOf":[
+									{"if":{"properties":{"action":{"const":"edit"}},"required":["action"]},"then":{"required":["section"]}},
+									{"if":{"properties":{"action":{"const":"affirm"}},"required":["action"]},"then":{"not":{"required":["section"]}}}
+								]}
+							},
+							"required":["intent","description","message_guidance","candidate_action"],
+							"allOf":[
+								{"if":{"properties":{"intent":{"const":"edit"}},"required":["intent"]},"then":{"required":["section"]}},
+								{"if":{"properties":{"intent":{"const":"affirm"}},"required":["intent"]},"then":{"not":{"required":["section"]}}}
+							]
+						}}
+					}}
 				}
 			},
 			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
@@ -168,7 +228,7 @@ func agentGenesisReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisRead,
 		Title:        "Read Host-backed agent genesis",
-		Description:  "Read the durable lesser-host HostedGenesisSession projection for an in-progress or completed Ptah genesis conversation. Follow structuredContent.data.guidance for state to next tool. When guidance.wait=true or Host status is in_progress/declaration_extraction_pending, do not call agent_genesis_advance to nudge; wait the returned poll_after_seconds when present, then read again. Requires explicit instance owner/operator OAuth authority and read scope; the Host projection is the source of truth.",
+		Description:  "Read the durable lesser-host HostedGenesisSession projection for a Ptah genesis conversation. Follow structuredContent.data.guidance. in_progress is read-only: wait poll_after_seconds when present, then read again. During candidate review, inspect the exact lossless declaration_candidate.review.review_text and use the returned structural candidate_action bindings; free-form affirmation text has no authority. Requires explicit instance owner/operator OAuth authority and read scope; Host is the sole state authority.",
 		Annotations:  readOnlyToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -179,7 +239,7 @@ func agentGenesisAdvanceDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisAdvance,
 		Title:       "Advance Host-backed agent genesis",
-		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation only when Host is waiting for owner/operator input: assistant_turn_ready, awaiting_owner, or needs_owner_turn. Persist and reuse the Host conversation_id returned by the first call; this is a new-agent genesis flow, not existing-agent delegation. If Host reports in_progress or declaration_extraction_pending, do not call this tool again and do not nudge; wait poll_after_seconds when present, then call agent_genesis_read. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description: "Submit the owner's next message to lesser-host's durable genesis/mint conversation when Host reports assistant_turn_ready. During candidate section phase, send the normal owner message; provider declaration tools remain private to Host's AppTheory MicroVM. During candidate review, candidate_action is mandatory: affirm forbids section, while edit requires the exact section and an owner revision message; both bind the exact returned revision and hashes. Free-form affirmation text has no authority. Persist and reuse conversation_id. in_progress is wait/read-only. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -188,6 +248,16 @@ func agentGenesisAdvanceDef() mcpruntime.ToolDef {
 				"conversation_id":{"type":"string","description":"Host conversation id returned by the first advance; omit only for the first turn."},
 				"model":{"type":"string","description":"Host model identifier. Required when starting the first conversation."},
 				"message":{"type":"string","description":"Owner's next genesis conversation message."},
+				"candidate_action":{"type":"object","description":"Structural owner action required only for Host candidate review.","additionalProperties":false,"properties":{
+					"action":{"type":"string","enum":["affirm","edit"]},
+					"section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+					"candidate_revision":{"type":"integer","minimum":0},
+					"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+					"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}
+				},"required":["action","candidate_revision","candidate_hash","review_hash"],"allOf":[
+					{"if":{"properties":{"action":{"const":"edit"}},"required":["action"]},"then":{"required":["section"]}},
+					{"if":{"properties":{"action":{"const":"affirm"}},"required":["action"]},"then":{"not":{"required":["section"]}}}
+				]},
 				"idempotency_key":{"type":"string","description":"Optional client idempotency key for this Host turn."},
 				"correlation_id":{"type":"string","description":"Optional client-safe correlation id."}
 			},
@@ -203,17 +273,6 @@ func agentGenesisRecoverDef() mcpruntime.ToolDef {
 		Name:         toolAgentGenesisRecover,
 		Title:        "Recover Host-backed agent genesis",
 		Description:  "Ask lesser-host to reconcile or safely retry a typed recovery state for the durable genesis conversation only when Host returns failure.recovery.action=retry_same_step. Wait Host's bounded retry_after_seconds when present, then call this tool exactly once. Host owns the recovery state machine; refresh_state maps to one agent_genesis_read, restart_soul_bootstrap maps to a fresh agent_genesis_begin lane, and operator_action requires operator contact with no automatic write. Body never reruns or substitutes the conversation locally. Requires explicit instance owner/operator OAuth authority and write scope.",
-		Annotations:  additiveMutationToolAnnotations(),
-		InputSchema:  genesisConversationInputSchema(),
-		OutputSchema: genesisOutputSchema(),
-	}
-}
-
-func agentGenesisCompleteDef() mcpruntime.ToolDef {
-	return mcpruntime.ToolDef{
-		Name:         toolAgentGenesisComplete,
-		Title:        "Complete Host-backed agent genesis",
-		Description:  "Ask lesser-host to perform the durable declaration-extraction handoff for the genesis conversation. Body sends no caller-supplied declarations; Host's produced_declarations checkpoint remains authoritative. Next: call agent_genesis_finalize_preflight, then agent_genesis_finalize after Host readiness. Requires explicit instance owner/operator OAuth authority and write scope.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -381,6 +440,7 @@ func (cfg config) handleAgentGenesisAdvance(ctx context.Context, args json.RawMe
 		ConversationID:  in.ConversationID,
 		Model:           in.Model,
 		Message:         in.Message,
+		CandidateAction: in.CandidateAction,
 		IdempotencyKey:  in.IdempotencyKey,
 		CorrelationID:   in.CorrelationID,
 		LesserRequestID: auth.RequestIDFromToolContext(ctx),
@@ -394,12 +454,6 @@ func (cfg config) handleAgentGenesisAdvance(ctx context.Context, args json.RawMe
 func (cfg config) handleAgentGenesisRecover(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	return cfg.handleGenesisConversationAction(ctx, args, toolAgentGenesisRecover, func(client hostapi.GenesisClient, bearer string, in agentGenesisConversationInput) (map[string]any, error) {
 		return client.RecoverConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
-	})
-}
-
-func (cfg config) handleAgentGenesisComplete(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
-	return cfg.handleGenesisConversationAction(ctx, args, toolAgentGenesisComplete, func(client hostapi.GenesisClient, bearer string, in agentGenesisConversationInput) (map[string]any, error) {
-		return client.CompleteConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
 	})
 }
 
@@ -431,7 +485,10 @@ func (cfg config) handleAgentGenesisFinalize(ctx context.Context, args json.RawM
 	if err != nil {
 		return genesisToolResultFromError(toolAgentGenesisFinalize, err)
 	}
-	data := sanitizeGenesisResponse("finalize", raw)
+	data, sanitizeErr := sanitizeGenesisResponse("finalize", raw)
+	if sanitizeErr != nil {
+		return genesisProjectionInvalidResult(toolAgentGenesisFinalize)
+	}
 	registryAgent, created, result, err := cfg.registerFinalizedGenesisAgent(ctx, actor, in, data)
 	if result != nil || err != nil {
 		return result, err
@@ -486,8 +543,6 @@ func genesisOperationForTool(toolName string) string {
 		return "advance"
 	case toolAgentGenesisRecover:
 		return "recover"
-	case toolAgentGenesisComplete:
-		return "complete"
 	case toolAgentGenesisFinalizePreflight:
 		return "finalize_preflight"
 	case toolAgentGenesisFinalize:
@@ -580,6 +635,12 @@ func parseAgentGenesisBeginInput(args json.RawMessage) (agentGenesisBeginInput, 
 
 func parseAgentGenesisAdvanceInput(args json.RawMessage) (agentGenesisAdvanceInput, *mcpruntime.ToolResult, error) {
 	var in agentGenesisAdvanceInput
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(args, &fields); err == nil {
+		if raw, present := fields["candidate_action"]; present && strings.TrimSpace(string(raw)) == "null" {
+			return in, mustToolErrorResult("invalid_request", "agent_genesis_advance candidate_action must be an object", http.StatusBadRequest, nil), nil
+		}
+	}
 	if result := decodeGenesisInput(args, &in); result != nil {
 		return in, result, nil
 	}
@@ -598,6 +659,11 @@ func parseAgentGenesisAdvanceInput(args json.RawMessage) (agentGenesisAdvanceInp
 	}
 	if in.Message, err = requiredGenesisMessage(in.Message); err != nil {
 		return in, mustToolErrorResult("invalid_request", "agent_genesis_advance requires a bounded message", http.StatusBadRequest, nil), nil
+	}
+	if in.CandidateAction != nil {
+		if err := in.CandidateAction.Validate(); err != nil {
+			return in, mustToolErrorResult("invalid_request", "agent_genesis_advance candidate_action is invalid", http.StatusBadRequest, nil), nil
+		}
 	}
 	if in.IdempotencyKey, err = optionalGenesisString(in.IdempotencyKey, "idempotency_key", genesisMaxPathID); err != nil {
 		return in, mustToolErrorResult("invalid_request", "agent_genesis_advance idempotency_key is invalid", http.StatusBadRequest, nil), nil
@@ -668,8 +734,18 @@ func requiredGenesisMessage(value string) (string, error) {
 }
 
 func genesisSuccessResult(toolName string, operation string, raw map[string]any) (*mcpruntime.ToolResult, error) {
-	data := sanitizeGenesisResponse(operation, raw)
+	data, err := sanitizeGenesisResponse(operation, raw)
+	if err != nil {
+		return genesisProjectionInvalidResult(toolName)
+	}
 	return genesisSuccessResultFromData(toolName, operation, data)
+}
+
+func genesisProjectionInvalidResult(toolName string) (*mcpruntime.ToolResult, error) {
+	return mustToolErrorResult("host_genesis_projection_invalid", "lesser-host returned an invalid genesis projection", http.StatusBadGateway, map[string]any{
+		"source": "lesser_host_genesis",
+		"tool":   toolName,
+	}), nil
 }
 
 func genesisSuccessResultFromData(toolName string, operation string, data map[string]any) (*mcpruntime.ToolResult, error) {
@@ -843,29 +919,22 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 			guidance["progress_percent"] = progressPercent
 		}
 		guidance["instruction"] = genesisProcessingWaitInstruction(data)
+	case operation == "finalize_preflight":
+		guidance["next_tool"] = toolAgentGenesisFinalize
+		guidance["instruction"] = "Host preflight succeeded. Call agent_genesis_finalize; Body writes a Host-derived Ptah registry row only after Host publishes the identity."
+	case operation == "finalize" || status == "published":
+		guidance["next_tool"] = toolAgentGet
+		guidance["alternate_next_tool"] = toolAgentList
+		guidance["instruction"] = "This Host lane is published and terminal. Verify the minted agent with agent_get for the returned agent_id, or agent_list for the account-scoped registry view."
+	case status == "declaration_ready":
+		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
+		guidance["instruction"] = "Host reports declaration_ready. Call agent_genesis_finalize_preflight directly, then agent_genesis_finalize only after the preflight succeeds."
+	case genesisOwnerInputStatus(status) && genesisCandidatePhase(data) == "review":
+		return genesisCandidateReviewGuidance(status, data)
 	case genesisOwnerInputStatus(status):
 		guidance["next_tool"] = toolAgentGenesisAdvance
 		guidance["alternate_next_tool"] = toolAgentGenesisRead
-		guidance["instruction"] = "Host is waiting for owner/operator input. Call agent_genesis_advance with the next owner/operator message; optionally call agent_genesis_read first to refresh the Host projection."
-	case operation == "complete":
-		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
-		guidance["instruction"] = "Call agent_genesis_finalize_preflight, then agent_genesis_finalize only after Host reports readiness."
-	case operation == "finalize_preflight":
-		guidance["next_tool"] = toolAgentGenesisFinalize
-		guidance["instruction"] = "Call agent_genesis_finalize; Body will write a Host-derived Ptah registry row after Host publishes the identity."
-	case status == "declaration_ready" || status == "ready_for_completion":
-		guidance["next_tool"] = toolAgentGenesisComplete
-		guidance["instruction"] = "Call agent_genesis_complete so Host extracts and validates its durable produced_declarations checkpoint."
-	case status == "complete" || status == "completed" || status == "finalization_ready":
-		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
-		guidance["instruction"] = "Call agent_genesis_finalize_preflight, then agent_genesis_finalize only after Host reports readiness."
-	case status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
-		guidance["next_tool"] = toolAgentGenesisFinalize
-		guidance["instruction"] = "Call agent_genesis_finalize; Body will write a Host-derived Ptah registry row after Host publishes the identity."
-	case operation == "finalize" || status == "published" || status == "finalized" || status == "active":
-		guidance["next_tool"] = toolAgentGet
-		guidance["alternate_next_tool"] = toolAgentList
-		guidance["instruction"] = "Verify the minted agent with agent_get for the returned agent_id, or agent_list for the account-scoped registry view."
+		guidance["instruction"] = "Host candidate phase is section. Call agent_genesis_advance with the next normal owner message for current_section; Host's five provider declaration tools remain inside its AppTheory MicroVM and are never Body-local tools. Optionally read first to refresh the Host projection."
 	default:
 		guidance["next_tool"] = toolAgentGenesisRead
 		guidance["instruction"] = "Poll agent_genesis_read and follow the Host status; Body does not substitute a local genesis state machine."
@@ -873,9 +942,60 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 	return guidance
 }
 
+func genesisCandidatePhase(data map[string]any) string {
+	return nestedString(data, "conversation", "declaration_candidate", "phase")
+}
+
+func genesisCandidateReviewGuidance(status string, data map[string]any) map[string]any {
+	candidate := nestedMap(data, "conversation", "declaration_candidate")
+	review := nestedMap(candidate, "review")
+	revision, _ := exactNonNegativeInt(candidate["revision"])
+	candidateHash := stringValue(candidate, "candidate_hash")
+	reviewHash := stringValue(review, "review_hash")
+	bindings := map[string]any{
+		"candidate_revision": revision,
+		"candidate_hash":     candidateHash,
+		"review_hash":        reviewHash,
+	}
+	affirm := cloneMap(bindings)
+	affirm["action"] = "affirm"
+	actions := []any{
+		map[string]any{
+			"intent":           "affirm",
+			"description":      "Accept the exact lossless Host review bound by the advertised revision and hashes.",
+			"message_guidance": "Supply a bounded owner decision message; the structural candidate_action, not its prose, carries authority.",
+			"candidate_action": affirm,
+		},
+	}
+	for _, section := range genesisDeclarationSections {
+		edit := cloneMap(bindings)
+		edit["action"] = "edit"
+		edit["section"] = section
+		actions = append(actions, map[string]any{
+			"intent":           "edit",
+			"section":          section,
+			"description":      "Reopen the exact " + section + " section while preserving the advertised review bindings.",
+			"message_guidance": "Supply a bounded owner revision message describing the requested " + section + " change.",
+			"candidate_action": edit,
+		})
+	}
+	return map[string]any{
+		"status":              status,
+		"fresh_lane":          false,
+		"next_tool":           toolAgentGenesisAdvance,
+		"alternate_next_tool": toolAgentGenesisRead,
+		"candidate_revision":  revision,
+		"candidate_hash":      candidateHash,
+		"review_hash":         reviewHash,
+		"allowed_actions":     []any{"affirm", "edit"},
+		"candidate_actions":   actions,
+		"instruction":         "Inspect the exact lossless conversation.declaration_candidate.review.review_text. Select one advertised candidate_actions entry, then call agent_genesis_advance with only its nested candidate_action unchanged. affirm forbids section. edit requires one exact section; each edit action supplies it and requires an owner revision message. Free-form or canonical affirmation phrases have zero authority.",
+	}
+}
+
 func genesisProcessingWaitStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "in_progress", "declaration_extraction_pending":
+	case "in_progress":
 		return true
 	default:
 		return false
@@ -884,7 +1004,7 @@ func genesisProcessingWaitStatus(status string) bool {
 
 func genesisOwnerInputStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "assistant_turn_ready", "awaiting_owner", "needs_owner_turn":
+	case "assistant_turn_ready":
 		return true
 	default:
 		return false
@@ -896,7 +1016,7 @@ func genesisProcessingWaitInstruction(data map[string]any) string {
 	if pollAfter, ok := genesisPollAfterSeconds(data); ok {
 		waitText = fmt.Sprintf("wait poll_after_seconds=%d seconds", pollAfter)
 	}
-	return "Host is processing. Do not call " + toolAgentGenesisAdvance + " again and do not nudge; " + waitText + ", then call " + toolAgentGenesisRead + ". Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn."
+	return "Host is processing. Do not call " + toolAgentGenesisAdvance + " again and do not nudge; " + waitText + ", then call " + toolAgentGenesisRead + ". Only call " + toolAgentGenesisAdvance + " after Host reports assistant_turn_ready; review phase additionally requires structural candidate_action."
 }
 
 func genesisPollAfterSeconds(data map[string]any) (int, bool) {
@@ -961,7 +1081,7 @@ func genesisRecoveryActionGuidance(data map[string]any) map[string]any {
 	if len(recovery) == 0 {
 		recovery = nestedMap(data, "failure", "recovery")
 	}
-	action := strings.ToLower(strings.TrimSpace(stringValue(recovery, "action")))
+	action, _ := recovery["action"].(string)
 	if action == "" {
 		return nil
 	}
@@ -996,6 +1116,7 @@ func genesisRecoveryActionGuidance(data map[string]any) map[string]any {
 	case "operator_action":
 		out["instruction"] = "Host requested operator_action: Stop automatic Genesis tool calls and contact the instance operator with the Host-provided safe recovery reason when present. Do not call a Genesis write tool and do not poll " + toolAgentGenesisRead + " endlessly."
 	default:
+		out["recovery_action"] = action
 		out["instruction"] = "Host returned an unrecognized failure.recovery.action: Stop automatic Genesis tool calls and contact the instance operator. Body will not normalize the Host value or select a fallback read/write tool."
 	}
 	if reason := stringValue(recovery, "reason"); reason != "" {
@@ -1078,7 +1199,7 @@ func genesisAudit(ctx context.Context, toolName string, actor string, allowed bo
 	slog.WarnContext(ctx, "ptah genesis authorization rejected", attrs...)
 }
 
-func sanitizeGenesisResponse(operation string, raw map[string]any) map[string]any {
+func sanitizeGenesisResponse(operation string, raw map[string]any) (map[string]any, error) {
 	data := map[string]any{
 		"source":          "lesser_host",
 		"state_authority": "Host HostedGenesisSession",
@@ -1100,10 +1221,15 @@ func sanitizeGenesisResponse(operation string, raw map[string]any) map[string]an
 		}
 	default:
 		conversation := mapValue(raw, "conversation")
+		conversationEnvelope := len(conversation) > 0
 		if len(conversation) == 0 {
 			conversation = raw
 		}
-		if safe := sanitizeGenesisConversation(conversation); len(safe) > 0 {
+		safe, err := sanitizeGenesisConversation(conversation, conversationEnvelope)
+		if err != nil {
+			return nil, err
+		}
+		if len(safe) > 0 {
 			data["conversation"] = safe
 		}
 		if agentID := firstString(raw, "agent_id", "agentId"); agentID != "" {
@@ -1115,7 +1241,7 @@ func sanitizeGenesisResponse(operation string, raw map[string]any) map[string]an
 			data = sanitizeGenesisPreflight(data, raw)
 		}
 	}
-	return data
+	return data, nil
 }
 
 func sanitizeGenesisListResponse(agentID string, limit int, raw map[string]any) map[string]any {
@@ -1229,25 +1355,21 @@ func genesisApplyListRecommendation(summary map[string]any, agentID string) {
 	summary["terminal"] = false
 	switch {
 	case genesisProcessingWaitStatus(status) || status == "created":
-		setGenesis(toolAgentGenesisRead, "Host is processing this lane. This list summary does not include exact poll timing; call agent_genesis_read with the listed ids to get poll_after_seconds when Host provides it, then wait/read only. Do not call agent_genesis_advance again and do not nudge while status remains in_progress or declaration_extraction_pending.")
+		setGenesis(toolAgentGenesisRead, "Host is processing this lane. This list summary does not include exact poll timing; call agent_genesis_read with the listed ids to get poll_after_seconds when Host provides it, then wait/read only. Do not call agent_genesis_advance again and do not nudge while status remains in_progress.")
 		summary["wait"] = true
 		summary["forbidden_next_tool"] = toolAgentGenesisAdvance
 		summary["recoverable_hint"] = "processing_wait_read_only"
 	case genesisOwnerInputStatus(status):
-		setGenesis(toolAgentGenesisRead, "Host appears to be waiting for owner/operator input. Call agent_genesis_read first with the listed ids to load the bounded latest prompt/context, then call agent_genesis_advance with the next owner/operator message if the read response still reports an owner-input state.")
+		setGenesis(toolAgentGenesisRead, "Host is waiting for owner/operator input. Call agent_genesis_read first with the listed ids to load candidate phase and exact review bindings. Then follow read guidance: section uses a normal owner message; review requires structural candidate_action.")
 		summary["alternate_next_tool"] = toolAgentGenesisAdvance
 		summary["alternate_arguments"] = genesisArgs()
 	case status == "failed":
 		setGenesis(toolAgentGenesisRead, "This lane failed, but list summaries intentionally do not include typed failure.recovery details. Call agent_genesis_read with the listed ids first, then follow the read response's failure.recovery action; do not guess recover vs restart from the list.")
 		summary["recoverable_hint"] = "unknown_until_read"
 		summary["restart_hint"] = "unknown_until_read"
-	case status == "declaration_ready" || status == "ready_for_completion":
-		setGenesis(toolAgentGenesisComplete, "Host has declaration-ready state for this lane. Call agent_genesis_complete with the listed ids so Host validates and advances its durable declaration checkpoint.")
-		summary["recoverable_hint"] = "completion_ready"
-	case status == "finalization_ready" || status == "ready_for_finalization":
-		setGenesis(toolAgentGenesisFinalizePreflight, "Host reports finalization-ready state. Call agent_genesis_finalize_preflight with the listed ids before finalization.")
-	case status == "preflight_ok" || status == "ready_to_finalize" || status == "finalize_ready":
-		setGenesis(toolAgentGenesisFinalize, "Host preflight/finalize readiness is present. Call agent_genesis_finalize with the listed ids; Body writes registry visibility only after Host publishes.")
+	case status == "declaration_ready":
+		setGenesis(toolAgentGenesisFinalizePreflight, "Host reports declaration_ready. Call agent_genesis_finalize_preflight directly with the listed ids, then finalize only after preflight succeeds.")
+		summary["recoverable_hint"] = "finalization_preflight_ready"
 	case genesisTerminalListStatus(status):
 		summary["recommended_next_tool"] = toolAgentGet
 		summary["alternate_next_tool"] = toolAgentList
@@ -1264,7 +1386,7 @@ func genesisApplyListRecommendation(summary map[string]any, agentID string) {
 
 func genesisTerminalListStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "finalized", "published", "active", "complete", "completed":
+	case "published":
 		return true
 	default:
 		return false
@@ -1358,9 +1480,16 @@ func sanitizeGenesisPromotion(raw map[string]any) map[string]any {
 	return out
 }
 
-func sanitizeGenesisConversation(raw map[string]any) map[string]any {
+func sanitizeGenesisConversation(raw map[string]any, strictStatus bool) (map[string]any, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
+	}
+	if strictStatus {
+		statusRaw, present := raw["status"]
+		status, ok := statusRaw.(string)
+		if !present || !ok || !validGenesisConversationStatus(status) {
+			return nil, errors.New("host genesis conversation status is invalid")
+		}
 	}
 	out := map[string]any{}
 	for output, keys := range map[string][]string{
@@ -1400,7 +1529,284 @@ func sanitizeGenesisConversation(raw map[string]any) map[string]any {
 	if traceIDs := sanitizeGenesisTraceIDs(mapValue(raw, "trace_ids", "traceIds")); len(traceIDs) > 0 {
 		out["trace_ids"] = traceIDs
 	}
-	return out
+	if candidateRaw, present := raw["declaration_candidate"]; present {
+		candidateObject, ok := candidateRaw.(map[string]any)
+		if !ok || candidateObject == nil {
+			return nil, errors.New("host declaration candidate is not an object")
+		}
+		candidate, err := sanitizeDeclarationCandidate(candidateObject)
+		if err != nil {
+			return nil, err
+		}
+		out["declaration_candidate"] = candidate
+		if strictStatus {
+			status, _ := raw["status"].(string)
+			phase, _ := candidate["phase"].(string)
+			if (status == "assistant_turn_ready" && phase != "section" && phase != "review") ||
+				((status == "declaration_ready" || status == "published") && phase != "finalized") {
+				return nil, errors.New("host declaration candidate phase does not match conversation status")
+			}
+		}
+	} else if strictStatus && !validGenesisNoCandidateRestartProjection(raw) {
+		return nil, errors.New("host declaration candidate is missing")
+	}
+	return out, nil
+}
+
+var (
+	genesisDeclarationSections     = []string{"identity", "philosophy", "discipline", "boundaries", "soul"}
+	genesisSHA256IdentifierPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
+
+func validGenesisConversationStatus(status string) bool {
+	switch status {
+	case "created", "in_progress", "assistant_turn_ready", "declaration_ready", "published", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+// validGenesisNoCandidateRestartProjection recognizes the one strict nested
+// Host projection that deliberately has no typed candidate: a terminal hard-cut
+// failure for an untyped/stale lane. Host owns this migration decision and
+// requires a fresh bootstrap; Body relays it without rebuilding candidate state.
+func validGenesisNoCandidateRestartProjection(raw map[string]any) bool {
+	status, ok := exactString(raw["status"])
+	if !ok || status != "failed" {
+		return false
+	}
+	failure, ok := raw["failure"].(map[string]any)
+	if !ok || failure == nil || requireExactObjectKeys(failure,
+		[]string{"code", "message", "retryable", "recovery"},
+		[]string{"class"},
+	) != nil {
+		return false
+	}
+	code, ok := exactString(failure["code"])
+	if !ok || !oneOf(code,
+		"llm_unavailable",
+		"assistant_turn_failed",
+		"invalid_completion_state",
+		"missing_produced_declarations",
+		"invalid_produced_declarations",
+		"tenant_boundary_violation",
+		"operator_action_required",
+		"microvm_unavailable",
+	) {
+		return false
+	}
+	if classRaw, present := failure["class"]; present {
+		class, ok := exactString(classRaw)
+		if !ok || !oneOf(class, "provider_timeout", "provider_canceled", "provider_api_failure", "invalid_provider_output", "parse_validation_failure") {
+			return false
+		}
+	}
+	message, ok := exactString(failure["message"])
+	if !ok || strings.TrimSpace(message) == "" || utf8.RuneCountInString(message) > 512 {
+		return false
+	}
+	retryable, ok := failure["retryable"].(bool)
+	if !ok || retryable {
+		return false
+	}
+	recovery, ok := failure["recovery"].(map[string]any)
+	if !ok || recovery == nil || requireExactObjectKeys(recovery,
+		[]string{"action"},
+		[]string{"max_attempts", "retry_after_seconds", "reason"},
+	) != nil {
+		return false
+	}
+	action, ok := exactString(recovery["action"])
+	if !ok || action != "restart_soul_bootstrap" {
+		return false
+	}
+	if !validOptionalGenesisBoundedPositiveInt(recovery, "max_attempts", 10) ||
+		!validOptionalGenesisBoundedPositiveInt(recovery, "retry_after_seconds", genesisMaxRecoveryRetryAfterSeconds) {
+		return false
+	}
+	if reasonRaw, present := recovery["reason"]; present {
+		reason, ok := exactString(reasonRaw)
+		if !ok || strings.TrimSpace(reason) == "" || utf8.RuneCountInString(reason) > 128 {
+			return false
+		}
+	}
+	return true
+}
+
+func validOptionalGenesisBoundedPositiveInt(raw map[string]any, key string, maximum int) bool {
+	value, present := raw[key]
+	if !present {
+		return true
+	}
+	number, ok := exactNonNegativeInt(value)
+	return ok && number >= 1 && number <= int64(maximum)
+}
+
+func sanitizeDeclarationCandidate(raw map[string]any) (map[string]any, error) {
+	if err := requireExactObjectKeys(raw,
+		[]string{"version", "phase", "revision", "candidate_hash"},
+		[]string{"current_section", "completed_sections", "review"},
+	); err != nil {
+		return nil, err
+	}
+	version, ok := exactString(raw["version"])
+	if !ok || version != "hosted-genesis-declaration-candidate.v1" {
+		return nil, errors.New("host declaration candidate version is invalid")
+	}
+	phase, ok := exactString(raw["phase"])
+	if !ok || !oneOf(phase, "section", "review", "affirmed", "finalized") {
+		return nil, errors.New("host declaration candidate phase is invalid")
+	}
+	revision, ok := exactNonNegativeInt(raw["revision"])
+	if !ok {
+		return nil, errors.New("host declaration candidate revision is invalid")
+	}
+	candidateHash, ok := exactString(raw["candidate_hash"])
+	if !ok || !genesisSHA256IdentifierPattern.MatchString(candidateHash) {
+		return nil, errors.New("host declaration candidate hash is invalid")
+	}
+	out := map[string]any{
+		"version": version, "phase": phase, "revision": revision, "candidate_hash": candidateHash,
+	}
+	currentSection := ""
+	if value, present := raw["current_section"]; present {
+		currentSection, ok = exactString(value)
+		if !ok || !oneOf(currentSection, genesisDeclarationSections...) {
+			return nil, errors.New("host declaration candidate current section is invalid")
+		}
+		out["current_section"] = currentSection
+	}
+	completed := []any(nil)
+	var err error
+	if value, present := raw["completed_sections"]; present {
+		completed, err = exactDeclarationSections(value)
+		if err != nil {
+			return nil, err
+		}
+		out["completed_sections"] = completed
+	}
+	var review map[string]any
+	if value, present := raw["review"]; present {
+		reviewRaw, ok := value.(map[string]any)
+		if !ok || reviewRaw == nil {
+			return nil, errors.New("host declaration candidate review is not an object")
+		}
+		review, err = sanitizeDeclarationCandidateReview(reviewRaw, revision, candidateHash)
+		if err != nil {
+			return nil, err
+		}
+		out["review"] = review
+	}
+	switch phase {
+	case "section":
+		if currentSection == "" || review != nil || len(completed) >= len(genesisDeclarationSections) {
+			return nil, errors.New("host declaration candidate section phase is inconsistent")
+		}
+		if currentSection != genesisDeclarationSections[len(completed)] {
+			return nil, errors.New("host declaration candidate section order is inconsistent")
+		}
+	case "review", "affirmed", "finalized":
+		if currentSection != "" || len(completed) != len(genesisDeclarationSections) || review == nil {
+			return nil, errors.New("host declaration candidate review binding is inconsistent")
+		}
+	}
+	return out, nil
+}
+
+func sanitizeDeclarationCandidateReview(raw map[string]any, candidateRevision int64, candidateHash string) (map[string]any, error) {
+	if err := requireExactObjectKeys(raw,
+		[]string{"renderer_version", "candidate_revision", "candidate_hash", "review_hash", "review_text"}, nil,
+	); err != nil {
+		return nil, err
+	}
+	rendererVersion, rendererOK := exactString(raw["renderer_version"])
+	revision, revisionOK := exactNonNegativeInt(raw["candidate_revision"])
+	reviewCandidateHash, candidateHashOK := exactString(raw["candidate_hash"])
+	reviewHash, reviewHashOK := exactString(raw["review_hash"])
+	reviewText, reviewTextOK := exactString(raw["review_text"])
+	if !rendererOK || rendererVersion != "hosted-genesis-owner-review.v1" ||
+		!revisionOK || revision != candidateRevision || !candidateHashOK || reviewCandidateHash != candidateHash ||
+		!reviewHashOK || !genesisSHA256IdentifierPattern.MatchString(reviewHash) || !reviewTextOK ||
+		utf8.RuneCountInString(reviewText) == 0 || utf8.RuneCountInString(reviewText) > genesisMaxReviewRunes {
+		return nil, errors.New("host declaration candidate review is invalid")
+	}
+	digest := sha256.Sum256([]byte(reviewText))
+	if reviewHash != "sha256:"+hex.EncodeToString(digest[:]) {
+		return nil, errors.New("host declaration candidate review hash is inconsistent")
+	}
+	return map[string]any{
+		"renderer_version": rendererVersion, "candidate_revision": revision,
+		"candidate_hash": reviewCandidateHash, "review_hash": reviewHash, "review_text": reviewText,
+	}, nil
+}
+
+func requireExactObjectKeys(raw map[string]any, required []string, optional []string) error {
+	allowed := make(map[string]bool, len(required)+len(optional))
+	for _, key := range required {
+		allowed[key] = true
+		if _, ok := raw[key]; !ok {
+			return fmt.Errorf("host declaration candidate field %s is missing", key)
+		}
+	}
+	for _, key := range optional {
+		allowed[key] = true
+	}
+	for key := range raw {
+		if !allowed[key] {
+			return fmt.Errorf("host declaration candidate field %s is unknown", key)
+		}
+	}
+	return nil
+}
+
+func exactDeclarationSections(value any) ([]any, error) {
+	items, ok := value.([]any)
+	if !ok || len(items) > len(genesisDeclarationSections) {
+		return nil, errors.New("host declaration candidate completed sections are invalid")
+	}
+	out := make([]any, 0, len(items))
+	for index, item := range items {
+		section, ok := exactString(item)
+		if !ok || index >= len(genesisDeclarationSections) || section != genesisDeclarationSections[index] {
+			return nil, errors.New("host declaration candidate completed sections are invalid")
+		}
+		out = append(out, section)
+	}
+	return out, nil
+}
+
+func exactString(value any) (string, bool) {
+	text, ok := value.(string)
+	return text, ok
+}
+
+func exactNonNegativeInt(value any) (int64, bool) {
+	switch number := value.(type) {
+	case int:
+		return int64(number), number >= 0
+	case int64:
+		return number, number >= 0
+	case float64:
+		if number < 0 || number > math.MaxInt64 || number != math.Trunc(number) {
+			return 0, false
+		}
+		return int64(number), true
+	case json.Number:
+		parsed, err := number.Int64()
+		return parsed, err == nil && parsed >= 0
+	default:
+		return 0, false
+	}
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeGenesisMessages(raw any) ([]map[string]any, bool) {
@@ -1480,7 +1886,9 @@ func sanitizeGenesisFailure(raw map[string]any) map[string]any {
 	copyBoolField(out, "retryable", raw, "retryable")
 	if recovery := mapValue(raw, "recovery"); len(recovery) > 0 {
 		safeRecovery := map[string]any{}
-		copyStringField(safeRecovery, "action", recovery, "action")
+		if action, ok := recovery["action"].(string); ok && action != "" {
+			safeRecovery["action"] = action
+		}
 		copySafeRecoveryReasonField(safeRecovery, recovery)
 		copyIntField(safeRecovery, "max_attempts", recovery, "max_attempts", "maxAttempts")
 		copyIntField(safeRecovery, "retry_after_seconds", recovery, "retry_after_seconds", "retryAfterSeconds")

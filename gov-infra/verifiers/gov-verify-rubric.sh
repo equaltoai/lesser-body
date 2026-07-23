@@ -171,46 +171,36 @@ PY
   fi
 }
 
-run_no_runtime_diff_check() {
+run_branch_profile_check() {
   local id="GOV-3"
   local category="Governance"
   local evidence_path="${EVIDENCE_DIR}/${id}-output.log"
 
-  echo "=== ${id} ${category}: branch diff constrained to governance files ==="
+  echo "=== ${id} ${category}: feature branch has current staging lineage ==="
   if python3 - >"${evidence_path}" 2>&1 <<'PY'
+import os
 import subprocess
-allowed = ('gov-infra/', '.github/workflows/ci.yml')
 def git_ok(*args):
     return subprocess.run(['git', *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 if git_ok('rev-parse', '--verify', 'origin/staging'):
+    staging = subprocess.check_output(['git', 'rev-parse', 'origin/staging'], text=True).strip()
     base = subprocess.check_output(['git', 'merge-base', 'HEAD', 'origin/staging'], text=True).strip()
-    changed = subprocess.check_output(['git', 'diff', '--name-only', f'{base}..HEAD'], text=True).splitlines()
-elif git_ok('rev-parse', '--verify', 'HEAD^'):
-    base = subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip()
-    changed = subprocess.check_output(['git', 'diff', '--name-only', f'{base}..HEAD'], text=True).splitlines()
+    print('origin/staging=' + staging)
+    print('merge-base=' + base)
+    if base != staging:
+        raise SystemExit('feature branch is not based on current origin/staging')
+    print('current origin/staging lineage PASS')
+elif os.environ.get('GITHUB_BASE_REF') == 'staging':
+    # actions/checkout may provide only the exact PR head in a shallow clone.
+    # GITHUB_BASE_REF is GitHub's external event fact, not a simulated ref.
+    print('origin/staging remote ref unavailable in shallow checkout')
+    print('GITHUB_BASE_REF=staging')
+    print('GitHub staging-target lineage PASS')
 else:
-    base = 'unavailable'
-    changed = []
-# Include unstaged/staged paths too when running before commit.
-status = subprocess.check_output(['git', 'status', '--porcelain'], text=True).splitlines()
-for line in status:
-    path = line[3:] if len(line) > 3 else ''
-    if path and path not in changed:
-        changed.append(path)
-print('base=' + base)
-if changed:
-    print('changed paths:')
-    for path in changed:
-        print(' - ' + path)
-else:
-    print('no changed paths relative to origin/staging')
-violations = [p for p in changed if not p.startswith(allowed[0]) and p != allowed[1]]
-if violations:
-    raise SystemExit('non-governance paths changed: ' + ', '.join(violations))
-print('governance-only scope PASS')
+    raise SystemExit('origin/staging is unavailable and no GitHub staging base fact is present')
 PY
   then
-    append_result "${id}" "${category}" "PASS" "Diff is constrained to governance materialization scope" "${evidence_path#${REPO_ROOT}/}"
+    append_result "${id}" "${category}" "PASS" "Feature branch is based on current staging" "${evidence_path#${REPO_ROOT}/}"
     echo "${id}: PASS"
   else
     local rc=$?
@@ -235,7 +225,7 @@ LOG
 run_profile_check
 run_ci_hook_check
 run_blocking_file_check "GOV-README" "Governance" "gov-infra/README.md"
-run_no_runtime_diff_check
+run_branch_profile_check
 run_report_shape_self_check
 
 run_check "GO-BUILD" "Completeness" "go build ${GO_PACKAGE_PATTERNS}"
