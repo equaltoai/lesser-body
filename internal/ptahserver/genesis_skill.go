@@ -24,7 +24,7 @@ type genesisSkillFile struct {
 }
 
 // genesisSkillVersion derives the stable skill version from the Host-owned
-// guidance version and the pinned Host contract head. A Host PR #975 refresh
+// guidance version and the pinned Host contract head. A Host PR #978 refresh
 // changes this version and the bundle id together with the mirrored fixtures.
 func genesisSkillVersion() string {
 	head := fiveBodyHostHeadSHA
@@ -113,7 +113,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisSkillGet,
 		Title:       "Get Ptah genesis operator skill",
-		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns deterministic structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to the mirrored Host PR #975 five-body contract. Ptah serves content only: no local installation, no filesystem write, no publish, and no cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns AppTheory MCP structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to Host PR #978 exact accepted head. Ptah serves content only: no local installation, filesystem write, publish, or cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -147,7 +147,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 							"sha256":{"type":"string"},
 							"content":{"type":"string"}
 						}}},
-						"provenance":{"type":"object","description":"Host PR #975 head plus Body's mirrored contract versions and checksums."},
+						"provenance":{"type":"object","description":"Host PR #978 exact accepted head plus Body's mirrored contract versions and checksums."},
 						"semantics":{"type":"object","description":"Explicit no-write/no-install semantics: Ptah serves content only; clients decide materialization."},
 						"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_begin"]},"status":{"type":"string"},"instruction":{"type":"string"}}}
 					}
@@ -198,15 +198,16 @@ func genesisSkillVisibleText(data map[string]any) string {
 	text.WriteString("- Interview the staged five bodies identity → philosophy → discipline → boundaries → soul.\n")
 	text.WriteString("- Persist `conversation_id` immediately and after every call.\n")
 	text.WriteString("- Follow `structuredContent.data.guidance.next_tool` from every Host-backed response.\n")
-	text.WriteString("- `in_progress` and `declaration_extraction_pending` are wait-only: Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge; wait `poll_after_seconds` when present, then call `" + toolAgentGenesisRead + "`.\n")
-	text.WriteString("- Call `" + toolAgentGenesisComplete + "`; never submit declarations as source of truth.\n")
-	text.WriteString("- Call `" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`.\n")
+	text.WriteString("- `in_progress` is wait/read-only: Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge; wait `poll_after_seconds` when present, then call `" + toolAgentGenesisRead + "`.\n")
+	text.WriteString("- Candidate section phase uses a normal owner message through `" + toolAgentGenesisAdvance + "`; Host's provider section tools stay private to its AppTheory MicroVM.\n")
+	text.WriteString("- Candidate review requires inspecting the exact lossless `review_text` and passing structural `candidate_action` with exact revision/hash bindings. affirm has no section; edit has an exact section plus owner revision message. Prose has zero authority.\n")
+	text.WriteString("- `declaration_ready` goes directly to `" + toolAgentGenesisFinalizePreflight + "`, then `" + toolAgentGenesisFinalize + "`.\n")
 	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
 	text.WriteString("- `restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`.\n")
 	text.WriteString("- `retry_same_step` means wait `retry_after_seconds` when present, then call `" + toolAgentGenesisRecover + "` exactly once on the same lane.\n")
 	text.WriteString("- `refresh_state` means call `" + toolAgentGenesisRead + "` exactly once; do not write or poll endlessly.\n")
 	text.WriteString("- `operator_action` means stop automatic Genesis tool calls and contact the instance operator; no automatic write is selected.\n")
-	text.WriteString("- Host is source of truth; never fabricate genesis state, declarations, model allowlists, or directory entries.\n\n")
+	text.WriteString("- Host is the sole candidate/state authority; never fabricate genesis state, persist candidate data, expose private provider tools, or recompute candidate truth.\n\n")
 	for _, file := range genesisSkillFiles() {
 		text.WriteString("## File: `" + file.path + "`\n\n")
 		text.WriteString("media_type: `" + file.mediaType + "`  \n")
@@ -233,7 +234,7 @@ func fiveBodyGenesisOperatorSkillResource(context.Context) ([]mcpruntime.Resourc
 func genesisSkillMarkdown() string {
 	return `---
 name: ` + genesisSkillName + `
-description: Operate Body/Ptah's Host-backed agent_genesis_* tools to mint the next agent through lesser-host's durable five-body genesis flow.
+description: Operate Body/Ptah's Host-backed typed-candidate genesis protocol without creating local declaration state.
 version: ` + genesisSkillVersion() + `
 ---
 
@@ -241,9 +242,10 @@ version: ` + genesisSkillVersion() + `
 
 You are an LLM client operating Body/Ptah's instance-plane MCP surface to create the next agent. Host
 (equaltoai/lesser-host) owns the durable HostedGenesisSession state machine and the ` + fiveBodySchemaVersion + ` /
-` + fiveBodyGuidanceVersion + ` contract. Body is a guidance and registry consumer: it relays Host state and never
-fabricates business state. This skill is served read-only; Ptah performs no installation, filesystem write, publish,
-or cloud/on-chain mutation. You decide whether and how to materialize this content.
+` + fiveBodyGuidanceVersion + ` contract, typed declaration candidate, and candidate persistence. The five provider
+section tools run only inside Host's AppTheory MicroVM. Body uses AppTheory's MCP ToolDef/InputSchema/OutputSchema/
+StructuredContent path to validate and relay Host's bounded public projection; it has no declaration engine, private
+provider tools, or candidate store. This skill is read-only.
 
 ## Authority
 
@@ -251,6 +253,8 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
   rejected, and ordinary read/write tokens or x402/user payment evidence are never owner authority.
 - Every genesis response's ` + "`structuredContent.data`" + ` is the Host-backed truth; treat your own transcript as
   scratch, not state.
+- Free-form or canonical affirmation phrases have zero authority. Only Host's structural candidate_action changes
+  candidate state.
 
 ## Operating sequence
 
@@ -258,26 +262,24 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
    ` + "`ptah://genesis/" + resourceGenesisOperatorSkill + "`" + `) and use this SKILL.md as the operating playbook.
 2. **Begin.** Call ` + "`" + toolAgentGenesisBegin + "`" + ` with the managed instance domain and a new local_id.
    Persist the returned registration_id.
-3. **Interview the five bodies.** Call ` + "`" + toolAgentGenesisAdvance + "`" + ` to run Host's staged interview:
-   staged five bodies identity → philosophy → discipline → boundaries → soul, with capabilities and transparency as
-   satellites. Persist ` + "`conversation_id`" + ` immediately when the first advance returns it and after every call;
-   also keep the ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair together.
-4. **Recover/navigation index when ids are unclear.** If you are resuming, see multiple stuck/broken lanes, or do not
-   know the current ` + "`registration_id`" + `/` + "`conversation_id`" + ` pair, call ` + "`" + toolAgentGenesisList + "`" + ` with
+3. **Advance candidate sections.** When Host status is ` + "`assistant_turn_ready`" + ` and candidate phase is
+   ` + "`section`" + `, call ` + "`" + toolAgentGenesisAdvance + "`" + ` with the next normal owner message for the
+   exact current_section. Host invokes its private section tool. Persist conversation_id after every call.
+4. **Recover/navigation index when ids are unclear.** If resuming or the id pair is unknown, call ` + "`" + toolAgentGenesisList + "`" + ` with
    the ` + "`agent_id`" + ` first. Follow ` + "`structuredContent.data.recommended_start`" + ` exactly; it includes the next tool and
-   arguments. The list is Host summary-only and does not expose transcripts or declarations.
+   arguments. The summary list does not include candidate review bindings; read the selected lane before owner input.
 5. **Read and follow guidance.** Poll ` + "`" + toolAgentGenesisRead + "`" + ` for the durable Host projection and
    always follow ` + "`structuredContent.data.guidance.next_tool`" + ` for the next step; do not improvise ordering.
-   ` + "`in_progress`" + ` and ` + "`declaration_extraction_pending`" + ` are Host-processing states, not owner-input
-   states. When status is one of those states or guidance has ` + "`wait=true`" + `, do not treat it as owner input.
-   Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` again and do not nudge while Host is processing; wait for ` + "`poll_after_seconds`" + ` when present, then call ` + "`" + toolAgentGenesisRead + "`" + `. Only advance after Host reports
-   ` + "`assistant_turn_ready`" + `, ` + "`awaiting_owner`" + `, or ` + "`needs_owner_turn`" + `.
-6. **Complete.** When Host reports declaration readiness, call ` + "`" + toolAgentGenesisComplete + "`" + `. Host
-   extracts and validates its own produced declarations; never submit declarations as source of truth.
-7. **Preflight, then finalize.** Call ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` then, only after Host
-   readiness, ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
+   ` + "`in_progress`" + ` is wait/read-only. Never call advance to nudge; wait poll_after_seconds when present, then read.
+6. **Review structurally.** When status is ` + "`assistant_turn_ready`" + ` and candidate phase is ` + "`review`" + `,
+   inspect the exact, lossless ` + "`conversation.declaration_candidate.review.review_text`" + `. Use the exact
+   candidate_revision, candidate_hash, and review_hash returned in guidance. Call advance with candidate_action:
+   ` + "`affirm`" + ` forbids section; ` + "`edit`" + ` requires one exact section plus an owner revision message.
+7. **Preflight, then finalize.** When Host reports ` + "`declaration_ready`" + `, call
+   ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` directly, then, only after preflight succeeds,
+   ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
 8. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
-   registry or merged registry/live view.
+   registry or merged registry/live view. ` + "`published`" + ` is terminal.
 
 ## Failure recovery
 
@@ -297,10 +299,12 @@ or cloud/on-chain mutation. You decide whether and how to materialize this conte
 
 ## Invariants
 
-- Host is source of truth for genesis state, produced declarations, and validation; Body only relays and registers
-  Host-derived results.
-- Never fabricate conversation state, declarations, model allowlists, or directory entries.
-- Before final acceptance Host uses the canonical affirmation exactly: ` + canonicalGenesisAffirmation() + `
+- Host HostedGenesisSession is the sole candidate/state authority. Body does not infer affirmation from message text,
+  recompute candidate truth, persist candidate state, or expose provider section tools.
+- The full owner review is the exact review_text, up to 65,536 characters. Never substitute the bounded latest
+  transcript message.
+- Only Host's bounded public declaration_candidate projection may be relayed; canonical candidate internals and
+  provider payloads stay private to Host.
 - Consult references/genesis-guidance-map.md for the resource, prompt, and state-to-next-tool map.
 `
 }
@@ -314,9 +318,8 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 
 ## Ptah resources
 
-- ` + fiveBodyResourceURI(resourceSoulSchemaV2) + ` — mirrored Host schema, golden example, and contract document.
-- ` + fiveBodyResourceURI(resourceGenesisInterviewGuide) + ` — staged five-body interview guide with satellites and
-  the canonical affirmation.
+- ` + fiveBodyResourceURI(resourceSoulSchemaV2) + ` — mirrored Host schema, golden example, and PR #978 provenance/checksums.
+- ` + fiveBodyResourceURI(resourceGenesisInterviewGuide) + ` — staged five-body interview and structural review guide.
 - ` + fiveBodyResourceURI(resourceAgentSideGenesisPlaybook) + ` — operator/client playbook for the agent_genesis_*
   tools.
 - ` + fiveBodyResourceURI(resourceGenesisRubric) + ` — review rubric, refusal floor, and Host validation codes.
@@ -326,7 +329,7 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 ## Ptah prompts
 
 - ` + promptDraftGenesisTurn + ` — draft the next owner/operator interview turn.
-- ` + promptReviewSoulDraft + ` — review a soul draft against the Host-owned rubric.
+- ` + promptReviewGenesisCandidate + ` — inspect exact Host review_text and prepare a structural affirm/edit action.
 
 ## State to next tool
 
@@ -336,21 +339,22 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | skill fetched | ` + toolAgentGenesisBegin + ` |
 | resuming / ids unclear / multiple lanes | ` + toolAgentGenesisList + ` (then follow recommended_start) |
 | begin success | ` + toolAgentGenesisAdvance + ` (persist conversation_id) |
-| assistant_turn_ready / awaiting_owner / needs_owner_turn | ` + toolAgentGenesisAdvance + ` |
-| in_progress / declaration_extraction_pending | ` + toolAgentGenesisRead + ` (wait-only; never ` + toolAgentGenesisAdvance + ` to nudge) |
-| declaration_ready | ` + toolAgentGenesisComplete + ` |
-| complete success / finalization-ready | ` + toolAgentGenesisFinalizePreflight + ` |
+| assistant_turn_ready + candidate phase section | ` + toolAgentGenesisAdvance + ` with normal owner message |
+| assistant_turn_ready + candidate phase review | inspect exact review_text, then ` + toolAgentGenesisAdvance + ` with structural candidate_action and exact bindings |
+| in_progress | ` + toolAgentGenesisRead + ` (wait-only; never ` + toolAgentGenesisAdvance + ` to nudge) |
+| declaration_ready | ` + toolAgentGenesisFinalizePreflight + ` directly |
 | preflight-ready | ` + toolAgentGenesisFinalize + ` |
-| finalize success / published / finalized | ` + toolAgentGet + ` or ` + toolAgentList + ` |
+| finalize success / published | ` + toolAgentGet + ` or ` + toolAgentList + `; terminal |
 | failure.recovery.action=retry_same_step | ` + toolAgentGenesisRecover + ` exactly once after retry_after_seconds when present; same lane |
 | failure.recovery.action=restart_soul_bootstrap | ` + toolAgentGenesisBegin + ` (fresh lane; never ` + toolAgentGenesisRecover + `) |
 | failure.recovery.action=refresh_state | ` + toolAgentGenesisRead + ` exactly once; no write or endless read loop |
 | failure.recovery.action=operator_action | no automatic next tool; stop and contact the instance operator |
 
 Always prefer the live ` + "`structuredContent.data.guidance.next_tool`" + ` from the latest Host-backed response
-over this static table. For ` + "`in_progress`" + ` / ` + "`declaration_extraction_pending`" + ` processing guidance, use any
+over this static table. For ` + "`in_progress`" + ` processing guidance, use any
 ` + "`poll_after_seconds`" + ` / ` + "`expected_wait_seconds`" + ` value as the delay and then call ` + "`" + toolAgentGenesisRead + "`" + `.
 For ` + "`retry_same_step`" + ` guidance, the same delay fields precede exactly one ` + "`" + toolAgentGenesisRecover + "`" + ` call instead.
-Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports an owner-input state.
+Do not call ` + "`" + toolAgentGenesisAdvance + "`" + ` until Host reports assistant_turn_ready. In review phase,
+candidate_action is mandatory and free-form phrases have zero authority.
 `
 }

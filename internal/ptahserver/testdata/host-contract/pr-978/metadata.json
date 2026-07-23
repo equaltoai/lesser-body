@@ -1,0 +1,66 @@
+{
+  "source_repository": "equaltoai/lesser-host",
+  "source_pull_request": 978,
+  "source_issue": 977,
+  "source_head_sha": "2339acffe646c49fb951e7a7164f55174d841770",
+  "schema_version": "soul-five-body-schema.v2",
+  "guidance_version": "soul-five-body-guidance.v2",
+  "artifacts": [
+    {
+      "source_path": "docs/contracts/soul-five-body-schema.md",
+      "mirror_file": "soul-five-body-schema.md",
+      "sha256": "0d17d526aee1671d963549fde150364816fa1057bd5744d0348050b9639297db"
+    },
+    {
+      "source_path": "docs/contracts/soul-five-body.schema.v2.json",
+      "mirror_file": "soul-five-body.schema.v2.json",
+      "sha256": "4926ea5c44601ab606c24cf7a61b7b3f221b5e2ca871efee54935bfec25a7511"
+    },
+    {
+      "source_path": "docs/contracts/soul-five-body.example.v2.json",
+      "mirror_file": "soul-five-body.example.v2.json",
+      "sha256": "2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e"
+    },
+    {
+      "source_path": "docs/contracts/hosted-genesis-conversation.md",
+      "mirror_file": "hosted-genesis-conversation.md",
+      "sha256": "0f6f9f745de7e2438bbab20cc03baee6a9a151d0cc09f7d42747d0d67340a5ff"
+    },
+    {
+      "source_path": "docs/contracts/openapi.yaml",
+      "mirror_file": "openapi.yaml",
+      "sha256": "665ee0b4eef312962ab7474befbbab2375bf9a9a4e043daa601f3c13afbda953"
+    },
+    {
+      "source_path": "docs/spec/v3/schemas/hosted-genesis.conversation.response.schema.json",
+      "mirror_file": "hosted-genesis.conversation.response.schema.json",
+      "sha256": "827d623c6b3c0521668537c8e2c661b5526bcb0805a004c403b8641886a9839e"
+    },
+    {
+      "source_path": "docs/spec/v3/fixtures/hosted-genesis.conversation.in-progress.example.json",
+      "mirror_file": "hosted-genesis.conversation.in-progress.example.json",
+      "sha256": "47b4837fe8181fb73798137bc94cd4ad5811bc1ba8d5bd3b7f5750cdeab39d4c"
+    },
+    {
+      "source_path": "docs/spec/v3/fixtures/hosted-genesis.conversation.assistant-turn-ready.example.json",
+      "mirror_file": "hosted-genesis.conversation.assistant-turn-ready.example.json",
+      "sha256": "3939899a1e592de774772a2ffe7f3f1810dcaff30b7b06ec47bd8d285d3bb982"
+    },
+    {
+      "source_path": "docs/spec/v3/fixtures/hosted-genesis.conversation.completed-declaration-ready.example.json",
+      "mirror_file": "hosted-genesis.conversation.completed-declaration-ready.example.json",
+      "sha256": "6fd1e8da6b1060875645f9e7c8fd7d1ddd360950ad35e804386e557ab50fa10f"
+    },
+    {
+      "source_path": "docs/spec/v3/fixtures/hosted-genesis.conversation.published.example.json",
+      "mirror_file": "hosted-genesis.conversation.published.example.json",
+      "sha256": "aafe65ab0f218865f799694331fa16a9af4c54ba37ad97d4fba58f50c8a02dbc"
+    },
+    {
+      "source_path": "docs/spec/v3/fixtures/hosted-genesis.conversation.failed.example.json",
+      "mirror_file": "hosted-genesis.conversation.failed.example.json",
+      "sha256": "3ccd491745aabb9fa45b97c36b0c9af18df32f2cd26c1c32ec25630431fe6ba0"
+    }
+  ],
+  "notes": "Body mirror of Host PR #978 exact accepted head. Refresh every artifact and checksum from Host-owned source; never edit a Body-local declaration protocol."
+}

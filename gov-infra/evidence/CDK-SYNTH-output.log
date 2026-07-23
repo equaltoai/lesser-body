@@ -225,7 +225,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 61b35b840ac3da426db2c3db20fac2838ba3d65d2b5f4723a6579307ec92a1fa.zip
+        S3Key: 816b388814e8a3b4ccf315a72246b95f9b05e573675242c6e48b449afcbf888f.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -266,7 +266,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.61b35b840ac3da426db2c3db20fac2838ba3d65d2b5f4723a6579307ec92a1fa.zip
+      aws:asset:path: asset.816b388814e8a3b4ccf315a72246b95f9b05e573675242c6e48b449afcbf888f.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1269,6 +1269,46 @@ Resources:
             Resource:
               Ref: JWTSecretKeyArnParamLookupParameter
           - Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Effect: Allow
+            Resource:
+              - Fn::Join:
+                  - ""
+                  - - "arn:"
+                    - Ref: AWS::Partition
+                    - :secretsmanager:us-east-1:000000000000:secret:lesser/instance-key*
+              - Fn::Join:
+                  - ""
+                  - - "arn:"
+                    - Ref: AWS::Partition
+                    - :secretsmanager:us-east-1:000000000000:secret:lesser-host/lab/instances/lesser/instance-key*
+          - Action: dynamodb:DescribeTable
+            Effect: Allow
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:"
+                  - Ref: AWS::Partition
+                  - :dynamodb:us-east-1:000000000000:table/
+                  - Ref: LesserTableNameParamLookupParameter
+          - Action:
+              - dynamodb:Query
+              - dynamodb:GetItem
+            Condition:
+              ForAllValues:StringLike:
+                dynamodb:LeadingKeys:
+                  - SOUL_BODY_BINDING_USERNAME#*
+                  - INSTANCE#CONFIG
+            Effect: Allow
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:"
+                  - Ref: AWS::Partition
+                  - :dynamodb:us-east-1:000000000000:table/
+                  - Ref: LesserTableNameParamLookupParameter
+          - Action:
               - dynamodb:BatchGetItem
               - dynamodb:BatchWriteItem
               - dynamodb:DeleteItem
@@ -1304,7 +1344,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 7ef1093632ae95ca01b1a8f62a78e1d3edaeff2db9800bb9a948c6bef0962432.zip
+        S3Key: f8154a5708ab8e06371cbb378bab73f798242a219961973010d56c40c491233c.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1319,6 +1359,9 @@ Resources:
             Ref: InstanceGrantTable
           INSTANCE_SESSION_TABLE:
             Ref: InstanceSessionTable
+          LESSER_API_BASE_URL: https://api.dev.example.com
+          LESSER_TABLE_NAME:
+            Ref: LesserTableNameParamLookupParameter
       FunctionName: lesser-dev-lesser-body-instance-mcp
       Handler: instance
       MemorySize: 1024
@@ -1335,7 +1378,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.7ef1093632ae95ca01b1a8f62a78e1d3edaeff2db9800bb9a948c6bef0962432.zip
+      aws:asset:path: asset.f8154a5708ab8e06371cbb378bab73f798242a219961973010d56c40c491233c.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:

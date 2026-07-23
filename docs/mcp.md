@@ -92,7 +92,7 @@ must match the exact instance MCP resource URL, for example `https://api.<stageD
 requirements before side effects such as Lesser integration calls or one-time grant minting.
 
 Ptah's Host-backed genesis tools add a stricter authority gate: `agent_genesis_begin`,
-`agent_genesis_advance`, `agent_genesis_recover`, `agent_genesis_complete`,
+`agent_genesis_advance`, `agent_genesis_recover`,
 `agent_genesis_finalize_preflight`, and `agent_genesis_finalize` require an account-holder OAuth token with explicit
 instance owner/operator authority (the Lesser-issued `client_class: "operator"` claim, or an equivalent explicitly
 recognized owner/operator claim). A normal `read` or `write` token is not an owner/operator token and is rejected;
@@ -616,14 +616,13 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
-| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#975` provenance. Ptah serves content only: no local installation, no filesystem write, no publish, no cloud/on-chain mutation; the client decides materialization. |
+| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic AppTheory MCP `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#978` exact-head provenance. Ptah serves content only. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
-| `agent_genesis_read` | Read + owner/operator | Read the compact Host `HostedGenesisSession` projection, including latest bounded turn and state→next-tool guidance. When Host reports `in_progress` / `declaration_extraction_pending`, guidance is wait-only: do not call `agent_genesis_advance` to nudge; wait `poll_after_seconds` when present, then read again. |
-| `agent_genesis_advance` | Write + owner/operator | Submit the owner/operator's next message to the Host mint conversation only when Host is waiting for owner/operator input (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`) and persist the returned conversation id. Do not call this tool while Host is `in_progress` / `declaration_extraction_pending`; wait/read instead. |
+| `agent_genesis_read` | Read + owner/operator | Read the bounded Host `HostedGenesisSession` projection. The latest transcript message remains capped at 8,192 characters, while `conversation.declaration_candidate.review.review_text` is a distinct lossless field accepted through 65,536 characters. Malformed candidate projections fail closed with `host_genesis_projection_invalid`. `in_progress` is wait/read-only. |
+| `agent_genesis_advance` | Write + owner/operator | Submit the owner message when Host reports `assistant_turn_ready`. Candidate phase `section` uses a normal owner message; Host's five provider section tools remain private inside the AppTheory MicroVM. Candidate phase `review` requires `candidate_action`: `affirm` forbids `section`; `edit` requires an exact five-body `section` plus an owner revision message; both bind the exact `candidate_revision`, `candidate_hash`, and `review_hash`. Free-form phrases have zero authority. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to retry the same durable step only when `failure.recovery.action="retry_same_step"`; wait the bounded `retry_after_seconds` when present, then call recover exactly once on the same lane. `refresh_state` maps to one read, `restart_soul_bootstrap` maps to a fresh begin and forbids recover, and `operator_action` stops automation for operator contact. Body does not retry or replace the Host state machine locally. |
-| `agent_genesis_complete` | Write + owner/operator | Ask Host to extract and validate its durable produced-declarations checkpoint; Body sends no caller declarations. Next: `agent_genesis_finalize_preflight`. |
-| `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness for the instance-trust registration without wallet signatures. Next: `agent_genesis_finalize` after Host readiness. |
+| `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness directly when the conversation reports `declaration_ready`, without wallet signatures. Next: `agent_genesis_finalize` after preflight succeeds. |
 | `agent_genesis_finalize` | Write + owner/operator | Ask Host to finalize/publish the hosted/offchain identity, then idempotently write Body's Host-derived Ptah registry row for `agent_get`/`agent_list` visibility. |
 | `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor, including Host-genesis provenance and content metadata where available. |
 | `agent_list` | Read | List Body/Ptah account-scoped registry entries, including Host-finalized minted agents, merged with Lesser's public live-agent directory, with cursor pagination. |
@@ -637,53 +636,59 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 ### Instance-plane Ptah resources and prompts
 
 Ptah guidance resources and prompts are Body's MCP guidance surface for Host-backed five-body genesis. The source
-contract is Host-owned, not Body-owned. Body mirrors the artifacts from `equaltoai/lesser-host` PR `#975` at head
-`5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b`, closing Host issue `#974`, and pins:
+contract is Host-owned, not Body-owned. Body mirrors the exact producer artifacts from `equaltoai/lesser-host` PR
+`#978` at accepted head `2339acffe646c49fb951e7a7164f55174d841770` (Host issue `#977`). The mirror pins the
+candidate-action request shape, declaration-candidate/review response shape, representative conversation fixtures,
+and the unchanged five-body schema references:
 
 - `schemaVersion`: `soul-five-body-schema.v2`
 - `guidanceVersion`: `soul-five-body-guidance.v2`
-- Host contract doc SHA-256: `0d17d526aee1671d963549fde150364816fa1057bd5744d0348050b9639297db`
-- Host JSON schema SHA-256: `4926ea5c44601ab606c24cf7a61b7b3f221b5e2ca871efee54935bfec25a7511`
-- Host golden example SHA-256: `2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e`
+- `hosted-genesis-conversation.md`: `0f6f9f745de7e2438bbab20cc03baee6a9a151d0cc09f7d42747d0d67340a5ff`
+- `openapi.yaml`: `665ee0b4eef312962ab7474befbbab2375bf9a9a4e043daa601f3c13afbda953`
+- `hosted-genesis.conversation.response.schema.json`: `827d623c6b3c0521668537c8e2c661b5526bcb0805a004c403b8641886a9839e`
+- in-progress / assistant-turn-ready / declaration-ready / published / failed fixtures:
+  `47b4837fe8181fb73798137bc94cd4ad5811bc1ba8d5bd3b7f5750cdeab39d4c`,
+  `3939899a1e592de774772a2ffe7f3f1810dcaff30b7b06ec47bd8d285d3bb982`,
+  `6fd1e8da6b1060875645f9e7c8fd7d1ddd360950ad35e804386e557ab50fa10f`,
+  `aafe65ab0f218865f799694331fa16a9af4c54ba37ad97d4fba58f50c8a02dbc`, and
+  `3ccd491745aabb9fa45b97c36b0c9af18df32f2cd26c1c32ec25630431fe6ba0`
+- five-body doc / schema / example:
+  `0d17d526aee1671d963549fde150364816fa1057bd5744d0348050b9639297db`,
+  `4926ea5c44601ab606c24cf7a61b7b3f221b5e2ca871efee54935bfec25a7511`, and
+  `2e0ac739d688f58506936a542f90ed69de0d829852a7e862b0d806a31978773e`
 
-If Host PR `#975` changes before merge, Body's checked fixture and drift tests must be refreshed from the Host-owned
-artifacts. Body must not hand-edit a parallel five-body schema.
+The registered sibling checkout guard requires every artifact and exact byte/checksum agreement. Body never defines a
+parallel declaration protocol or weakens the guard when Host changes.
 
 Registered Ptah resources:
 
 | Resource name | URI | Description |
 |---------------|-----|-------------|
-| `soul-schema-v2` | `ptah://genesis/soul-schema-v2` | JSON resource containing source metadata, the mirrored Host JSON schema, Host golden example, and Host contract document text. |
-| `genesis-interview-guide` | `ptah://genesis/genesis-interview-guide` | Staged interview guide for identity, philosophy, discipline, boundaries, and soul, with capabilities/transparency as satellites and the canonical final affirmation. |
+| `soul-schema-v2` | `ptah://genesis/soul-schema-v2` | JSON resource containing exact Host provenance/checksums plus the mirrored five-body JSON schema and golden example. |
+| `genesis-interview-guide` | `ptah://genesis/genesis-interview-guide` | Staged section guide plus current structural review protocol: inspect exact review text; affirm without section or edit one exact section with an owner revision message. |
 | `agent-side-genesis-playbook` | `ptah://genesis/agent-side-genesis-playbook` | Operator/client playbook for using `agent_genesis_*` tools without creating local genesis state or bypassing owner/operator OAuth. |
-| `genesis-rubric` | `ptah://genesis/genesis-rubric` | Review rubric for first-class body presence, refusal floor, cadence rule, canonical affirmation, and Host validation codes. |
+| `genesis-rubric` | `ptah://genesis/genesis-rubric` | Review rubric for first-class body presence, refusal floor, cadence rule, exact review bindings, and Host validation codes. |
 | `genesis-operator-skill` | `ptah://genesis/genesis-operator-skill` | The client-native genesis operator skill bundle, identical to the `agent_genesis_skill_get` tool payload, for clients that discover through `resources/list` only. |
 
 Registered Ptah prompts:
 
 | Prompt | Description |
 |--------|-------------|
-| `draft-genesis-turn` | Draft the next owner/operator turn for the Host-owned five-body interview while preserving the staged bodies, refusal floor, cadence rule, and canonical affirmation. |
-| `review-soul-draft` | Review a proposed declaration against Host's five-body schema/guidance, refusal floor, capabilities/transparency satellite rule, and independent-review rubric. |
+| `draft-genesis-turn` | Draft the next normal owner section turn; review phase redirects to the structural candidate-review prompt rather than drafting affirmation prose. |
+| `review-genesis-candidate` | Inspect Host's exact `review_text` with its exact revision/hash bindings and prepare either an `affirm` action with no section or an `edit` action with one exact section and an owner revision message. |
 
 The five first-class bodies are `identity`, `philosophy`, `discipline`, `boundaries`, and `soul`. `capabilities` and
-`transparency` are satellites; they do not replace any body. The refusal floor requires at least three concrete rows
-with `bypass`, `invariant`, and `closestSafePath`. The cadence rule is to define the named cadence once and carry it as
-a commitment/reference rather than repeating it in every body. The canonical final affirmation remains:
-
-> Do you affirm this declaration as the foundation of your minted soul? If there is anything here you would correct,
-> qualify, or strike before it is inscribed, name it now.
-
-Host PR `#975` records `mintingModel` in declaration evidence but does not publish a Body-consumable model allowlist
-artifact or endpoint. Body therefore does not advertise a model allowlist; callers should use Host-configured models and
-track a Host/Body follow-up if a listable producer contract is required.
+`transparency` are satellites. The refusal floor requires at least three concrete rows with `bypass`, `invariant`, and
+`closestSafePath`. At review, the exact Host `review_text` is authoritative evidence for the owner to inspect. Only the
+structural action bound to the exact revision and hashes can affirm or reopen a section; message phrases never do.
+Host PR `#978` does not publish a Body-consumable model allowlist; callers use Host-configured models.
 
 The genesis operator skill bundle (`agent_genesis_skill_get` / `ptah://genesis/genesis-operator-skill`) packages this
 guidance as a client-native skill an LLM client fetches before operating the `agent_genesis_*` tools. The response is
 deterministic: a stable skill id/name, a version derived from `soul-five-body-guidance.v2` plus the pinned Host contract
 head, a `bundle_id` computed from the file checksums, `content.mode="inline_files"` with a file-count summary, and
 install-neutral file entries (`SKILL.md` plus a bounded `references/genesis-guidance-map.md`). Provenance points at Host
-PR `#975`/head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
+PR `#978`/exact accepted head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
 `agent_genesis_skill_get` also renders deterministic MCP-visible Markdown containing the complete `SKILL.md`, the
 bounded guidance map, bundle identity/provenance, and no-install/no-write semantics. The semantics are explicitly
 no-write/no-install: Ptah serves content only, and the calling client decides whether and how to materialize or use the
@@ -708,25 +713,27 @@ The owner-operated sequence is:
    `authority_model: "instance_trust"` to lesser-host's
    `POST /api/v1/soul/instance/agents/register/begin`. Host creates the registration and derives the new agent
    identity; Body does not look up or require an existing agent and does not create a local genesis record.
-4. The owner calls `agent_genesis_advance` for the first turn with a model and message, then continues the conversation
-   using the `registration_id` and Host-issued `conversation_id` only when Host is waiting for owner/operator input
-   (`assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn`). `agent_genesis_read` polls the durable Host
-   projection; `200`/`202` transport responses do not by themselves mean the conversation is terminal. If Host reports
-   `in_progress` or `declaration_extraction_pending`, wait `poll_after_seconds` when present, then call
-   `agent_genesis_read`; do not call `agent_genesis_advance` again just to nudge the assistant forward.
+4. The owner calls `agent_genesis_advance` for the first turn with a model and normal message, then reuses the
+   `registration_id` and Host-issued `conversation_id`. When status is `assistant_turn_ready` and candidate phase is
+   `section`, the owner sends a normal message for the exact `current_section`; Host invokes the corresponding private
+   provider tool inside its AppTheory MicroVM. `agent_genesis_read` polls durable state. `in_progress` is read-only:
+   wait `poll_after_seconds` when present, then read; never advance to nudge Host.
 5. If Host returns a typed failed recovery action, follow the exact Host vocabulary: `retry_same_step` waits the
    bounded `retry_after_seconds` when present and then calls `agent_genesis_recover` exactly once on the same lane;
    `refresh_state` calls `agent_genesis_read` exactly once; `restart_soul_bootstrap` starts a fresh lane with
    `agent_genesis_begin` and explicitly forbids recover; and `operator_action` stops automatic Genesis calls for
-   explicit instance-operator contact. Do not normalize these values into generic retry/wait/contact behavior. When
-   the conversation is ready, `agent_genesis_complete` asks Host to extract its own declarations; callers cannot
-   provide or replace declaration material.
-6. The owner calls `agent_genesis_finalize_preflight`, then `agent_genesis_finalize`. Instance-trust finalization sends
+   explicit instance-operator contact. Do not normalize these values into generic retry/wait/contact behavior.
+6. When status is `assistant_turn_ready` and candidate phase is `review`, the owner inspects the exact lossless
+   `conversation.declaration_candidate.review.review_text`. Guidance returns the exact `candidate_revision`,
+   `candidate_hash`, and `review_hash`. The next `agent_genesis_advance` carries `candidate_action`: `affirm` has no
+   `section`; `edit` has one exact section plus an owner revision message. Free-form message text has no authority.
+7. When Host reports `declaration_ready`, the owner calls `agent_genesis_finalize_preflight` directly, then
+   `agent_genesis_finalize`. Instance-trust finalization sends
    an empty request body: Host owns the declaration checkpoint and publishes the hosted/offchain identity without a
    wallet signature supplied by Body. After Host returns the finalized identity, Body writes exactly one idempotent
    `agentregistry` row in the authenticated account partition using Host-derived fields and
    `provenance.source="host_genesis_finalize"`.
-7. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
+8. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
    account-scoped registry view. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a
    matching live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
@@ -754,12 +761,12 @@ State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 | no genesis lane yet (before any genesis call) | `agent_genesis_skill_get` | Fetch the read-only operator skill bundle and use `SKILL.md` as the operating playbook; then call `agent_genesis_begin`. |
 | resuming / ids unclear / multiple lanes | `agent_genesis_list` | Start with the Host-backed recovery index. Follow `recommended_start` exactly; it includes the next tool and exact `registration_id` / `conversation_id` arguments when a non-terminal lane exists. |
 | `agent_genesis_begin` success | `agent_genesis_advance` | Send the first owner/operator message and persist Host's `conversation_id`. |
-| `assistant_turn_ready`, `awaiting_owner`, or `needs_owner_turn` | `agent_genesis_advance` | Host is waiting for owner/operator input; submit the next owner/operator message, optionally after a read refresh. |
-| `in_progress` or `declaration_extraction_pending` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and `poll_after_seconds` / `expected_wait_seconds` when Host provides a delay. Do not call `agent_genesis_advance` again and do not nudge; wait the expected delay, then read. |
-| `declaration_ready` / ready-for-completion | `agent_genesis_complete` | Let Host extract/validate its durable produced-declarations checkpoint; callers do not supply declarations. |
-| `agent_genesis_complete` success / finalization-ready state | `agent_genesis_finalize_preflight` | Check Host readiness before finalization. |
+| `assistant_turn_ready` + candidate phase `section` | `agent_genesis_advance` | Submit the next normal owner message for exact `current_section`. Host's provider section tools stay inside its AppTheory MicroVM. |
+| `assistant_turn_ready` + candidate phase `review` | `agent_genesis_advance` | Inspect exact lossless `review_text`, then supply structural `candidate_action` with exact bindings. `affirm` has no section; `edit` requires exact section and owner revision message. |
+| `in_progress` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and bounded wait fields. Do not nudge. |
+| `declaration_ready` | `agent_genesis_finalize_preflight` | Check Host readiness directly before finalization. |
 | preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |
-| `agent_genesis_finalize` success / `published` / `finalized` / `active` / terminal `complete` | `agent_get` (or `agent_list`) | Verify account-scoped Body/Ptah visibility with registry provenance; do not recover or advance terminal lanes. |
+| `agent_genesis_finalize` success / `published` | `agent_get` (or `agent_list`) | Published is terminal. Verify account-scoped Body/Ptah visibility with registry provenance. |
 | `failure.recovery.action="retry_same_step"` | `agent_genesis_recover` | Keep `fresh_lane=false`. Wait the bounded `retry_after_seconds` when present (also projected as `poll_after_seconds` / `expected_wait_seconds`), then call recover exactly once for the same registration/conversation ids; do not poll the terminal read instead. |
 | `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. |
 | `failure.recovery.action="refresh_state"` | `agent_genesis_read` | Keep `fresh_lane=false`. Read exactly once to refresh Host state, then follow the newly returned status/recovery action; do not write or create an endless read loop. |
@@ -771,7 +778,8 @@ Body uses the server-side `LESSER_HOST_INSTANCE_KEY` only for its Host calls; it
    declarations, and private conversation bodies.
 
 The Host source-of-truth routes are the registration begin endpoint plus the durable mint-conversation
-`POST`/`GET`/`recover`/`complete`/`finalize/preflight`/`finalize` routes. Changes to those routes or to Lesser's owner
+`POST`/`GET`/`recover`/`finalize/preflight`/`finalize` routes used by Ptah. Host retains its Lesser-route convergence
+endpoint, but it is not a distinct Ptah tool. Changes to these routes or to Lesser's owner
 OAuth claims must be coordinated with the `lesser-host` and `lesser` stewards; Body does not substitute a local
 implementation.
 

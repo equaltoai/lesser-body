@@ -55,3 +55,10 @@ git merge-base --is-ancestor <report.git.head> <review-head>
 The CI workflow also reruns the verifier at PR head, so the committed artifact
 provides repo-local evidence from the live branch lineage while CI proves the
 same verifier still passes at the exact checked head.
+
+`GOV-3` is the recurring branch-profile check: ordinary feature work is allowed,
+but its merge base must be the current `origin/staging` (or GitHub must provide
+the external `GITHUB_BASE_REF=staging` fact in a shallow PR checkout). The
+governance-only write scope recorded in `pack.json` describes the original
+governance materialization assignment; it does not prohibit later governed
+feature PRs from changing their explicitly assigned product files.

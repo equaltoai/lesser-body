@@ -264,9 +264,6 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentGenesisRecoverDef(), cfg.handleAgentGenesisRecover); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisCompleteDef(), cfg.handleAgentGenesisComplete); err != nil {
-		return err
-	}
 	if err := r.RegisterTool(agentGenesisFinalizePreflightDef(), cfg.handleAgentGenesisFinalizePreflight); err != nil {
 		return err
 	}

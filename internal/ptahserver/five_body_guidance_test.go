@@ -55,8 +55,9 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 	}
 
 	interview := resourcePayload(t, srv, resourceGenesisInterviewGuide)["interview"].(map[string]any)
-	if interview["canonical_affirmation"] != canonicalGenesisAffirmation() {
-		t.Fatalf("canonical affirmation = %q", interview["canonical_affirmation"])
+	reviewProtocol := interview["review_protocol"].(map[string]any)
+	if !strings.Contains(reviewProtocol["authority"].(string), "zero authority") || !strings.Contains(reviewProtocol["affirm"].(string), "no section") || !strings.Contains(reviewProtocol["edit"].(string), "exact section") {
+		t.Fatalf("review protocol = %+v", reviewProtocol)
 	}
 	stages := interview["stages"].([]any)
 	if got, want := len(stages), 5; got != want {
@@ -80,7 +81,7 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 	if waitOnly["next_tool"] != toolAgentGenesisRead || waitOnly["forbidden_next_tool"] != toolAgentGenesisAdvance || waitOnly["wait"] != true {
 		t.Fatalf("wait-only processing guidance = %+v", waitOnly)
 	}
-	if !containsAnyString(waitOnly["states"], "in_progress") || !containsAnyString(waitOnly["states"], "declaration_extraction_pending") {
+	if !containsAnyString(waitOnly["states"], "in_progress") {
 		t.Fatalf("wait-only processing states = %+v", waitOnly["states"])
 	}
 	if instruction := waitOnly["instruction"].(string); !strings.Contains(instruction, "Do not call "+toolAgentGenesisAdvance+" again") || !strings.Contains(instruction, "do not nudge") || !strings.Contains(instruction, "poll_after_seconds") {
@@ -88,26 +89,26 @@ func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
 	}
 
 	prompts := srv.Prompts().List()
-	if got, want := promptNames(prompts), []string{promptDraftGenesisTurn, promptReviewSoulDraft}; !reflect.DeepEqual(got, want) {
+	if got, want := promptNames(prompts), []string{promptDraftGenesisTurn, promptReviewGenesisCandidate}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("prompt names = %v, want %v", got, want)
 	}
-	draftPrompt, err := srv.Prompts().Get(context.Background(), promptDraftGenesisTurn, json.RawMessage(`{"phase":"soul","current_status":"awaiting_owner","owner_intent":"finish refusal floor"}`))
+	draftPrompt, err := srv.Prompts().Get(context.Background(), promptDraftGenesisTurn, json.RawMessage(`{"phase":"soul","current_status":"assistant_turn_ready","owner_intent":"finish refusal floor"}`))
 	if err != nil {
 		t.Fatalf("Prompts.Get draft: %v", err)
 	}
 	combined := promptText(draftPrompt)
-	for _, want := range []string{fiveBodySchemaVersion, fiveBodyGuidanceVersion, "identity, philosophy, discipline, boundaries, and soul", canonicalGenesisAffirmation(), "ptah://genesis/genesis-interview-guide"} {
+	for _, want := range []string{fiveBodySchemaVersion, fiveBodyGuidanceVersion, "identity, philosophy, discipline, boundaries, and soul", "structural candidate_action", "ptah://genesis/genesis-interview-guide"} {
 		if !strings.Contains(combined, want) {
 			t.Fatalf("draft prompt missing %q: %s", want, combined)
 		}
 	}
 
-	reviewPrompt, err := srv.Prompts().Get(context.Background(), promptReviewSoulDraft, json.RawMessage(`{"draft":"identity/philosophy/discipline/boundaries/soul","focus":"refusal_floor"}`))
+	reviewPrompt, err := srv.Prompts().Get(context.Background(), promptReviewGenesisCandidate, json.RawMessage(`{"review_text":"identity/philosophy/discipline/boundaries/soul","candidate_revision":"7","candidate_hash":"sha256:aaa","review_hash":"sha256:bbb","owner_intent":"edit boundaries"}`))
 	if err != nil {
 		t.Fatalf("Prompts.Get review: %v", err)
 	}
-	if text := promptText(reviewPrompt); !strings.Contains(text, "finding, refutation") || !strings.Contains(text, "closestSafePath") {
-		t.Fatalf("review prompt missing rubric language: %s", text)
+	if text := promptText(reviewPrompt); !strings.Contains(text, "action=affirm") || !strings.Contains(text, "action=edit") || !strings.Contains(text, "zero authority") || !strings.Contains(text, "identity/philosophy") {
+		t.Fatalf("review prompt missing structural protocol: %s", text)
 	}
 }
 
@@ -119,14 +120,17 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 	if meta.SchemaVersion != fiveBodySchemaVersion || meta.GuidanceVersion != fiveBodyGuidanceVersion {
 		t.Fatalf("metadata versions = %+v", meta)
 	}
-	if got := sha256Hex(hostFiveBodyContractDoc); got != meta.ContractDocSHA256 {
-		t.Fatalf("contract doc sha = %s, want %s", got, meta.ContractDocSHA256)
+	if len(meta.Artifacts) != 11 {
+		t.Fatalf("mirrored artifact count = %d, want 11", len(meta.Artifacts))
 	}
-	if got := sha256Hex(hostFiveBodySchemaJSON); got != meta.SchemaSHA256 {
-		t.Fatalf("schema sha = %s, want %s", got, meta.SchemaSHA256)
-	}
-	if got := sha256Hex(hostFiveBodyExampleJSON); got != meta.ExampleSHA256 {
-		t.Fatalf("example sha = %s, want %s", got, meta.ExampleSHA256)
+	for _, artifact := range meta.Artifacts {
+		mirrored, err := hostContractMirrorFS.ReadFile("testdata/host-contract/pr-978/" + artifact.MirrorFile)
+		if err != nil {
+			t.Fatalf("read mirrored %s: %v", artifact.MirrorFile, err)
+		}
+		if got := sha256Hex(mirrored); got != artifact.SHA256 {
+			t.Fatalf("mirror %s sha = %s, want %s", artifact.MirrorFile, got, artifact.SHA256)
+		}
 	}
 
 	var schema map[string]any
@@ -149,11 +153,11 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 
 	// When the sibling lesser-host checkout is available in the delegated factory
 	// workspace, compare the Host contract artifacts themselves. The checkout may
-	// be on a later Host branch whose unrelated head moved while the PR #975
+	// be on a later Host branch whose unrelated head moved while the PR #978
 	// contract bytes stayed identical; only artifact drift should break Body's
 	// mirror guard. Explicit env-provided Host dirs are stricter and must contain
 	// every mirrored artifact.
-	hostRoot, requireAllArtifacts, ok := findHostContractDir(t)
+	hostRoot, requireAllArtifacts, ok := findHostContractRoot(t)
 	if !ok {
 		return
 	}
@@ -164,9 +168,7 @@ func TestFiveBodyHostContractFixtureChecksumsAndVersions(t *testing.T) {
 
 func TestFiveBodyHostContractArtifactGuardAcceptsMatchingExplicitDir(t *testing.T) {
 	dir := t.TempDir()
-	writeHostContractArtifact(t, dir, "soul-five-body-schema.md", hostFiveBodyContractDoc)
-	writeHostContractArtifact(t, dir, "soul-five-body.schema.v2.json", hostFiveBodySchemaJSON)
-	writeHostContractArtifact(t, dir, "soul-five-body.example.v2.json", hostFiveBodyExampleJSON)
+	writeAllHostContractArtifacts(t, dir, mustFiveBodyMetadata())
 
 	if err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata()); err != nil {
 		t.Fatalf("verifyHostContractArtifacts: %v", err)
@@ -177,48 +179,43 @@ func TestFiveBodyHostContractArtifactGuardRejectsExplicitMissingArtifact(t *test
 	dir := t.TempDir()
 
 	err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata())
-	if err == nil || !strings.Contains(err.Error(), "missing required Host artifact soul-five-body-schema.md") {
+	if err == nil || !strings.Contains(err.Error(), "missing required Host artifact docs/contracts/soul-five-body-schema.md") {
 		t.Fatalf("verifyHostContractArtifacts missing artifact error = %v", err)
 	}
 }
 
 func TestFiveBodyHostContractArtifactGuardRejectsArtifactDrift(t *testing.T) {
 	dir := t.TempDir()
-	writeHostContractArtifact(t, dir, "soul-five-body-schema.md", []byte("changed host contract"))
-	writeHostContractArtifact(t, dir, "soul-five-body.schema.v2.json", hostFiveBodySchemaJSON)
-	writeHostContractArtifact(t, dir, "soul-five-body.example.v2.json", hostFiveBodyExampleJSON)
+	writeAllHostContractArtifacts(t, dir, mustFiveBodyMetadata())
+	writeHostContractArtifact(t, dir, "docs/contracts/soul-five-body-schema.md", []byte("changed host contract"))
 
 	err := verifyHostContractArtifacts(dir, true, mustFiveBodyMetadata())
-	if err == nil || !strings.Contains(err.Error(), "sync Host PR #975 before merge") {
+	if err == nil || !strings.Contains(err.Error(), "sync Host PR #978 before merge") {
 		t.Fatalf("verifyHostContractArtifacts drift error = %v", err)
 	}
 }
 
-func verifyHostContractArtifacts(contractsDir string, requireAllArtifacts bool, meta fiveBodyContractMetadata) error {
-	for _, tc := range []struct {
-		name string
-		want string
-		data []byte
-	}{
-		{name: "soul-five-body-schema.md", want: meta.ContractDocSHA256, data: hostFiveBodyContractDoc},
-		{name: "soul-five-body.schema.v2.json", want: meta.SchemaSHA256, data: hostFiveBodySchemaJSON},
-		{name: "soul-five-body.example.v2.json", want: meta.ExampleSHA256, data: hostFiveBodyExampleJSON},
-	} {
-		live, err := os.ReadFile(filepath.Join(contractsDir, tc.name))
+func verifyHostContractArtifacts(hostRoot string, requireAllArtifacts bool, meta fiveBodyContractMetadata) error {
+	for _, artifact := range meta.Artifacts {
+		mirror, err := hostContractMirrorFS.ReadFile("testdata/host-contract/pr-978/" + artifact.MirrorFile)
+		if err != nil {
+			return fmt.Errorf("read Body mirror %s: %w", artifact.MirrorFile, err)
+		}
+		live, err := os.ReadFile(filepath.Join(hostRoot, filepath.FromSlash(artifact.SourcePath)))
 		if os.IsNotExist(err) {
 			if requireAllArtifacts {
-				return fmt.Errorf("Host contracts dir %s missing required Host artifact %s; set LESSER_HOST_CONTRACTS_DIR/LESSER_HOST_ROOT to a checkout or directory containing Host PR #%d contract artifacts", contractsDir, tc.name, fiveBodyHostPR)
+				return fmt.Errorf("Host root %s missing required Host artifact %s; set LESSER_HOST_ROOT to a checkout containing Host PR #%d artifacts", hostRoot, artifact.SourcePath, fiveBodyHostPR)
 			}
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("read Host artifact %s: %w", tc.name, err)
+			return fmt.Errorf("read Host artifact %s: %w", artifact.SourcePath, err)
 		}
-		if got := sha256Hex(live); got != tc.want {
-			return fmt.Errorf("Host artifact %s sha = %s, Body fixture/metadata want %s; sync Host PR #%d before merge", tc.name, got, tc.want, fiveBodyHostPR)
+		if got := sha256Hex(live); got != artifact.SHA256 {
+			return fmt.Errorf("Host artifact %s sha = %s, Body fixture/metadata want %s; sync Host PR #%d before merge", artifact.SourcePath, got, artifact.SHA256, fiveBodyHostPR)
 		}
-		if string(live) != string(tc.data) {
-			return fmt.Errorf("Host artifact %s differs byte-for-byte from Body mirror", tc.name)
+		if string(live) != string(mirror) {
+			return fmt.Errorf("Host artifact %s differs byte-for-byte from Body mirror", artifact.SourcePath)
 		}
 	}
 	return nil
@@ -226,23 +223,37 @@ func verifyHostContractArtifacts(contractsDir string, requireAllArtifacts bool, 
 
 func writeHostContractArtifact(t *testing.T, dir string, name string, data []byte) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir host contract artifact %s: %v", name, err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write host contract artifact %s: %v", name, err)
 	}
 }
 
-func findHostContractDir(t *testing.T) (contractsDir string, requireAllArtifacts bool, ok bool) {
+func writeAllHostContractArtifacts(t *testing.T, dir string, meta fiveBodyContractMetadata) {
+	t.Helper()
+	for _, artifact := range meta.Artifacts {
+		data, err := hostContractMirrorFS.ReadFile("testdata/host-contract/pr-978/" + artifact.MirrorFile)
+		if err != nil {
+			t.Fatalf("read mirror %s: %v", artifact.MirrorFile, err)
+		}
+		writeHostContractArtifact(t, dir, artifact.SourcePath, data)
+	}
+}
+
+func findHostContractRoot(t *testing.T) (hostRoot string, requireAllArtifacts bool, ok bool) {
 	t.Helper()
 	if dir := strings.TrimSpace(os.Getenv("LESSER_HOST_CONTRACTS_DIR")); dir != "" {
-		contractsDir = filepath.Clean(dir)
+		contractsDir := filepath.Clean(dir)
 		mustExistDir(t, "LESSER_HOST_CONTRACTS_DIR", contractsDir)
-		return contractsDir, true, true
+		return filepath.Dir(filepath.Dir(contractsDir)), true, true
 	}
 	if root := strings.TrimSpace(os.Getenv("LESSER_HOST_ROOT")); root != "" {
-		hostRepoRoot := filepath.Clean(root)
-		contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
-		mustExistDir(t, "LESSER_HOST_ROOT docs/contracts", contractsDir)
-		return contractsDir, true, true
+		hostRoot = filepath.Clean(root)
+		mustExistDir(t, "LESSER_HOST_ROOT", hostRoot)
+		return hostRoot, true, true
 	}
 
 	bodyRoot, ok := findBodyRepoRoot(t)
@@ -250,13 +261,12 @@ func findHostContractDir(t *testing.T) (contractsDir string, requireAllArtifacts
 		return "", false, false
 	}
 	hostRepoRoot := filepath.Join(filepath.Dir(bodyRoot), "lesser-host")
-	contractsDir = filepath.Join(hostRepoRoot, "docs", "contracts")
-	if _, err := os.Stat(contractsDir); os.IsNotExist(err) {
+	if _, err := os.Stat(hostRepoRoot); os.IsNotExist(err) {
 		return "", false, false
 	} else if err != nil {
-		t.Fatalf("stat sibling Host contracts dir %s: %v", contractsDir, err)
+		t.Fatalf("stat sibling Host root %s: %v", hostRepoRoot, err)
 	}
-	return contractsDir, false, true
+	return hostRepoRoot, true, true
 }
 
 func mustExistDir(t *testing.T, label string, dir string) {
@@ -375,7 +385,7 @@ func TestAgentGenesisListReturnsHostBackedRecoveryIndex(t *testing.T) {
 		t.Fatalf("waiting guidance = %+v", waiting)
 	}
 	owner := conversations[3]
-	if owner["recommended_next_tool"] != toolAgentGenesisRead || owner["alternate_next_tool"] != toolAgentGenesisAdvance || !strings.Contains(owner["instruction"].(string), "load the bounded latest prompt/context") {
+	if owner["recommended_next_tool"] != toolAgentGenesisRead || owner["alternate_next_tool"] != toolAgentGenesisAdvance || !strings.Contains(owner["instruction"].(string), "load candidate phase and exact review bindings") {
 		t.Fatalf("owner-input guidance = %+v", owner)
 	}
 	terminal := conversations[0]
@@ -413,7 +423,10 @@ func TestAgentGenesisListRequiresOwnerOperatorReadAuthority(t *testing.T) {
 
 func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "not_available")
-	assertSchemaContainsEnum(t, genesisOutputSchema(), "declaration_extraction_pending")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "created")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "assistant_turn_ready")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "declaration_ready")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "published")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "producer_contract_missing")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "microvm_unavailable")
 	var schema map[string]any
@@ -447,7 +460,7 @@ func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 			}
 		}
 	}
-	for _, wantField := range []string{"forbidden_next_tool", "wait", "poll_after_seconds", "expected_wait_seconds"} {
+	for _, wantField := range []string{"forbidden_next_tool", "wait", "poll_after_seconds", "expected_wait_seconds", "declaration_candidate", "review_text", "candidate_revision", "candidate_hash", "review_hash"} {
 		if !strings.Contains(string(genesisOutputSchema()), wantField) {
 			t.Fatalf("genesis output schema missing guidance field %q: %s", wantField, string(genesisOutputSchema()))
 		}
@@ -494,6 +507,80 @@ func TestGenesisSanitizesFiveBodyContractEvidence(t *testing.T) {
 	for _, forbidden := range []string{"private declaration", "private body", "private review report", "fiveBodies"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("sanitized produced_declarations leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestGenesisCurrentProtocolSurfacesContainNoRemovedCompatibilityLane(t *testing.T) {
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(tools); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	var active strings.Builder
+	for _, def := range tools.List() {
+		active.WriteString(def.Name)
+		active.WriteString(def.Description)
+		active.Write(def.InputSchema)
+		active.Write(def.OutputSchema)
+	}
+
+	srv := mcpruntime.NewServer("ptah-test", "dev", mcpruntime.WithCapabilityConfig(mcpruntime.CapabilityConfig{Tools: true, Resources: true, Prompts: true}))
+	if err := RegisterResources(srv); err != nil {
+		t.Fatalf("RegisterResources: %v", err)
+	}
+	if err := RegisterPrompts(srv); err != nil {
+		t.Fatalf("RegisterPrompts: %v", err)
+	}
+	for _, def := range srv.Resources().List() {
+		contents, err := srv.Resources().Read(context.Background(), def.URI)
+		if err != nil {
+			t.Fatalf("Read(%s): %v", def.URI, err)
+		}
+		for _, content := range contents {
+			active.WriteString(content.Text)
+		}
+	}
+	for _, file := range genesisSkillFiles() {
+		active.WriteString(file.content)
+	}
+	for name, args := range map[string]json.RawMessage{
+		promptDraftGenesisTurn:       json.RawMessage(`{"phase":"review","current_status":"assistant_turn_ready"}`),
+		promptReviewGenesisCandidate: json.RawMessage(`{"review_text":"exact review","candidate_revision":"1","candidate_hash":"sha256:a","review_hash":"sha256:b"}`),
+	} {
+		result, err := srv.Prompts().Get(context.Background(), name, args)
+		if err != nil {
+			t.Fatalf("Prompt(%s): %v", name, err)
+		}
+		active.WriteString(promptText(result))
+	}
+	bodyRoot, ok := findBodyRepoRoot(t)
+	if !ok {
+		t.Fatal("Body repo root unavailable")
+	}
+	doc, err := os.ReadFile(filepath.Join(bodyRoot, "docs", "mcp.md"))
+	if err != nil {
+		t.Fatalf("read docs/mcp.md: %v", err)
+	}
+	active.Write(doc)
+
+	for _, forbidden := range []string{
+		"agent_genesis_" + "complete",
+		"declaration_" + "extraction_pending",
+		"declaration_" + "extraction_failed",
+		"awaiting_" + "owner",
+		"needs_" + "owner_turn",
+		"ready_for_" + "completion",
+		"review-" + "soul-draft",
+		"Do you affirm this " + "declaration",
+	} {
+		if strings.Contains(active.String(), forbidden) {
+			t.Fatalf("removed compatibility surface %q is still active", forbidden)
+		}
+	}
+	registered := strings.Join(toolDefNames(tools.List()), ",")
+	for _, privateTool := range []string{"declaration_identity_put", "declaration_philosophy_put", "declaration_discipline_put", "declaration_boundaries_put", "declaration_soul_put"} {
+		if strings.Contains(registered, privateTool) {
+			t.Fatalf("Host-private provider tool %q was registered on Ptah: %s", privateTool, registered)
 		}
 	}
 }

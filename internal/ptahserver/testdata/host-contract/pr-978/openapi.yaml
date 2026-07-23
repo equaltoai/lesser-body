@@ -1,0 +1,4716 @@
+openapi: 3.1.0
+info:
+  title: lesser-host REST API (contracts)
+  version: 0.1.0
+  description: |
+    Contract snapshot for build-time client generation. This file is not served at runtime.
+
+components:
+  parameters:
+    SoulMailboxAgentId:
+      name: agentId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^0x[0-9a-fA-F]{64}$"
+    SoulMailboxDeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    SoulMailboxMessageRef:
+      name: messageRef
+      in: path
+      required: true
+      description: Opaque stable body-facing mailbox reference. In v1 this is backed by deliveryId; legacy messageId values are accepted only when unambiguous for the authenticated instance and agent.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: Rate limited
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InternalError:
+      description: Internal error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  securitySchemes:
+    sessionAuth:
+      type: http
+      scheme: bearer
+      description: "Control plane session token: `Authorization: Bearer <session_token>`."
+    instanceKeyAuth:
+      type: http
+      scheme: bearer
+      description: "Managed instance API key: `Authorization: Bearer <instance_key>`. Host stores and matches only `sha256(raw_key)`; raw keys are returned only at creation time and never by read endpoints."
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              minLength: 1
+              maxLength: 128
+            message:
+              type: string
+              minLength: 1
+              maxLength: 2048
+            status_code:
+              type: integer
+              minimum: 400
+              maximum: 599
+            details:
+              type: object
+              additionalProperties: true
+              description: Client-safe metadata for validation or state conflicts. Secrets, raw bearer tokens, and private signing material never appear here.
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                conversation_status:
+                  type: string
+                  enum: [unknown, pending, created, in_progress, assistant_turn_ready, declaration_ready, completed, failed]
+                expected_status:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                produced_declarations_present:
+                  type: boolean
+                produced_declarations_valid:
+                  type: boolean
+            request_id:
+              type: string
+              minLength: 1
+              maxLength: 128
+
+    SoulAgentChannelsResponse:
+      type: object
+      additionalProperties: false
+      required: [agentId, channels, contactPreferences, updatedAt]
+      properties:
+        agentId:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        channels:
+          type: object
+          additionalProperties: false
+          required: [ens, email, phone]
+          properties:
+            ens:
+              type: [object, "null"]
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  pattern: "^[a-z0-9][a-z0-9_.-]*\\.eth$"
+                resolverAddress:
+                  type: string
+                  pattern: "^0x[0-9a-fA-F]{40}$"
+                chain:
+                  type: string
+                  default: mainnet
+            email:
+              type: [object, "null"]
+              additionalProperties: false
+              required: [address, capabilities, verified]
+              properties:
+                address:
+                  type: string
+                  format: email
+                  description: >
+                    Current managed lessersoul.ai channels are derived as
+                    <agent-local-id>.<instance-slug>@lessersoul.ai. Legacy bare
+                    <agent-local-id>@lessersoul.ai addresses are inbound aliases
+                    for migrated agents only and are not current public channels.
+                capabilities:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum: [receive, send]
+                protocols:
+                  type: array
+                  items:
+                    type: string
+                    enum: [smtp, imap]
+                verified:
+                  type: boolean
+                verifiedAt:
+                  type: string
+                  format: date-time
+                status:
+                  type: string
+                  enum: [active, paused, decommissioned]
+            phone:
+              type: [object, "null"]
+              additionalProperties: false
+              required: [number, capabilities, verified]
+              properties:
+                number:
+                  type: string
+                  pattern: "^\\+[1-9]\\d{1,14}$"
+                capabilities:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    enum: [sms-receive, sms-send, voice-receive, voice-send]
+                provider:
+                  type: string
+                verified:
+                  type: boolean
+                verifiedAt:
+                  type: string
+                  format: date-time
+                status:
+                  type: string
+                  enum: [active, paused, decommissioned]
+        contactPreferences:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [preferred, availability, responseExpectation, languages]
+          properties:
+            preferred:
+              type: string
+              enum: [email, sms, voice, activitypub, mcp]
+            fallback:
+              type: string
+              enum: [email, sms, voice, activitypub, mcp]
+            availability:
+              type: object
+              additionalProperties: false
+              required: [schedule]
+              properties:
+                schedule:
+                  type: string
+                  enum: [always, business-hours, custom]
+                timezone:
+                  type: string
+                windows:
+                  type: [array, "null"]
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [days, startTime, endTime]
+                    properties:
+                      days:
+                        type: array
+                        minItems: 1
+                        items:
+                          type: string
+                          enum: [mon, tue, wed, thu, fri, sat, sun]
+                      startTime:
+                        type: string
+                        pattern: "^[0-2][0-9]:[0-5][0-9]$"
+                      endTime:
+                        type: string
+                        pattern: "^[0-2][0-9]:[0-5][0-9]$"
+            responseExpectation:
+              type: object
+              additionalProperties: false
+              required: [target, guarantee]
+              properties:
+                target:
+                  type: string
+                guarantee:
+                  type: string
+                  enum: [guaranteed, best-effort]
+            rateLimits:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    maxInboundPerHour:
+                      type: integer
+                      minimum: 1
+                    maxInboundPerDay:
+                      type: integer
+                      minimum: 1
+                sms:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    maxInboundPerHour:
+                      type: integer
+                      minimum: 1
+                    maxInboundPerDay:
+                      type: integer
+                      minimum: 1
+                voice:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    maxConcurrentCalls:
+                      type: integer
+                      minimum: 1
+                    maxCallsPerDay:
+                      type: integer
+                      minimum: 1
+            languages:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                pattern: "^[a-z]{2}$"
+            contentTypes:
+              type: array
+              items:
+                type: string
+            firstContact:
+              type: object
+              additionalProperties: false
+              properties:
+                requireSoul:
+                  type: boolean
+                  default: false
+                requireReputation:
+                  type: [number, "null"]
+                  minimum: 0
+                  maximum: 1
+                introductionExpected:
+                  type: boolean
+                  default: false
+        updatedAt:
+          type: string
+          format: date-time
+
+    SoulAgentChannelPreferencesResponse:
+      $ref: "../spec/v3/schemas/soul-agent-channel-preferences.response.schema.json"
+
+    SoulAgentChannelPreferencesRequest:
+      $ref: "../spec/v3/schemas/soul-agent-channel-preferences.request.schema.json"
+
+    SoulAgentIdentity:
+      $ref: "../spec/v3/schemas/soul-agent-identity.schema.json"
+
+    SoulAnchorEvidence:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [host_registry_record, mint_transaction]
+        tx_hash:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        token_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        chain_id:
+          type: integer
+          minimum: 1
+        recorded_at:
+          type: string
+          format: date-time
+
+    SoulAnchorAssurance:
+      type: object
+      additionalProperties: false
+      required: [state, source, capability_gate, mutable, revocable]
+      properties:
+        state:
+          type: string
+          enum: [hosted_offchain, immutable_onchain]
+        source:
+          type: string
+          enum: [host_record, onchain_receipt]
+        capability_gate:
+          type: boolean
+          enum: [false]
+        mutable:
+          type: boolean
+        revocable:
+          type: boolean
+        evidence:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/SoulAnchorEvidence"
+
+    SoulResolveResponse:
+      type: object
+      additionalProperties: false
+      required: [version, agent]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        agent:
+          $ref: "#/components/schemas/SoulAgentIdentity"
+
+    SoulSearchResult:
+      $ref: "../spec/v3/schemas/soul-search.result.schema.json"
+
+    SoulSearchResponse:
+      $ref: "../spec/v3/schemas/soul-search.response.schema.json"
+
+    SoulCommSendRequest:
+      $ref: "../spec/v3/schemas/soul-comm-send.request.schema.json"
+
+    SoulCommSendResponse:
+      $ref: "../spec/v3/schemas/soul-comm-send.response.schema.json"
+
+    SoulCommSendErrorEnvelope:
+      $ref: "../spec/v3/schemas/soul-comm-send.error.schema.json"
+
+    SoulCommStatusResponse:
+      $ref: "../spec/v3/schemas/soul-comm-status.response.schema.json"
+
+    SoulCommStatusErrorEnvelope:
+      $ref: "../spec/v3/schemas/soul-comm-status.error.schema.json"
+
+    SoulCommContactabilityResponse:
+      $ref: "../spec/v3/schemas/soul-comm-contactability.response.schema.json"
+
+    SoulX402InvocationGrant:
+      $ref: "../spec/v3/schemas/soul-x402-invocation-grant.schema.json"
+
+    SoulX402InvocationGrantIssueRequest:
+      $ref: "../spec/v3/schemas/soul-x402-invocation-grant.issue.request.schema.json"
+
+    SoulX402InvocationGrantIssueResponse:
+      $ref: "../spec/v3/schemas/soul-x402-invocation-grant.issue.response.schema.json"
+
+    SoulX402InvocationGrantConsumeRequest:
+      $ref: "../spec/v3/schemas/soul-x402-invocation-grant.consume.request.schema.json"
+
+    SoulX402InvocationGrantConsumeResponse:
+      $ref: "../spec/v3/schemas/soul-x402-invocation-grant.consume.response.schema.json"
+
+    SoulCommMailboxMessage:
+      $ref: "../spec/v3/schemas/soul-comm-mailbox-message.schema.json"
+
+    SoulCommMailboxListResponse:
+      $ref: "../spec/v3/schemas/soul-comm-mailbox-list.response.schema.json"
+
+    SoulCommMailboxGetResponse:
+      $ref: "../spec/v3/schemas/soul-comm-mailbox-get.response.schema.json"
+
+    SoulCommMailboxContentResponse:
+      $ref: "../spec/v3/schemas/soul-comm-mailbox-content.response.schema.json"
+
+    SoulCommMailboxReplyRequest:
+      $ref: "../spec/v3/schemas/soul-comm-mailbox-reply.request.schema.json"
+
+    SoulAgentCommActivityItem:
+      $ref: "../spec/v3/schemas/soul-agent-comm-activity-item.schema.json"
+
+    SoulAgentCommActivityResponse:
+      $ref: "../spec/v3/schemas/soul-agent-comm-activity.response.schema.json"
+
+    SoulAgentCommQueueItem:
+      $ref: "../spec/v3/schemas/soul-agent-comm-queue-item.schema.json"
+
+    SoulAgentCommQueueResponse:
+      $ref: "../spec/v3/schemas/soul-agent-comm-queue.response.schema.json"
+
+    SafeTxPayload:
+      type: object
+      additionalProperties: false
+      required: [safe_address, to, value, data]
+      properties:
+        safe_address:
+          type: string
+        to:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        value:
+          type: string
+        data:
+          type: string
+          pattern: "^0x[0-9a-fA-F]*$"
+
+    SoulOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kind, status, created_at, updated_at]
+      properties:
+        operation_id:
+          type: string
+        kind:
+          type: string
+        agent_id:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        status:
+          type: string
+          enum: [pending, proposed, executed, failed]
+        safe_payload:
+          type: string
+        exec_tx_hash:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        exec_block_number:
+          type: integer
+        exec_success:
+          type: boolean
+        receipt_json:
+          type: string
+        snapshot_json:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        executed_at:
+          type: string
+          format: date-time
+
+    WalletChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [id, address, chainId, nonce, message, issuedAt, expiresAt]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        chainId:
+          type: integer
+        nonce:
+          type: string
+        message:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    SoulRegistryProofInstructions:
+      type: object
+      additionalProperties: false
+      required: [method]
+      properties:
+        method:
+          type: string
+          enum: [dns_txt, https_well_known]
+        dns_name:
+          type: string
+        dns_value:
+          type: string
+        https_url:
+          type: string
+          format: uri
+        https_body:
+          type: string
+
+    SoulAgentRegistration:
+      type: object
+      additionalProperties: false
+      required: [id, domain_normalized, local_id, agent_id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        domain_raw:
+          type: string
+        domain_normalized:
+          type: string
+        local_id_raw:
+          type: string
+        local_id:
+          type: string
+        agent_id:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        wallet_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        authority_model:
+          type: string
+          enum: [wallet_principal, instance_trust]
+        capabilities:
+          type: array
+          items:
+            type: string
+        wallet_nonce:
+          type: string
+        wallet_message:
+          type: string
+        proof_token:
+          type: string
+        dns_verified:
+          type: boolean
+        https_verified:
+          type: boolean
+        wallet_verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, completed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    SoulAgentPromotionPrerequisites:
+      type: object
+      additionalProperties: false
+      required:
+        - principal_declaration_recorded
+        - mint_operation_created
+        - mint_executed
+        - conversation_started
+        - conversation_completed
+        - review_draft_ready
+        - ready_for_finalize
+        - graduated
+      properties:
+        principal_declaration_recorded:
+          type: boolean
+        mint_operation_created:
+          type: boolean
+        mint_executed:
+          type: boolean
+        conversation_started:
+          type: boolean
+        conversation_completed:
+          type: boolean
+        review_draft_ready:
+          type: boolean
+        ready_for_finalize:
+          type: boolean
+        graduated:
+          type: boolean
+
+    SoulAgentPromotion:
+      type: object
+      additionalProperties: false
+      required:
+        - agent_id
+        - domain
+        - local_id
+        - stage
+        - request_status
+        - review_status
+        - approval_status
+        - readiness_status
+        - created_at
+        - updated_at
+        - prerequisites
+      properties:
+        agent_id:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        registration_id:
+          type: string
+        requested_by:
+          type: string
+        domain:
+          type: string
+        local_id:
+          type: string
+        wallet:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        authority_model:
+          type: string
+          enum: [wallet_principal, instance_trust]
+        stage:
+          type: string
+          enum: [requested, approved, minted, reviewing, ready_to_finalize, graduated]
+        request_status:
+          type: string
+          enum: [requested, verified, minted, graduated]
+        review_status:
+          type: string
+          enum: [not_started, conversation_in_progress, draft_ready, published]
+        approval_status:
+          type: string
+          enum: [pending, approved]
+        readiness_status:
+          type: string
+          enum: [awaiting_verification, awaiting_mint, ready_for_conversation, ready_for_finalize, graduated]
+        mint_operation_id:
+          type: string
+        mint_operation_status:
+          type: string
+          enum: [pending, proposed, executed, failed]
+        anchor_state:
+          type: string
+          enum: [hosted_offchain, immutable_onchain]
+        onchain_binding_status:
+          type: string
+          enum: [unavailable, pending, proposed, executed, failed]
+        onchain_binding_available:
+          type: boolean
+        hosted_offchain_finalizable:
+          type: boolean
+        principal_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        latest_conversation_id:
+          type: string
+        latest_conversation_status:
+          type: string
+          enum: [created, in_progress, assistant_turn_ready, declaration_ready, published, completed, failed]
+        latest_review_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        latest_boundary_count:
+          type: integer
+          minimum: 0
+        latest_capability_count:
+          type: integer
+          minimum: 0
+        published_version:
+          type: integer
+          minimum: 0
+        requested_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
+        minted_at:
+          type: string
+          format: date-time
+        review_started_at:
+          type: string
+          format: date-time
+        review_ready_at:
+          type: string
+          format: date-time
+        graduated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        prerequisites:
+          $ref: "#/components/schemas/SoulAgentPromotionPrerequisites"
+        next_actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - verify_request
+              - record_mint_execution
+              - start_review_conversation
+              - complete_review_conversation
+              - begin_finalize
+
+    SoulAgentPromotionResponse:
+      type: object
+      additionalProperties: false
+      required: [version, promotion]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        promotion:
+          $ref: "#/components/schemas/SoulAgentPromotion"
+
+    SoulAgentPromotionListResponse:
+      type: object
+      additionalProperties: false
+      required: [version, promotions, count, has_more]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        promotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulAgentPromotion"
+        count:
+          type: integer
+          minimum: 0
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+
+    SoulAgentPromotionLifecycleEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, event_type, occurred_at, promotion]
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+          enum:
+            - request_created
+            - request_approved
+            - mint_executed
+            - review_started
+            - finalize_ready
+            - graduated
+        summary:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        operation_id:
+          type: string
+        conversation_id:
+          type: string
+        anchor_assurance:
+          $ref: "#/components/schemas/SoulAnchorAssurance"
+        promotion:
+          $ref: "#/components/schemas/SoulAgentPromotion"
+
+    SoulAgentPromotionLifecycleEventListResponse:
+      type: object
+      additionalProperties: false
+      required: [version, events, count, has_more]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulAgentPromotionLifecycleEvent"
+        count:
+          type: integer
+          minimum: 0
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+
+    SoulAgentRegistrationBeginRequest:
+      type: object
+      additionalProperties: false
+      required: [domain, local_id]
+      properties:
+        domain:
+          type: string
+        local_id:
+          type: string
+        wallet_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+          description: Required for wallet_principal registrations; omitted for instance_trust registrations on the instance-key route.
+        authority_model:
+          type: string
+          enum: [wallet_principal, instance_trust]
+          description: Explicit authority model. session-auth routes allow wallet_principal only; instance-key routes may use instance_trust with no wallet.
+        capabilities:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: object
+                additionalProperties: true
+
+    SoulAgentRegistrationBeginResponse:
+      type: object
+      additionalProperties: false
+      required: [registration, proofs]
+      properties:
+        registration:
+          $ref: "#/components/schemas/SoulAgentRegistration"
+        wallet:
+          $ref: "#/components/schemas/WalletChallengeResponse"
+        proofs:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulRegistryProofInstructions"
+        promotion:
+          $ref: "#/components/schemas/SoulAgentPromotion"
+
+    SoulAgentRegistrationPrincipalDeclarationPreflightRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - principal_address
+        - principal_declaration
+        - declared_at
+      properties:
+        principal_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        principal_declaration:
+          type: string
+        declared_at:
+          type: string
+          format: date-time
+
+    SoulAgentRegistrationPrincipalDeclarationPreflightResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - principal_address
+        - signer_address
+        - signing_method
+        - message_encoding
+        - message_hex
+        - digest_hex
+        - canonical_json
+        - declared_at
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        principal_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        signer_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        signing_method:
+          type: string
+          enum: [eip191_personal_sign]
+        message_encoding:
+          type: string
+          enum: [hex_bytes]
+        message_hex:
+          type: string
+          description: 32-byte digest encoded as 0x-prefixed hex; sign these bytes with EIP-191 personal_sign.
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        digest_hex:
+          type: string
+          description: Alias of message_hex for clients that name the signing bytes as a digest.
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        canonical_json:
+          type: string
+          description: Host-owned JCS canonical JSON that produced digest_hex.
+        declared_at:
+          type: string
+          format: date-time
+
+    SoulAgentRegistrationVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - signature
+        - principal_address
+        - principal_declaration
+        - principal_signature
+        - declared_at
+      properties:
+        signature:
+          type: string
+        principal_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        principal_declaration:
+          type: string
+        principal_signature:
+          type: string
+        declared_at:
+          type: string
+          format: date-time
+
+    SoulAgentRegistrationVerifyResponse:
+      type: object
+      additionalProperties: false
+      required: [registration, operation]
+      properties:
+        registration:
+          $ref: "#/components/schemas/SoulAgentRegistration"
+        operation:
+          $ref: "#/components/schemas/SoulOperation"
+        safe_tx:
+          $ref: "#/components/schemas/SafeTxPayload"
+        promotion:
+          $ref: "#/components/schemas/SoulAgentPromotion"
+
+    AIUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+        duration_ms:
+          type: integer
+          minimum: 0
+        tool_calls:
+          type: integer
+          minimum: 0
+
+    SoulMintConversationSSEInput:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        model:
+          type: string
+          minLength: 1
+        conversation_id:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+
+    SoulHostedGenesisMintConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      description: |
+        JSON-authoritative Host ↔ Lesser request for creating or appending a hosted-genesis mint-conversation turn.
+        `conversation_id` is supplied when Lesser is resuming or appending to a persisted Host conversation. The optional
+        `idempotency_key` and `correlation_id` are client-safe cross-boundary identifiers; they must not contain raw Host
+        credentials, browser bearer tokens, raw LLM transcripts, or tenant user content.
+      properties:
+        model:
+          type: string
+          minLength: 1
+        conversation_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        message:
+          type: string
+          minLength: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]{1,128}$"
+        correlation_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        lesser_request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        candidate_action:
+          type: object
+          additionalProperties: false
+          required: [action, candidate_revision, candidate_hash, review_hash]
+          description: Structural owner action bound to the exact deterministic review. Free-form affirmation text is not authoritative.
+          properties:
+            action:
+              type: string
+              enum: [affirm, edit]
+            section:
+              type: string
+              enum: [identity, philosophy, discipline, boundaries, soul]
+            candidate_revision:
+              type: integer
+              minimum: 0
+            candidate_hash:
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
+            review_hash:
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
+          allOf:
+            - if:
+                properties:
+                  action:
+                    const: edit
+              then:
+                required: [section]
+            - if:
+                properties:
+                  action:
+                    const: affirm
+              then:
+                not:
+                  required: [section]
+
+    SoulHostedGenesisConversationResponse:
+      $ref: "../spec/v3/schemas/hosted-genesis.conversation.response.schema.json"
+
+    SoulMintConversation:
+      type: object
+      additionalProperties: false
+      required:
+        - agent_id
+        - conversation_id
+        - model
+        - status
+        - created_at
+      properties:
+        agent_id:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        conversation_id:
+          type: string
+        model:
+          type: string
+        messages:
+          type: string
+        produced_declarations:
+          type: string
+        status:
+          type: string
+          description: >
+            Legacy raw Host record status. `completed` is retained for backward compatibility and maps to the
+            durable hosted-genesis contract status `declaration_ready` only when valid produced declarations exist.
+          enum: [created, in_progress, assistant_turn_ready, declaration_ready, completed, failed]
+        usage:
+          $ref: "#/components/schemas/AIUsage"
+        charged_credits:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    SoulMintConversationCompleteRequest:
+      type: object
+      additionalProperties: false
+      description: Read/convergence request. Hosted Genesis declaration bytes are finalized only by the MicroVM from the structurally affirmed typed candidate.
+
+    SoulAgentMintConversationsResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversations, count]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulMintConversation"
+        count:
+          type: integer
+          minimum: 0
+
+    SoulInstanceMintConversationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - agent_id
+        - registration_id
+        - conversation_id
+        - status
+        - created_at
+      properties:
+        agent_id:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        registration_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        conversation_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: string
+          enum: [created, in_progress, assistant_turn_ready, declaration_ready, published, failed]
+        message_count:
+          type: integer
+          minimum: 0
+        latest_turn_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        published_version:
+          type: integer
+          minimum: 1
+        published_at:
+          type: string
+          format: date-time
+
+    SoulInstanceMintConversationsResponse:
+      type: object
+      additionalProperties: false
+      required: [version, conversations, count, limit]
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulInstanceMintConversationSummary"
+        count:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+
+    SoulInstanceMintConversationResponse:
+      $ref: "../spec/v3/schemas/hosted-genesis.conversation.response.schema.json"
+
+    SoulMintConversationInstanceReadErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - soul_mint.invalid_request
+                - soul_mint.unauthorized
+                - soul_mint.boundary_violation
+                - soul_mint.not_found
+                - soul_mint.conflict
+                - soul_mint.rate_limited
+                - soul_mint.response_too_large
+                - soul_mint.internal
+            message:
+              type: string
+              minLength: 1
+              maxLength: 2048
+            status_code:
+              type: integer
+              minimum: 400
+              maximum: 599
+            details:
+              type: object
+              additionalProperties: true
+              description: Client-safe metadata for validation, tenant-boundary, rate-limit, or oversize failures.
+              properties:
+                boundary:
+                  type: string
+                  enum: [instance_domain]
+                field:
+                  type: string
+                  enum: [agentId, conversationId, limit, body]
+                reason:
+                  type: string
+                  enum:
+                    - invalid_agent_id
+                    - invalid_conversation_id
+                    - invalid_limit
+                    - request_body_present
+                    - tenant_domain_mismatch
+                    - domain_not_verified
+                    - response_too_large
+                retry_after_seconds:
+                  type: integer
+                  minimum: 1
+            request_id:
+              type: string
+              minLength: 1
+              maxLength: 128
+
+    SoulInstanceBootstrapErrorEnvelope:
+      $ref: "../spec/v3/schemas/soul-instance-bootstrap.error.schema.json"
+
+    SoulMintConversationFinalizeBeginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        boundary_signatures:
+          type: object
+          additionalProperties:
+            type: string
+          description: Required for wallet_principal registrations; omitted for authority_model=instance_trust.
+
+    SoulMintConversationDeclarationPreview:
+      type: object
+      additionalProperties: false
+      required: [selfDescription, capabilities, boundaries, transparency]
+      properties:
+        selfDescription:
+          type: object
+          additionalProperties: true
+        capabilities:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        boundaries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        transparency:
+          type: object
+          additionalProperties: true
+
+    SoulMintConversationFinalizeBoundaryRequirement:
+      type: object
+      additionalProperties: false
+      required:
+        - boundary_id
+        - category
+        - statement
+        - signing_method
+        - message_encoding
+        - message
+      properties:
+        boundary_id:
+          type: string
+        category:
+          type: string
+        statement:
+          type: string
+        rationale:
+          type: string
+        supersedes:
+          type: string
+        signature_hex:
+          type: string
+        signer_wallet:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        signing_method:
+          type: string
+          enum: [eip191_personal_sign, instance_trust]
+        message_encoding:
+          type: string
+          enum: [utf8, none]
+        message:
+          type: string
+        digest_hex:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+
+    SoulMintConversationFinalizeSigningInput:
+      type: object
+      additionalProperties: false
+      required:
+        - signer_wallet
+        - signing_method
+        - message_encoding
+        - message_hex
+        - digest_hex
+        - canonical_json
+      properties:
+        signer_wallet:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        signing_method:
+          type: string
+          enum: [eip191_personal_sign]
+        message_encoding:
+          type: string
+          enum: [hex_bytes]
+        message_hex:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        digest_hex:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        canonical_json:
+          type: string
+
+    SoulMintConversationFinalizeRequestTemplate:
+      type: object
+      additionalProperties: false
+      required: [boundary_signatures, issued_at, expected_version]
+      properties:
+        boundary_signatures:
+          type: object
+          additionalProperties:
+            type: string
+        issued_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          minimum: 0
+        self_attestation:
+          type: string
+
+    SoulMintConversationFinalizeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        boundary_signatures:
+          type: object
+          additionalProperties:
+            type: string
+          description: Required for wallet_principal registrations; omitted for authority_model=instance_trust.
+        issued_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          minimum: 0
+        self_attestation:
+          type: string
+          description: Required for wallet_principal registrations; omitted for authority_model=instance_trust.
+
+    SoulMintConversationFinalizePreflightResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - authority_model
+        - anchor_state
+        - issued_at
+        - expected_version
+        - next_version
+        - declarations_preview
+        - finalize_request_template
+      properties:
+        version:
+          type: string
+          enum: ["1"]
+        authority_model:
+          type: string
+          enum: [wallet_principal, instance_trust]
+        anchor_state:
+          type: string
+          enum: [hosted_offchain, immutable_onchain]
+        digest_hex:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{64}$"
+        issued_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          minimum: 0
+        next_version:
+          type: integer
+          minimum: 1
+        declarations_preview:
+          $ref: "#/components/schemas/SoulMintConversationDeclarationPreview"
+        boundary_requirements:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoulMintConversationFinalizeBoundaryRequirement"
+        self_attestation_signing:
+          $ref: "#/components/schemas/SoulMintConversationFinalizeSigningInput"
+        finalize_request_template:
+          $ref: "#/components/schemas/SoulMintConversationFinalizeRequestTemplate"
+        registration_preview:
+          type: object
+          additionalProperties: true
+
+    SoulMintConversationFinalizeResponse:
+      $ref: "../spec/v3/schemas/soul-instance-bootstrap.finalize.response.schema.json"
+
+paths:
+  /api/v1/soul/agents/{agentId}:
+    get:
+      operationId: soulGetAgent
+      summary: Get public soul agent identity (v3)
+      description: |
+        Returns Host's read-only Soul registry projection for a soul agent ID.
+        Lesser's server-side soul-binding ceremony uses this projection as Host
+        source truth before writing Lesser-local `SOUL_BODY_BINDING` rows. For
+        Ptah-created hosted souls, consumers validate `agent_id`, `domain`,
+        `local_id`, `authority_model=instance_trust`,
+        `anchor_state=hosted_offchain`,
+        `operational_binding=hosted_bound_soul`, active lifecycle/status,
+        publication evidence through `self_description_version > 0` (or future
+        `published_version > 0`), and principal evidence through
+        `principal_address` with `wallet` as compatibility fallback.
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      responses:
+        "200":
+          description: Public Soul registry identity projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulResolveResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/soul/agents/{agentId}/channels:
+    get:
+      operationId: soulGetAgentChannels
+      summary: Get authenticated agent reachability channels (v3)
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentChannelsResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/channels/preferences:
+    get:
+      operationId: soulGetAgentChannelPreferences
+      summary: Get authenticated agent contact preferences (v3)
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentChannelPreferencesResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    put:
+      operationId: soulUpdateAgentChannelPreferences
+      summary: Update agent contact preferences (v3)
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentChannelPreferencesRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentChannelPreferencesResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/resolve/ens/{ensName}:
+    get:
+      operationId: soulResolveEns
+      summary: Resolve an ENS name to a soul agent
+      parameters:
+        - name: ensName
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulResolveResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/resolve/email/{emailAddress}:
+    get:
+      operationId: soulResolveEmail
+      summary: Resolve an email address to an owned soul agent
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: emailAddress
+          in: path
+          required: true
+          schema:
+            type: string
+            format: email
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulResolveResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/resolve/phone/{phoneNumber}:
+    get:
+      operationId: soulResolvePhone
+      summary: Resolve an E.164 phone number to an owned soul agent
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: phoneNumber
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^\\+[1-9]\\d{1,14}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulResolveResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/search:
+    get:
+      operationId: soulSearch
+      summary: Search soul agents (including channel + ens filters)
+      description: |
+        Accepted lookup forms include domain-only queries (`q=example.com`), domain-qualified agent queries
+        (`q=example.com/medic`), explicit domain plus local queries (`q=medic&domain=example.com`), and bare local
+        queries such as `q=medic`, `q=@medic`, or `q=medic/` when the request host maps to a verified instance domain.
+
+        The endpoint stays fail-closed for cross-domain ambiguity: it does not perform an unbounded local-ID scan, and
+        requests where `q` and `domain` specify conflicting domains reject with `400`.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: |
+            Domain-only, domain-qualified, or local query. Bare local queries require either `domain` or a request
+            host that maps to a verified instance domain.
+          schema:
+            type: string
+        - name: domain
+          in: query
+          required: false
+          description: |
+            Optional domain override for local queries. Stage-qualified domains stay exact for lookup and are not
+            canonicalized to the base instance domain.
+          schema:
+            type: string
+        - name: capability
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: boundary
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: ens
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: principal
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{40}$"
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [email, phone]
+          explode: true
+          style: form
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulSearchResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/begin:
+    post:
+      operationId: soulRegisterBegin
+      summary: Begin a soul promotion request
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationBeginRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationBeginResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/principal-declaration/preflight:
+    post:
+      operationId: soulRegisterPrincipalDeclarationPreflight
+      summary: Build Host-owned principal declaration signing material
+      description: |
+        Returns the canonical JCS payload and 32-byte digest that the principal wallet must sign with EIP-191
+        `personal_sign` before calling registration verify. Clients must sign `message_hex` as hex bytes; they
+        should not reconstruct this digest locally.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationPrincipalDeclarationPreflightRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationPrincipalDeclarationPreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/verify:
+    post:
+      operationId: soulRegisterVerify
+      summary: Verify proofs and principal approval for a soul promotion request
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationVerifyRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationVerifyResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation:
+    post:
+      operationId: soulStartMintConversationSSE
+      summary: Start or continue a registration-scoped mint conversation over SSE
+      description: |
+        Streams the assistant response using `text/event-stream`.
+        Canonical SSE event names and payload schemas are published in `docs/contracts/soul-mint-conversation-sse.json`.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationSSEInput"
+      responses:
+        "200":
+          description: SSE stream of mint-conversation events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          x-sse-contract:
+            file: "./soul-mint-conversation-sse.json"
+            version: "1"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation/{conversationId}:
+    get:
+      operationId: soulGetMintConversation
+      summary: Get a registration-scoped mint conversation record
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversation"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation/{conversationId}/complete:
+    post:
+      operationId: soulCompleteMintConversation
+      summary: Read or replay a registration-scoped mint conversation completion
+      description: |
+        Replays an already terminal conversation. Active declaration construction and finalization belong exclusively
+        to the Hosted Genesis MicroVM typed-candidate lane; this route accepts no caller-authored declaration document,
+        invokes no provider, and returns a conflict for active legacy rows.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationCompleteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversation"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation/{conversationId}/finalize/preflight:
+    post:
+      operationId: soulMintConversationFinalizePreflight
+      summary: Build finalize preflight data for a completed mint conversation
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation/{conversationId}/finalize/begin:
+    post:
+      operationId: soulMintConversationFinalizeBegin
+      summary: Compatibility alias for finalize preflight
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/register/{id}/mint-conversation/{conversationId}/finalize:
+    post:
+      operationId: soulMintConversationFinalize
+      summary: Finalize and publish a registration-scoped mint conversation
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizeResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversations:
+    get:
+      operationId: soulAgentListMintConversations
+      summary: List agent-scoped mint conversation records
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentMintConversationsResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation:
+    post:
+      operationId: soulStartAgentMintConversationSSE
+      summary: Start or continue an agent-scoped mint conversation over SSE
+      description: |
+        Streams the assistant response using `text/event-stream`.
+        Canonical SSE event names and payload schemas are published in `docs/contracts/soul-mint-conversation-sse.json`.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationSSEInput"
+      responses:
+        "200":
+          description: SSE stream of mint-conversation events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          x-sse-contract:
+            file: "./soul-mint-conversation-sse.json"
+            version: "1"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation/{conversationId}:
+    get:
+      operationId: soulAgentGetMintConversation
+      summary: Get an agent-scoped mint conversation record
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversation"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/instance/agents/{agentId}/mint-conversations:
+    get:
+      operationId: soulInstanceListMintConversations
+      summary: List compact mint-conversation metadata for an instance-owned agent
+      description: |
+        Instance-key authenticated read used by Lesser's self-scope proxy. The list response is compact and never
+        includes private `messages` or `produced_declarations`; use the explicit single-conversation route for a
+        bounded full private record. Published sessions are terminal and include `published_version` and
+        `published_at`; callers proceed to agent read/list rather than retrying completion or finalize preflight.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceMintConversationsResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "404":
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "413":
+          description: Response too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "429":
+          description: Rate limited
+          headers:
+            Retry-After:
+              description: Seconds until the caller should retry when available.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+
+  /api/v1/soul/instance/agents/{agentId}/mint-conversations/{conversationId}:
+    get:
+      operationId: soulInstanceGetMintConversation
+      summary: Get a bounded private mint-conversation record for an instance-owned agent
+      description: |
+        Instance-key authenticated read used by Lesser's self-scope proxy. This explicit single-conversation route returns
+        the hosted-genesis durable conversation envelope and may include bounded `conversation.messages` at
+        `assistant_turn_ready` for Lesser same-origin relay. Terminal declaration evidence appears only as
+        `conversation.produced_declarations` when the durable status is `declaration_ready`. Successful publication is
+        the distinct terminal `published` status with its exact version and timestamp; raw legacy
+        message/declaration strings, credentials, target-account
+        details, and infrastructure state are never returned.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceMintConversationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "413":
+          description: Response too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "429":
+          description: Rate limited
+          headers:
+            Retry-After:
+              description: Seconds until the caller should retry when available.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationInstanceReadErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/begin:
+    post:
+      operationId: soulInstanceRegisterBegin
+      summary: Begin an instance-key soul registration bootstrap request
+      description: |
+        Server-to-server route for managed Lesser instances. The bearer token is the managed InstanceKey provisioned for
+        the authenticated instance; Host validates it by `sha256(raw_key)` and then enforces that the requested domain
+        belongs to the same managed instance slug. This route never uses portal/control-plane session auth.
+      security:
+        - instanceKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationBeginRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationBeginResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/principal-declaration/preflight:
+    post:
+      operationId: soulInstanceRegisterPrincipalDeclarationPreflight
+      summary: Build principal declaration signing material for an instance-key registration
+      description: |
+        Server-to-server route for managed Lesser instances. Returns Host-owned JCS canonical material and the 32-byte
+        digest the principal wallet must sign. The bearer token is the managed InstanceKey; this route never uses
+        portal/control-plane session auth.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationPrincipalDeclarationPreflightRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationPrincipalDeclarationPreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/verify:
+    post:
+      operationId: soulInstanceRegisterVerify
+      summary: Verify proofs and principal approval for an instance-key registration
+      description: |
+        Server-to-server route for managed Lesser instances. The bearer token is the managed InstanceKey; Host validates
+        the key by hash, enforces the registration's domain remains inside the instance boundary, and returns the
+        Safe-ready mint operation metadata for the hosted-bound soul workflow.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationVerifyRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationVerifyResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation:
+    post:
+      operationId: soulInstanceStartRegistrationMintConversation
+      summary: Start or continue an instance-key registration mint conversation with durable JSON status
+      description: |
+        JSON-authoritative server-to-server route for Lesser. It creates or appends a hosted-genesis turn for a
+        registration owned by the authenticated managed instance and returns a durable HostConversation status envelope.
+        Responses may include bounded `conversation.messages` so Lesser can render the same-origin hosted genesis
+        transcript when the durable status is `assistant_turn_ready`. The bearer token is the managed InstanceKey
+        (`sha256(raw_key)` stored by Host), and Host enforces the registration's domain boundary before returning any
+        conversation id or status.
+
+        HTTP `200` or `202` means transport/request acceptance only; it is not terminal completion. Lesser must persist
+        `conversation_id` immediately, then poll `GET
+        /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}` until the durable status is
+        `declaration_ready` (terminal declaration evidence present) or `failed` (typed bounded recovery). SSE remains an
+        optional portal/native Host UI delivery mechanism on the non-instance routes, but it is not the authoritative
+        completion mechanism for this Lesser path.
+      x-authoritative-completion: durable-json
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulHostedGenesisMintConversationRequest"
+      responses:
+        "200":
+          description: |
+            Request accepted or replayed and the current durable HostConversation status is available. This is transport
+            success only; inspect `conversation.status` before advancing workflow state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "202":
+          description: |
+            Request accepted and asynchronous hosted-genesis work is in progress. This is transport success only; Lesser
+            must poll the durable status read using the returned `conversation.conversation_id`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Registration not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}:
+    get:
+      operationId: soulInstanceGetRegistrationMintConversation
+      summary: Read durable hosted-genesis mint-conversation status
+      description: |
+        JSON-authoritative durable status read for managed Lesser instances. Returns the current HostConversation status
+        envelope for a registration inside the authenticated instance boundary. This route is the polling/resume source
+        of truth for hosted genesis; it may include bounded `conversation.messages` at `assistant_turn_ready` for Lesser
+        same-origin transcript relay, returns terminal declaration evidence only when `conversation.status` is
+        `declaration_ready`, and returns typed failure/recovery when `conversation.status` is `failed`.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      responses:
+        "200":
+          description: Current durable HostConversation status. HTTP 200 is transport success only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}/recover:
+    post:
+      operationId: soulInstanceRecoverRegistrationMintConversation
+      summary: Recover a stuck instance-key registration mint conversation
+      description: |
+        Server-to-server route for managed Lesser instances. Retriggers the assistant turn for an in-progress
+        conversation whose assistant checkpoint is missing — for example, after a worker crash or timeout left
+        the conversation in `in_progress` without a recorded assistant response. If the conversation does not
+        need recovery (already has an assistant checkpoint, or is not `in_progress`), the route is idempotent
+        and returns `200` with the current durable HostConversation envelope without re-running the turn.
+        When recovery is needed, Host re-progresses the accepted turn; `200`/`202` is transport success only —
+        downstream consumers must inspect `conversation.status`.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      responses:
+        "200":
+          description: Recovery was not needed (idempotent noop) or the assistant turn completed synchronously; returns the durable HostConversation envelope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "202":
+          description: Recovery turn is still in progress; inspect `conversation.status`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}/complete:
+    post:
+      operationId: soulInstanceCompleteRegistrationMintConversation
+      summary: Read or replay an instance-key registration mint conversation completion
+      description: |
+        Progress-safe read/convergence route for managed Lesser instances. If the conversation is still `in_progress`
+        or `assistant_turn_ready`, the route returns `HTTP 202` with the compact HostConversation progress envelope.
+        If the MicroVM has deterministically finalized the exact structurally affirmed candidate, the route
+        idempotently returns the `declaration_ready` envelope. The request accepts no caller-authored declaration
+        document and invokes no provider. Failed or invalid states fail closed.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationCompleteRequest"
+      responses:
+        "200":
+          description: Terminal replay with valid produced declarations; returns the compact HostConversation envelope and never raw transcript fields.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "202":
+          description: Typed section construction or provider-free candidate finalization is still in progress; inspect `conversation.status` and `conversation.declaration_candidate`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulHostedGenesisConversationResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}/finalize/preflight:
+    post:
+      operationId: soulInstanceMintConversationFinalizePreflight
+      summary: Build finalize preflight data for an instance-key registration mint conversation
+      description: |
+        Server-to-server route for managed Lesser instances. Returns signing material and the finalize request template
+        for hosted/off-chain publication inside the authenticated instance boundary.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}/finalize/begin:
+    post:
+      operationId: soulInstanceMintConversationFinalizeBegin
+      summary: Compatibility alias for instance-key finalize preflight
+      description: |
+        Server-to-server alias for finalize preflight. Returns the same response shape as
+        `/finalize/preflight` and never uses portal/control-plane session auth.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/instance/agents/register/{id}/mint-conversation/{conversationId}/finalize:
+    post:
+      operationId: soulInstanceMintConversationFinalize
+      summary: Finalize and publish an instance-key registration mint conversation
+      description: |
+        Server-to-server route for managed Lesser instances. Publishes the hosted/off-chain registration artifact,
+        returns the activated agent identity, publication evidence, and promotion continuity fields Lesser needs to bind
+        local body state. The bearer token is the managed InstanceKey and Host enforces the instance/domain boundary.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9._:-]{1,128}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizeResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "401":
+          description: Missing, invalid, or revoked instance key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "403":
+          description: Tenant/domain boundary mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "404":
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulInstanceBootstrapErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation/{conversationId}/complete:
+    post:
+      operationId: soulAgentCompleteMintConversation
+      summary: Read or replay an agent-scoped mint conversation completion
+      description: |
+        Replays an already terminal conversation for a stable agent handle. Active declaration construction and
+        finalization belong exclusively to the Hosted Genesis MicroVM typed-candidate lane; this route accepts no
+        caller-authored declaration document, invokes no provider, and returns a conflict for active legacy rows.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationCompleteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversation"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation/{conversationId}/finalize/preflight:
+    post:
+      operationId: soulAgentMintConversationFinalizePreflight
+      summary: Build finalize preflight data using the stable agentId handle
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation/{conversationId}/finalize/begin:
+    post:
+      operationId: soulAgentMintConversationFinalizeBegin
+      summary: Compatibility alias for finalize preflight via the stable agentId handle
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeBeginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizePreflightResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/mint-conversation/{conversationId}/finalize:
+    post:
+      operationId: soulAgentMintConversationFinalize
+      summary: Finalize and publish an agent-scoped mint conversation
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulMintConversationFinalizeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulMintConversationFinalizeResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/promotions/mine:
+    get:
+      operationId: soulListMyPromotions
+      summary: List durable promotion workflows for the authenticated requester
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentPromotionListResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/promotions/mine/events:
+    get:
+      operationId: soulListMyPromotionLifecycleEvents
+      summary: List structured promotion lifecycle events for the authenticated requester
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentPromotionLifecycleEventListResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/promotion:
+    get:
+      operationId: soulGetPromotion
+      summary: Get the durable, agent-centered promotion state
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentPromotionResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/promotion/verify:
+    post:
+      operationId: soulVerifyPromotion
+      summary: Verify a soul promotion request using the stable agentId handle
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulAgentRegistrationVerifyRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentRegistrationVerifyResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/promotion/events:
+    get:
+      operationId: soulListAgentPromotionLifecycleEvents
+      summary: List structured lifecycle events for a single agent promotion workflow
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentPromotionLifecycleEventListResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/x402/grants:
+    post:
+      operationId: soulX402IssueInvocationGrant
+      summary: Issue a scoped x402 invocation grant
+      security:
+        - instanceKeyAuth: []
+      description: |
+        Issues a host-side off-chain invocation grant for a configured public paid caller. The grant binds the
+        `agentId`, `capabilityVersion`, `capability`, `tool`, `resource`, access `scope`, invocation `requestHash`, caller subject
+        hash, payment evidence hash, amount/network metadata, nonce, idempotency key hash, expiry, max usage, and caller-access
+        payment policy version. The access `scope` vocabulary is `read`, `write`, or `admin` and stays separate from grant
+        `authority`, which remains `scoped_invocation`. Capability vocabulary is versioned: `scoped-invocation/v1`
+        remains the actor/scoped invocation vocabulary, while `instance-capability/v1` is restricted to
+        `instance:agent_create` and `instance:install_plan`.
+
+        This instance-key authenticated route returns a raw `grantToken` only on the first successful issue. Idempotent replays return the
+        same grant metadata with `tokenReturned=false`; callers must retain the original token. Host stores only hashes
+        of caller subject, payment evidence, optional payment id, idempotency key, and grant token. Generic
+        `x402.grant_unavailable` errors avoid exposing private soul state, private comm reachability, unresolved payment
+        detail, wallet material, or tenant data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulX402InvocationGrantIssueRequest"
+      responses:
+        "200":
+          description: Grant issued or idempotently replayed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulX402InvocationGrantIssueResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/x402/grants/{grantId}/consume:
+    post:
+      operationId: soulX402ConsumeInvocationGrant
+      summary: Consume a scoped x402 invocation grant
+      description: |
+        Consumes a host-issued x402 invocation grant from an authenticated managed instance. The bearer token is the
+        instance API key; public paid callers never receive principal/operator/session authority. The authenticated
+        instance must own the agent domain, present the one-time raw grant token, and repeat the original
+        agent/capabilityVersion/capability/tool/resource/request hash binding. Consume responses return the persisted
+        grant `scope` and `capabilityVersion` so downstream runtimes can reject right-tool/wrong-scope or
+        actor-capability-on-instance-tool invocations before side effects. Instance tools must use
+        `capabilityVersion="instance-capability/v1"` with `capability="instance:agent_create"` for `tool="agent_create"`
+        or `capability="instance:install_plan"` for `tool="agent_local_install_plan"` (the shorter
+        `tool="install_plan"` is also accepted by Host). Actor/scoped invocation capabilities remain under
+        `scoped-invocation/v1` and are rejected for these instance tools.
+
+        Consumption writes a bounded usage slot keyed by the consume idempotency key hash. Repeating the same consume
+        idempotency key with the same consume request hash is a replay and does not increment usage. Distinct consume
+        idempotency keys cannot exceed `maxUsage`.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulX402InvocationGrantConsumeRequest"
+      responses:
+        "200":
+          description: Grant consumed or idempotently replayed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulX402InvocationGrantConsumeResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/send:
+    post:
+      operationId: soulCommSend
+      summary: Send an outbound comm message
+      description: |
+        Sends a new outbound comm through host. Host always generates the outgoing `messageId`, `messageRef`, and
+        `deliveryId`; callers must not use this endpoint to supply outbound message identity.
+
+        `inReplyTo`, when present, is a reply/conversation boundary reference rather than an identity override. Host
+        checks it against prior host/provider conversation state for every recipient and fails closed with HTTP 403
+        `comm.boundary_violation` plus `error.details.field=inReplyTo` when the reference is invalid. Canonical mailbox
+        replies should use `POST /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/reply`, which derives
+        recipient, thread, and provider reply headers from host's mailbox state.
+      security:
+        - instanceKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulCommSendRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendErrorEnvelope"
+        "403":
+          description: Boundary or preference violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendErrorEnvelope"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendErrorEnvelope"
+
+  /api/v1/soul/comm/status/{messageId}:
+    get:
+      operationId: soulCommStatus
+      summary: Get outbound comm delivery status
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommStatusResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommStatusErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommStatusErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommStatusErrorEnvelope"
+
+  /api/v1/soul/comm/contactability/{agentId}:
+    get:
+      operationId: soulCommContactability
+      summary: Resolve bounded soul comm contactability for one agent
+      description: |
+        Resolves mailbox/read and send affordances for exactly one agent owned by the authenticated instance.
+        This endpoint intentionally has no search or list mode and does not expose channel secrets.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommContactabilityResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages:
+    get:
+      operationId: soulCommMailboxList
+      summary: List redacted canonical mailbox messages
+      description: |
+        Returns bounded metadata and previews only. Full message content is fetched explicitly from the content endpoint.
+        Filters are evaluated within the authenticated instance + exact agent mailbox. `query` is bounded metadata/preview
+        matching only; it is not full-body search and never scans across tenants or agents.
+
+        `fields` may be used by MCP clients to request compact projected message objects. `hasMore` and `nextCursor`
+        describe the filtered result set. If bounded server-side filtering stops before exhausting broad mailbox rows,
+        `partialScan`, `scanHasMore`, and `scanCursor` expose that broad scan state separately so MCP callers do not treat
+        broad mailbox pagination as matching SMS/voice pagination.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: includeDeleted
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: deleted
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When present, filters exactly by deleted state. `deleted=true` implies deleted rows may be returned.
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Set false to exclude archived messages. Omitted preserves legacy behavior and may include archived messages.
+        - name: archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When present, filters exactly by archived state.
+        - name: read
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When present, filters exactly by read state.
+        - name: unreadOnly
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Convenience alias for `read=false`.
+        - name: channelType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [email, sms, voice]
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [inbound, outbound]
+        - name: threadId
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Bounded metadata/preview match within the authenticated instance + exact agent mailbox.
+        - name: fields
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+          description: |
+            Comma-separated projection list for compact MCP responses. Supported fields are
+            `messageRef`, `deliveryId`, `messageId`, `threadId`, `direction`, `channelType`, `provider`,
+            `providerMessageId`, `status`, `from`, `to`, `subject`, `preview`, `content`, `state`, `createdAt`,
+            `updatedAt`, and nested fields such as `content.available`, `state.read`, `from.address`, and `to.number`.
+            When omitted, the legacy full metadata object is returned.
+        - name: include_raw
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Defaults to false. Host mailbox list responses do not expose raw upstream provider payloads; when false,
+            any future raw diagnostic payload is omitted unless explicitly requested and available.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxListResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}:
+    get:
+      operationId: soulCommMailboxGet
+      summary: Get canonical mailbox message metadata
+      description: Accepts canonical messageRef/deliveryId and legacy messageId values only when unambiguous for the authenticated instance + agent.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: messageRef
+          in: path
+          required: true
+          description: Opaque stable body-facing mailbox reference; v1 equals deliveryId and legacy messageId aliases are accepted only when unambiguous.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/content:
+    get:
+      operationId: soulCommMailboxContent
+      summary: Explicitly fetch bounded mailbox message content
+      description: Returns full content only for a specific messageRef/delivery. Calls are instance-key authenticated, rate-limited, and audit logged.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: messageRef
+          in: path
+          required: true
+          description: Opaque stable body-facing mailbox reference; v1 equals deliveryId and legacy messageId aliases are accepted only when unambiguous.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxContentResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/reply:
+    post:
+      operationId: soulCommMailboxReply
+      summary: Reply to a canonical mailbox message
+      description: |
+        Resolves the messageRef against host's canonical mailbox state, derives recipient/thread/provider reply context,
+        and sends a new outbound soul comm. Body should call this endpoint instead of reconstructing reply recipients or
+        provider headers locally. The request is authenticated with strict hash-only instance API key auth.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoulCommMailboxReplyRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommSendResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/read:
+    post:
+      operationId: soulCommMailboxMarkRead
+      summary: Mark a mailbox message read
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/unread:
+    post:
+      operationId: soulCommMailboxMarkUnread
+      summary: Mark a mailbox message unread
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/archive:
+    post:
+      operationId: soulCommMailboxArchive
+      summary: Archive a mailbox message
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/unarchive:
+    post:
+      operationId: soulCommMailboxUnarchive
+      summary: Unarchive a mailbox message
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/delete:
+    post:
+      operationId: soulCommMailboxDelete
+      summary: Soft-delete a mailbox message
+      description: Sets bounded mailbox delete state. The content object remains lifecycle-bound and is no longer returned by content fetches.
+      security:
+        - instanceKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SoulMailboxAgentId"
+        - $ref: "#/components/parameters/SoulMailboxMessageRef"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommMailboxGetResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/soul/agents/{agentId}/comm/activity:
+    get:
+      operationId: soulAgentCommActivity
+      summary: List communication activity for a soul agent
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentCommActivityResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/comm/queue:
+    get:
+      operationId: soulAgentCommQueue
+      summary: List queued inbound communications for a soul agent
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulAgentCommQueueResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/soul/agents/{agentId}/comm/status/{messageId}:
+    get:
+      operationId: soulAgentCommStatus
+      summary: Get outbound comm delivery status for a soul agent
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{64}$"
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoulCommStatusResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"

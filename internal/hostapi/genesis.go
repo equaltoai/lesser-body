@@ -1,12 +1,15 @@
 package hostapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/soulapi"
@@ -39,7 +42,6 @@ type GenesisClient interface {
 	AdvanceConversation(ctx context.Context, bearerToken string, registrationID string, req MintConversationRequest) (map[string]any, error)
 	ReadConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
 	RecoverConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
-	CompleteConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
 	FinalizePreflight(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
 	FinalizeConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error)
 }
@@ -58,12 +60,134 @@ type RegistrationBeginRequest struct {
 // hosted-genesis conversation. ConversationID is empty only for the first
 // turn; Host then returns the durable ID which callers must persist and reuse.
 type MintConversationRequest struct {
-	ConversationID  string `json:"conversation_id,omitempty"`
-	Model           string `json:"model,omitempty"`
-	Message         string `json:"message"`
-	IdempotencyKey  string `json:"idempotency_key,omitempty"`
-	CorrelationID   string `json:"correlation_id,omitempty"`
-	LesserRequestID string `json:"lesser_request_id,omitempty"`
+	ConversationID  string                      `json:"conversation_id,omitempty"`
+	Model           string                      `json:"model,omitempty"`
+	Message         string                      `json:"message"`
+	CandidateAction *DeclarationCandidateAction `json:"candidate_action,omitempty"`
+	IdempotencyKey  string                      `json:"idempotency_key,omitempty"`
+	CorrelationID   string                      `json:"correlation_id,omitempty"`
+	LesserRequestID string                      `json:"lesser_request_id,omitempty"`
+}
+
+// DeclarationCandidateAction is the Host-owned structural owner decision for
+// the exact declaration review currently projected by HostedGenesisSession.
+// Body validates and relays these bindings; it never infers an action from
+// prose or recomputes candidate truth.
+type DeclarationCandidateAction struct {
+	Action            string `json:"action"`
+	Section           string `json:"section,omitempty"`
+	CandidateRevision int64  `json:"candidate_revision"`
+	CandidateHash     string `json:"candidate_hash"`
+	ReviewHash        string `json:"review_hash"`
+
+	decoded                  bool
+	sectionPresent           bool
+	actionPresent            bool
+	candidateRevisionPresent bool
+	candidateHashPresent     bool
+	reviewHashPresent        bool
+}
+
+var declarationCandidateHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// UnmarshalJSON rejects unknown, missing, null, malformed, and conditionally
+// invalid action objects before a Host request can be issued.
+func (a *DeclarationCandidateAction) UnmarshalJSON(data []byte) error {
+	if a == nil {
+		return errors.New("candidate action is nil")
+	}
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&fields); err != nil {
+		return fmt.Errorf("candidate action must be an object: %w", err)
+	}
+	if fields == nil {
+		return errors.New("candidate action must be an object")
+	}
+	allowed := map[string]bool{
+		"action": true, "section": true, "candidate_revision": true,
+		"candidate_hash": true, "review_hash": true,
+	}
+	for key := range fields {
+		if !allowed[key] {
+			return fmt.Errorf("unknown candidate action field %q", key)
+		}
+	}
+	*a = DeclarationCandidateAction{decoded: true}
+	decodeString := func(key string, dst *string, present *bool) error {
+		raw, ok := fields[key]
+		if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("candidate action %s is required", key)
+		}
+		if err := json.Unmarshal(raw, dst); err != nil {
+			return fmt.Errorf("candidate action %s must be a string", key)
+		}
+		*present = true
+		return nil
+	}
+	if err := decodeString("action", &a.Action, &a.actionPresent); err != nil {
+		return err
+	}
+	if raw, ok := fields["section"]; ok {
+		a.sectionPresent = true
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &a.Section) != nil {
+			return errors.New("candidate action section must be a string")
+		}
+	}
+	if raw, ok := fields["candidate_revision"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		revision, err := strconv.ParseInt(string(raw), 10, 64)
+		if err != nil {
+			return errors.New("candidate action candidate_revision must be a non-negative integer")
+		}
+		a.CandidateRevision = revision
+		a.candidateRevisionPresent = true
+	} else {
+		return errors.New("candidate action candidate_revision is required")
+	}
+	if err := decodeString("candidate_hash", &a.CandidateHash, &a.candidateHashPresent); err != nil {
+		return err
+	}
+	if err := decodeString("review_hash", &a.ReviewHash, &a.reviewHashPresent); err != nil {
+		return err
+	}
+	return a.Validate()
+}
+
+// Validate enforces Host PR #978's candidate-action contract without
+// normalizing any value.
+func (a DeclarationCandidateAction) Validate() error {
+	if a.decoded && (!a.actionPresent || !a.candidateRevisionPresent || !a.candidateHashPresent || !a.reviewHashPresent) {
+		return errors.New("candidate action is missing required bindings")
+	}
+	if a.Action != "affirm" && a.Action != "edit" {
+		return errors.New("candidate action must be affirm or edit")
+	}
+	if a.CandidateRevision < 0 {
+		return errors.New("candidate action candidate_revision must be non-negative")
+	}
+	if !declarationCandidateHashPattern.MatchString(a.CandidateHash) || !declarationCandidateHashPattern.MatchString(a.ReviewHash) {
+		return errors.New("candidate action hashes must be exact sha256 identifiers")
+	}
+	if a.Action == "affirm" {
+		if a.Section != "" || a.sectionPresent {
+			return errors.New("candidate action section is forbidden for affirm")
+		}
+		return nil
+	}
+	if !validDeclarationCandidateSection(a.Section) {
+		return errors.New("candidate action section is required for edit")
+	}
+	return nil
+}
+
+func validDeclarationCandidateSection(section string) bool {
+	switch section {
+	case "identity", "philosophy", "discipline", "boundaries", "soul":
+		return true
+	default:
+		return false
+	}
 }
 
 // APIError is a sanitized Host HTTP failure. Body deliberately does not
@@ -154,6 +278,11 @@ func (c *Client) AdvanceConversation(ctx context.Context, bearerToken string, re
 	if strings.TrimSpace(req.Message) == "" {
 		return nil, errors.New("host genesis conversation message is required")
 	}
+	if req.CandidateAction != nil {
+		if err := req.CandidateAction.Validate(); err != nil {
+			return nil, fmt.Errorf("host genesis candidate action is invalid: %w", err)
+		}
+	}
 	return c.do(ctx, http.MethodPost, instanceRegistrationPath+url.PathEscape(registrationID)+"/mint-conversation", bearerToken, req)
 }
 
@@ -171,16 +300,6 @@ func (c *Client) RecoverConversation(ctx context.Context, bearerToken string, re
 		return nil, err
 	}
 	return c.do(ctx, http.MethodPost, path+"/recover", bearerToken, map[string]any{})
-}
-
-func (c *Client) CompleteConversation(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error) {
-	path, err := conversationPath(registrationID, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	// Omitting declarations is intentional. Host extracts and validates its
-	// own durable produced_declarations checkpoint from HostedGenesisSession.
-	return c.do(ctx, http.MethodPost, path+"/complete", bearerToken, map[string]any{})
 }
 
 func (c *Client) FinalizePreflight(ctx context.Context, bearerToken string, registrationID string, conversationID string) (map[string]any, error) {

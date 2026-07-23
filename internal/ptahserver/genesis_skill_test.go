@@ -68,16 +68,18 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 	for _, want := range []string{
 		toolAgentGenesisSkillGet,
 		toolAgentGenesisBegin,
-		"staged five bodies identity → philosophy → discipline → boundaries → soul",
-		"Persist `conversation_id` immediately",
-		"after every call",
+		"candidate phase is",
+		"Persist conversation_id after every call",
 		"structuredContent.data.guidance.next_tool",
-		"`in_progress` and `declaration_extraction_pending` are Host-processing states",
-		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
-		"`poll_after_seconds`",
-		toolAgentGenesisComplete,
-		"never submit declarations as source of truth",
-		"`" + toolAgentGenesisFinalizePreflight + "` then",
+		"`in_progress` is wait/read-only",
+		"Never call advance to nudge",
+		"poll_after_seconds",
+		"exact, lossless",
+		"candidate_action",
+		"`affirm` forbids section",
+		"`edit` requires one exact section",
+		"`declaration_ready`",
+		toolAgentGenesisFinalizePreflight,
 		toolAgentGenesisFinalize,
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
 		"`restart_soul_bootstrap`",
@@ -88,9 +90,9 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 		"call `" + toolAgentGenesisRead + "` exactly once",
 		"`operator_action`",
 		"contact the instance operator",
-		"Host is source of truth",
-		"Never fabricate",
-		canonicalGenesisAffirmation(),
+		"sole candidate/state authority",
+		"Free-form or canonical affirmation phrases have zero authority",
+		"AppTheory MicroVM",
 	} {
 		if !strings.Contains(skillMD, want) {
 			t.Fatalf("SKILL.md missing operating directive %q", want)
@@ -119,7 +121,7 @@ func TestAgentGenesisSkillGetReturnsDeterministicHostBackedBundle(t *testing.T) 
 	meta := mustFiveBodyMetadata()
 	hostContract := provenance["host_contract"].(map[string]any)
 	checksums := hostContract["checksums"].(map[string]string)
-	if hostContract["schema_version"] != meta.SchemaVersion || checksums["schema_sha256"] != meta.SchemaSHA256 || checksums["contract_doc_sha256"] != meta.ContractDocSHA256 {
+	if hostContract["schema_version"] != meta.SchemaVersion || len(checksums) != len(meta.Artifacts) || checksums["hosted-genesis.conversation.response.schema.json"] == "" || checksums["openapi.yaml"] == "" {
 		t.Fatalf("host contract provenance = %+v", hostContract)
 	}
 
@@ -147,22 +149,23 @@ func assertVisibleGenesisSkillDirectives(t *testing.T, text string) {
 	t.Helper()
 	for _, want := range []string{
 		toolAgentGenesisBegin,
-		"staged five bodies identity → philosophy → discipline → boundaries → soul",
+		"Candidate section phase",
 		"Persist `conversation_id` immediately and after every call",
 		"Follow `structuredContent.data.guidance.next_tool`",
-		"`in_progress` and `declaration_extraction_pending` are wait-only",
+		"`in_progress` is wait/read-only",
 		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
-		toolAgentGenesisComplete,
-		"never submit declarations as source of truth",
-		"`" + toolAgentGenesisFinalizePreflight + "` then `" + toolAgentGenesisFinalize + "`",
+		"Candidate review requires inspecting the exact lossless `review_text`",
+		"structural `candidate_action`",
+		"`declaration_ready` goes directly",
+		toolAgentGenesisFinalizePreflight,
+		toolAgentGenesisFinalize,
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
 		"`restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`",
 		"`retry_same_step` means wait",
 		"call `" + toolAgentGenesisRecover + "` exactly once",
 		"`refresh_state` means call `" + toolAgentGenesisRead + "` exactly once",
 		"`operator_action` means stop automatic Genesis tool calls",
-		"Host is source of truth",
-		"never fabricate",
+		"sole candidate/state authority",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("visible skill content missing operating directive %q", want)
@@ -225,14 +228,13 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		"SKILL.md",
 		"references/genesis-guidance-map.md",
 		toolAgentGenesisBegin,
-		"staged five bodies identity → philosophy → discipline → boundaries → soul",
-		"Persist `conversation_id` immediately",
-		"after every call",
+		"candidate phase is",
+		"Persist conversation_id after every call",
 		"structuredContent.data.guidance.next_tool",
-		"`in_progress` and `declaration_extraction_pending` are Host-processing states",
-		"Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge",
-		toolAgentGenesisComplete,
-		"never submit declarations as source of truth",
+		"`in_progress` is wait/read-only",
+		"Never call advance to nudge",
+		"candidate_action",
+		"exact, lossless",
 		toolAgentGenesisFinalizePreflight,
 		toolAgentGenesisFinalize,
 		"Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`",
@@ -241,8 +243,7 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		"call `" + toolAgentGenesisRecover + "` exactly once",
 		"`refresh_state`",
 		"`operator_action`",
-		"Host is source of truth",
-		"Never fabricate",
+		"sole candidate/state authority",
 	} {
 		if !strings.Contains(resourceText, want) {
 			t.Fatalf("skill resource visible JSON missing %q", want)
@@ -292,10 +293,11 @@ func TestGenesisOperatorSkillResourceMatchesToolBundle(t *testing.T) {
 		fiveBodyResourceURI(resourceSoulSchemaV2),
 		fiveBodyResourceURI(resourceGenesisOperatorSkill),
 		promptDraftGenesisTurn,
-		promptReviewSoulDraft,
+		promptReviewGenesisCandidate,
 		fiveBodyHostHeadSHA,
-		"in_progress / declaration_extraction_pending",
+		"in_progress",
 		"wait-only; never " + toolAgentGenesisAdvance,
+		"candidate phase review",
 		"failure.recovery.action=retry_same_step",
 		"failure.recovery.action=refresh_state",
 		"failure.recovery.action=operator_action",

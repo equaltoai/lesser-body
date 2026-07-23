@@ -7,23 +7,26 @@ $ cd cdk && npm test
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-✔ secret read policy includes legacy and managed instance-key patterns (192.062658ms)
-✔ managed template supports an exact lesser-host instance key ARN (32.139848ms)
-✔ managed template requires app-scoped Lesser parameter paths (22.860941ms)
-✔ lesser table policy uses least-privilege primary table access (19.371701ms)
-✔ managed template pins MCP table logical IDs (22.230448ms)
-✔ runtime stack uses AppTheory durable stream table schema (20.027232ms)
-✔ runtime stack provisions internal MCP task storage without SSM export (16.908248ms)
-✔ remote MCP server uses actor-path wiring (18.895768ms)
-✔ runtime stack preserves named MCP table fingerprints (17.894709ms)
-✔ stream table export name stays stable across baseline reset (16.906745ms)
-✔ runtime stack provisions instance-plane lambda with owned tables (17.947648ms)
-✔ runtime stack publishes additive instance-plane SSM exports (16.507886ms)
-ℹ tests 12
+✔ secret read policy includes legacy and managed instance-key patterns (175.784556ms)
+✔ managed template supports an exact lesser-host instance key ARN (32.473781ms)
+✔ managed template supports Ptah soul-binding bearer secret ARN (22.886136ms)
+✔ managed template requires app-scoped Lesser parameter paths (23.249676ms)
+✔ lesser table policy uses least-privilege primary table access (21.105964ms)
+✔ managed template pins MCP table logical IDs (22.919909ms)
+✔ runtime stack uses AppTheory durable stream table schema (20.016264ms)
+✔ runtime stack provisions internal MCP task storage without SSM export (17.403354ms)
+✔ remote MCP server uses actor-path wiring (18.12821ms)
+✔ runtime stack preserves named MCP table fingerprints (18.853277ms)
+✔ stream table export name stays stable across baseline reset (16.768857ms)
+✔ runtime stack provisions instance-plane lambda with owned tables (19.162256ms)
+✔ instance-plane lambda receives managed Lesser/Host genesis configuration (19.019128ms)
+✔ instance-plane Lesser table read includes binding lookup without memory access (21.393803ms)
+✔ runtime stack publishes additive instance-plane SSM exports (17.176649ms)
+ℹ tests 15
 ℹ suites 0
-ℹ pass 12
+ℹ pass 15
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 467.325477
+ℹ duration_ms 520.40883
