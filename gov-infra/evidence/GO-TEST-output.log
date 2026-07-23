@@ -1,10 +1,16 @@
-$ go test ./...
+$ go test ./cmd/... ./internal/...
 ?   	github.com/equaltoai/lesser-body/cmd/lesser-body	[no test files]
 ?   	github.com/equaltoai/lesser-body/cmd/lesser-body-instance	[no test files]
+ok  	github.com/equaltoai/lesser-body/internal/agentcontent	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/agentregistry	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/auth	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/baserver	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/cmsapi	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/downloadgrant	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/hostapi	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/installpack	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/instanceapp	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/instancex402	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/lesserapi	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/mcpapp	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/mcpserver	(cached)

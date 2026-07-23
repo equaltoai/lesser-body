@@ -55,3 +55,28 @@ git merge-base --is-ancestor <report.git.head> <review-head>
 The CI workflow also reruns the verifier at PR head, so the committed artifact
 provides repo-local evidence from the live branch lineage while CI proves the
 same verifier still passes at the exact checked head.
+
+`GOV-3` is the recurring branch-profile check. In a GitHub PR it reads the
+event's base/head refs and exact SHAs, requires those facts to agree with the
+Actions environment, and refreshes the protected branch refs before deciding:
+
+- feature -> `staging` passes only when the event base is current
+  `origin/staging`, that commit is an ancestor of the exact feature head, and
+  the same-repository source uses an authorized feature/steward prefix;
+- `staging` -> `main` passes only when both event SHAs are the current remote
+  branch tips and the source is the same repository's exact `staging` branch;
+- every other, malformed, stale, or ambiguous PR context fails closed.
+
+Authorized `main`/`staging` push runs must match their current remote tips.
+Outside GitHub Actions, the checked-out commit must retain current
+`origin/staging` lineage. The four required feature-current, feature-stale,
+promotion-valid, and invalid-promotion contexts are exercised deterministically
+by:
+
+```bash
+bash gov-infra/verifiers/gov-verify-rubric-branch-profile-test.sh
+```
+
+The governance-only write scope recorded in `pack.json` describes the original
+governance materialization assignment; it does not prohibit later governed
+feature PRs from changing their explicitly assigned product files.

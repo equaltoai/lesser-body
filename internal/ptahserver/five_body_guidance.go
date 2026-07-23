@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "embed"
+	"embed"
 
 	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
 )
@@ -16,45 +16,52 @@ import (
 const (
 	fiveBodySchemaVersion   = "soul-five-body-schema.v2"
 	fiveBodyGuidanceVersion = "soul-five-body-guidance.v2"
-	fiveBodyHostPR          = 975
-	fiveBodyHostHeadSHA     = "5c40b4fc4e18d23ba44236cf28ec8e983f6e7e3b"
+	fiveBodyHostPR          = 978
+	fiveBodyHostHeadSHA     = "2339acffe646c49fb951e7a7164f55174d841770"
 
 	resourceSoulSchemaV2              = "soul-schema-v2"
 	resourceGenesisInterviewGuide     = "genesis-interview-guide"
 	resourceAgentSideGenesisPlaybook  = "agent-side-genesis-playbook"
 	resourceGenesisRubric             = "genesis-rubric"
 	promptDraftGenesisTurn            = "draft-genesis-turn"
-	promptReviewSoulDraft             = "review-soul-draft"
+	promptReviewGenesisCandidate      = "review-genesis-candidate"
 	ptahGenesisGuidanceResourcePrefix = "ptah://genesis/"
 )
 
-//go:embed testdata/host-contract/pr-975/soul-five-body-schema.md
+//go:embed testdata/host-contract/pr-978/soul-five-body-schema.md
 var hostFiveBodyContractDoc []byte
 
-//go:embed testdata/host-contract/pr-975/soul-five-body.schema.v2.json
+//go:embed testdata/host-contract/pr-978/soul-five-body.schema.v2.json
 var hostFiveBodySchemaJSON []byte
 
-//go:embed testdata/host-contract/pr-975/soul-five-body.example.v2.json
+//go:embed testdata/host-contract/pr-978/soul-five-body.example.v2.json
 var hostFiveBodyExampleJSON []byte
 
-//go:embed testdata/host-contract/pr-975/metadata.json
+//go:embed testdata/host-contract/pr-978/metadata.json
 var hostFiveBodyMetadataJSON []byte
 
+//go:embed testdata/host-contract/pr-978/*
+var hostContractMirrorFS embed.FS
+
 type fiveBodyContractMetadata struct {
-	SourceRepository  string `json:"source_repository"`
-	SourcePullRequest int    `json:"source_pull_request"`
-	SourceIssue       int    `json:"source_issue"`
-	SourceHeadSHA     string `json:"source_head_sha"`
-	SchemaVersion     string `json:"schema_version"`
-	GuidanceVersion   string `json:"guidance_version"`
-	ContractDocSHA256 string `json:"contract_doc_sha256"`
-	SchemaSHA256      string `json:"schema_sha256"`
-	ExampleSHA256     string `json:"example_sha256"`
-	Notes             string `json:"notes"`
+	SourceRepository  string                     `json:"source_repository"`
+	SourcePullRequest int                        `json:"source_pull_request"`
+	SourceIssue       int                        `json:"source_issue"`
+	SourceHeadSHA     string                     `json:"source_head_sha"`
+	SchemaVersion     string                     `json:"schema_version"`
+	GuidanceVersion   string                     `json:"guidance_version"`
+	Artifacts         []fiveBodyContractArtifact `json:"artifacts"`
+	Notes             string                     `json:"notes"`
+}
+
+type fiveBodyContractArtifact struct {
+	SourcePath string `json:"source_path"`
+	MirrorFile string `json:"mirror_file"`
+	SHA256     string `json:"sha256"`
 }
 
 // RegisterResources registers Ptah's static AppTheory MCP guidance resources.
-// The content mirrors Host PR #975 contract artifacts; Body renders guidance
+// The content mirrors Host PR #978 contract artifacts; Body renders guidance
 // from the pinned Host contract instead of defining a competing schema.
 func RegisterResources(srv *mcpruntime.Server) error {
 	if srv == nil || srv.Resources() == nil {
@@ -100,7 +107,7 @@ func RegisterPrompts(srv *mcpruntime.Server) error {
 				Title:       "Draft genesis turn",
 				Description: "Draft the next owner/operator turn for Host-backed five-body genesis without inventing Body-local state.",
 				Arguments: []mcpruntime.PromptArgument{
-					{Name: "phase", Description: "Current five-body interview phase: identity, philosophy, discipline, boundaries, soul, review, or affirmation."},
+					{Name: "phase", Description: "Current Host candidate phase/section: identity, philosophy, discipline, boundaries, soul, or review."},
 					{Name: "current_status", Description: "Host conversation status from agent_genesis_read/advance."},
 					{Name: "owner_intent", Description: "What the account-holder wants this turn to accomplish."},
 					{Name: "known_facts", Description: "Facts already established in the Host conversation."},
@@ -110,15 +117,18 @@ func RegisterPrompts(srv *mcpruntime.Server) error {
 		},
 		{
 			def: mcpruntime.PromptDef{
-				Name:        promptReviewSoulDraft,
-				Title:       "Review soul draft",
-				Description: "Review a proposed five-body soul declaration against the Host-owned schema, refusal floor, cadence, and rubric.",
+				Name:        promptReviewGenesisCandidate,
+				Title:       "Review Host genesis candidate",
+				Description: "Inspect Host's exact owner review and prepare a structural affirm or edit action without treating prose as authority.",
 				Arguments: []mcpruntime.PromptArgument{
-					{Name: "draft", Description: "Draft declaration or summary to review.", Required: true},
-					{Name: "focus", Description: "Optional review focus such as refusal_floor, cadence, capabilities, transparency, or schema."},
+					{Name: "review_text", Description: "Exact lossless declaration_candidate.review.review_text returned by Host.", Required: true},
+					{Name: "candidate_revision", Description: "Exact Host candidate revision binding.", Required: true},
+					{Name: "candidate_hash", Description: "Exact Host candidate hash binding.", Required: true},
+					{Name: "review_hash", Description: "Exact Host owner-review hash binding.", Required: true},
+					{Name: "owner_intent", Description: "Either affirm, or edit with the exact section and requested revision."},
 				},
 			},
-			handler: promptReviewFiveBodySoulDraft,
+			handler: promptReviewGenesisCandidateAction,
 		},
 	} {
 		if err := r.RegisterPrompt(prompt.def, prompt.handler); err != nil {
@@ -156,8 +166,7 @@ func fiveBodySchemaResource(context.Context) ([]mcpruntime.ResourceContent, erro
 		"contract":          fiveBodyContractDescriptor(),
 		"schema":            schema,
 		"example":           example,
-		"host_contract_doc": string(hostFiveBodyContractDoc),
-		"consumer_boundary": "Body mirrors and renders Host's contract; Host remains schema/guidance owner and produced-declaration authority.",
+		"consumer_boundary": "Body renders the Host-owned five-body schema/example as read-only reference while Host remains typed-candidate and persistence authority. Current action/response shapes are pinned separately in contract.checksums.",
 	})
 }
 
@@ -198,9 +207,15 @@ func fiveBodyInterviewGuideResource(context.Context) ([]mcpruntime.ResourceConte
 					"must_not_skip": "Do not finalize until the refusal floor is concrete and complete.",
 				},
 			},
-			"satellites":            []string{"capabilities: concrete self-declared capabilities only", "transparency: model/provider uncertainty, operational notes, and self-declared notice"},
-			"canonical_affirmation": canonicalGenesisAffirmation(),
-			"host_owned":            "Host performs the durable extraction/validation and owns the produced declarations; Body only guides MCP callers.",
+			"satellites": []string{"capabilities: concrete self-declared capabilities only", "transparency: model/provider uncertainty, operational notes, and self-declared notice"},
+			"host_owned": "Host owns HostedGenesisSession, typed candidate construction, candidate persistence, and the five provider declaration tools inside its AppTheory MicroVM; Body only relays the bounded public projection.",
+			"review_protocol": map[string]any{
+				"inspect":   "Read the exact declaration_candidate.review.review_text without substituting the bounded transcript message.",
+				"guidance":  "Select one of structuredContent.data.guidance.candidate_actions: one affirm plus five exact per-section edits; pass only its nested candidate_action unchanged.",
+				"affirm":    "Call agent_genesis_advance with action=affirm, no section, and the exact candidate_revision/candidate_hash/review_hash bindings.",
+				"edit":      "Call agent_genesis_advance with action=edit, one exact section from the five-body enum, the exact bindings, and an owner revision message.",
+				"authority": "Only structural candidate_action has authority; free-form affirmation phrases have zero authority.",
+			},
 		},
 	})
 }
@@ -217,28 +232,29 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 			},
 			"authority": []string{
 				"Use explicit instance owner/operator OAuth only; ordinary read/write tokens and x402 evidence are not owner authority.",
-				"Treat Host HostedGenesisSession as the state authority. Body must not create a local genesis state machine or fabricate Lesser directory entries.",
+				"Treat Host HostedGenesisSession as the sole state authority. Body must not create a declaration builder, extractor, candidate store, local state machine, or fabricated Lesser directory entry.",
+				"The five provider section tools execute only inside Host's AppTheory MicroVM and are never public Body/Ptah tools.",
 			},
 			"wait_only_processing_states": map[string]any{
-				"states":              []any{"in_progress", "declaration_extraction_pending"},
+				"states":              []any{"in_progress"},
 				"next_tool":           toolAgentGenesisRead,
 				"forbidden_next_tool": toolAgentGenesisAdvance,
 				"wait":                true,
 				"poll_after_seconds":  "Use the Host-provided poll_after_seconds/expected_wait_seconds value when present.",
-				"instruction":         "Host is processing. Do not call " + toolAgentGenesisAdvance + " again and do not nudge; wait poll_after_seconds when present, then call " + toolAgentGenesisRead + ". Only advance after Host reports assistant_turn_ready, awaiting_owner, or needs_owner_turn.",
+				"instruction":         "Host is processing. Do not call " + toolAgentGenesisAdvance + " again and do not nudge; wait poll_after_seconds when present, then call " + toolAgentGenesisRead + ". Only advance after Host reports assistant_turn_ready.",
 			},
-			"tool_sequence": []map[string]string{
+			"tool_sequence": []map[string]any{
 				{"step": "skill", "tool": toolAgentGenesisSkillGet, "instruction": "Fetch and read the read-only genesis operator skill bundle before beginning."},
 				{"step": "begin", "tool": toolAgentGenesisBegin, "instruction": "Start the Host registration lane for the intended managed domain/local_id."},
 				{"step": "list", "tool": toolAgentGenesisList, "instruction": "When resuming or ids are unclear, list Host-backed summaries and follow recommended_start exactly."},
-				{"step": "interview", "tool": toolAgentGenesisAdvance, "instruction": "Advance identity, philosophy, discipline, boundaries, and soul stages only when Host is waiting for owner/operator input; persist Host conversation_id."},
+				{"step": "section", "tool": toolAgentGenesisAdvance, "instruction": "When assistant_turn_ready and candidate phase is section, submit the next normal owner message for current_section; Host invokes its private provider section tool."},
 				{"step": "read", "tool": toolAgentGenesisRead, "instruction": "Poll Host status and follow structuredContent.data.guidance.next_tool; if guidance.wait=true, wait poll_after_seconds when present and never nudge with agent_genesis_advance."},
-				{"step": "complete", "tool": toolAgentGenesisComplete, "instruction": "Ask Host to extract and validate produced declarations; callers do not submit declarations."},
+				{"step": "review", "tool": toolAgentGenesisAdvance, "instruction": "Inspect exact review_text, select one of guidance.candidate_actions, then pass only its nested structural candidate_action unchanged: affirm has no section; the five edits each have one exact section plus owner revision message; all carry exact returned bindings."},
 				{"step": "preflight", "tool": toolAgentGenesisFinalizePreflight, "instruction": "Check Host readiness before finalization."},
 				{"step": "finalize", "tool": toolAgentGenesisFinalize, "instruction": "Finalize through Host; Body writes a Host-derived Ptah registry row only after Host publication."},
 				{"step": "verify", "tool": toolAgentGet, "instruction": "Verify account-scoped Body/Ptah registry visibility; use agent_list for the merged registry/live view."},
 			},
-			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover; operator_action stops automatic calls and requires operator contact.",
+			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover (its exact terminal untyped/stale hard-cut projection may omit declaration_candidate); operator_action stops automatic calls and requires operator contact.",
 			"recovery_actions": map[string]any{
 				"retry_same_step": map[string]any{
 					"next_tool":   toolAgentGenesisRecover,
@@ -264,9 +280,15 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 			"listing": map[string]string{
 				"tool":        toolAgentGenesisList,
 				"status":      "Host-backed summary-only recovery index.",
-				"instruction": "Start with list when registration_id/conversation_id are unclear, then follow recommended_start.recommended_next_tool and recommended_arguments. Failed lanes must be read first for typed failure.recovery; list output does not expose transcripts or produced declarations.",
+				"instruction": "Start with list when registration_id/conversation_id are unclear, then follow recommended_start.recommended_next_tool and recommended_arguments. Failed lanes must be read first for typed failure.recovery; review bindings and exact review_text are available only from read/advance, not the summary list.",
 			},
-			"model_guidance": "Host PR #975 records mintingModel in declaration evidence but does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models and watch Host contract follow-up.",
+			"candidate_protocol": map[string]any{
+				"section":           "Normal owner message through agent_genesis_advance; provider section tools stay inside Host's AppTheory MicroVM.",
+				"review":            "Inspect exact declaration_candidate.review.review_text and use exact candidate_revision/candidate_hash/review_hash with structural candidate_action. Free-form phrases have no authority.",
+				"declaration_ready": toolAgentGenesisFinalizePreflight,
+				"published":         []string{toolAgentGet, toolAgentList},
+			},
+			"model_guidance": "Host PR #978 does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models.",
 		},
 	})
 }
@@ -281,7 +303,8 @@ func fiveBodyRubricResource(context.Context) ([]mcpruntime.ResourceContent, erro
 				"capabilities and transparency are satellites, not replacements for any body.",
 				"soul.refusals has at least three concrete bypass/invariant/closestSafePath rows.",
 				"The named cadence is defined once in identity and carried as a commitment/reference elsewhere.",
-				"The canonical affirmation is asked exactly before final declaration acceptance.",
+				"The owner inspects Host's exact lossless review and submits a structural affirm or edit action bound to the exact revision and hashes.",
+				"Free-form or canonical affirmation phrases are treated as having zero authority.",
 				"Independent review finds, refutes, and reports unresolved weaknesses before declaration_ready.",
 			},
 			"host_validation_codes": []string{
@@ -300,7 +323,7 @@ func fiveBodyRubricResource(context.Context) ([]mcpruntime.ResourceContent, erro
 				"required_fields": []string{"bypass", "invariant", "closestSafePath"},
 				"reject_generic":  []string{"unsafe requests", "policy violations", "bad things", "be safe", "n/a"},
 			},
-			"fail_closed": "If Host PR #975 changes schema/guidance versions or checksums, Body fixtures/tests fail and must be synchronized before deploy proof.",
+			"fail_closed": "If Host PR #978 exact accepted head changes any mirrored candidate request/response artifact or checksum, Body fixtures/tests fail and must be synchronized before deploy proof.",
 		},
 	})
 }
@@ -316,11 +339,11 @@ func promptDraftFiveBodyGenesisTurn(_ context.Context, args json.RawMessage) (*m
 		"You are helping an account-holder draft the next owner/operator message for Body/Ptah Host-backed genesis.",
 		"Use the AppTheory resources ptah://genesis/genesis-interview-guide, ptah://genesis/agent-side-genesis-playbook, and ptah://genesis/genesis-rubric as the guidance source.",
 		"Host owns the durable HostedGenesisSession state and the " + fiveBodySchemaVersion + " / " + fiveBodyGuidanceVersion + " contract; do not invent Body-local state, declarations, model allowlists, or Lesser directory entries.",
-		"If current_status is in_progress or declaration_extraction_pending, do not draft an owner advance/nudge. Tell the caller to wait poll_after_seconds when present and then call " + toolAgentGenesisRead + ".",
+		"If current_status is in_progress, do not draft an owner advance/nudge. Tell the caller to wait poll_after_seconds when present and then call " + toolAgentGenesisRead + ".",
 		"Current phase: " + phase + ". Current Host status: " + status + ". Owner intent: " + intent + ". Known facts: " + facts,
 		"Draft one concise turn that advances the current phase and asks only for missing information. The staged bodies are identity, philosophy, discipline, boundaries, and soul; capabilities/transparency are satellites.",
 		"Preserve the refusal floor: by the soul phase, require concrete bypass, invariant, and closest safe path rows. Define the named cadence once, then refer to it rather than repeating it in every body.",
-		"Before final acceptance, use the canonical affirmation exactly: " + canonicalGenesisAffirmation(),
+		"If phase is review, do not draft affirmation prose. Tell the caller to inspect the exact Host review_text and use review-genesis-candidate; only structural candidate_action bound to the exact revision and hashes has authority.",
 	}, "\n\n")
 
 	return &mcpruntime.PromptResult{
@@ -332,26 +355,28 @@ func promptDraftFiveBodyGenesisTurn(_ context.Context, args json.RawMessage) (*m
 	}, nil
 }
 
-func promptReviewFiveBodySoulDraft(_ context.Context, args json.RawMessage) (*mcpruntime.PromptResult, error) {
+func promptReviewGenesisCandidateAction(_ context.Context, args json.RawMessage) (*mcpruntime.PromptResult, error) {
 	values := promptArgs(args)
-	draft := values["draft"]
-	focus := firstNonEmpty(values["focus"], "full five-body rubric")
-	if strings.TrimSpace(draft) == "" {
-		draft = "<no draft supplied; report that review cannot pass without a draft>"
+	reviewText := values["review_text"]
+	if strings.TrimSpace(reviewText) == "" {
+		reviewText = "<missing exact Host review_text; stop without proposing an action>"
 	}
+	revision := firstNonEmpty(values["candidate_revision"], "<missing>")
+	candidateHash := firstNonEmpty(values["candidate_hash"], "<missing>")
+	reviewHash := firstNonEmpty(values["review_hash"], "<missing>")
+	ownerIntent := firstNonEmpty(values["owner_intent"], "inspect before choosing affirm or edit")
 
 	text := strings.Join([]string{
-		"Review the supplied soul declaration draft against Host's five-body contract " + fiveBodySchemaVersion + " / " + fiveBodyGuidanceVersion + ".",
-		"Focus: " + focus + ". Do not rewrite the Host schema and do not treat this review as Host validation proof.",
-		"Check for five first-class bodies: identity, philosophy, discipline, boundaries, soul. Check that capabilities and transparency are satellites with self-declared capability claims only.",
-		"Check the refusal floor: at least three concrete refusals, each with bypass, invariant, and closestSafePath. Reject generic placeholders.",
-		"Check the cadence rule: named cadence defined once, then referenced. Check the canonical affirmation is present exactly when final acceptance is requested: " + canonicalGenesisAffirmation(),
-		"Report findings as: finding, refutation if resolved, and report. If unresolved, name the exact missing body or Host validation code when known.",
-		"Draft under review:\n" + draft,
+		"Inspect the exact Host-owned declaration candidate review. Do not reconstruct candidate JSON, infer truth from transcript text, or treat prose as an affirmation action.",
+		"Exact bindings: candidate_revision=" + revision + "; candidate_hash=" + candidateHash + "; review_hash=" + reviewHash + ". Owner intent: " + ownerIntent + ".",
+		"Check identity, philosophy, discipline, boundaries, soul, the refusal floor, cadence references, capabilities, and transparency in the exact review below.",
+		"If accepted, propose agent_genesis_advance candidate_action with action=affirm, the exact three bindings, and no section. If revision is needed, propose action=edit with one exact section (identity, philosophy, discipline, boundaries, or soul), the exact bindings, and require an owner revision message.",
+		"Free-form or canonical affirmation phrases have zero authority. Do not expose or invoke Host's private provider section tools.",
+		"Exact Host review_text:\n" + reviewText,
 	}, "\n\n")
 
 	return &mcpruntime.PromptResult{
-		Description: "Review a five-body soul draft against Host-owned guidance.",
+		Description: "Inspect Host's exact declaration-candidate review and prepare a structural owner action.",
 		Messages: []mcpruntime.PromptMessage{{
 			Role:    "user",
 			Content: mcpruntime.ContentBlock{Type: "text", Text: text},
@@ -373,6 +398,10 @@ func fiveBodyResourceJSON(name string, payload any) ([]mcpruntime.ResourceConten
 
 func fiveBodyContractDescriptor() map[string]any {
 	meta := mustFiveBodyMetadata()
+	checksums := make(map[string]string, len(meta.Artifacts))
+	for _, artifact := range meta.Artifacts {
+		checksums[artifact.MirrorFile] = artifact.SHA256
+	}
 	return map[string]any{
 		"schema_version":      meta.SchemaVersion,
 		"guidance_version":    meta.GuidanceVersion,
@@ -380,12 +409,8 @@ func fiveBodyContractDescriptor() map[string]any {
 		"source_pull_request": meta.SourcePullRequest,
 		"source_issue":        meta.SourceIssue,
 		"source_head_sha":     meta.SourceHeadSHA,
-		"checksums": map[string]string{
-			"contract_doc_sha256": meta.ContractDocSHA256,
-			"schema_sha256":       meta.SchemaSHA256,
-			"example_sha256":      meta.ExampleSHA256,
-		},
-		"mirror_policy": "checked Body fixture; refresh only from Host-owned artifacts, never by editing a Body-local schema",
+		"checksums":           checksums,
+		"mirror_policy":       "checked Body fixture; refresh only from Host-owned artifacts, never by editing a Body-local schema",
 	}
 }
 
@@ -395,10 +420,6 @@ func mustFiveBodyMetadata() fiveBodyContractMetadata {
 		panic("invalid embedded Host five-body metadata: " + err.Error())
 	}
 	return meta
-}
-
-func canonicalGenesisAffirmation() string {
-	return "Do you affirm this declaration as the foundation of your minted soul? If there is anything here you would correct, qualify, or strike before it is inscribed, name it now."
 }
 
 func promptArgs(args json.RawMessage) map[string]string {

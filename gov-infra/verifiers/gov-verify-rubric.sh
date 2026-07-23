@@ -171,46 +171,199 @@ PY
   fi
 }
 
-run_no_runtime_diff_check() {
+run_branch_profile_check() {
   local id="GOV-3"
   local category="Governance"
   local evidence_path="${EVIDENCE_DIR}/${id}-output.log"
 
-  echo "=== ${id} ${category}: branch diff constrained to governance files ==="
+  echo "=== ${id} ${category}: authorized feature or promotion lineage ==="
   if python3 - >"${evidence_path}" 2>&1 <<'PY'
+import json
+import os
+import re
 import subprocess
-allowed = ('gov-infra/', '.github/workflows/ci.yml')
-def git_ok(*args):
-    return subprocess.run(['git', *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-if git_ok('rev-parse', '--verify', 'origin/staging'):
-    base = subprocess.check_output(['git', 'merge-base', 'HEAD', 'origin/staging'], text=True).strip()
-    changed = subprocess.check_output(['git', 'diff', '--name-only', f'{base}..HEAD'], text=True).splitlines()
-elif git_ok('rev-parse', '--verify', 'HEAD^'):
-    base = subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip()
-    changed = subprocess.check_output(['git', 'diff', '--name-only', f'{base}..HEAD'], text=True).splitlines()
+from pathlib import Path
+
+SHA_PATTERN = re.compile(r'^[0-9a-f]{40}$')
+GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS') == 'true'
+REPOSITORY = 'equaltoai/lesser-body'
+FEATURE_PREFIXES = (
+    'aron/',
+    'chore/',
+    'codex/',
+    'feat/',
+    'fix/',
+    'milestone/',
+    'theorymcp/equaltoai/body/',
+)
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def git(*args):
+    return subprocess.run(
+        ['git', *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def git_output(*args):
+    result = git(*args)
+    if result.returncode != 0:
+        fail('required git fact is unavailable: ' + ' '.join(args))
+    return result.stdout.strip()
+
+
+def refresh_branch(branch):
+    if branch not in {'main', 'staging'}:
+        fail('internal error: attempted to refresh an unauthorized branch')
+    remote_ref = f'origin/{branch}'
+    if GITHUB_ACTIONS:
+        result = git(
+            'fetch', '--quiet', '--no-tags', '--force', 'origin',
+            f'+refs/heads/{branch}:refs/remotes/origin/{branch}',
+        )
+        if result.returncode != 0:
+            fail(f'could not refresh current {remote_ref}')
+    return git_output('rev-parse', '--verify', remote_ref)
+
+
+def require_commit(sha):
+    if not SHA_PATTERN.fullmatch(sha):
+        fail('malformed GitHub event commit SHA')
+    if git('cat-file', '-e', f'{sha}^{{commit}}').returncode == 0:
+        return
+    if GITHUB_ACTIONS:
+        result = git('fetch', '--quiet', '--no-tags', 'origin', sha)
+        if result.returncode == 0 and git('cat-file', '-e', f'{sha}^{{commit}}').returncode == 0:
+            return
+    fail('GitHub event commit is unavailable for lineage verification')
+
+
+def require_ancestor(ancestor, descendant, failure_message):
+    require_commit(ancestor)
+    require_commit(descendant)
+    if git('merge-base', '--is-ancestor', ancestor, descendant).returncode != 0:
+        fail(failure_message)
+
+
+def authorized_feature_ref(ref):
+    return any(ref.startswith(prefix) and len(ref) > len(prefix) for prefix in FEATURE_PREFIXES)
+
+
+def event_pull_request():
+    if not GITHUB_ACTIONS:
+        fail('pull_request context requires GITHUB_ACTIONS=true')
+    event_path = os.environ.get('GITHUB_EVENT_PATH', '')
+    if not event_path:
+        fail('pull_request context is missing GITHUB_EVENT_PATH')
+    try:
+        event = json.loads(Path(event_path).read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f'invalid GitHub event payload: {type(exc).__name__}')
+    pull_request = event.get('pull_request')
+    if not isinstance(pull_request, dict):
+        fail('GitHub event payload is missing pull_request')
+    try:
+        base = pull_request['base']
+        head = pull_request['head']
+        base_ref = base['ref']
+        base_sha = base['sha']
+        base_repository = base['repo']['full_name']
+        head_ref = head['ref']
+        head_sha = head['sha']
+        head_repository = head['repo']['full_name']
+    except (KeyError, TypeError):
+        fail('GitHub pull_request payload is missing branch facts')
+    facts = (base_ref, base_sha, base_repository, head_ref, head_sha, head_repository)
+    if not all(isinstance(value, str) and value for value in facts):
+        fail('GitHub pull_request branch facts are malformed')
+    if base_ref != os.environ.get('GITHUB_BASE_REF') or head_ref != os.environ.get('GITHUB_HEAD_REF'):
+        fail('ambiguous GitHub pull_request branch facts')
+    if not SHA_PATTERN.fullmatch(base_sha) or not SHA_PATTERN.fullmatch(head_sha):
+        fail('malformed GitHub pull_request commit SHA')
+    if base_repository != REPOSITORY or head_repository != REPOSITORY:
+        fail('unauthorized GitHub pull_request repository context')
+    return base_ref, base_sha, head_ref, head_sha
+
+
+event_name = os.environ.get('GITHUB_EVENT_NAME', '')
+base_env = os.environ.get('GITHUB_BASE_REF', '')
+head_env = os.environ.get('GITHUB_HEAD_REF', '')
+
+if event_name == 'pull_request':
+    base_ref, base_sha, head_ref, head_sha = event_pull_request()
+    current_staging = refresh_branch('staging')
+    print('context=pull_request')
+    print('base_ref=' + base_ref)
+    print('head_ref=' + head_ref)
+    print('event_base_sha=' + base_sha)
+    print('event_head_sha=' + head_sha)
+    print('origin/staging=' + current_staging)
+
+    if base_ref == 'staging':
+        if not authorized_feature_ref(head_ref):
+            fail('unauthorized feature source for staging target')
+        if base_sha != current_staging:
+            fail('staging-target event base is not current origin/staging')
+        require_ancestor(
+            current_staging,
+            head_sha,
+            'feature head is not based on current origin/staging',
+        )
+        print('feature -> staging lineage PASS')
+    elif base_ref == 'main':
+        if head_ref != 'staging':
+            fail('unauthorized promotion source: main accepts only staging')
+        current_main = refresh_branch('main')
+        print('origin/main=' + current_main)
+        if base_sha != current_main:
+            fail('promotion event base is not current origin/main')
+        if head_sha != current_staging:
+            fail('promotion head is not current origin/staging')
+        print('staging -> main promotion PASS')
+    else:
+        fail('unauthorized pull_request base: expected staging or main')
+elif base_env or head_env:
+    fail('ambiguous branch context: PR refs are present outside pull_request')
+elif event_name:
+    if event_name != 'push' or not GITHUB_ACTIONS:
+        fail('unauthorized GitHub event context for GOV-3')
+    github_ref = os.environ.get('GITHUB_REF', '')
+    github_sha = os.environ.get('GITHUB_SHA', '')
+    if github_ref not in {'refs/heads/main', 'refs/heads/staging'}:
+        fail('unauthorized push ref for GOV-3')
+    if not SHA_PATTERN.fullmatch(github_sha):
+        fail('malformed push SHA for GOV-3')
+    branch = github_ref.removeprefix('refs/heads/')
+    current = refresh_branch(branch)
+    print('context=push')
+    print('branch=' + branch)
+    print('GITHUB_SHA=' + github_sha)
+    print(f'origin/{branch}=' + current)
+    if github_sha != current:
+        fail(f'push SHA is not current origin/{branch}')
+    require_commit(github_sha)
+    print(f'current {branch} push PASS')
 else:
-    base = 'unavailable'
-    changed = []
-# Include unstaged/staged paths too when running before commit.
-status = subprocess.check_output(['git', 'status', '--porcelain'], text=True).splitlines()
-for line in status:
-    path = line[3:] if len(line) > 3 else ''
-    if path and path not in changed:
-        changed.append(path)
-print('base=' + base)
-if changed:
-    print('changed paths:')
-    for path in changed:
-        print(' - ' + path)
-else:
-    print('no changed paths relative to origin/staging')
-violations = [p for p in changed if not p.startswith(allowed[0]) and p != allowed[1]]
-if violations:
-    raise SystemExit('non-governance paths changed: ' + ', '.join(violations))
-print('governance-only scope PASS')
+    current_staging = refresh_branch('staging')
+    head = git_output('rev-parse', 'HEAD')
+    print('context=local')
+    print('HEAD=' + head)
+    print('origin/staging=' + current_staging)
+    require_ancestor(
+        current_staging,
+        head,
+        'feature head is not based on current origin/staging',
+    )
+    print('local current-staging lineage PASS')
 PY
   then
-    append_result "${id}" "${category}" "PASS" "Diff is constrained to governance materialization scope" "${evidence_path#${REPO_ROOT}/}"
+    append_result "${id}" "${category}" "PASS" "Authorized branch context has current lineage" "${evidence_path#${REPO_ROOT}/}"
     echo "${id}: PASS"
   else
     local rc=$?
@@ -218,6 +371,20 @@ PY
     echo "${id}: FAIL (exit ${rc})"
   fi
 }
+
+if [[ $# -gt 0 ]]; then
+  if [[ $# -ne 1 || "$1" != "--branch-profile-only" ]]; then
+    echo "usage: $0 [--branch-profile-only]" >&2
+    exit 2
+  fi
+  run_branch_profile_check
+  cat "${EVIDENCE_DIR}/GOV-3-output.log"
+  rm -f "${RESULTS_FILE}"
+  if [[ ${FAIL_COUNT} -eq 0 && ${BLOCKED_COUNT} -eq 0 ]]; then
+    exit 0
+  fi
+  exit 1
+fi
 
 run_report_shape_self_check() {
   local id="GOV-4"
@@ -235,7 +402,8 @@ LOG
 run_profile_check
 run_ci_hook_check
 run_blocking_file_check "GOV-README" "Governance" "gov-infra/README.md"
-run_no_runtime_diff_check
+run_branch_profile_check
+run_check "GOV-3-REGRESSION" "Governance" "bash gov-infra/verifiers/gov-verify-rubric-branch-profile-test.sh"
 run_report_shape_self_check
 
 run_check "GO-BUILD" "Completeness" "go build ${GO_PACKAGE_PATTERNS}"

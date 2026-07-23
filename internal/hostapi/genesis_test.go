@@ -2,6 +2,7 @@ package hostapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -73,8 +74,14 @@ func TestGenesisClientUsesInstanceTrustHostRoutesAndKey(t *testing.T) {
 		t.Fatalf("BeginRegistration: %v", err)
 	}
 	if _, err := client.AdvanceConversation(ctx, hostKey, "reg-123", MintConversationRequest{
+		ConversationID: "conv-456",
 		Model:          "model:test",
-		Message:        "begin genesis",
+		Message:        "revise boundaries",
+		CandidateAction: &DeclarationCandidateAction{
+			Action: "edit", Section: "boundaries", CandidateRevision: 17,
+			CandidateHash: "sha256:" + strings.Repeat("a", 64),
+			ReviewHash:    "sha256:" + strings.Repeat("b", 64),
+		},
 		IdempotencyKey: "idem-1",
 	}); err != nil {
 		t.Fatalf("AdvanceConversation: %v", err)
@@ -84,9 +91,6 @@ func TestGenesisClientUsesInstanceTrustHostRoutesAndKey(t *testing.T) {
 	}
 	if _, err := client.RecoverConversation(ctx, hostKey, "reg-123", "conv-456"); err != nil {
 		t.Fatalf("RecoverConversation: %v", err)
-	}
-	if _, err := client.CompleteConversation(ctx, hostKey, "reg-123", "conv-456"); err != nil {
-		t.Fatalf("CompleteConversation: %v", err)
 	}
 	if _, err := client.FinalizePreflight(ctx, hostKey, "reg-123", "conv-456"); err != nil {
 		t.Fatalf("FinalizePreflight: %v", err)
@@ -103,7 +107,6 @@ func TestGenesisClientUsesInstanceTrustHostRoutesAndKey(t *testing.T) {
 		{http.MethodPost, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation"},
 		{http.MethodGet, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation/conv-456"},
 		{http.MethodPost, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation/conv-456/recover"},
-		{http.MethodPost, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation/conv-456/complete"},
 		{http.MethodPost, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation/conv-456/finalize/preflight"},
 		{http.MethodPost, "/api/v1/soul/instance/agents/register/reg-123/mint-conversation/conv-456/finalize"},
 	}
@@ -132,13 +135,56 @@ func TestGenesisClientUsesInstanceTrustHostRoutesAndKey(t *testing.T) {
 	}
 
 	advanceBody, ok := doer.calls[1].body.(MintConversationRequest)
-	if !ok || advanceBody.Message != "begin genesis" || advanceBody.ConversationID != "" {
+	if !ok || advanceBody.Message != "revise boundaries" || advanceBody.ConversationID != "conv-456" || advanceBody.CandidateAction == nil {
 		t.Fatalf("advance body = %#v", doer.calls[1].body)
+	}
+	if got := *advanceBody.CandidateAction; got.Action != "edit" || got.Section != "boundaries" || got.CandidateRevision != 17 || got.CandidateHash != "sha256:"+strings.Repeat("a", 64) || got.ReviewHash != "sha256:"+strings.Repeat("b", 64) {
+		t.Fatalf("candidate action changed in Host request: %#v", got)
+	}
+	capturedCandidateJSON, err := json.Marshal(advanceBody.CandidateAction)
+	if err != nil {
+		t.Fatalf("marshal captured candidate action: %v", err)
+	}
+	wantCandidateJSON := `{"action":"edit","section":"boundaries","candidate_revision":17,"candidate_hash":"sha256:` + strings.Repeat("a", 64) + `","review_hash":"sha256:` + strings.Repeat("b", 64) + `"}`
+	if string(capturedCandidateJSON) != wantCandidateJSON {
+		t.Fatalf("captured Host candidate_action bytes = %s, want %s", capturedCandidateJSON, wantCandidateJSON)
 	}
 	for _, call := range doer.calls[3:] {
 		if body, ok := call.body.(map[string]any); !ok || len(body) != 0 {
 			t.Errorf("state transition body = %#v, want empty instance-trust body", call.body)
 		}
+	}
+}
+
+func TestDeclarationCandidateActionStrictJSONContract(t *testing.T) {
+	validHash := "sha256:" + strings.Repeat("a", 64)
+	reviewHash := "sha256:" + strings.Repeat("b", 64)
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{name: "affirm", raw: `{"action":"affirm","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`},
+		{name: "edit", raw: `{"action":"edit","section":"soul","candidate_revision":12,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`},
+		{name: "affirm forbids section", raw: `{"action":"affirm","section":"identity","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "affirm forbids empty section presence", raw: `{"action":"affirm","section":"","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "edit requires section", raw: `{"action":"edit","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "missing revision", raw: `{"action":"affirm","candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "negative revision", raw: `{"action":"affirm","candidate_revision":-1,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "fractional revision", raw: `{"action":"affirm","candidate_revision":1.5,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "malformed candidate hash", raw: `{"action":"affirm","candidate_revision":0,"candidate_hash":"sha256:ABC","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "missing review hash", raw: `{"action":"affirm","candidate_revision":0,"candidate_hash":"` + validHash + `"}`, wantErr: true},
+		{name: "unknown action", raw: `{"action":"approve","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `"}`, wantErr: true},
+		{name: "unknown field", raw: `{"action":"affirm","candidate_revision":0,"candidate_hash":"` + validHash + `","review_hash":"` + reviewHash + `","legacy":true}`, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var action DeclarationCandidateAction
+			err := json.Unmarshal([]byte(test.raw), &action)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Unmarshal error = %v, wantErr=%v", err, test.wantErr)
+			}
+		})
 	}
 }
 

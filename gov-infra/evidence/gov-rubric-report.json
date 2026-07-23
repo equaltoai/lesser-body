@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-15T15:55:16.256385Z",
+  "generated_at": "2026-07-23T02:23:22.975773Z",
   "git": {
-    "head": "5764b2904591ca82b909f3859c7159277c87a4f8",
-    "head_tree": "ad6d3b0e36025b9e2caf22e62d0dec8a05181691",
-    "merge_base_origin_staging": "0be6ed9142cd8afe7da7a2e1d67f133f08c6ea29",
-    "ref": "project48-body-gov-rubric-materialization",
-    "working_tree_after_run": "3 changed paths after verifier run"
+    "head": "88f49941adceb8c6f7faad1acfdec719149e4321",
+    "head_tree": "b71fb2b807d26962f1897235b1222fe212d8a637",
+    "merge_base_origin_staging": "88f49941adceb8c6f7faad1acfdec719149e4321",
+    "ref": "theorymcp/equaltoai/body/issue-452-gov3-promotion-context",
+    "working_tree_after_run": "8 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
@@ -59,7 +59,14 @@
       "category": "Governance",
       "evidence_path": "gov-infra/evidence/GOV-3-output.log",
       "id": "GOV-3",
-      "message": "Diff is constrained to governance materialization scope",
+      "message": "Authorized branch context has current lineage",
+      "status": "PASS"
+    },
+    {
+      "category": "Governance",
+      "evidence_path": "gov-infra/evidence/GOV-3-REGRESSION-output.log",
+      "id": "GOV-3-REGRESSION",
+      "message": "Command succeeded",
       "status": "PASS"
     },
     {
@@ -167,9 +174,9 @@
   "summary": {
     "blocked": 0,
     "fail": 0,
-    "pass": 18,
+    "pass": 19,
     "status": "PASS",
-    "total": 18
+    "total": 19
   },
   "verifier": {
     "command": "bash gov-infra/verifiers/gov-verify-rubric.sh",
