@@ -16,8 +16,8 @@ import (
 const (
 	fiveBodySchemaVersion   = "soul-five-body-schema.v2"
 	fiveBodyGuidanceVersion = "soul-five-body-guidance.v2"
-	fiveBodyHostPR          = 978
-	fiveBodyHostHeadSHA     = "2339acffe646c49fb951e7a7164f55174d841770"
+	fiveBodyHostPR          = 980
+	fiveBodyHostHeadSHA     = "5f873e184ba70e662ed2c945a71357385ac196bc"
 
 	resourceSoulSchemaV2              = "soul-schema-v2"
 	resourceGenesisInterviewGuide     = "genesis-interview-guide"
@@ -61,7 +61,7 @@ type fiveBodyContractArtifact struct {
 }
 
 // RegisterResources registers Ptah's static AppTheory MCP guidance resources.
-// The content mirrors Host PR #978 contract artifacts; Body renders guidance
+// The content mirrors Host PR #980 contract artifacts; Body renders guidance
 // from the pinned Host contract instead of defining a competing schema.
 func RegisterResources(srv *mcpruntime.Server) error {
 	if srv == nil || srv.Resources() == nil {
@@ -288,7 +288,7 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 				"declaration_ready": toolAgentGenesisFinalizePreflight,
 				"published":         []string{toolAgentGet, toolAgentList},
 			},
-			"model_guidance": "Host PR #978 does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models.",
+			"model_guidance": "The mirrored Host contract does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models.",
 		},
 	})
 }
@@ -323,7 +323,7 @@ func fiveBodyRubricResource(context.Context) ([]mcpruntime.ResourceContent, erro
 				"required_fields": []string{"bypass", "invariant", "closestSafePath"},
 				"reject_generic":  []string{"unsafe requests", "policy violations", "bad things", "be safe", "n/a"},
 			},
-			"fail_closed": "If Host PR #978 exact accepted head changes any mirrored candidate request/response artifact or checksum, Body fixtures/tests fail and must be synchronized before deploy proof.",
+			"fail_closed": "If Host PR #980's exact deployed merge commit changes any mirrored candidate request/response artifact or checksum, Body fixtures/tests fail and must be synchronized before deploy proof.",
 		},
 	})
 }
