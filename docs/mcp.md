@@ -616,7 +616,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `agent_bind_soul` | Write | Orchestrate Lesser's hosted soul/body binding ceremony for a Host-finalized local agent actor under the authenticated account-holder; call `agent_genesis_finalize` first for new Host-genesis agents so Body can write the Host-derived registry row. |
-| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic AppTheory MCP `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#978` exact-head provenance. Ptah serves content only. |
+| `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic AppTheory MCP `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#980` deployed-commit provenance. Ptah serves content only. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
 | `agent_genesis_read` | Read + owner/operator | Read the bounded Host `HostedGenesisSession` projection. The latest transcript message remains capped at 8,192 characters, while `conversation.declaration_candidate.review.review_text` is a distinct lossless field accepted through 65,536 characters. Malformed candidate projections fail closed with `host_genesis_projection_invalid`. The sole no-candidate exception is Host's exact terminal `failed` + `restart_soul_bootstrap` hard-cut projection for an untyped/stale lane; Body relays its fresh-begin guidance without reconstructing candidate state. `in_progress` is wait/read-only. |
@@ -636,14 +636,15 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 ### Instance-plane Ptah resources and prompts
 
 Ptah guidance resources and prompts are Body's MCP guidance surface for Host-backed five-body genesis. The source
-contract is Host-owned, not Body-owned. Body mirrors the exact producer artifacts from `equaltoai/lesser-host` PR
-`#978` at accepted head `2339acffe646c49fb951e7a7164f55174d841770` (Host issue `#977`). The mirror pins the
+contract is Host-owned, not Body-owned. Body mirrors the PR `#978` typed-candidate artifacts as repaired by
+`equaltoai/lesser-host` PR `#980` at deployed staging merge commit
+`5f873e184ba70e662ed2c945a71357385ac196bc` (Host issue `#977`, Project 48 / Host `#940`). The mirror pins the
 candidate-action request shape, declaration-candidate/review response shape, representative conversation fixtures,
 and the unchanged five-body schema references:
 
 - `schemaVersion`: `soul-five-body-schema.v2`
 - `guidanceVersion`: `soul-five-body-guidance.v2`
-- `hosted-genesis-conversation.md`: `0f6f9f745de7e2438bbab20cc03baee6a9a151d0cc09f7d42747d0d67340a5ff`
+- `hosted-genesis-conversation.md`: `5bc7b76f9d8fb3bc40c336aef99183980325a35c06309b75534358bcbf878875`
 - `openapi.yaml`: `665ee0b4eef312962ab7474befbbab2375bf9a9a4e043daa601f3c13afbda953`
 - `hosted-genesis.conversation.response.schema.json`: `827d623c6b3c0521668537c8e2c661b5526bcb0805a004c403b8641886a9839e`
 - in-progress / assistant-turn-ready / declaration-ready / published / failed fixtures:
@@ -681,14 +682,14 @@ The five first-class bodies are `identity`, `philosophy`, `discipline`, `boundar
 `transparency` are satellites. The refusal floor requires at least three concrete rows with `bypass`, `invariant`, and
 `closestSafePath`. At review, the exact Host `review_text` is authoritative evidence for the owner to inspect. Only the
 structural action bound to the exact revision and hashes can affirm or reopen a section; message phrases never do.
-Host PR `#978` does not publish a Body-consumable model allowlist; callers use Host-configured models.
+The mirrored Host contract does not publish a Body-consumable model allowlist; callers use Host-configured models.
 
 The genesis operator skill bundle (`agent_genesis_skill_get` / `ptah://genesis/genesis-operator-skill`) packages this
 guidance as a client-native skill an LLM client fetches before operating the `agent_genesis_*` tools. The response is
 deterministic: a stable skill id/name, a version derived from `soul-five-body-guidance.v2` plus the pinned Host contract
 head, a `bundle_id` computed from the file checksums, `content.mode="inline_files"` with a file-count summary, and
 install-neutral file entries (`SKILL.md` plus a bounded `references/genesis-guidance-map.md`). Provenance points at Host
-PR `#978`/exact accepted head and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
+PR `#980`/exact deployed merge commit and Body's mirrored contract checksums. For clients that do not expose `structuredContent`,
 `agent_genesis_skill_get` also renders deterministic MCP-visible Markdown containing the complete `SKILL.md`, the
 bounded guidance map, bundle identity/provenance, and no-install/no-write semantics. The semantics are explicitly
 no-write/no-install: Ptah serves content only, and the calling client decides whether and how to materialize or use the

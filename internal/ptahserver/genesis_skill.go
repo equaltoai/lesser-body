@@ -24,7 +24,7 @@ type genesisSkillFile struct {
 }
 
 // genesisSkillVersion derives the stable skill version from the Host-owned
-// guidance version and the pinned Host contract head. A Host PR #978 refresh
+// guidance version and the pinned Host contract commit. A Host PR #980 refresh
 // changes this version and the bundle id together with the mirrored fixtures.
 func genesisSkillVersion() string {
 	head := fiveBodyHostHeadSHA
@@ -113,7 +113,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentGenesisSkillGet,
 		Title:       "Get Ptah genesis operator skill",
-		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns AppTheory MCP structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to Host PR #978 exact accepted head. Ptah serves content only: no local installation, filesystem write, publish, or cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
+		Description: "Fetch the read-only, client-native genesis operator skill bundle before calling agent_genesis_begin. Returns AppTheory MCP structuredContent with a SKILL.md operating playbook, bounded references, and provenance pinned to Host PR #980's exact deployed merge commit. Ptah serves content only: no local installation, filesystem write, publish, or cloud/on-chain mutation. Requires explicit instance owner/operator OAuth authority and read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -147,7 +147,7 @@ func agentGenesisSkillGetDef() mcpruntime.ToolDef {
 							"sha256":{"type":"string"},
 							"content":{"type":"string"}
 						}}},
-						"provenance":{"type":"object","description":"Host PR #978 exact accepted head plus Body's mirrored contract versions and checksums."},
+							"provenance":{"type":"object","description":"Host PR #980 exact deployed merge commit plus Body's mirrored contract versions and checksums."},
 						"semantics":{"type":"object","description":"Explicit no-write/no-install semantics: Ptah serves content only; clients decide materialization."},
 						"guidance":{"type":"object","properties":{"next_tool":{"type":"string","enum":["agent_genesis_begin"]},"status":{"type":"string"},"instruction":{"type":"string"}}}
 					}
@@ -317,11 +317,11 @@ func genesisSkillGuidanceMap() string {
 
 Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contract:
 ` + fiveBodySchemaVersion + ` / ` + fiveBodyGuidanceVersion + ` pinned at equaltoai/lesser-host PR #` +
-		strconv.Itoa(fiveBodyHostPR) + ` head ` + fiveBodyHostHeadSHA + `.
+		strconv.Itoa(fiveBodyHostPR) + ` deployed merge commit ` + fiveBodyHostHeadSHA + `.
 
 ## Ptah resources
 
-- ` + fiveBodyResourceURI(resourceSoulSchemaV2) + ` — mirrored Host schema, golden example, and PR #978 provenance/checksums.
+- ` + fiveBodyResourceURI(resourceSoulSchemaV2) + ` — mirrored Host schema, golden example, and PR #980 provenance/checksums.
 - ` + fiveBodyResourceURI(resourceGenesisInterviewGuide) + ` — staged five-body interview and structural review guide.
 - ` + fiveBodyResourceURI(resourceAgentSideGenesisPlaybook) + ` — operator/client playbook for the agent_genesis_*
   tools.

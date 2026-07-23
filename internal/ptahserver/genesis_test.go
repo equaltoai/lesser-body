@@ -1112,16 +1112,109 @@ func TestGenesisCandidateSectionGuidanceUsesNormalOwnerMessage(t *testing.T) {
 	}
 }
 
-func TestGenesisCandidateSectionRejectsCompletedReviewShape(t *testing.T) {
-	raw := genesisConversationResponse("assistant_turn_ready", "private transcript")
-	candidate := nestedMap(raw, "conversation", "declaration_candidate")
-	candidate["completed_sections"] = []any{"identity", "philosophy", "discipline", "boundaries", "soul"}
-	candidate["current_section"] = "soul"
+func TestGenesisCandidateSectionAcceptsHostReviewReeditShape(t *testing.T) {
+	raw := genesisReviewReeditConversationResponse("assistant_turn_ready", "boundaries")
 	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
 	if err != nil {
 		t.Fatalf("genesisSuccessResult: %v", err)
 	}
-	assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+	data := structuredGenesisData(t, result)
+	candidate := nestedMap(data, "conversation", "declaration_candidate")
+	want := map[string]any{
+		"version":            "hosted-genesis-declaration-candidate.v1",
+		"phase":              "section",
+		"current_section":    "boundaries",
+		"completed_sections": []any{"identity", "philosophy", "discipline", "boundaries", "soul"},
+		"revision":           int64(6),
+		"candidate_hash":     "sha256:" + strings.Repeat("6", 64),
+	}
+	if !reflect.DeepEqual(candidate, want) {
+		t.Fatalf("Host review re-edit projection changed in relay: got=%#v want=%#v", candidate, want)
+	}
+	guidance := nestedMap(data, "guidance")
+	if guidance["next_tool"] != toolAgentGenesisAdvance {
+		t.Fatalf("review re-edit guidance = %#v, want %s", guidance, toolAgentGenesisAdvance)
+	}
+	instruction := guidance["instruction"].(string)
+	for _, wantText := range []string{"normal owner revision message", "current_section=boundaries"} {
+		if !strings.Contains(instruction, wantText) {
+			t.Fatalf("review re-edit guidance missing %q: %s", wantText, instruction)
+		}
+	}
+}
+
+func TestGenesisCandidateSectionReviewReeditInProgressRemainsReadOnly(t *testing.T) {
+	raw := genesisReviewReeditConversationResponse("in_progress", "boundaries")
+	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+	if err != nil {
+		t.Fatalf("genesisSuccessResult: %v", err)
+	}
+	data := structuredGenesisData(t, result)
+	candidate := nestedMap(data, "conversation", "declaration_candidate")
+	if candidate["phase"] != "section" || candidate["current_section"] != "boundaries" || candidate["revision"] != int64(6) {
+		t.Fatalf("in-progress review re-edit candidate = %#v", candidate)
+	}
+	guidance := nestedMap(data, "guidance")
+	if guidance["next_tool"] != toolAgentGenesisRead || guidance["forbidden_next_tool"] != toolAgentGenesisAdvance || guidance["wait"] != true {
+		t.Fatalf("in-progress review re-edit guidance is not read-only: %#v", guidance)
+	}
+}
+
+func TestGenesisCandidateSectionReviewReeditAcceptsEveryCurrentSection(t *testing.T) {
+	for _, section := range genesisDeclarationSections {
+		t.Run(section, func(t *testing.T) {
+			raw := genesisReviewReeditConversationResponse("assistant_turn_ready", section)
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			data := structuredGenesisData(t, result)
+			candidate := nestedMap(data, "conversation", "declaration_candidate")
+			if candidate["current_section"] != section {
+				t.Fatalf("current_section = %#v, want %q", candidate["current_section"], section)
+			}
+		})
+	}
+}
+
+func TestGenesisCandidateSectionProjectionFailsClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "review present", mutate: func(c map[string]any) {
+			reviewText := "stale review must be absent after edit"
+			c["review"] = map[string]any{
+				"renderer_version":   "hosted-genesis-owner-review.v1",
+				"candidate_revision": c["revision"],
+				"candidate_hash":     c["candidate_hash"],
+				"review_hash":        "sha256:" + sha256Hex([]byte(reviewText)),
+				"review_text":        reviewText,
+			}
+		}},
+		{name: "missing current section", mutate: func(c map[string]any) { delete(c, "current_section") }},
+		{name: "unknown current section", mutate: func(c map[string]any) { c["current_section"] = "capabilities" }},
+		{name: "partial out of order", mutate: func(c map[string]any) { c["completed_sections"] = []any{"identity", "discipline"} }},
+		{name: "partial duplicate", mutate: func(c map[string]any) { c["completed_sections"] = []any{"identity", "identity"} }},
+		{name: "unknown candidate field", mutate: func(c map[string]any) { c["canonical_json"] = `{"private":true}` }},
+		{name: "invalid candidate hash", mutate: func(c map[string]any) { c["candidate_hash"] = "sha256:BAD" }},
+		{name: "invalid revision", mutate: func(c map[string]any) { c["revision"] = float64(-1) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := genesisReviewReeditConversationResponse("assistant_turn_ready", "boundaries")
+			test.mutate(nestedMap(raw, "conversation", "declaration_candidate"))
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			payload := assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+			encoded, _ := json.Marshal(payload)
+			if strings.Contains(string(encoded), "canonical_json") || strings.Contains(string(encoded), "private") || strings.Contains(string(encoded), "stale review") {
+				t.Fatalf("contract error leaked candidate internals: %s", encoded)
+			}
+		})
+	}
 }
 
 func genesisCandidateConversationResponse(phase string, reviewText string) map[string]any {
@@ -1243,6 +1336,17 @@ func genesisSectionCandidateProjection() map[string]any {
 		"phase":   "section", "current_section": "identity", "completed_sections": []any{},
 		"revision": float64(0), "candidate_hash": "sha256:" + strings.Repeat("0", 64),
 	}
+}
+
+func genesisReviewReeditConversationResponse(status string, currentSection string) map[string]any {
+	raw := genesisConversationResponse(status, "private transcript")
+	candidate := nestedMap(raw, "conversation", "declaration_candidate")
+	candidate["current_section"] = currentSection
+	candidate["completed_sections"] = []any{"identity", "philosophy", "discipline", "boundaries", "soul"}
+	candidate["revision"] = float64(6)
+	candidate["candidate_hash"] = "sha256:" + strings.Repeat("6", 64)
+	delete(candidate, "review")
+	return raw
 }
 
 func genesisFinalizedCandidateProjection(reviewText string) map[string]any {

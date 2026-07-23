@@ -88,7 +88,9 @@ discipline, boundaries, and soul. Accepted tool submissions are normalized and v
 under tenant/session/turn/candidate guards through TableTheory. Invalid submissions return machine-readable
 section/path/code errors and retry only the current section. Every tool payload must repeat the exact current
 `candidateRevision` and `candidateHash`; missing, stale, mismatched, or unknown payload fields fail closed before any
-candidate mutation. The VM actor never rebuilds the candidate from a transcript.
+candidate mutation. Host rejects section fields above their published limits so provider repair can compress the
+current section; it never silently truncates owner-supplied declaration content. The VM actor never rebuilds the
+candidate from a transcript.
 
 The owner review is rendered deterministically as a stable human header plus a byte-counted, delimited copy of the
 exact canonical JSON. The canonical block is reversible byte-for-byte without a provider and losslessly exposes every
@@ -97,7 +99,9 @@ derived boundaries, refusals, and adversarial-review evidence. `candidate_hash` 
 `review_hash` separately authenticates the complete `review_text`. The full lossless payload is authoritative at
 `declaration_candidate.review.review_text`; clients must not substitute a potentially truncated transcript-message
 projection. Structural affirmation binds the candidate revision/hash and review hash; any edit invalidates the prior
-review and affirmation. Finalization revalidates and publishes the exact canonical candidate bytes. **No provider request occurs after affirmation.**
+review and affirmation, advances the revision, and reopens only the selected section. The revised section regenerates
+the deterministic review and bindings; actions from the prior review fail closed. Finalization revalidates and
+publishes the exact canonical candidate bytes. **No provider request occurs after affirmation.**
 The fifth accepted tool also needs no provider-generated review prose: Host projects the stored deterministic review
 directly, including after process/VM recovery from the accepted review checkpoint.
 When the actor finalizes, it advances the same durable conversation to `declaration_ready` with `produced_declarations`

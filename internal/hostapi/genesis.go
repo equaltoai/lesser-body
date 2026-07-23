@@ -154,7 +154,7 @@ func (a *DeclarationCandidateAction) UnmarshalJSON(data []byte) error {
 	return a.Validate()
 }
 
-// Validate enforces Host PR #978's candidate-action contract without
+// Validate enforces Host PR #980's candidate-action contract without
 // normalizing any value.
 func (a DeclarationCandidateAction) Validate() error {
 	if a.decoded && (!a.actionPresent || !a.candidateRevisionPresent || !a.candidateHashPresent || !a.reviewHashPresent) {
