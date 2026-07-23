@@ -619,7 +619,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | `agent_genesis_skill_get` | Read + owner/operator | Fetch the read-only, client-native genesis operator skill bundle before `agent_genesis_begin`. Returns deterministic AppTheory MCP `structuredContent` with a `SKILL.md` operating playbook, bounded references, `bundle_id`, and Host PR `#978` exact-head provenance. Ptah serves content only. |
 | `agent_genesis_begin` | Write + owner/operator | Begin a new-agent, instance-trust registration in lesser-host's durable genesis state machine; no pre-existing Lesser agent is required and no x402 payment is used. First: `agent_genesis_skill_get`. Next: `agent_genesis_advance`. |
 | `agent_genesis_list` | Read + owner/operator | Host-backed recovery/navigation index for durable genesis conversations for one `agent_id`. It calls Host's summary-only HostedGenesisSession list endpoint, returns `status="ok"`, sanitized `conversations[]`, and `recommended_start` / exact next-tool arguments. Start here when `registration_id` / `conversation_id` are unclear. |
-| `agent_genesis_read` | Read + owner/operator | Read the bounded Host `HostedGenesisSession` projection. The latest transcript message remains capped at 8,192 characters, while `conversation.declaration_candidate.review.review_text` is a distinct lossless field accepted through 65,536 characters. Malformed candidate projections fail closed with `host_genesis_projection_invalid`. `in_progress` is wait/read-only. |
+| `agent_genesis_read` | Read + owner/operator | Read the bounded Host `HostedGenesisSession` projection. The latest transcript message remains capped at 8,192 characters, while `conversation.declaration_candidate.review.review_text` is a distinct lossless field accepted through 65,536 characters. Malformed candidate projections fail closed with `host_genesis_projection_invalid`. The sole no-candidate exception is Host's exact terminal `failed` + `restart_soul_bootstrap` hard-cut projection for an untyped/stale lane; Body relays its fresh-begin guidance without reconstructing candidate state. `in_progress` is wait/read-only. |
 | `agent_genesis_advance` | Write + owner/operator | Submit the owner message when Host reports `assistant_turn_ready`. Candidate phase `section` uses a normal owner message; Host's five provider section tools remain private inside the AppTheory MicroVM. Candidate phase `review` requires `candidate_action`: `affirm` forbids `section`; `edit` requires an exact five-body `section` plus an owner revision message; both bind the exact `candidate_revision`, `candidate_hash`, and `review_hash`. Free-form phrases have zero authority. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to retry the same durable step only when `failure.recovery.action="retry_same_step"`; wait the bounded `retry_after_seconds` when present, then call recover exactly once on the same lane. `refresh_state` maps to one read, `restart_soul_bootstrap` maps to a fresh begin and forbids recover, and `operator_action` stops automation for operator contact. Body does not retry or replace the Host state machine locally. |
 | `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness directly when the conversation reports `declaration_ready`, without wallet signatures. Next: `agent_genesis_finalize` after preflight succeeds. |
@@ -722,11 +722,16 @@ The owner-operated sequence is:
    bounded `retry_after_seconds` when present and then calls `agent_genesis_recover` exactly once on the same lane;
    `refresh_state` calls `agent_genesis_read` exactly once; `restart_soul_bootstrap` starts a fresh lane with
    `agent_genesis_begin` and explicitly forbids recover; and `operator_action` stops automatic Genesis calls for
-   explicit instance-operator contact. Do not normalize these values into generic retry/wait/contact behavior.
+   explicit instance-operator contact. For Host's hard cut of an untyped/stale lane, the exact terminal
+   `failed` + `restart_soul_bootstrap` projection deliberately omits `declaration_candidate`; this is the sole strict
+   no-candidate state Body accepts, and it never triggers extraction, reconstruction, or a compatibility lane. Do not
+   normalize these values into generic retry/wait/contact behavior.
 6. When status is `assistant_turn_ready` and candidate phase is `review`, the owner inspects the exact lossless
    `conversation.declaration_candidate.review.review_text`. Guidance returns the exact `candidate_revision`,
-   `candidate_hash`, and `review_hash`. The next `agent_genesis_advance` carries `candidate_action`: `affirm` has no
-   `section`; `edit` has one exact section plus an owner revision message. Free-form message text has no authority.
+   `candidate_hash`, and `review_hash`, plus `candidate_actions`: one affirm entry and five exact per-section edit
+   entries. Each entry keeps descriptive metadata outside its nested `candidate_action`; pass only that nested object
+   unchanged to the next `agent_genesis_advance`. `affirm` has no `section`; every `edit` has one exact section plus an
+   owner revision message. Free-form message text has no authority.
 7. When Host reports `declaration_ready`, the owner calls `agent_genesis_finalize_preflight` directly, then
    `agent_genesis_finalize`. Instance-trust finalization sends
    an empty request body: Host owns the declaration checkpoint and publishes the hosted/offchain identity without a
@@ -762,13 +767,13 @@ State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 | resuming / ids unclear / multiple lanes | `agent_genesis_list` | Start with the Host-backed recovery index. Follow `recommended_start` exactly; it includes the next tool and exact `registration_id` / `conversation_id` arguments when a non-terminal lane exists. |
 | `agent_genesis_begin` success | `agent_genesis_advance` | Send the first owner/operator message and persist Host's `conversation_id`. |
 | `assistant_turn_ready` + candidate phase `section` | `agent_genesis_advance` | Submit the next normal owner message for exact `current_section`. Host's provider section tools stay inside its AppTheory MicroVM. |
-| `assistant_turn_ready` + candidate phase `review` | `agent_genesis_advance` | Inspect exact lossless `review_text`, then supply structural `candidate_action` with exact bindings. `affirm` has no section; `edit` requires exact section and owner revision message. |
+| `assistant_turn_ready` + candidate phase `review` | `agent_genesis_advance` | Inspect exact lossless `review_text`, select one of guidance's six `candidate_actions` entries, and pass only its nested exact `candidate_action` unchanged. `affirm` has no section; each of the five edits has one exact section and requires an owner revision message. |
 | `in_progress` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and bounded wait fields. Do not nudge. |
 | `declaration_ready` | `agent_genesis_finalize_preflight` | Check Host readiness directly before finalization. |
 | preflight-ready state | `agent_genesis_finalize` | Finalize through Host; Body writes the Host-derived registry row only after Host publication. |
 | `agent_genesis_finalize` success / `published` | `agent_get` (or `agent_list`) | Published is terminal. Verify account-scoped Body/Ptah visibility with registry provenance. |
 | `failure.recovery.action="retry_same_step"` | `agent_genesis_recover` | Keep `fresh_lane=false`. Wait the bounded `retry_after_seconds` when present (also projected as `poll_after_seconds` / `expected_wait_seconds`), then call recover exactly once for the same registration/conversation ids; do not poll the terminal read instead. |
-| `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. |
+| `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. Host's terminal hard-cut response for an untyped/stale lane may omit `declaration_candidate`; no other strict nested no-candidate state is accepted. |
 | `failure.recovery.action="refresh_state"` | `agent_genesis_read` | Keep `fresh_lane=false`. Read exactly once to refresh Host state, then follow the newly returned status/recovery action; do not write or create an endless read loop. |
 | `failure.recovery.action="operator_action"` | none (operator contact) | Keep `fresh_lane=false`. Stop automatic Genesis calls and contact the instance operator with the safe Host reason when present; Body selects no automatic write and does not prescribe endless reads. |
 

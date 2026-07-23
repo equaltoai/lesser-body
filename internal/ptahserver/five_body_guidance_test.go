@@ -465,6 +465,24 @@ func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 			t.Fatalf("genesis output schema missing guidance field %q: %s", wantField, string(genesisOutputSchema()))
 		}
 	}
+	guidanceSchema := properties["guidance"].(map[string]any)
+	guidanceProperties := guidanceSchema["properties"].(map[string]any)
+	advertisedActionsSchema, ok := guidanceProperties["candidate_actions"].(map[string]any)
+	if !ok || advertisedActionsSchema["minItems"] != float64(6) || advertisedActionsSchema["maxItems"] != float64(6) {
+		t.Fatalf("genesis candidate_actions output schema = %#v, want exactly six directly callable actions", advertisedActionsSchema)
+	}
+	advertisedActionSchema := advertisedActionsSchema["items"].(map[string]any)
+	advertisedActionProperties := advertisedActionSchema["properties"].(map[string]any)
+	candidateActionSchema := advertisedActionProperties["candidate_action"].(map[string]any)
+	if candidateActionSchema["additionalProperties"] != false {
+		t.Fatalf("advertised candidate_action schema must fail closed on unknown keys: %#v", candidateActionSchema)
+	}
+	if got, want := candidateActionSchema["required"], []any{"action", "candidate_revision", "candidate_hash", "review_hash"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("advertised candidate_action required fields = %#v, want %#v", got, want)
+	}
+	if _, ok := candidateActionSchema["allOf"].([]any); !ok {
+		t.Fatalf("advertised candidate_action schema does not describe affirm/edit section conditionality: %#v", candidateActionSchema)
+	}
 	assertSchemaContainsEnum(t, agentGenesisListDef().OutputSchema, "ok")
 	for _, wantField := range []string{"recommended_start", "recommended_next_tool", "recommended_arguments", "terminal", "recoverable_hint", "restart_hint"} {
 		if !strings.Contains(string(agentGenesisListDef().OutputSchema), wantField) {

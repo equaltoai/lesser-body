@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -462,6 +463,31 @@ func TestGenesisRecoveryReasonAndRestartGuidanceAreSanitized(t *testing.T) {
 	}
 }
 
+func TestAgentGenesisReadRelaysHostHardCutNoCandidateRestart(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	raw := hostNoCandidateRestartConversationResponse()
+	assertNoCandidateRestartFixtureMatchesMirroredHostSchema(t, raw)
+
+	fake := &fakeGenesisClient{readResponse: raw}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result := callGenesisTool(t, registry, operatorToolContext("owner", []string{"read"}, "owner-token"), toolAgentGenesisRead, `{"registration_id":"reg-legacy","conversation_id":"conv-legacy"}`)
+	data := structuredGenesisData(t, result)
+	conversation := nestedMap(data, "conversation")
+	if _, present := conversation["declaration_candidate"]; present {
+		t.Fatalf("hard-cut restart invented declaration_candidate: %#v", conversation)
+	}
+	guidance := nestedMap(data, "guidance")
+	if guidance["next_tool"] != toolAgentGenesisBegin || guidance["fresh_lane"] != true || guidance["forbidden_next_tool"] != toolAgentGenesisRecover {
+		t.Fatalf("hard-cut restart guidance = %#v", guidance)
+	}
+	if strings.Contains(mustMarshalGenesisResult(t, result), "host_genesis_projection_invalid") {
+		t.Fatalf("Host-valid hard-cut restart was collapsed into a projection error: %#v", result)
+	}
+}
+
 func TestGenesisRetrySameStepRuntimePayloadGuidance(t *testing.T) {
 	raw := map[string]any{
 		"conversation": map[string]any{
@@ -849,12 +875,22 @@ func TestGenesisCandidateProjectionIsLosslessAndReviewGuidanceIsStructural(t *te
 	if guidance["next_tool"] != toolAgentGenesisAdvance || guidance["candidate_revision"] != int64(9) || guidance["candidate_hash"] != candidate["candidate_hash"] || guidance["review_hash"] != review["review_hash"] {
 		t.Fatalf("review guidance bindings = %#v", guidance)
 	}
-	actions := guidance["candidate_action"].(map[string]any)
-	affirm := actions["affirm"].(map[string]any)
-	edit := actions["edit"].(map[string]any)
-	allowedSections, _ := edit["allowed_sections"].([]any)
-	if _, present := affirm["section"]; present || edit["section_required"] != true || len(allowedSections) != 5 {
-		t.Fatalf("review action conditionality = %#v", actions)
+	actions, ok := guidance["candidate_actions"].([]any)
+	if !ok || len(actions) != 6 {
+		t.Fatalf("review candidate_actions = %#v, want affirm plus five edits", guidance["candidate_actions"])
+	}
+	for index, advertised := range actions {
+		entry, ok := advertised.(map[string]any)
+		if !ok {
+			t.Fatalf("review candidate_actions[%d] = %#v", index, advertised)
+		}
+		action, ok := entry["candidate_action"].(map[string]any)
+		if !ok {
+			t.Fatalf("review candidate_actions[%d].candidate_action = %#v", index, entry["candidate_action"])
+		}
+		if action["candidate_revision"] != int64(9) || action["candidate_hash"] != candidate["candidate_hash"] || action["review_hash"] != review["review_hash"] {
+			t.Fatalf("review candidate_actions[%d] bindings = %#v", index, action)
+		}
 	}
 	instruction := guidance["instruction"].(string)
 	for _, want := range []string{"exact lossless", "affirm forbids section", "edit requires one exact section", "phrases have zero authority"} {
@@ -864,6 +900,103 @@ func TestGenesisCandidateProjectionIsLosslessAndReviewGuidanceIsStructural(t *te
 	}
 	if strings.Contains(result.Content[0].Text, reviewText[:256]) {
 		t.Fatal("full review leaked into text content instead of StructuredContent")
+	}
+}
+
+func TestGenesisCandidateReviewGuidanceEveryAdvertisedActionRoundTripsThroughRegistry(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	reviewText := "exact owner review"
+	fake := &fakeGenesisClient{
+		readResponse:    genesisCandidateConversationResponse("review", reviewText),
+		advanceResponse: genesisCandidateConversationResponse("review", reviewText),
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := operatorToolContext("owner", []string{"read", "write"}, "owner-token")
+	read := callGenesisTool(t, registry, ctx, toolAgentGenesisRead, `{"registration_id":"reg-123","conversation_id":"conv-456"}`)
+	actions, ok := nestedMap(structuredGenesisData(t, read), "guidance")["candidate_actions"].([]any)
+	if !ok || len(actions) != 6 {
+		t.Fatalf("advertised candidate actions = %#v, want six", actions)
+	}
+
+	wantSections := map[string]bool{"identity": false, "philosophy": false, "discipline": false, "boundaries": false, "soul": false}
+	affirmCount := 0
+	for index, advertised := range actions {
+		entry, ok := advertised.(map[string]any)
+		if !ok {
+			t.Fatalf("candidate_actions[%d] = %#v", index, advertised)
+		}
+		action, ok := entry["candidate_action"].(map[string]any)
+		if !ok {
+			t.Fatalf("candidate_actions[%d].candidate_action = %#v", index, entry["candidate_action"])
+		}
+		allowedKeys := map[string]bool{"action": true, "section": true, "candidate_revision": true, "candidate_hash": true, "review_hash": true}
+		for key := range action {
+			if !allowedKeys[key] {
+				t.Fatalf("candidate_actions[%d] advertised unknown submitted key %q: %#v", index, key, action)
+			}
+		}
+		switch action["action"] {
+		case "affirm":
+			affirmCount++
+			if _, present := action["section"]; present {
+				t.Fatalf("affirm action advertised forbidden section: %#v", action)
+			}
+		case "edit":
+			section, ok := action["section"].(string)
+			if !ok {
+				t.Fatalf("edit action omitted required section: %#v", action)
+			}
+			if _, expected := wantSections[section]; !expected || wantSections[section] {
+				t.Fatalf("edit action section is unknown or duplicated: %#v", action)
+			}
+			wantSections[section] = true
+		default:
+			t.Fatalf("candidate action has invalid action: %#v", action)
+		}
+
+		arguments, err := json.Marshal(map[string]any{
+			"registration_id":  "reg-123",
+			"conversation_id":  "conv-456",
+			"message":          "Owner decision for advertised action.",
+			"candidate_action": action,
+		})
+		if err != nil {
+			t.Fatalf("marshal advertised action %d: %v", index, err)
+		}
+		result, err := registry.Call(ctx, toolAgentGenesisAdvance, arguments)
+		if err != nil {
+			t.Fatalf("registry.Call advertised action %d: %v", index, err)
+		}
+		if result == nil || result.IsError {
+			t.Fatalf("advertised action %d was not directly callable through the registered parser: args=%s result=%#v", index, arguments, result)
+		}
+		gotBytes, err := json.Marshal(fake.advanceRequest.CandidateAction)
+		if err != nil {
+			t.Fatalf("marshal Host candidate action %d: %v", index, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(gotBytes, &got); err != nil {
+			t.Fatalf("decode Host candidate action %d: %v", index, err)
+		}
+		var want map[string]any
+		wantBytes, _ := json.Marshal(action)
+		if err := json.Unmarshal(wantBytes, &want); err != nil {
+			t.Fatalf("decode advertised candidate action %d: %v", index, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("advertised candidate_action %d changed before Host: got=%#v want=%#v", index, got, want)
+		}
+	}
+	if affirmCount != 1 {
+		t.Fatalf("affirm action count = %d, want 1", affirmCount)
+	}
+	for section, seen := range wantSections {
+		if !seen {
+			t.Fatalf("missing directly callable edit action for %s", section)
+		}
 	}
 }
 
@@ -929,6 +1062,33 @@ func TestGenesisCandidateProjectionFailsClosed(t *testing.T) {
 	}
 }
 
+func TestGenesisMissingCandidateFailsClosedOutsideExactHardCutRestart(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]any
+	}{
+		{name: "created", raw: genesisConversationResponse("created", "private")},
+		{name: "in progress", raw: genesisConversationResponse("in_progress", "private")},
+		{name: "assistant turn ready", raw: genesisConversationResponse("assistant_turn_ready", "private")},
+		{name: "declaration ready", raw: genesisConversationResponse("declaration_ready", "private")},
+		{name: "published", raw: genesisConversationResponse("published", "private")},
+		{name: "failed retry", raw: hostNoCandidateRestartConversationResponse()},
+		{name: "malformed restart failure", raw: hostNoCandidateRestartConversationResponse()},
+	}
+	nestedMap(tests[5].raw, "conversation", "failure", "recovery")["action"] = "retry_same_step"
+	delete(nestedMap(tests[6].raw, "conversation", "failure"), "message")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			delete(nestedMap(test.raw, "conversation"), "declaration_candidate")
+			result, err := genesisSuccessResult(toolAgentGenesisRead, "read", test.raw)
+			if err != nil {
+				t.Fatalf("genesisSuccessResult: %v", err)
+			}
+			assertToolError(t, result, "host_genesis_projection_invalid", http.StatusBadGateway)
+		})
+	}
+}
+
 func TestGenesisCandidateSectionGuidanceUsesNormalOwnerMessage(t *testing.T) {
 	raw := genesisConversationResponse("assistant_turn_ready", "private transcript")
 	result, err := genesisSuccessResult(toolAgentGenesisRead, "read", raw)
@@ -982,6 +1142,78 @@ func genesisCandidateConversationResponse(phase string, reviewText string) map[s
 				},
 			},
 		},
+	}
+}
+
+func hostNoCandidateRestartConversationResponse() map[string]any {
+	return map[string]any{
+		"version":    "1",
+		"request_id": "req-hard-cut-restart",
+		"conversation": map[string]any{
+			"registration_id": "reg-legacy",
+			"conversation_id": "conv-legacy",
+			"agent_id":        "0x" + strings.Repeat("42", 32),
+			"status":          "failed",
+			"message_count":   float64(1),
+			"failure": map[string]any{
+				"code":      "invalid_completion_state",
+				"message":   "Conversation cannot be completed from the migrated state.",
+				"retryable": false,
+				"recovery": map[string]any{
+					"action": "restart_soul_bootstrap",
+					"reason": "invalid_completion_state",
+				},
+			},
+			"request_id":   "req-hard-cut-restart",
+			"created_at":   "2026-07-22T19:33:23Z",
+			"updated_at":   "2026-07-22T19:33:23Z",
+			"completed_at": "2026-07-22T19:33:23Z",
+		},
+	}
+}
+
+func assertNoCandidateRestartFixtureMatchesMirroredHostSchema(t *testing.T, raw map[string]any) {
+	t.Helper()
+	schemaBytes, err := hostContractMirrorFS.ReadFile("testdata/host-contract/pr-978/hosted-genesis.conversation.response.schema.json")
+	if err != nil {
+		t.Fatalf("read mirrored Host response schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		t.Fatalf("decode mirrored Host response schema: %v", err)
+	}
+	defs := nestedMap(schema, "$defs")
+	conversationSchema := nestedMap(defs, "conversation")
+	required, ok := conversationSchema["required"].([]any)
+	if !ok || containsAnyString(required, "declaration_candidate") {
+		t.Fatalf("mirrored Host schema unexpectedly requires declaration_candidate: %#v", required)
+	}
+	conversation := nestedMap(raw, "conversation")
+	for _, field := range required {
+		name, _ := field.(string)
+		if _, present := conversation[name]; name == "" || !present {
+			t.Fatalf("producer-derived no-candidate fixture omits Host-required conversation field %q", name)
+		}
+	}
+	failureSchema := nestedMap(defs, "failure")
+	failureRequired, ok := failureSchema["required"].([]any)
+	if !ok {
+		t.Fatalf("mirrored Host failure schema has no required fields: %#v", failureSchema)
+	}
+	failure := nestedMap(conversation, "failure")
+	for _, field := range failureRequired {
+		name, _ := field.(string)
+		if _, present := failure[name]; name == "" || !present {
+			t.Fatalf("producer-derived no-candidate fixture omits Host-required failure field %q", name)
+		}
+	}
+	recovery := nestedMap(failure, "recovery")
+	if recovery["action"] != "restart_soul_bootstrap" {
+		t.Fatalf("producer-derived no-candidate fixture recovery = %#v", recovery)
+	}
+	actionSchema := nestedMap(nestedMap(nestedMap(failureSchema, "properties"), "recovery"), "properties", "action")
+	if !containsAnyString(actionSchema["enum"], "restart_soul_bootstrap") {
+		t.Fatalf("mirrored Host schema does not authorize restart_soul_bootstrap: %#v", actionSchema)
 	}
 }
 

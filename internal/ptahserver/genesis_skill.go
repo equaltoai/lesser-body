@@ -200,10 +200,10 @@ func genesisSkillVisibleText(data map[string]any) string {
 	text.WriteString("- Follow `structuredContent.data.guidance.next_tool` from every Host-backed response.\n")
 	text.WriteString("- `in_progress` is wait/read-only: Do not call `" + toolAgentGenesisAdvance + "` again and do not nudge; wait `poll_after_seconds` when present, then call `" + toolAgentGenesisRead + "`.\n")
 	text.WriteString("- Candidate section phase uses a normal owner message through `" + toolAgentGenesisAdvance + "`; Host's provider section tools stay private to its AppTheory MicroVM.\n")
-	text.WriteString("- Candidate review requires inspecting the exact lossless `review_text` and passing structural `candidate_action` with exact revision/hash bindings. affirm has no section; edit has an exact section plus owner revision message. Prose has zero authority.\n")
+	text.WriteString("- Candidate review requires inspecting the exact lossless `review_text`, selecting one of guidance's six `candidate_actions` entries, and passing only its nested structural `candidate_action` unchanged. affirm has no section; `edit` requires one exact section, supplied by each of the five edit entries, plus owner revision message. Prose has zero authority.\n")
 	text.WriteString("- `declaration_ready` goes directly to `" + toolAgentGenesisFinalizePreflight + "`, then `" + toolAgentGenesisFinalize + "`.\n")
 	text.WriteString("- Verify with `" + toolAgentGet + "` / `" + toolAgentList + "`.\n")
-	text.WriteString("- `restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`.\n")
+	text.WriteString("- `restart_soul_bootstrap` means fresh `" + toolAgentGenesisBegin + "`, not `" + toolAgentGenesisRecover + "`; Host's exact terminal hard-cut response for an untyped/stale lane may omit declaration_candidate, and Body never reconstructs it.\n")
 	text.WriteString("- `retry_same_step` means wait `retry_after_seconds` when present, then call `" + toolAgentGenesisRecover + "` exactly once on the same lane.\n")
 	text.WriteString("- `refresh_state` means call `" + toolAgentGenesisRead + "` exactly once; do not write or poll endlessly.\n")
 	text.WriteString("- `operator_action` means stop automatic Genesis tool calls and contact the instance operator; no automatic write is selected.\n")
@@ -273,8 +273,10 @@ provider tools, or candidate store. This skill is read-only.
    ` + "`in_progress`" + ` is wait/read-only. Never call advance to nudge; wait poll_after_seconds when present, then read.
 6. **Review structurally.** When status is ` + "`assistant_turn_ready`" + ` and candidate phase is ` + "`review`" + `,
    inspect the exact, lossless ` + "`conversation.declaration_candidate.review.review_text`" + `. Use the exact
-   candidate_revision, candidate_hash, and review_hash returned in guidance. Call advance with candidate_action:
-   ` + "`affirm`" + ` forbids section; ` + "`edit`" + ` requires one exact section plus an owner revision message.
+   candidate_revision, candidate_hash, and review_hash returned in guidance. Select one of the six
+   ` + "`guidance.candidate_actions`" + ` entries and pass only its nested candidate_action unchanged to advance:
+   ` + "`affirm`" + ` forbids section; ` + "`edit`" + ` requires one exact section, supplied by each of the five edit
+   entries, plus an owner revision message.
 7. **Preflight, then finalize.** When Host reports ` + "`declaration_ready`" + `, call
    ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` directly, then, only after preflight succeeds,
    ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
@@ -288,7 +290,8 @@ provider tools, or candidate store. This skill is read-only.
 - ` + "`retry_same_step`" + ` means wait ` + "`retry_after_seconds`" + ` when present, then call ` + "`" + toolAgentGenesisRecover + "`" + ` exactly once
   with the same registration_id/conversation_id. Keep ` + "`fresh_lane=false`" + `; do not start a new lane or poll read instead.
 - ` + "`restart_soul_bootstrap`" + ` means fresh ` + "`" + toolAgentGenesisBegin + "`" + `, not ` + "`" + toolAgentGenesisRecover + "`" + `.
-  Recover is explicitly forbidden for that action.
+  Recover is explicitly forbidden for that action. Host's exact terminal hard-cut projection for an untyped/stale lane
+  may omit declaration_candidate; do not reject it, extract old transcript state, or reconstruct a candidate.
 - ` + "`refresh_state`" + ` means call ` + "`" + toolAgentGenesisRead + "`" + ` exactly once, then follow the newly returned Host
   status/recovery action. Do not write and do not turn refresh into an endless read loop.
 - ` + "`operator_action`" + ` means stop automatic Genesis tool calls and contact the instance operator with the safe Host reason

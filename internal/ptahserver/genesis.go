@@ -107,7 +107,49 @@ func genesisOutputSchema() json.RawMessage {
 							},"required":["renderer_version","candidate_revision","candidate_hash","review_hash","review_text"]}
 						},"required":["version","phase","revision","candidate_hash"]}
 					}},
-					"guidance":{"type":"object","properties":{"next_tool":{"type":"string"},"alternate_next_tool":{"type":"string"},"forbidden_next_tool":{"type":"string"},"status":{"type":"string"},"fresh_lane":{"type":"boolean"},"wait":{"type":"boolean"},"poll_after_seconds":{"type":"integer"},"expected_wait_seconds":{"type":"integer"},"progress":{"type":"string"},"progress_percent":{"type":"integer"},"reason":{"type":"string","maxLength":256},"instruction":{"type":"string"},"candidate_revision":{"type":"integer","minimum":0},"candidate_hash":{"type":"string"},"review_hash":{"type":"string"},"allowed_actions":{"type":"array","items":{"type":"string","enum":["affirm","edit"]}},"candidate_action":{"type":"object"}}}
+					"guidance":{"type":"object","additionalProperties":false,"properties":{
+						"next_tool":{"type":"string"},
+						"alternate_next_tool":{"type":"string"},
+						"forbidden_next_tool":{"type":"string"},
+						"status":{"type":"string"},
+						"fresh_lane":{"type":"boolean"},
+						"wait":{"type":"boolean"},
+						"poll_after_seconds":{"type":"integer"},
+						"expected_wait_seconds":{"type":"integer"},
+						"progress":{"type":"string"},
+						"progress_percent":{"type":"integer"},
+						"reason":{"type":"string","maxLength":256},
+						"recovery_action":{"type":"string"},
+						"instruction":{"type":"string"},
+						"candidate_revision":{"type":"integer","minimum":0},
+						"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+						"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+						"allowed_actions":{"type":"array","items":{"type":"string","enum":["affirm","edit"]}},
+						"candidate_actions":{"type":"array","minItems":6,"maxItems":6,"uniqueItems":true,"items":{
+							"type":"object","additionalProperties":false,
+							"properties":{
+								"intent":{"type":"string","enum":["affirm","edit"]},
+								"section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+								"description":{"type":"string"},
+								"message_guidance":{"type":"string"},
+								"candidate_action":{"type":"object","additionalProperties":false,"properties":{
+									"action":{"type":"string","enum":["affirm","edit"]},
+									"section":{"type":"string","enum":["identity","philosophy","discipline","boundaries","soul"]},
+									"candidate_revision":{"type":"integer","minimum":0},
+									"candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+									"review_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}
+								},"required":["action","candidate_revision","candidate_hash","review_hash"],"allOf":[
+									{"if":{"properties":{"action":{"const":"edit"}},"required":["action"]},"then":{"required":["section"]}},
+									{"if":{"properties":{"action":{"const":"affirm"}},"required":["action"]},"then":{"not":{"required":["section"]}}}
+								]}
+							},
+							"required":["intent","description","message_guidance","candidate_action"],
+							"allOf":[
+								{"if":{"properties":{"intent":{"const":"edit"}},"required":["intent"]},"then":{"required":["section"]}},
+								{"if":{"properties":{"intent":{"const":"affirm"}},"required":["intent"]},"then":{"not":{"required":["section"]}}}
+							]
+						}}
+					}}
 				}
 			},
 			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
@@ -917,10 +959,26 @@ func genesisCandidateReviewGuidance(status string, data map[string]any) map[stri
 	}
 	affirm := cloneMap(bindings)
 	affirm["action"] = "affirm"
-	edit := cloneMap(bindings)
-	edit["action"] = "edit"
-	edit["section_required"] = true
-	edit["allowed_sections"] = []any{"identity", "philosophy", "discipline", "boundaries", "soul"}
+	actions := []any{
+		map[string]any{
+			"intent":           "affirm",
+			"description":      "Accept the exact lossless Host review bound by the advertised revision and hashes.",
+			"message_guidance": "Supply a bounded owner decision message; the structural candidate_action, not its prose, carries authority.",
+			"candidate_action": affirm,
+		},
+	}
+	for _, section := range genesisDeclarationSections {
+		edit := cloneMap(bindings)
+		edit["action"] = "edit"
+		edit["section"] = section
+		actions = append(actions, map[string]any{
+			"intent":           "edit",
+			"section":          section,
+			"description":      "Reopen the exact " + section + " section while preserving the advertised review bindings.",
+			"message_guidance": "Supply a bounded owner revision message describing the requested " + section + " change.",
+			"candidate_action": edit,
+		})
+	}
 	return map[string]any{
 		"status":              status,
 		"fresh_lane":          false,
@@ -930,11 +988,8 @@ func genesisCandidateReviewGuidance(status string, data map[string]any) map[stri
 		"candidate_hash":      candidateHash,
 		"review_hash":         reviewHash,
 		"allowed_actions":     []any{"affirm", "edit"},
-		"candidate_action": map[string]any{
-			"affirm": affirm,
-			"edit":   edit,
-		},
-		"instruction": "Inspect the exact lossless conversation.declaration_candidate.review.review_text. Then call agent_genesis_advance with candidate_action bound to the exact candidate_revision, candidate_hash, and review_hash above. affirm forbids section. edit requires one exact section plus an owner revision message. Free-form or canonical affirmation phrases have zero authority.",
+		"candidate_actions":   actions,
+		"instruction":         "Inspect the exact lossless conversation.declaration_candidate.review.review_text. Select one advertised candidate_actions entry, then call agent_genesis_advance with only its nested candidate_action unchanged. affirm forbids section. edit requires one exact section; each edit action supplies it and requires an owner revision message. Free-form or canonical affirmation phrases have zero authority.",
 	}
 }
 
@@ -1492,7 +1547,7 @@ func sanitizeGenesisConversation(raw map[string]any, strictStatus bool) (map[str
 				return nil, errors.New("host declaration candidate phase does not match conversation status")
 			}
 		}
-	} else if strictStatus {
+	} else if strictStatus && !validGenesisNoCandidateRestartProjection(raw) {
 		return nil, errors.New("host declaration candidate is missing")
 	}
 	return out, nil
@@ -1510,6 +1565,82 @@ func validGenesisConversationStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// validGenesisNoCandidateRestartProjection recognizes the one strict nested
+// Host projection that deliberately has no typed candidate: a terminal hard-cut
+// failure for an untyped/stale lane. Host owns this migration decision and
+// requires a fresh bootstrap; Body relays it without rebuilding candidate state.
+func validGenesisNoCandidateRestartProjection(raw map[string]any) bool {
+	status, ok := exactString(raw["status"])
+	if !ok || status != "failed" {
+		return false
+	}
+	failure, ok := raw["failure"].(map[string]any)
+	if !ok || failure == nil || requireExactObjectKeys(failure,
+		[]string{"code", "message", "retryable", "recovery"},
+		[]string{"class"},
+	) != nil {
+		return false
+	}
+	code, ok := exactString(failure["code"])
+	if !ok || !oneOf(code,
+		"llm_unavailable",
+		"assistant_turn_failed",
+		"invalid_completion_state",
+		"missing_produced_declarations",
+		"invalid_produced_declarations",
+		"tenant_boundary_violation",
+		"operator_action_required",
+		"microvm_unavailable",
+	) {
+		return false
+	}
+	if classRaw, present := failure["class"]; present {
+		class, ok := exactString(classRaw)
+		if !ok || !oneOf(class, "provider_timeout", "provider_canceled", "provider_api_failure", "invalid_provider_output", "parse_validation_failure") {
+			return false
+		}
+	}
+	message, ok := exactString(failure["message"])
+	if !ok || strings.TrimSpace(message) == "" || utf8.RuneCountInString(message) > 512 {
+		return false
+	}
+	retryable, ok := failure["retryable"].(bool)
+	if !ok || retryable {
+		return false
+	}
+	recovery, ok := failure["recovery"].(map[string]any)
+	if !ok || recovery == nil || requireExactObjectKeys(recovery,
+		[]string{"action"},
+		[]string{"max_attempts", "retry_after_seconds", "reason"},
+	) != nil {
+		return false
+	}
+	action, ok := exactString(recovery["action"])
+	if !ok || action != "restart_soul_bootstrap" {
+		return false
+	}
+	if !validOptionalGenesisBoundedPositiveInt(recovery, "max_attempts", 10) ||
+		!validOptionalGenesisBoundedPositiveInt(recovery, "retry_after_seconds", genesisMaxRecoveryRetryAfterSeconds) {
+		return false
+	}
+	if reasonRaw, present := recovery["reason"]; present {
+		reason, ok := exactString(reasonRaw)
+		if !ok || strings.TrimSpace(reason) == "" || utf8.RuneCountInString(reason) > 128 {
+			return false
+		}
+	}
+	return true
+}
+
+func validOptionalGenesisBoundedPositiveInt(raw map[string]any, key string, maximum int) bool {
+	value, present := raw[key]
+	if !present {
+		return true
+	}
+	number, ok := exactNonNegativeInt(value)
+	return ok && number >= 1 && number <= int64(maximum)
 }
 
 func sanitizeDeclarationCandidate(raw map[string]any) (map[string]any, error) {

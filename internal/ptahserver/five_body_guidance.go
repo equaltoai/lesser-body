@@ -211,6 +211,7 @@ func fiveBodyInterviewGuideResource(context.Context) ([]mcpruntime.ResourceConte
 			"host_owned": "Host owns HostedGenesisSession, typed candidate construction, candidate persistence, and the five provider declaration tools inside its AppTheory MicroVM; Body only relays the bounded public projection.",
 			"review_protocol": map[string]any{
 				"inspect":   "Read the exact declaration_candidate.review.review_text without substituting the bounded transcript message.",
+				"guidance":  "Select one of structuredContent.data.guidance.candidate_actions: one affirm plus five exact per-section edits; pass only its nested candidate_action unchanged.",
 				"affirm":    "Call agent_genesis_advance with action=affirm, no section, and the exact candidate_revision/candidate_hash/review_hash bindings.",
 				"edit":      "Call agent_genesis_advance with action=edit, one exact section from the five-body enum, the exact bindings, and an owner revision message.",
 				"authority": "Only structural candidate_action has authority; free-form affirmation phrases have zero authority.",
@@ -248,12 +249,12 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 				{"step": "list", "tool": toolAgentGenesisList, "instruction": "When resuming or ids are unclear, list Host-backed summaries and follow recommended_start exactly."},
 				{"step": "section", "tool": toolAgentGenesisAdvance, "instruction": "When assistant_turn_ready and candidate phase is section, submit the next normal owner message for current_section; Host invokes its private provider section tool."},
 				{"step": "read", "tool": toolAgentGenesisRead, "instruction": "Poll Host status and follow structuredContent.data.guidance.next_tool; if guidance.wait=true, wait poll_after_seconds when present and never nudge with agent_genesis_advance."},
-				{"step": "review", "tool": toolAgentGenesisAdvance, "instruction": "Inspect exact review_text, then supply structural candidate_action: affirm has no section; edit has an exact section plus owner revision message; both carry exact returned bindings."},
+				{"step": "review", "tool": toolAgentGenesisAdvance, "instruction": "Inspect exact review_text, select one of guidance.candidate_actions, then pass only its nested structural candidate_action unchanged: affirm has no section; the five edits each have one exact section plus owner revision message; all carry exact returned bindings."},
 				{"step": "preflight", "tool": toolAgentGenesisFinalizePreflight, "instruction": "Check Host readiness before finalization."},
 				{"step": "finalize", "tool": toolAgentGenesisFinalize, "instruction": "Finalize through Host; Body writes a Host-derived Ptah registry row only after Host publication."},
 				{"step": "verify", "tool": toolAgentGet, "instruction": "Verify account-scoped Body/Ptah registry visibility; use agent_list for the merged registry/live view."},
 			},
-			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover; operator_action stops automatic calls and requires operator contact.",
+			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover (its exact terminal untyped/stale hard-cut projection may omit declaration_candidate); operator_action stops automatic calls and requires operator contact.",
 			"recovery_actions": map[string]any{
 				"retry_same_step": map[string]any{
 					"next_tool":   toolAgentGenesisRecover,
