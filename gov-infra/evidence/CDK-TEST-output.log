@@ -7,21 +7,21 @@ $ cd cdk && npm test
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-✔ secret read policy includes legacy and managed instance-key patterns (174.124112ms)
-✔ managed template supports an exact lesser-host instance key ARN (30.306406ms)
-✔ managed template supports Ptah soul-binding bearer secret ARN (23.976464ms)
-✔ managed template requires app-scoped Lesser parameter paths (23.247682ms)
-✔ lesser table policy uses least-privilege primary table access (20.914747ms)
-✔ managed template pins MCP table logical IDs (22.644203ms)
-✔ runtime stack uses AppTheory durable stream table schema (20.074841ms)
-✔ runtime stack provisions internal MCP task storage without SSM export (17.99356ms)
-✔ remote MCP server uses actor-path wiring (17.578722ms)
-✔ runtime stack preserves named MCP table fingerprints (18.112718ms)
-✔ stream table export name stays stable across baseline reset (15.562826ms)
-✔ runtime stack provisions instance-plane lambda with owned tables (17.344953ms)
-✔ instance-plane lambda receives managed Lesser/Host genesis configuration (18.026293ms)
-✔ instance-plane Lesser table read includes binding lookup without memory access (19.429641ms)
-✔ runtime stack publishes additive instance-plane SSM exports (17.11979ms)
+✔ secret read policy includes legacy and managed instance-key patterns (201.012203ms)
+✔ managed template supports an exact lesser-host instance key ARN (34.134142ms)
+✔ managed template supports Ptah soul-binding bearer secret ARN (26.555601ms)
+✔ managed template requires app-scoped Lesser parameter paths (26.20899ms)
+✔ lesser table policy uses least-privilege primary table access (23.919687ms)
+✔ managed template pins MCP table logical IDs (31.757386ms)
+✔ runtime stack uses AppTheory durable stream table schema (31.939978ms)
+✔ runtime stack provisions internal MCP task storage without SSM export (19.329269ms)
+✔ remote MCP server uses actor-path wiring (18.665333ms)
+✔ runtime stack preserves named MCP table fingerprints (24.552013ms)
+✔ stream table export name stays stable across baseline reset (21.241515ms)
+✔ runtime stack provisions instance-plane lambda with owned tables (17.841078ms)
+✔ instance-plane lambda receives managed Lesser/Host genesis configuration (18.677146ms)
+✔ instance-plane Lesser table read includes binding lookup without memory access (20.597758ms)
+✔ runtime stack publishes additive instance-plane SSM exports (18.113229ms)
 ℹ tests 15
 ℹ suites 0
 ℹ pass 15
@@ -29,4 +29,4 @@ $ cd cdk && npm test
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 513.26818
+ℹ duration_ms 595.864479
