@@ -1,6 +1,6 @@
 package mcpserver
 
-import mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+import mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 
 // Server is an alias for AppTheory's MCP server implementation.
 //

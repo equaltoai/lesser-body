@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/v2/runtime/oauth"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"

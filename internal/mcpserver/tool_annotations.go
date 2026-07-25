@@ -1,6 +1,6 @@
 package mcpserver
 
-import mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+import mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 
 func boolHint(value bool) *bool {
 	return &value

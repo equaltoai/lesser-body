@@ -46,9 +46,9 @@ MCP_PROTOCOL_VERSION="$(awk '
     print $4
     exit
   }
-' "$(go list -f '{{.Dir}}' github.com/theory-cloud/apptheory/runtime/mcp)/server.go")"
+' "$(go list -f '{{.Dir}}' github.com/theory-cloud/apptheory/v2/runtime/mcp)/server.go")"
 if [[ -z "${MCP_PROTOCOL_VERSION}" ]]; then
-  echo "failed to resolve MCP protocol version from github.com/theory-cloud/apptheory/runtime/mcp" >&2
+  echo "failed to resolve MCP protocol version from github.com/theory-cloud/apptheory/v2/runtime/mcp" >&2
   exit 1
 fi
 
