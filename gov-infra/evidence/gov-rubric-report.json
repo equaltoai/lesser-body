@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-25T20:29:56.788957Z",
+  "generated_at": "2026-07-25T20:36:31.298204Z",
   "git": {
-    "head": "d82d9d1cd9ee3b16e95c3fa4f60053169cfd6e15",
-    "head_tree": "5c38692cfec69d6556630aaa48c435202a3cf16b",
+    "head": "f233835996221a0b712fe4a7f6e963fb644318de",
+    "head_tree": "c9f42fb13632cc7791d3e2585ba84d5212db257f",
     "merge_base_origin_staging": "8b4c58fd6a0fc5502d6b18dfa2df6add58092162",
     "ref": "theorymcp/equaltoai/body/apptheory-v2-adoption",
-    "working_tree_after_run": "103 changed paths after verifier run"
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
