@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
-	"github.com/theory-cloud/apptheory/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v2/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"

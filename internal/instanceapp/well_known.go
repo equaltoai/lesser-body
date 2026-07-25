@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/baserver"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/v2/runtime/oauth"
 )
 
 const instanceSurfacePlaceholder = "{surface}"

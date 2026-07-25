@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-23T02:23:22.975773Z",
+  "generated_at": "2026-07-25T20:36:31.298204Z",
   "git": {
-    "head": "88f49941adceb8c6f7faad1acfdec719149e4321",
-    "head_tree": "b71fb2b807d26962f1897235b1222fe212d8a637",
-    "merge_base_origin_staging": "88f49941adceb8c6f7faad1acfdec719149e4321",
-    "ref": "theorymcp/equaltoai/body/issue-452-gov3-promotion-context",
-    "working_tree_after_run": "8 changed paths after verifier run"
+    "head": "f233835996221a0b712fe4a7f6e963fb644318de",
+    "head_tree": "c9f42fb13632cc7791d3e2585ba84d5212db257f",
+    "merge_base_origin_staging": "8b4c58fd6a0fc5502d6b18dfa2df6add58092162",
+    "ref": "theorymcp/equaltoai/body/apptheory-v2-adoption",
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

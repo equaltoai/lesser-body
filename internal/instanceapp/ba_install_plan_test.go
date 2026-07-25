@@ -17,8 +17,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/installpack"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"github.com/theory-cloud/apptheory/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v2/testkit"
 )
 
 func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing.T) {
