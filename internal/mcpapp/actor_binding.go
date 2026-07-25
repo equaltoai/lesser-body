@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 func WithActorBinding(next apptheory.Handler) apptheory.Handler {

@@ -12,8 +12,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 const (

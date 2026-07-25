@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 var mcpExposeHeaders = []string{

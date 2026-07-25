@@ -13,7 +13,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 type fakeGenesisClient struct {

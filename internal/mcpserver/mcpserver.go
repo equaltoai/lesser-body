@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 	"github.com/theory-cloud/tabletheory/v2"
 	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
 	"github.com/theory-cloud/tabletheory/v2/pkg/session"

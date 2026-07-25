@@ -20,7 +20,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 const (

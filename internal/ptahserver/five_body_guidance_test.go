@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 func TestFiveBodyGuidanceRegistersResourcesAndPrompts(t *testing.T) {
