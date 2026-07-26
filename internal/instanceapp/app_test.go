@@ -46,7 +46,7 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 		serverName string
 		wantTools  []string
 	}{
-		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_skill_get", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
+		{name: "ptah", path: "/instance/ptah/mcp", serverName: "lesser-body-instance-ptah", wantTools: []string{"agent_bind_soul", "agent_get", "agent_list", "agent_soul_get", "agent_soul_upsert", "agent_soul_publish", "agent_soul_archive", "agent_instructions_get", "agent_instructions_upsert", "agent_instructions_archive", "agent_genesis_skill_get", "agent_genesis_begin", "agent_genesis_list", "agent_genesis_read", "agent_genesis_advance", "agent_genesis_recover", "agent_genesis_finalize_preflight", "agent_genesis_finalize"}},
 		{name: "ba", path: "/instance/ba/mcp", serverName: "lesser-body-instance-ba", wantTools: []string{baserver.ToolAgentLocalInstallPlan}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,34 +142,38 @@ func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 					t.Fatalf("agent_list annotations not read-only: %+v", listDef)
 				}
 				soulGetDef := listBody.Result.Tools[3]
-				if soulGetDef.Name != "agent_soul_get" || soulGetDef.Annotations == nil || soulGetDef.Annotations.ReadOnlyHint == nil || !*soulGetDef.Annotations.ReadOnlyHint || !strings.Contains(soulGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
+				if soulGetDef.Name != "agent_soul_get" || soulGetDef.Annotations == nil || soulGetDef.Annotations.ReadOnlyHint == nil || !*soulGetDef.Annotations.ReadOnlyHint || !strings.Contains(soulGetDef.Description, "Panonomous soul-document v2") {
 					t.Fatalf("agent_soul_get annotations/description invalid: %+v", soulGetDef)
 				}
 				soulUpsertDef := listBody.Result.Tools[4]
 				if soulUpsertDef.Name != "agent_soul_upsert" || soulUpsertDef.Annotations == nil || soulUpsertDef.Annotations.ReadOnlyHint == nil || *soulUpsertDef.Annotations.ReadOnlyHint || soulUpsertDef.Annotations.IdempotentHint == nil || *soulUpsertDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_soul_upsert annotations invalid: %+v", soulUpsertDef)
 				}
-				soulArchiveDef := listBody.Result.Tools[5]
+				soulPublishDef := listBody.Result.Tools[5]
+				if soulPublishDef.Name != "agent_soul_publish" || soulPublishDef.Annotations == nil || soulPublishDef.Annotations.ReadOnlyHint == nil || *soulPublishDef.Annotations.ReadOnlyHint || soulPublishDef.Annotations.IdempotentHint == nil || !*soulPublishDef.Annotations.IdempotentHint {
+					t.Fatalf("agent_soul_publish annotations invalid: %+v", soulPublishDef)
+				}
+				soulArchiveDef := listBody.Result.Tools[6]
 				if soulArchiveDef.Name != "agent_soul_archive" || soulArchiveDef.Annotations == nil || soulArchiveDef.Annotations.ReadOnlyHint == nil || *soulArchiveDef.Annotations.ReadOnlyHint || soulArchiveDef.Annotations.IdempotentHint == nil || !*soulArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_soul_archive annotations invalid: %+v", soulArchiveDef)
 				}
-				instructionsGetDef := listBody.Result.Tools[6]
-				if instructionsGetDef.Name != "agent_instructions_get" || instructionsGetDef.Annotations == nil || instructionsGetDef.Annotations.ReadOnlyHint == nil || !*instructionsGetDef.Annotations.ReadOnlyHint || strings.Contains(instructionsGetDef.Description, "provisional_agent_soul_schema_pending_lesser_soul_s1") {
+				instructionsGetDef := listBody.Result.Tools[7]
+				if instructionsGetDef.Name != "agent_instructions_get" || instructionsGetDef.Annotations == nil || instructionsGetDef.Annotations.ReadOnlyHint == nil || !*instructionsGetDef.Annotations.ReadOnlyHint {
 					t.Fatalf("agent_instructions_get annotations/description invalid: %+v", instructionsGetDef)
 				}
-				instructionsUpsertDef := listBody.Result.Tools[7]
+				instructionsUpsertDef := listBody.Result.Tools[8]
 				if instructionsUpsertDef.Name != "agent_instructions_upsert" || instructionsUpsertDef.Annotations == nil || instructionsUpsertDef.Annotations.ReadOnlyHint == nil || *instructionsUpsertDef.Annotations.ReadOnlyHint || instructionsUpsertDef.Annotations.IdempotentHint == nil || *instructionsUpsertDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_upsert annotations invalid: %+v", instructionsUpsertDef)
 				}
-				instructionsArchiveDef := listBody.Result.Tools[8]
+				instructionsArchiveDef := listBody.Result.Tools[9]
 				if instructionsArchiveDef.Name != "agent_instructions_archive" || instructionsArchiveDef.Annotations == nil || instructionsArchiveDef.Annotations.ReadOnlyHint == nil || *instructionsArchiveDef.Annotations.ReadOnlyHint || instructionsArchiveDef.Annotations.IdempotentHint == nil || !*instructionsArchiveDef.Annotations.IdempotentHint {
 					t.Fatalf("agent_instructions_archive annotations invalid: %+v", instructionsArchiveDef)
 				}
-				genesisSkillDef := listBody.Result.Tools[9]
+				genesisSkillDef := listBody.Result.Tools[10]
 				if genesisSkillDef.Name != "agent_genesis_skill_get" || genesisSkillDef.Annotations == nil || genesisSkillDef.Annotations.ReadOnlyHint == nil || !*genesisSkillDef.Annotations.ReadOnlyHint || !strings.Contains(genesisSkillDef.Description, "no local installation") || !strings.Contains(string(genesisSkillDef.OutputSchema), "bundle_id") {
 					t.Fatalf("agent_genesis_skill_get definition invalid: %+v", genesisSkillDef)
 				}
-				genesisListDef := listBody.Result.Tools[11]
+				genesisListDef := listBody.Result.Tools[12]
 				if genesisListDef.Name != "agent_genesis_list" || genesisListDef.Annotations == nil || genesisListDef.Annotations.ReadOnlyHint == nil || !*genesisListDef.Annotations.ReadOnlyHint || !strings.Contains(genesisListDef.Description, "producer_contract_missing") || !strings.Contains(string(genesisListDef.OutputSchema), "not_available") {
 					t.Fatalf("agent_genesis_list definition invalid: %+v", genesisListDef)
 				}

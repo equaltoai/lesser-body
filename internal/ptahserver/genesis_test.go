@@ -3,6 +3,7 @@ package ptahserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strings"
@@ -31,6 +32,8 @@ type fakeGenesisClient struct {
 	listErr           error
 	advanceResponse   map[string]any
 	readResponse      map[string]any
+	readResponses     []map[string]any
+	readCalls         int
 	recoverResponse   map[string]any
 	preflightResponse map[string]any
 	finalizeResponse  map[string]any
@@ -68,6 +71,12 @@ func (f *fakeGenesisClient) ReadConversation(_ context.Context, bearer string, r
 	f.calls = append(f.calls, "read:"+registrationID+":"+conversationID)
 	f.registrationID = registrationID
 	f.conversationID = conversationID
+	if f.readCalls < len(f.readResponses) {
+		response := f.readResponses[f.readCalls]
+		f.readCalls++
+		return response, nil
+	}
+	f.readCalls++
 	return f.readResponse, nil
 }
 
@@ -214,7 +223,10 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 			"promotion": map[string]any{"stage": "pending"},
 		},
 		advanceResponse: genesisConversationResponse("assistant_turn_ready", oldTranscript),
-		readResponse:    genesisConversationResponse("assistant_turn_ready", oldTranscript),
+		readResponses: []map[string]any{
+			genesisConversationResponse("assistant_turn_ready", oldTranscript),
+			seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-123"),
+		},
 		recoverResponse: genesisConversationResponse("assistant_turn_ready", oldTranscript),
 		preflightResponse: map[string]any{
 			"conversation": map[string]any{
@@ -235,9 +247,10 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 		},
 	}
 	registryStore := newMemoryAgentRegistry()
+	contentStore := newVersionedFakeAgentContentStore()
 
 	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry, WithGenesisClient(fake), WithAgentRegistryStore(registryStore)); err != nil {
+	if err := RegisterTools(registry, WithGenesisClient(fake), WithAgentRegistryStore(registryStore), WithAgentContentStore(contentStore)); err != nil {
 		t.Fatalf("RegisterTools: %v", err)
 	}
 	ctx := operatorToolContext("owner", []string{"read", "write"}, callerBearer)
@@ -276,6 +289,10 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 	if registryStore.upsertFinalizedCalls != 1 || len(registryStore.records) != 1 {
 		t.Fatalf("finalize registry writes = calls %d rows %d, want one Host-derived row", registryStore.upsertFinalizedCalls, len(registryStore.records))
 	}
+	seed, _ := finalizeData["soul_seed"].(map[string]any)
+	if seed["lifecycle_state"] != string(agentcontent.LifecycleStatePublished) || seed["provenance_source"] != "ptah_seed" {
+		t.Fatalf("finalize soul seed = %+v, want published ptah_seed", seed)
+	}
 
 	wantCalls := []string{
 		"begin",
@@ -283,6 +300,7 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 		"read:reg-123:conv-456",
 		"recover:reg-123:conv-456",
 		"preflight:reg-123:conv-456",
+		"read:reg-123:conv-456",
 		"finalize:reg-123:conv-456",
 	}
 	if strings.Join(fake.calls, "|") != strings.Join(wantCalls, "|") {
@@ -309,6 +327,10 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	const hostKey = "host-instance-key-test-only"
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", hostKey)
 	fake := &fakeGenesisClient{
+		readResponses: []map[string]any{
+			seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-0xabc"),
+			seedableGenesisConversationResponse(t, "published", "reg-123", "conv-456", "agent-0xabc"),
+		},
 		finalizeResponse: map[string]any{
 			"agent_id":          "agent-0xabc",
 			"published_version": 7,
@@ -341,15 +363,6 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	}
 	registryStore := newMemoryAgentRegistry()
 	contentStore := newVersionedFakeAgentContentStore()
-	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
-		Account:            "owner",
-		AgentID:            "agent-0xabc",
-		Type:               agentcontent.ContentTypeAgentSoul,
-		Content:            "safe soul draft summary source",
-		UpdatedBySubjectID: "subject-writer",
-	}); err != nil {
-		t.Fatalf("seed agent_soul content: %v", err)
-	}
 	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
 		Account:            "owner",
 		AgentID:            "agent-0xabc",
@@ -391,6 +404,20 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	if secondWrite["created"] != false || secondWrite["idempotent"] != true {
 		t.Fatalf("second registry_write = %+v, want idempotent replay", secondWrite)
 	}
+	firstSeed, _ := firstData["soul_seed"].(map[string]any)
+	secondSeed, _ := secondData["soul_seed"].(map[string]any)
+	if firstSeed["created"] != true || secondSeed["created"] != false ||
+		firstSeed["lifecycle_state"] != string(agentcontent.LifecycleStatePublished) ||
+		secondSeed["soul_version"] != firstSeed["soul_version"] {
+		t.Fatalf("finalize seed replay first=%+v second=%+v", firstSeed, secondSeed)
+	}
+	seededSoul, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentSoul)
+	if err != nil || seededSoul.Document == nil || seededSoul.Document.AgentID != "agent-0xabc" {
+		t.Fatalf("seeded registry agent_id record = %+v/%v", seededSoul, err)
+	}
+	if _, err := contentStore.Get(context.Background(), "owner", "ada", agentcontent.ContentTypeAgentSoul); !errors.Is(err, agentcontent.ErrContentNotFound) {
+		t.Fatalf("local_id was incorrectly used as soul document agent_id: %v", err)
+	}
 
 	getData := callToolData(t, tools, toolContextWithSubject("owner", []string{"read"}, "owner-oauth-bearer-test-only", "subject-reader"), toolAgentGet, `{"agent_id":"agent-0xabc"}`)
 	getRegistry, _ := getData["registry"].(map[string]any)
@@ -416,6 +443,82 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	listRegistry, _ := agents[0]["registry"].(map[string]any)
 	if agents[0]["source"] != agentListRegistrySourceCode || listRegistry["agent_id"] != "agent-0xabc" {
 		t.Fatalf("agent_list minted item = %+v", agents[0])
+	}
+}
+
+func TestGenesisFinalizeRejectsInvalidDeclarationBeforeHostPublication(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	declaration := seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-0xabc")
+	nestedMap(nestedMap(declaration, "conversation"), "declaration_candidate")["candidate_hash"] = "sha256:" + strings.Repeat("0", 64)
+	fake := &fakeGenesisClient{
+		readResponse:     declaration,
+		finalizeResponse: map[string]any{"agent_id": "agent-0xabc"},
+	}
+	registryStore := newMemoryAgentRegistry()
+	contentStore := newVersionedFakeAgentContentStore()
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(
+		tools,
+		WithGenesisClient(fake),
+		WithAgentRegistryStore(registryStore),
+		WithAgentContentStore(contentStore),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisFinalize,
+		json.RawMessage(`{"registration_id":"reg-123","conversation_id":"conv-456"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertToolError(t, result, "host_genesis_declaration_invalid", http.StatusBadGateway)
+	if got, want := strings.Join(fake.calls, "|"), "read:reg-123:conv-456"; got != want {
+		t.Fatalf("Host calls = %q, want only pre-publication read %q", got, want)
+	}
+	if registryStore.upsertFinalizedCalls != 0 || len(contentStore.records) != 0 {
+		t.Fatalf("invalid declaration reached Body writes: registry=%d content=%d", registryStore.upsertFinalizedCalls, len(contentStore.records))
+	}
+}
+
+func TestGenesisFinalizeReportsRepairableSeedFailureAfterHostPublication(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{
+		readResponse:     seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-0xabc"),
+		finalizeResponse: map[string]any{"agent_id": "agent-0xabc"},
+	}
+	registryStore := newMemoryAgentRegistry()
+	contentStore := &fakeAgentContentStore{seedPublishedErr: errors.New("private conditional write detail")}
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(
+		tools,
+		WithGenesisClient(fake),
+		WithAgentRegistryStore(registryStore),
+		WithAgentContentStore(contentStore),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisFinalize,
+		json.RawMessage(`{"registration_id":"reg-123","conversation_id":"conv-456"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_soul_seed_error", http.StatusInternalServerError)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "private conditional write detail") {
+		t.Fatalf("seed failure leaked store detail: %s", encoded)
+	}
+	if got, want := strings.Join(fake.calls, "|"), "read:reg-123:conv-456|finalize:reg-123:conv-456"; got != want {
+		t.Fatalf("Host calls = %q, want %q", got, want)
+	}
+	if registryStore.upsertFinalizedCalls != 1 || contentStore.seedPublishedCalls != 1 {
+		t.Fatalf("repairable finalize writes registry=%d seed=%d, want 1/1", registryStore.upsertFinalizedCalls, contentStore.seedPublishedCalls)
 	}
 }
 
@@ -1328,6 +1431,27 @@ func genesisConversationResponse(status string, oldTranscript string) map[string
 			},
 		},
 	}
+}
+
+func seedableGenesisConversationResponse(t *testing.T, status, registrationID, conversationID, agentID string) map[string]any {
+	t.Helper()
+	fixture := "testdata/host-contract/pr-978/hosted-genesis.conversation.completed-declaration-ready.example.json"
+	if status == "published" {
+		fixture = "testdata/host-contract/pr-978/hosted-genesis.conversation.published.example.json"
+	}
+	raw := readGenesisFixture(t, fixture)
+	conversation := nestedMap(raw, "conversation")
+	conversation["status"] = status
+	conversation["registration_id"] = registrationID
+	conversation["conversation_id"] = conversationID
+	conversation["agent_id"] = agentID
+	if produced := nestedMap(conversation, "produced_declarations"); len(produced) > 0 {
+		evidence := nestedMap(produced, "evidence")
+		evidence["registration_id"] = registrationID
+		evidence["conversation_id"] = conversationID
+		evidence["agent_id"] = agentID
+	}
+	return raw
 }
 
 func genesisSectionCandidateProjection() map[string]any {

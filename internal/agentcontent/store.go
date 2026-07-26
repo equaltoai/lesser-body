@@ -27,10 +27,6 @@ const (
 	agentPKSegment  = "#AGENT#"
 	contentSKPrefix = "CONTENT#"
 
-	// MaxAgentSoulBytes bounds a single draft soul body. The default is kept
-	// below DynamoDB's item limit so future metadata can fit beside the content.
-	MaxAgentSoulBytes = 64 * 1024
-
 	// MaxAgentInstructionsBytes bounds a single draft instructions body. The
 	// default is kept below DynamoDB's item limit so future metadata can fit
 	// beside the content.
@@ -52,8 +48,9 @@ const (
 type LifecycleState string
 
 const (
-	LifecycleStateDraft    LifecycleState = "draft"
-	LifecycleStateArchived LifecycleState = "archived"
+	LifecycleStateDraft     LifecycleState = "draft"
+	LifecycleStatePublished LifecycleState = "published"
+	LifecycleStateArchived  LifecycleState = "archived"
 )
 
 var (
@@ -66,8 +63,12 @@ var (
 	ErrInvalidContentType = errors.New("invalid agent content type")
 
 	// ErrInvalidLifecycleState is returned when persisted state is not one of
-	// draft or archived.
+	// draft, published, or archived.
 	ErrInvalidLifecycleState = errors.New("invalid agent content lifecycle state")
+
+	// ErrInvalidLifecycleTransition is returned when a caller attempts a
+	// transition outside the soul-document v2 state machine.
+	ErrInvalidLifecycleTransition = errors.New("invalid agent content lifecycle transition")
 
 	// ErrContentTooLarge is returned when draft content exceeds the configured
 	// per-type byte limit.
@@ -99,8 +100,36 @@ func (e *SizeError) Error() string {
 
 func (e *SizeError) Unwrap() error { return ErrContentTooLarge }
 
-// Record is the current account-scoped draft/archived content record for one
-// account, agent, and content type.
+// TransitionError preserves a typed lifecycle rejection while naming the
+// explicit action the caller should take.
+type TransitionError struct {
+	Action ContentAction
+	From   LifecycleState
+	To     LifecycleState
+}
+
+func (e *TransitionError) Error() string {
+	if e == nil {
+		return ErrInvalidLifecycleTransition.Error()
+	}
+	return fmt.Sprintf("%s: action %s cannot transition %s to %s", ErrInvalidLifecycleTransition, e.Action, e.From, e.To)
+}
+
+func (e *TransitionError) Unwrap() error { return ErrInvalidLifecycleTransition }
+
+// ContentAction names lifecycle writes for transition errors and immutable
+// history rows.
+type ContentAction string
+
+const (
+	ContentActionUpsert  ContentAction = "upsert"
+	ContentActionPublish ContentAction = "publish"
+	ContentActionArchive ContentAction = "archive"
+)
+
+// Record is the current account-scoped content projection for one account,
+// agent, and content type. AgentSoul records include the closed v2 Document;
+// Content remains a compatibility alias for document.body.
 type Record struct {
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
@@ -109,8 +138,10 @@ type Record struct {
 	Type               ContentType    `json:"type"`
 	Content            string         `json:"content"`
 	Version            int64          `json:"version"`
+	SoulVersion        int64          `json:"soul_version,omitempty"`
 	LifecycleState     LifecycleState `json:"lifecycle_state"`
 	UpdatedBySubjectID string         `json:"updated_by_subject_id"`
+	Document           *SoulDocument  `json:"document,omitempty"`
 }
 
 // UpsertInput describes a create-or-update draft write. UpdatedBySubjectID is
@@ -122,6 +153,26 @@ type UpsertInput struct {
 	AgentID            string
 	Type               ContentType
 	Content            string
+	SoulDocument       *SoulDocument
+	UpdatedBySubjectID string
+}
+
+// PublishInput describes an explicit owner-authorized draft-to-published
+// transition for an agent_soul document.
+type PublishInput struct {
+	Account            string
+	AgentID            string
+	UpdatedBySubjectID string
+}
+
+// SeedPublishedInput is the deterministic Ptah genesis application path. It
+// creates the exact finalized declaration only when no current soul exists,
+// then publishes it; replays of the identical source repair a partial draft or
+// return the already-published snapshot without creating another version.
+type SeedPublishedInput struct {
+	Account            string
+	AgentID            string
+	SoulDocument       *SoulDocument
 	UpdatedBySubjectID string
 }
 
@@ -135,13 +186,13 @@ type ArchiveInput struct {
 
 // Store persists Ptah-authored versioned drafts in a body-owned instance table.
 type Store struct {
-	db        tablecore.DB
+	db        tablecore.ExtendedDB
 	tableName string
 }
 
 // NewStore constructs a Store over an injected TableTheory DB. tableName should
 // be the configured INSTANCE_CONTENT_TABLE value.
-func NewStore(db tablecore.DB, tableName string) (*Store, error) {
+func NewStore(db tablecore.ExtendedDB, tableName string) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("agent content db is required")
 	}
@@ -160,7 +211,7 @@ func Default() (*Store, error) {
 		return nil, fmt.Errorf("%s is required", EnvInstanceContentTable)
 	}
 
-	db, err := tabletheory.NewBasic(session.Config{Region: os.Getenv(envAWSRegion)})
+	db, err := tabletheory.New(session.Config{Region: os.Getenv(envAWSRegion)})
 	if err != nil {
 		return nil, fmt.Errorf("create tabletheory client: %w", err)
 	}
@@ -180,6 +231,9 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Record, error) {
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if validated.contentType == ContentTypeAgentSoul {
+		return s.upsertSoul(ctx, validated, in)
 	}
 
 	now := time.Now().UTC()
@@ -232,6 +286,100 @@ func (s *Store) Upsert(ctx context.Context, in UpsertInput) (*Record, error) {
 	return nil, fmt.Errorf("%w: upsert agent content", ErrContentConflict)
 }
 
+func (s *Store) upsertSoul(ctx context.Context, validated validatedWriteInput, in UpsertInput) (*Record, error) {
+	now := time.Now().UTC()
+	document := validated.soulDocument
+
+	for attempt := 0; attempt < updateRetryLimit; attempt++ {
+		current, err := s.loadRecord(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		switch {
+		case errors.Is(err, ErrContentNotFound):
+			stamped := stampSoulDocument(document, LifecycleStateDraft, 1, 1, validated.updatedBySubjectID, now, now)
+			if err := ValidateSoulDocumentRecord(stamped, validated.agentID); err != nil {
+				return nil, err
+			}
+			encoded, err := encodeSoulDocument(stamped)
+			if err != nil {
+				return nil, err
+			}
+			created := s.recordFor(validated.account, validated.agentID, ContentTypeAgentSoul)
+			created.Content = stamped.Body
+			created.DocumentJSON = encoded
+			created.SoulVersion = 1
+			created.Version = 1
+			created.LifecycleState = string(LifecycleStateDraft)
+			created.ContentCreatedAt = now
+			created.ContentUpdatedAt = now
+			created.UpdatedBySubjectID = validated.updatedBySubjectID
+			history := s.historyFor(created, ContentActionUpsert, now, validated.updatedBySubjectID)
+			err = s.db.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+				tx.Create(created).Create(history)
+				return nil
+			})
+			switch {
+			case err == nil:
+				return s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+			case tableerrors.IsConditionFailed(err):
+				continue
+			default:
+				return nil, fmt.Errorf("create agent soul document: %w", err)
+			}
+		case err != nil:
+			return nil, err
+		default:
+			currentSoulVersion := current.SoulVersion
+			if currentSoulVersion < 1 {
+				currentSoulVersion = current.Version
+			}
+			nextSoulVersion := currentSoulVersion + 1
+			nextRecordVersion := current.Version + 1
+			stamped := stampSoulDocument(document, LifecycleStateDraft, nextSoulVersion, nextRecordVersion, validated.updatedBySubjectID, now, now)
+			if err := ValidateSoulDocumentRecord(stamped, validated.agentID); err != nil {
+				return nil, err
+			}
+			encoded, err := encodeSoulDocument(stamped)
+			if err != nil {
+				return nil, err
+			}
+			historySource := *current
+			historySource.Content = stamped.Body
+			historySource.DocumentJSON = encoded
+			historySource.SoulVersion = nextSoulVersion
+			historySource.Version = nextRecordVersion
+			historySource.LifecycleState = string(LifecycleStateDraft)
+			historySource.ContentCreatedAt = now
+			historySource.ContentUpdatedAt = now
+			historySource.UpdatedBySubjectID = validated.updatedBySubjectID
+			history := s.historyFor(&historySource, ContentActionUpsert, now, validated.updatedBySubjectID)
+			err = s.db.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+				tx.UpdateWithBuilder(current, func(update tablecore.UpdateBuilder) error {
+					update.
+						Set("Content", stamped.Body).
+						Set("DocumentJSON", encoded).
+						Set("SoulVersion", nextSoulVersion).
+						Set("LifecycleState", string(LifecycleStateDraft)).
+						Set("ContentCreatedAt", now).
+						Set("ContentUpdatedAt", now).
+						Set("UpdatedBySubjectID", validated.updatedBySubjectID).
+						Add("Version", int64(1)).
+						ConditionVersion(current.Version)
+					return nil
+				}).Create(history)
+				return nil
+			})
+			switch {
+			case err == nil:
+				return s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+			case tableerrors.IsConditionFailed(err):
+				continue
+			default:
+				return nil, fmt.Errorf("update agent soul document: %w", err)
+			}
+		}
+	}
+	return nil, fmt.Errorf("%w: upsert agent soul document", ErrContentConflict)
+}
+
 // Get returns the current record for an account, agent, and content type. A
 // wrong account and an absent record both map to ErrContentNotFound.
 func (s *Store) Get(ctx context.Context, account string, agentID string, contentType ContentType) (*Record, error) {
@@ -250,6 +398,11 @@ func (s *Store) Get(ctx context.Context, account string, agentID string, content
 	if err != nil {
 		return nil, err
 	}
+	if typ == ContentTypeAgentSoul {
+		if err := ValidateSoulAgentID(agentID); err != nil {
+			return nil, err
+		}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -261,8 +414,135 @@ func (s *Store) Get(ctx context.Context, account string, agentID string, content
 	return record.toRecord()
 }
 
-// Archive idempotently marks the current content record archived. It preserves
-// the content version while updating lifecycle and audit fields.
+// Publish explicitly transitions the current agent_soul draft to a published
+// immutable snapshot. Replaying publication of the same current version is
+// idempotent.
+func (s *Store) Publish(ctx context.Context, in PublishInput) (*Record, error) {
+	if s == nil {
+		return nil, fmt.Errorf("agent content store is nil")
+	}
+	validated, err := validateWriteScope(in.Account, in.AgentID, ContentTypeAgentSoul, in.UpdatedBySubjectID)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return s.transitionSoul(ctx, validated, ContentActionPublish, LifecycleStateDraft, LifecycleStatePublished, 0)
+}
+
+// SeedPublished idempotently applies one finalized Hosted Genesis declaration
+// without ever overwriting owner-authored or differently-provenanced content.
+// A process interruption between the draft and publish transactions is repaired
+// by the next replay.
+func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Record, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent content store is nil")
+	}
+	validated, err := validateUpsertInput(UpsertInput{
+		Account:            in.Account,
+		AgentID:            in.AgentID,
+		Type:               ContentTypeAgentSoul,
+		SoulDocument:       in.SoulDocument,
+		UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	created := false
+	for attempt := 0; attempt < updateRetryLimit; attempt++ {
+		current, err := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		switch {
+		case errors.Is(err, ErrContentNotFound):
+			draft, createErr := s.createInitialSoulDraft(ctx, validated)
+			switch {
+			case createErr == nil:
+				current = draft
+				created = true
+			case errors.Is(createErr, ErrContentConflict):
+				continue
+			default:
+				return nil, false, createErr
+			}
+		case err != nil:
+			return nil, false, err
+		}
+
+		if !sameSoulDocumentAuthoringContent(current.Document, validated.soulDocument) {
+			return nil, false, fmt.Errorf("%w: finalized declaration differs from current agent_soul", ErrContentConflict)
+		}
+		switch current.LifecycleState {
+		case LifecycleStatePublished:
+			return current, created, nil
+		case LifecycleStateDraft:
+			// Bind the seed publication to the exact draft that matched the
+			// finalized declaration above. A concurrent owner upsert must never
+			// cause this path to publish a different draft.
+			published, err := s.transitionSoul(
+				ctx,
+				validated,
+				ContentActionPublish,
+				LifecycleStateDraft,
+				LifecycleStatePublished,
+				current.Version,
+			)
+			if errors.Is(err, ErrContentConflict) {
+				continue
+			}
+			return published, created, err
+		default:
+			return nil, false, &TransitionError{
+				Action: ContentActionPublish,
+				From:   current.LifecycleState,
+				To:     LifecycleStatePublished,
+			}
+		}
+	}
+	return nil, false, fmt.Errorf("%w: seed finalized agent soul", ErrContentConflict)
+}
+
+func (s *Store) createInitialSoulDraft(ctx context.Context, validated validatedWriteInput) (*Record, error) {
+	now := time.Now().UTC()
+	stamped := stampSoulDocument(validated.soulDocument, LifecycleStateDraft, 1, 1, validated.updatedBySubjectID, now, now)
+	if err := ValidateSoulDocumentRecord(stamped, validated.agentID); err != nil {
+		return nil, err
+	}
+	encoded, err := encodeSoulDocument(stamped)
+	if err != nil {
+		return nil, err
+	}
+	created := s.recordFor(validated.account, validated.agentID, ContentTypeAgentSoul)
+	created.Content = stamped.Body
+	created.DocumentJSON = encoded
+	created.SoulVersion = 1
+	created.Version = 1
+	created.LifecycleState = string(LifecycleStateDraft)
+	created.ContentCreatedAt = now
+	created.ContentUpdatedAt = now
+	created.UpdatedBySubjectID = validated.updatedBySubjectID
+	history := s.historyFor(created, ContentActionUpsert, now, validated.updatedBySubjectID)
+	err = s.db.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+		tx.Create(created).Create(history)
+		return nil
+	})
+	switch {
+	case err == nil:
+		return s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+	case tableerrors.IsConditionFailed(err):
+		return nil, fmt.Errorf("%w: create initial agent soul draft", ErrContentConflict)
+	default:
+		return nil, fmt.Errorf("create initial agent soul draft: %w", err)
+	}
+}
+
+// Archive idempotently retires the current content record. For agent_soul,
+// only a published snapshot can be archived; draft publication is always an
+// explicit owner act. Agent instructions preserve their existing draft archive
+// behavior.
 func (s *Store) Archive(ctx context.Context, in ArchiveInput) (*Record, error) {
 	if s == nil {
 		return nil, fmt.Errorf("agent content store is nil")
@@ -273,6 +553,9 @@ func (s *Store) Archive(ctx context.Context, in ArchiveInput) (*Record, error) {
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if validated.contentType == ContentTypeAgentSoul {
+		return s.transitionSoul(ctx, validated, ContentActionArchive, LifecycleStatePublished, LifecycleStateArchived, 0)
 	}
 
 	now := time.Now().UTC()
@@ -305,6 +588,83 @@ func (s *Store) Archive(ctx context.Context, in ArchiveInput) (*Record, error) {
 	}
 
 	return nil, fmt.Errorf("%w: archive agent content", ErrContentConflict)
+}
+
+func (s *Store) transitionSoul(
+	ctx context.Context,
+	validated validatedWriteInput,
+	action ContentAction,
+	from, to LifecycleState,
+	expectedRecordVersion int64,
+) (*Record, error) {
+	for attempt := 0; attempt < updateRetryLimit; attempt++ {
+		current, err := s.loadRecord(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		if err != nil {
+			return nil, err
+		}
+		if expectedRecordVersion > 0 && current.Version != expectedRecordVersion {
+			return nil, fmt.Errorf("%w: %s agent soul source draft changed", ErrContentConflict, action)
+		}
+		currentState, err := normalizeLifecycleState(LifecycleState(current.LifecycleState))
+		if err != nil {
+			return nil, err
+		}
+		if currentState == to {
+			return current.toRecord()
+		}
+		if currentState != from {
+			return nil, &TransitionError{Action: action, From: currentState, To: to}
+		}
+
+		currentRecord, err := current.toRecord()
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		nextRecordVersion := current.Version + 1
+		stamped := stampSoulDocument(
+			currentRecord.Document,
+			to,
+			currentRecord.SoulVersion,
+			nextRecordVersion,
+			currentRecord.UpdatedBySubjectID,
+			current.ContentCreatedAt,
+			current.ContentUpdatedAt,
+		)
+		if err := ValidateSoulDocumentRecord(stamped, validated.agentID); err != nil {
+			return nil, err
+		}
+		encoded, err := encodeSoulDocument(stamped)
+		if err != nil {
+			return nil, err
+		}
+
+		historySource := *current
+		historySource.DocumentJSON = encoded
+		historySource.Version = nextRecordVersion
+		historySource.LifecycleState = string(to)
+		history := s.historyFor(&historySource, action, now, validated.updatedBySubjectID)
+		err = s.db.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+			tx.UpdateWithBuilder(current, func(update tablecore.UpdateBuilder) error {
+				update.
+					Set("DocumentJSON", encoded).
+					Set("LifecycleState", string(to)).
+					Add("Version", int64(1)).
+					ConditionVersion(current.Version)
+				return nil
+			}).Create(history)
+			return nil
+		})
+		switch {
+		case err == nil:
+			return s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		case tableerrors.IsConditionFailed(err):
+			continue
+		default:
+			return nil, fmt.Errorf("%s agent soul document: %w", action, err)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s agent soul document", ErrContentConflict, action)
 }
 
 func (s *Store) loadRecord(ctx context.Context, account string, agentID string, contentType ContentType) (*contentRecord, error) {
@@ -354,6 +714,8 @@ type contentRecord struct {
 	AgentID            string    `theorydb:"attr:agentId" json:"agent_id"`
 	ContentType        string    `theorydb:"attr:contentType" json:"content_type"`
 	Content            string    `theorydb:"attr:content" json:"content"`
+	DocumentJSON       string    `theorydb:"attr:documentJson" json:"document_json,omitempty"`
+	SoulVersion        int64     `theorydb:"attr:soulVersion" json:"soul_version,omitempty"`
 	Version            int64     `theorydb:"version,attr:version" json:"version"`
 	LifecycleState     string    `theorydb:"attr:lifecycleState" json:"lifecycle_state"`
 	UpdatedBySubjectID string    `theorydb:"attr:updatedBySubjectId" json:"updated_by_subject_id"`
@@ -378,17 +740,116 @@ func (r *contentRecord) toRecord() (*Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Record{
+	record := &Record{
 		Account:            normalizeAccount(r.Account),
 		AgentID:            normalizeAgentID(r.AgentID),
 		Type:               typ,
 		Content:            r.Content,
 		Version:            r.Version,
+		SoulVersion:        r.SoulVersion,
 		LifecycleState:     state,
 		CreatedAt:          r.ContentCreatedAt.UTC(),
 		UpdatedAt:          r.ContentUpdatedAt.UTC(),
 		UpdatedBySubjectID: strings.TrimSpace(r.UpdatedBySubjectID),
-	}, nil
+	}
+	if typ != ContentTypeAgentSoul {
+		if state == LifecycleStatePublished {
+			return nil, fmt.Errorf("%w: published is only valid for agent_soul", ErrInvalidLifecycleState)
+		}
+		return record, nil
+	}
+
+	var document *SoulDocument
+	if strings.TrimSpace(r.DocumentJSON) == "" {
+		// Compatibility projection for pre-v2 Body rows. The old opaque
+		// content becomes the v2 canonical body; it is never interpreted as
+		// JSON or as a local_id/soul_agent_id.
+		document = &SoulDocument{
+			SchemaVersion: SoulDocumentSchemaVersion,
+			AgentID:       record.AgentID,
+			Body:          r.Content,
+		}
+		soulVersion := r.SoulVersion
+		if soulVersion < 1 {
+			soulVersion = r.Version
+		}
+		document = stampSoulDocument(document, state, soulVersion, r.Version, record.UpdatedBySubjectID, record.CreatedAt, record.UpdatedAt)
+	} else {
+		document, err = decodeSoulDocument(r.DocumentJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := ValidateSoulDocumentRecord(document, record.AgentID); err != nil {
+		return nil, err
+	}
+	expectedSoulVersion := r.SoulVersion
+	if expectedSoulVersion < 1 {
+		expectedSoulVersion = r.Version
+	}
+	if document.Body != r.Content ||
+		document.SoulVersion != expectedSoulVersion ||
+		document.Version != record.Version ||
+		document.LifecycleState != record.LifecycleState ||
+		document.UpdatedBySubjectID != record.UpdatedBySubjectID ||
+		document.CreatedAt != record.CreatedAt.Format(time.RFC3339Nano) ||
+		document.UpdatedAt != record.UpdatedAt.Format(time.RFC3339Nano) {
+		return nil, validationError("$", "persisted document metadata does not match its storage projection")
+	}
+	record.SoulVersion = document.SoulVersion
+	record.Document = document
+	return record, nil
+}
+
+type historyRecord struct {
+	tableName string
+
+	PK string `theorydb:"pk,attr:pk" json:"pk"`
+	SK string `theorydb:"sk,attr:sk" json:"sk"`
+
+	Account            string    `theorydb:"attr:account" json:"account"`
+	AgentID            string    `theorydb:"attr:agentId" json:"agent_id"`
+	ContentType        string    `theorydb:"attr:contentType" json:"content_type"`
+	Content            string    `theorydb:"attr:content" json:"content"`
+	DocumentJSON       string    `theorydb:"attr:documentJson" json:"document_json"`
+	SoulVersion        int64     `theorydb:"attr:soulVersion" json:"soul_version"`
+	RecordVersion      int64     `theorydb:"attr:recordVersion" json:"record_version"`
+	LifecycleState     string    `theorydb:"attr:lifecycleState" json:"lifecycle_state"`
+	Action             string    `theorydb:"attr:action" json:"action"`
+	ActionAt           time.Time `theorydb:"attr:actionAt" json:"action_at"`
+	ActionBySubjectID  string    `theorydb:"attr:actionBySubjectId" json:"action_by_subject_id"`
+	ContentCreatedAt   time.Time `theorydb:"attr:createdAt" json:"created_at"`
+	ContentUpdatedAt   time.Time `theorydb:"attr:updatedAt" json:"updated_at"`
+	UpdatedBySubjectID string    `theorydb:"attr:updatedBySubjectId" json:"updated_by_subject_id"`
+}
+
+func (r historyRecord) TableName() string {
+	if tableName := strings.TrimSpace(r.tableName); tableName != "" {
+		return tableName
+	}
+	return strings.TrimSpace(os.Getenv(EnvInstanceContentTable))
+}
+
+func (s *Store) historyFor(record *contentRecord, action ContentAction, actionAt time.Time, actionBySubjectID string) *historyRecord {
+	return &historyRecord{
+		tableName:          s.tableName,
+		PK:                 record.PK,
+		SK:                 historySortKey(ContentTypeAgentSoul, record.SoulVersion, LifecycleState(record.LifecycleState)),
+		Account:            record.Account,
+		AgentID:            record.AgentID,
+		ContentType:        record.ContentType,
+		Content:            record.Content,
+		DocumentJSON:       record.DocumentJSON,
+		SoulVersion:        record.SoulVersion,
+		RecordVersion:      record.Version,
+		LifecycleState:     record.LifecycleState,
+		Action:             string(action),
+		ActionAt:           actionAt.UTC(),
+		ActionBySubjectID:  strings.TrimSpace(actionBySubjectID),
+		ContentCreatedAt:   record.ContentCreatedAt,
+		ContentUpdatedAt:   record.ContentUpdatedAt,
+		UpdatedBySubjectID: record.UpdatedBySubjectID,
+	}
 }
 
 type validatedWriteInput struct {
@@ -396,6 +857,7 @@ type validatedWriteInput struct {
 	agentID            string
 	contentType        ContentType
 	updatedBySubjectID string
+	soulDocument       *SoulDocument
 }
 
 func validateUpsertInput(in UpsertInput) (validatedWriteInput, error) {
@@ -403,8 +865,28 @@ func validateUpsertInput(in UpsertInput) (validatedWriteInput, error) {
 	if err != nil {
 		return validatedWriteInput{}, err
 	}
-	if err := validateContentSize(validated.contentType, in.Content); err != nil {
-		return validatedWriteInput{}, err
+	switch validated.contentType {
+	case ContentTypeAgentSoul:
+		document := cloneSoulDocument(in.SoulDocument)
+		if document == nil {
+			document = &SoulDocument{
+				AgentID: validated.agentID,
+				Body:    in.Content,
+			}
+		} else if in.Content != "" && in.Content != document.Body {
+			return validatedWriteInput{}, validationError("body", "must not conflict with the legacy content alias")
+		}
+		if err := ValidateSoulDocumentDraft(document, validated.agentID); err != nil {
+			return validatedWriteInput{}, err
+		}
+		validated.soulDocument = document
+	case ContentTypeAgentInstructions:
+		if in.SoulDocument != nil {
+			return validatedWriteInput{}, validationError("$", "soul_document is only valid for agent_soul")
+		}
+		if err := validateContentSize(validated.contentType, in.Content); err != nil {
+			return validatedWriteInput{}, err
+		}
 	}
 	return validated, nil
 }
@@ -425,6 +907,11 @@ func validateWriteScope(account string, agentID string, contentType ContentType,
 	typ, err := normalizeContentType(contentType)
 	if err != nil {
 		return validatedWriteInput{}, err
+	}
+	if typ == ContentTypeAgentSoul {
+		if err := ValidateSoulAgentID(agentID); err != nil {
+			return validatedWriteInput{}, err
+		}
 	}
 	updatedBySubjectID = strings.TrimSpace(updatedBySubjectID)
 	if updatedBySubjectID == "" {
@@ -475,6 +962,14 @@ func contentSortKey(contentType ContentType) string {
 	return contentSKPrefix + string(typ)
 }
 
+func historySortKey(contentType ContentType, soulVersion int64, state LifecycleState) string {
+	typ, err := normalizeContentType(contentType)
+	if err != nil || soulVersion < 1 {
+		return ""
+	}
+	return fmt.Sprintf("%s%s#HISTORY#%020d#%s", contentSKPrefix, typ, soulVersion, state)
+}
+
 func normalizeContentType(contentType ContentType) (ContentType, error) {
 	token := normalizeEnumToken(string(contentType))
 	switch token {
@@ -491,6 +986,8 @@ func normalizeLifecycleState(state LifecycleState) (LifecycleState, error) {
 	switch strings.ToLower(strings.TrimSpace(string(state))) {
 	case string(LifecycleStateDraft):
 		return LifecycleStateDraft, nil
+	case string(LifecycleStatePublished):
+		return LifecycleStatePublished, nil
 	case string(LifecycleStateArchived):
 		return LifecycleStateArchived, nil
 	default:

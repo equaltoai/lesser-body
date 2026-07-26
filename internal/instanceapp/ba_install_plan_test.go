@@ -164,17 +164,31 @@ type baPlanContentStore struct {
 }
 
 func newBaPlanContentStore(account, agentID string) *baPlanContentStore {
+	createdAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
 	return &baPlanContentStore{records: map[string]*agentcontent.Record{
 		baPlanContentKey(account, agentID, agentcontent.ContentTypeAgentSoul): {
 			Account:            account,
 			AgentID:            agentID,
 			Type:               agentcontent.ContentTypeAgentSoul,
-			Content:            "draft soul content",
-			Version:            1,
-			LifecycleState:     agentcontent.LifecycleStateDraft,
-			CreatedAt:          time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
-			UpdatedAt:          time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC),
+			Content:            "published soul content",
+			Version:            2,
+			SoulVersion:        1,
+			LifecycleState:     agentcontent.LifecycleStatePublished,
+			CreatedAt:          createdAt,
+			UpdatedAt:          updatedAt,
 			UpdatedBySubjectID: "subject-agent1",
+			Document: &agentcontent.SoulDocument{
+				SchemaVersion:      agentcontent.SoulDocumentSchemaVersion,
+				AgentID:            agentID,
+				Body:               "published soul content",
+				SoulVersion:        1,
+				LifecycleState:     agentcontent.LifecycleStatePublished,
+				UpdatedBySubjectID: "subject-agent1",
+				CreatedAt:          createdAt.Format(time.RFC3339Nano),
+				UpdatedAt:          updatedAt.Format(time.RFC3339Nano),
+				Version:            2,
+			},
 		},
 		baPlanContentKey(account, agentID, agentcontent.ContentTypeAgentInstructions): {
 			Account:            account,
