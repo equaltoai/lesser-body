@@ -200,6 +200,16 @@ type SeedPublishedInput struct {
 	UpdatedBySubjectID string
 }
 
+// SeedInstructionsInput is the deterministic Ptah genesis application path for
+// the initial agent_instructions draft. It is create-only: any existing draft,
+// including an owner-authored replacement, wins unchanged.
+type SeedInstructionsInput struct {
+	Account            string
+	AgentID            string
+	Content            string
+	UpdatedBySubjectID string
+}
+
 // ArchiveInput describes an idempotent lifecycle transition to archived.
 type ArchiveInput struct {
 	Account            string
@@ -535,6 +545,50 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 		}
 	}
 	return nil, false, fmt.Errorf("%w: seed finalized agent soul", ErrContentConflict)
+}
+
+// SeedInstructions creates the deterministic Hosted Genesis operating note
+// only when the account-scoped agent has no instructions record. Matching
+// replays and later retries after an owner upsert return the exact current
+// version without modifying content, audit fields, lifecycle, or version.
+func (s *Store) SeedInstructions(ctx context.Context, in SeedInstructionsInput) (*Record, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent content store is nil")
+	}
+	validated, err := validateUpsertInput(UpsertInput{
+		Account:            in.Account,
+		AgentID:            in.AgentID,
+		Type:               ContentTypeAgentInstructions,
+		Content:            in.Content,
+		UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	now := time.Now().UTC()
+	created := s.recordFor(validated.account, validated.agentID, ContentTypeAgentInstructions)
+	created.Content = in.Content
+	created.Version = 1
+	created.LifecycleState = string(LifecycleStateDraft)
+	created.ContentCreatedAt = now
+	created.ContentUpdatedAt = now
+	created.UpdatedBySubjectID = validated.updatedBySubjectID
+
+	err = s.db.Model(created).WithContext(ctx).IfNotExists().Create()
+	switch {
+	case err == nil:
+		record, recordErr := created.toRecord()
+		return record, true, recordErr
+	case tableerrors.IsConditionFailed(err):
+		record, getErr := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentInstructions)
+		return record, false, getErr
+	default:
+		return nil, false, fmt.Errorf("create genesis agent instructions seed: %w", err)
+	}
 }
 
 func (s *Store) createInitialSoulDraft(ctx context.Context, validated validatedWriteInput) (*Record, error) {

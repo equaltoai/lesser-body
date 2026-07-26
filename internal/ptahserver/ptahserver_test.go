@@ -1729,6 +1729,12 @@ type fakeAgentContentStore struct {
 	seedPublishedCreated bool
 	seedPublishedErr     error
 
+	seedInstructionsCalls   int
+	seedInstructionsIn      agentcontent.SeedInstructionsInput
+	seedInstructionsRecord  *agentcontent.Record
+	seedInstructionsCreated bool
+	seedInstructionsErr     error
+
 	archiveCalls  int
 	archiveIn     agentcontent.ArchiveInput
 	archiveRecord *agentcontent.Record
@@ -1868,6 +1874,26 @@ func (f *fakeAgentContentStore) SeedPublished(_ context.Context, in agentcontent
 	record.Document.Version = 2
 	record.Document.UpdatedBySubjectID = in.UpdatedBySubjectID
 	return record, true, nil
+}
+
+func (f *fakeAgentContentStore) SeedInstructions(_ context.Context, in agentcontent.SeedInstructionsInput) (*agentcontent.Record, bool, error) {
+	f.seedInstructionsCalls++
+	f.seedInstructionsIn = in
+	if f.seedInstructionsErr != nil {
+		return nil, false, f.seedInstructionsErr
+	}
+	if f.seedInstructionsRecord != nil {
+		return f.seedInstructionsRecord, f.seedInstructionsCreated, nil
+	}
+	return agentContentRecord(
+		agentcontent.ContentTypeAgentInstructions,
+		in.Account,
+		in.AgentID,
+		in.Content,
+		1,
+		agentcontent.LifecycleStateDraft,
+		in.UpdatedBySubjectID,
+	), true, nil
 }
 
 func (f *fakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {
@@ -2085,6 +2111,21 @@ func (f *versionedFakeAgentContentStore) SeedPublished(ctx context.Context, in a
 		UpdatedBySubjectID: in.UpdatedBySubjectID,
 	})
 	return published, true, err
+}
+
+func (f *versionedFakeAgentContentStore) SeedInstructions(ctx context.Context, in agentcontent.SeedInstructionsInput) (*agentcontent.Record, bool, error) {
+	key := agentContentTestKey{account: in.Account, agentID: in.AgentID, typ: agentcontent.ContentTypeAgentInstructions}
+	if current := f.records[key]; current != nil {
+		return cloneAgentContentRecord(current), false, nil
+	}
+	record, err := f.Upsert(ctx, agentcontent.UpsertInput{
+		Account:            in.Account,
+		AgentID:            in.AgentID,
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            in.Content,
+		UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	return record, err == nil, err
 }
 
 func (f *versionedFakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {

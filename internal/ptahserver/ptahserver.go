@@ -65,6 +65,7 @@ type AgentContentStore interface {
 	Upsert(ctx context.Context, in agentcontent.UpsertInput) (*agentcontent.Record, error)
 	Publish(ctx context.Context, in agentcontent.PublishInput) (*agentcontent.Record, error)
 	SeedPublished(ctx context.Context, in agentcontent.SeedPublishedInput) (*agentcontent.Record, bool, error)
+	SeedInstructions(ctx context.Context, in agentcontent.SeedInstructionsInput) (*agentcontent.Record, bool, error)
 	Archive(ctx context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error)
 }
 

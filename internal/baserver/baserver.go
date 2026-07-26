@@ -47,11 +47,41 @@ const (
 
 var defaultRateWindow = time.Minute
 
-var ErrAgentSoulPublicationRequired = errors.New("agent soul publication is required")
+var (
+	ErrAgentSoulPublicationRequired = errors.New("agent soul publication is required")
+	ErrAgentContentMissing          = errors.New("required agent content is missing")
+)
+
+// AgentContentMissingError names the exact account-scoped record and Ptah
+// authoring tool needed before Ba can render an install pack.
+type AgentContentMissingError struct {
+	AgentID     string
+	ContentType agentcontent.ContentType
+	FixTool     string
+	NextTool    string
+}
+
+func (e *AgentContentMissingError) Error() string {
+	if e == nil {
+		return ErrAgentContentMissing.Error()
+	}
+	message := fmt.Sprintf(
+		"%s: %s record for agent_id %s is missing; call %s",
+		ErrAgentContentMissing,
+		e.ContentType,
+		e.AgentID,
+		e.FixTool,
+	)
+	if strings.TrimSpace(e.NextTool) != "" {
+		message += ", then call " + e.NextTool
+	}
+	return message
+}
+
+func (e *AgentContentMissingError) Unwrap() error { return ErrAgentContentMissing }
 
 // AgentSoulPublicationRequiredError is the typed Ba materialization gate. It
-// names the exact Ptah publish step rather than collapsing draft, archived, and
-// missing soul records into a generic renderer error.
+// names the exact Ptah publish step for an existing draft or archived record.
 type AgentSoulPublicationRequiredError struct {
 	AgentID        string
 	LifecycleState string
@@ -280,9 +310,9 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 		return packBuildToolResultFromError(err)
 	}
 
-	// The publication gate precedes the grant-mint limiter and issuer lookup:
-	// draft, archived, and missing souls are never grant attempts and always
-	// receive the typed Ptah publication guidance.
+	// Content readiness precedes the grant-mint limiter and issuer lookup:
+	// unpublished or missing records are never grant attempts and always receive
+	// the exact typed Ptah repair guidance.
 	decision := cfg.rateLimit(account)
 	if !decision.Allowed {
 		return toolErrorResult("rate_limited", "agent_local_install_plan grant minting rate limit exceeded for this account", http.StatusTooManyRequests, map[string]any{
@@ -597,22 +627,27 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	soul, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentSoul)
 	if err != nil {
 		if errors.Is(err, agentcontent.ErrContentNotFound) {
-			return nil, &AgentSoulPublicationRequiredError{
-				AgentID:        agentID,
-				LifecycleState: "missing",
-				PublishTool:    "agent_soul_publish",
+			return nil, &AgentContentMissingError{
+				AgentID:     agentID,
+				ContentType: agentcontent.ContentTypeAgentSoul,
+				FixTool:     "agent_soul_upsert",
+				NextTool:    "agent_soul_publish",
 			}
 		}
 		return nil, fmt.Errorf("read agent_soul: %w", err)
 	}
-	if soul == nil || soul.LifecycleState != agentcontent.LifecycleStatePublished {
-		state := "missing"
-		if soul != nil {
-			state = string(soul.LifecycleState)
+	if soul == nil {
+		return nil, &AgentContentMissingError{
+			AgentID:     agentID,
+			ContentType: agentcontent.ContentTypeAgentSoul,
+			FixTool:     "agent_soul_upsert",
+			NextTool:    "agent_soul_publish",
 		}
+	}
+	if soul.LifecycleState != agentcontent.LifecycleStatePublished {
 		return nil, &AgentSoulPublicationRequiredError{
 			AgentID:        agentID,
-			LifecycleState: state,
+			LifecycleState: string(soul.LifecycleState),
 			PublishTool:    "agent_soul_publish",
 		}
 	}
@@ -625,7 +660,21 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	}
 	instructions, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentInstructions)
 	if err != nil {
+		if errors.Is(err, agentcontent.ErrContentNotFound) {
+			return nil, &AgentContentMissingError{
+				AgentID:     agentID,
+				ContentType: agentcontent.ContentTypeAgentInstructions,
+				FixTool:     "agent_instructions_upsert",
+			}
+		}
 		return nil, fmt.Errorf("read agent_instructions: %w", err)
+	}
+	if instructions == nil {
+		return nil, &AgentContentMissingError{
+			AgentID:     agentID,
+			ContentType: agentcontent.ContentTypeAgentInstructions,
+			FixTool:     "agent_instructions_upsert",
+		}
 	}
 	packDigest := strings.TrimSpace(in.PackDigest)
 	if packDigest == "" {
@@ -655,7 +704,14 @@ func packBuildToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	}
 	details := map[string]any{"source": "ba_install_plan"}
 	var publicationErr *AgentSoulPublicationRequiredError
+	var missingErr *AgentContentMissingError
 	switch {
+	case errors.As(err, &missingErr):
+		details["agent_id"] = missingErr.AgentID
+		details["content_type"] = string(missingErr.ContentType)
+		details["fix_tool"] = missingErr.FixTool
+		details["next_tool"] = missingErr.NextTool
+		return toolErrorResult("not_found", missingErr.Error(), http.StatusNotFound, details)
 	case errors.As(err, &publicationErr):
 		details["agent_id"] = publicationErr.AgentID
 		details["lifecycle_state"] = publicationErr.LifecycleState

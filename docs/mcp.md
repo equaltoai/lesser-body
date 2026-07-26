@@ -670,7 +670,7 @@ not wrap AppTheory initialize or hard-code product instructions into protocol ne
 | `agent_genesis_advance` | Write + owner/operator | Submit the owner message when Host reports `assistant_turn_ready`. `model` is an optional Host alias; omission lets Host apply its configured default, while explicit unknown-alias validation errors are returned unchanged in `details.hostCode`. Candidate phase `section` uses a normal owner message; Host's five provider section tools remain private inside the AppTheory MicroVM. Candidate phase `review` requires `candidate_action`: `affirm` forbids `section`; `edit` requires an exact five-body `section` plus an owner revision message; both bind the exact `candidate_revision`, `candidate_hash`, and `review_hash`. Free-form phrases have zero authority. |
 | `agent_genesis_recover` | Write + owner/operator | Ask Host to retry the same durable step only when `failure.recovery.action="retry_same_step"`; wait the bounded `retry_after_seconds` when present, then call recover exactly once on the same lane. `refresh_state` maps to one read, `restart_soul_bootstrap` maps to a fresh begin and forbids recover, and `operator_action` stops automation for operator contact. Body does not retry or replace the Host state machine locally. |
 | `agent_genesis_finalize_preflight` | Write + owner/operator | Check Host finalization readiness directly when the conversation reports `declaration_ready`, without wallet signatures. Next: `agent_genesis_finalize` after preflight succeeds. |
-| `agent_genesis_finalize` | Write + owner/operator | Deterministically read/hash-verify Host's finalized canonical declaration, ask Host to publish the hosted/offchain identity, then idempotently write Body's Host-derived registry row and seed the matching published Panonomous soul-document v2. The declaration application step never invokes a MicroVM or model. |
+| `agent_genesis_finalize` | Write + owner/operator | Deterministically read/hash-verify Host's finalized canonical declaration, ask Host to publish the hosted/offchain identity, then idempotently write Body's Host-derived registry row, seed the matching published Panonomous soul-document v2, and create-only seed a default `agent_instructions` operating draft. The declaration application step never invokes a MicroVM or model. |
 | `agent_get` | Read | Read one Body/Ptah account-scoped registry entry for the authenticated account-holder actor, including Host-genesis provenance and content metadata where available. |
 | `agent_list` | Read | List Body/Ptah account-scoped registry entries, including Host-finalized minted agents, merged with Lesser's public live-agent directory, with cursor pagination. |
 | `agent_soul_get` | Read | Read the current account-scoped Panonomous soul-document v2 record and server-owned draft/published/archived lifecycle. |
@@ -791,11 +791,15 @@ The owner-operated sequence is:
    empty request body: Host owns the declaration checkpoint and publishes the hosted/offchain identity without a
    wallet signature supplied by Body. After Host returns the finalized identity, Body writes exactly one idempotent
    `agentregistry` row in the authenticated account partition using Host-derived fields and seeds the matching registry
-   `agent_id` as a published Panonomous soul-document v2 with complete `provenance.source="ptah_seed"`. A retry repairs
-   a partial draft but never overwrites different owner-authored content.
+   `agent_id` as a published Panonomous soul-document v2 with complete `provenance.source="ptah_seed"`. From the same
+   hash-verified declaration, Body also renders and create-only seeds the deterministic
+   `ptah-hosted-genesis-agent-instructions.v1` operating draft: read the soul first, honor its boundaries/refusals, and
+   follow its cadence. A retry repairs a matching partial soul draft but never overwrites different owner-authored soul
+   content or an existing owner-authored instructions draft.
 8. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
-   account-scoped registry view. The returned `soul_seed.lifecycle_state` is `published`, so Ba materialization is
-   immediately eligible. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
+   account-scoped registry view. The returned `soul_seed.lifecycle_state` is `published`, and
+   `instructions_seed.lifecycle_state` is `draft`, so `agent_local_install_plan` is immediately eligible with no manual
+   content-authoring step. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
    live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
 
@@ -826,8 +830,8 @@ State → next-tool down-payment exposed in `structuredContent.data.guidance`:
 | `assistant_turn_ready` + candidate phase `review` | `agent_genesis_advance` | Inspect exact lossless `review_text`, select one of guidance's six `candidate_actions` entries, and pass only its nested exact `candidate_action` unchanged. `affirm` has no section; each of the five edits has one exact section and requires an owner revision message. |
 | `in_progress` | `agent_genesis_read` | Host is processing. Guidance includes `wait=true`, `forbidden_next_tool=agent_genesis_advance`, and bounded wait fields. Do not nudge. |
 | `declaration_ready` | `agent_genesis_finalize_preflight` | Check Host readiness directly before finalization. |
-| preflight-ready state | `agent_genesis_finalize` | Body hash-verifies and deterministically transforms the finalized declaration before Host publication, then writes the Host-derived registry row and published v2 soul seed after Host succeeds. No MicroVM/model runs in declaration application. |
-| `agent_genesis_finalize` success / `published` | `agent_get` (or `agent_list`) | Published is terminal. Verify account-scoped Body/Ptah registry visibility and `soul_seed.lifecycle_state="published"`. |
+| preflight-ready state | `agent_genesis_finalize` | Body hash-verifies and deterministically transforms the finalized declaration before Host publication, then writes the Host-derived registry row, published v2 soul seed, and create-only default instructions seed after Host succeeds. No MicroVM/model runs in declaration application. |
+| `agent_genesis_finalize` success / `published` | `agent_get` (or `agent_list`) | Published is terminal. Verify account-scoped Body/Ptah registry visibility, `soul_seed.lifecycle_state="published"`, and `instructions_seed.lifecycle_state="draft"`; Ba needs no manual content-authoring step. |
 | `failure.recovery.action="retry_same_step"` | `agent_genesis_recover` | Keep `fresh_lane=false`. Wait the bounded `retry_after_seconds` when present (also projected as `poll_after_seconds` / `expected_wait_seconds`), then call recover exactly once for the same registration/conversation ids; do not poll the terminal read instead. |
 | `failure.recovery.action="restart_soul_bootstrap"` | `agent_genesis_begin` | Start a fresh genesis lane with the intended domain/local_id. This is not a recover call; do not call `agent_genesis_recover` for this action. Host's terminal hard-cut response for an untyped/stale lane may omit `declaration_candidate`; no other strict nested no-candidate state is accepted. |
 | `failure.recovery.action="refresh_state"` | `agent_genesis_read` | Keep `fresh_lane=false`. Read exactly once to refresh Host state, then follow the newly returned status/recovery action; do not write or create an endless read loop. |
@@ -1102,6 +1106,12 @@ store owns version increments, lifecycle state, and size bounds. It does not int
 DynamoDB client, or Lesser-table write. Successful upserts return the same `agent_instructions` record shape with
 `lifecycle_state:"draft"` and the incremented version.
 
+Hosted Genesis finalization uses a narrower create-only `SeedInstructions` path for its default operating note. The
+seed is byte-stable and bound to `ptah-hosted-genesis-agent-instructions.v1` plus the hash-verified registry `agent_id`
+and declaration candidate hash. An identical retry returns the existing version unchanged; if the owner has already
+written instructions with `agent_instructions_upsert`, the retry returns and preserves that exact owner-authored draft
+instead of overwriting it.
+
 `agent_instructions_archive` input:
 
 - Required: `agent_id`.
@@ -1169,7 +1179,7 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_local_install_plan` | Write | Render a deterministic local install pack only from a currently published account-scoped soul document and mint a one-time header-free download grant. |
+| `agent_local_install_plan` | Write | Render a deterministic local install pack only from a currently published account-scoped soul plus instructions and mint a one-time header-free download grant. |
 
 `agent_local_install_plan` input:
 
@@ -1192,8 +1202,11 @@ minting. Operator OAuth callers are exempt; actor/scoped invocation grants are r
 The tool reads current account-scoped `agent_soul` and `agent_instructions` records through
 `internal/agentcontent.Store.Get`, renders a deterministic ZIP through `internal/installpack`, then mints a short-lived
 one-time grant through `internal/downloadgrant.Store.Issue`. The soul record must have
-`lifecycle_state:"published"`: draft, archived, and missing records fail before rendering/grant minting with typed
-`agent_soul_publish_required` (`details.publish_tool="agent_soul_publish"`). Archived content is never rendered.
+`lifecycle_state:"published"`: existing draft and archived records fail before rendering/grant minting with typed
+`agent_soul_publish_required` (`details.publish_tool="agent_soul_publish"`). A missing soul returns `404 not_found`
+naming `content_type:"agent_soul"`, `fix_tool:"agent_soul_upsert"`, and `next_tool:"agent_soul_publish"`; missing
+instructions name `content_type:"agent_instructions"` and `fix_tool:"agent_instructions_upsert"`. Archived content is
+never rendered.
 When `document.structure.five_bodies` is present, Ba renders that typed structure through Body's single deterministic
 five-body Markdown template; otherwise it renders `document.body` byte-for-byte. The digest binds the selected rendered
 content. The grant binding is fixed to:

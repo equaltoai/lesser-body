@@ -121,6 +121,69 @@ func TestIndependentVersionCounters(t *testing.T) {
 	}
 }
 
+func TestSeedInstructionsIsIdempotentAndNeverOverwritesOwnerDraft(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	seed := SeedInstructionsInput{
+		Account:            "account-a",
+		AgentID:            "agent-123",
+		Content:            "# Seeded operating note\n\nRead the soul first.",
+		UpdatedBySubjectID: "subject-genesis",
+	}
+
+	first, created, err := store.SeedInstructions(ctx, seed)
+	if err != nil {
+		t.Fatalf("SeedInstructions(first) error = %v", err)
+	}
+	if !created ||
+		first.Type != ContentTypeAgentInstructions ||
+		first.Version != 1 ||
+		first.LifecycleState != LifecycleStateDraft ||
+		first.Content != seed.Content ||
+		first.UpdatedBySubjectID != seed.UpdatedBySubjectID {
+		t.Fatalf("SeedInstructions(first) = created %t record %+v", created, first)
+	}
+
+	replay, created, err := store.SeedInstructions(ctx, SeedInstructionsInput{
+		Account:            seed.Account,
+		AgentID:            seed.AgentID,
+		Content:            seed.Content,
+		UpdatedBySubjectID: "subject-genesis-retry",
+	})
+	if err != nil {
+		t.Fatalf("SeedInstructions(replay) error = %v", err)
+	}
+	if created ||
+		replay.Version != first.Version ||
+		replay.Content != first.Content ||
+		replay.UpdatedBySubjectID != first.UpdatedBySubjectID ||
+		!replay.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("SeedInstructions(replay) mutated seed: first=%+v replay=%+v created=%t", first, replay, created)
+	}
+
+	owner, err := store.Upsert(ctx, UpsertInput{
+		Account:            seed.Account,
+		AgentID:            seed.AgentID,
+		Type:               ContentTypeAgentInstructions,
+		Content:            "# Owner operating note\n\nUse the owner-authored draft.",
+		UpdatedBySubjectID: "subject-owner",
+	})
+	if err != nil {
+		t.Fatalf("Upsert(owner draft) error = %v", err)
+	}
+	preserved, created, err := store.SeedInstructions(ctx, seed)
+	if err != nil {
+		t.Fatalf("SeedInstructions(after owner draft) error = %v", err)
+	}
+	if created ||
+		preserved.Version != owner.Version ||
+		preserved.Content != owner.Content ||
+		preserved.UpdatedBySubjectID != owner.UpdatedBySubjectID ||
+		!preserved.UpdatedAt.Equal(owner.UpdatedAt) {
+		t.Fatalf("retry overwrote owner instructions: owner=%+v preserved=%+v created=%t", owner, preserved, created)
+	}
+}
+
 func TestCrossAccountGetReturnsNotFound(t *testing.T) {
 	store, _ := newTestStore(t)
 	if _, err := store.Upsert(context.Background(), UpsertInput{

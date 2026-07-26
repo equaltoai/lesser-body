@@ -33,12 +33,15 @@ The storage `version` is the optimistic record version and is distinct from `sou
 3. verify the complete owner-review hash;
 4. extract the exact delimited canonical JSON and verify its candidate hash;
 5. decode the closed five-body overlay and the hash-authenticated canonical minting model;
-6. render one deterministic Markdown template;
-7. after Host publication and registry projection, idempotently seed that document as `published`.
+6. render one deterministic Markdown soul template and one deterministic
+   `ptah-hosted-genesis-agent-instructions.v1` operating note;
+7. after Host publication and registry projection, idempotently seed that soul document as `published` and create-only
+   seed the instructions note as a draft.
 
 This path performs only Go JSON decoding, SHA-256 checks, validation, and template rendering. It never invokes a
-MicroVM, LLM, provider, or sibling repository. A retry repairs a matching partial draft and does not overwrite
-different owner-authored content.
+MicroVM, LLM, provider, or sibling repository. A retry repairs a matching partial soul draft and does not overwrite
+different owner-authored soul content. Instructions seeding is conditional-create only: a matching replay preserves its
+version/audit fields, and an existing owner-authored instructions draft wins unchanged.
 
 Template excerpt:
 

@@ -444,15 +444,6 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	}
 	registryStore := newMemoryAgentRegistry()
 	contentStore := newVersionedFakeAgentContentStore()
-	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
-		Account:            "owner",
-		AgentID:            "agent-0xabc",
-		Type:               agentcontent.ContentTypeAgentInstructions,
-		Content:            "safe instructions summary source",
-		UpdatedBySubjectID: "subject-writer",
-	}); err != nil {
-		t.Fatalf("seed agent_instructions content: %v", err)
-	}
 
 	tools := mcpruntime.NewToolRegistry()
 	if err := RegisterTools(tools, WithGenesisClient(fake), WithAgentRegistryStore(registryStore), WithAgentContentStore(contentStore), WithAgentLiveClient(&fakeAgentLiveClient{})); err != nil {
@@ -462,6 +453,26 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	args := `{"registration_id":"reg-123","conversation_id":"conv-456"}`
 
 	first := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
+	firstInstructions, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentInstructions)
+	if err != nil {
+		t.Fatalf("fresh finalize did not seed agent_instructions: %v", err)
+	}
+	if firstInstructions.Version != 1 ||
+		firstInstructions.LifecycleState != agentcontent.LifecycleStateDraft ||
+		!strings.Contains(firstInstructions.Content, hostedGenesisInstructionsSeedV1) ||
+		!strings.Contains(firstInstructions.Content, "Read the published agent soul before acting.") {
+		t.Fatalf("fresh finalize agent_instructions = %+v", firstInstructions)
+	}
+	ownerInstructions, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
+		Account:            "owner",
+		AgentID:            "agent-0xabc",
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            "# Owner instructions\n\nPreserve this owner-authored draft.",
+		UpdatedBySubjectID: "subject-owner",
+	})
+	if err != nil {
+		t.Fatalf("owner agent_instructions upsert: %v", err)
+	}
 	second := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
 	if registryStore.upsertFinalizedCalls != 2 || len(registryStore.records) != 1 {
 		t.Fatalf("double finalize registry writes = calls %d rows %d, want two idempotent calls and one row", registryStore.upsertFinalizedCalls, len(registryStore.records))
@@ -491,6 +502,25 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 		firstSeed["lifecycle_state"] != string(agentcontent.LifecycleStatePublished) ||
 		secondSeed["soul_version"] != firstSeed["soul_version"] {
 		t.Fatalf("finalize seed replay first=%+v second=%+v", firstSeed, secondSeed)
+	}
+	firstInstructionsSeed, _ := firstData["instructions_seed"].(map[string]any)
+	secondInstructionsSeed, _ := secondData["instructions_seed"].(map[string]any)
+	if firstInstructionsSeed["created"] != true ||
+		firstInstructionsSeed["matched_seed"] != true ||
+		firstInstructionsSeed["owner_authored_preserved"] != false ||
+		firstInstructionsSeed["seed_version"] != hostedGenesisInstructionsSeedV1 ||
+		firstInstructionsSeed["declaration_candidate_hash"] != firstSeed["declaration_candidate_hash"] ||
+		secondInstructionsSeed["created"] != false ||
+		secondInstructionsSeed["matched_seed"] != false ||
+		secondInstructionsSeed["owner_authored_preserved"] != true {
+		t.Fatalf("finalize instructions seed replay first=%+v second=%+v", firstInstructionsSeed, secondInstructionsSeed)
+	}
+	preservedInstructions, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentInstructions)
+	if err != nil ||
+		preservedInstructions.Version != ownerInstructions.Version ||
+		preservedInstructions.Content != ownerInstructions.Content ||
+		preservedInstructions.UpdatedBySubjectID != ownerInstructions.UpdatedBySubjectID {
+		t.Fatalf("finalize retry overwrote owner instructions: preserved=%+v owner=%+v err=%v", preservedInstructions, ownerInstructions, err)
 	}
 	seededSoul, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentSoul)
 	if err != nil || seededSoul.Document == nil || seededSoul.Document.AgentID != "agent-0xabc" {
@@ -600,6 +630,49 @@ func TestGenesisFinalizeReportsRepairableSeedFailureAfterHostPublication(t *test
 	}
 	if registryStore.upsertFinalizedCalls != 1 || contentStore.seedPublishedCalls != 1 {
 		t.Fatalf("repairable finalize writes registry=%d seed=%d, want 1/1", registryStore.upsertFinalizedCalls, contentStore.seedPublishedCalls)
+	}
+}
+
+func TestGenesisFinalizeReportsRepairableInstructionsSeedFailureAfterSoulSeed(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{
+		readResponse:     seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-0xabc"),
+		finalizeResponse: map[string]any{"agent_id": "agent-0xabc"},
+	}
+	registryStore := newMemoryAgentRegistry()
+	contentStore := &fakeAgentContentStore{seedInstructionsErr: errors.New("private instructions write detail")}
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(
+		tools,
+		WithGenesisClient(fake),
+		WithAgentRegistryStore(registryStore),
+		WithAgentContentStore(contentStore),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisFinalize,
+		json.RawMessage(`{"registration_id":"reg-123","conversation_id":"conv-456"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_instructions_seed_error", http.StatusInternalServerError)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "private instructions write detail") {
+		t.Fatalf("instructions seed failure leaked store detail: %s", encoded)
+	}
+	if registryStore.upsertFinalizedCalls != 1 ||
+		contentStore.seedPublishedCalls != 1 ||
+		contentStore.seedInstructionsCalls != 1 {
+		t.Fatalf(
+			"repairable finalize writes registry=%d soul_seed=%d instructions_seed=%d, want 1/1/1",
+			registryStore.upsertFinalizedCalls,
+			contentStore.seedPublishedCalls,
+			contentStore.seedInstructionsCalls,
+		)
 	}
 }
 

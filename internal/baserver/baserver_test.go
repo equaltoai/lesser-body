@@ -269,18 +269,13 @@ func TestBuildPackInputRequiresPublishedSoulAndNamesPublishStep(t *testing.T) {
 		{name: "published passes", state: string(agentcontent.LifecycleStatePublished)},
 		{name: "draft rejected", state: string(agentcontent.LifecycleStateDraft)},
 		{name: "archived rejected", state: string(agentcontent.LifecycleStateArchived)},
-		{name: "missing rejected", state: "missing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newFakeContentStore("owner", "agent-one")
 			key := key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)
-			if tc.state == "missing" {
-				delete(store.records, key)
-			} else {
-				store.records[key].LifecycleState = agentcontent.LifecycleState(tc.state)
-				if store.records[key].Document != nil {
-					store.records[key].Document.LifecycleState = agentcontent.LifecycleState(tc.state)
-				}
+			store.records[key].LifecycleState = agentcontent.LifecycleState(tc.state)
+			if store.records[key].Document != nil {
+				store.records[key].Document.LifecycleState = agentcontent.LifecycleState(tc.state)
 			}
 			pack, err := BuildPackInput(context.Background(), PackInputRequest{
 				ContentStore:     store,
@@ -311,20 +306,65 @@ func TestBuildPackInputRequiresPublishedSoulAndNamesPublishStep(t *testing.T) {
 	}
 }
 
+func TestBuildPackInputNamesMissingRecordAndExactFixTool(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType agentcontent.ContentType
+		fixTool     string
+		nextTool    string
+	}{
+		{
+			name:        "agent_soul",
+			contentType: agentcontent.ContentTypeAgentSoul,
+			fixTool:     "agent_soul_upsert",
+			nextTool:    "agent_soul_publish",
+		},
+		{
+			name:        "agent_instructions",
+			contentType: agentcontent.ContentTypeAgentInstructions,
+			fixTool:     "agent_instructions_upsert",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeContentStore("owner", "agent-one")
+			delete(store.records, key("owner", "agent-one", tc.contentType))
+			pack, err := BuildPackInput(context.Background(), PackInputRequest{
+				ContentStore:     store,
+				InstanceEndpoint: testInstanceEndpoint,
+				Namespace:        "equaltoai",
+				Account:          "owner",
+				AgentID:          "agent-one",
+				Actor:            "prototype-11",
+				Client:           "codex",
+			})
+			if pack != nil || !errors.Is(err, ErrAgentContentMissing) {
+				t.Fatalf("BuildPackInput(%s missing) = %+v/%v, want typed missing error", tc.contentType, pack, err)
+			}
+			var missingErr *AgentContentMissingError
+			if !errors.As(err, &missingErr) ||
+				missingErr.ContentType != tc.contentType ||
+				missingErr.FixTool != tc.fixTool ||
+				missingErr.NextTool != tc.nextTool {
+				t.Fatalf("missing error = %#v / %v", missingErr, err)
+			}
+			for _, required := range []string{string(tc.contentType), tc.fixTool, tc.nextTool} {
+				if required != "" && !strings.Contains(err.Error(), required) {
+					t.Fatalf("missing error does not name %q: %v", required, err)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentLocalInstallPlanMapsUnpublishedSoulToTypedPublishError(t *testing.T) {
 	for _, state := range []string{
 		string(agentcontent.LifecycleStateDraft),
 		string(agentcontent.LifecycleStateArchived),
-		"missing",
 	} {
 		t.Run(state, func(t *testing.T) {
 			store := newFakeContentStore("owner", "agent-one")
 			soulKey := key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)
-			if state == "missing" {
-				delete(store.records, soulKey)
-			} else {
-				store.records[soulKey].LifecycleState = agentcontent.LifecycleState(state)
-			}
+			store.records[soulKey].LifecycleState = agentcontent.LifecycleState(state)
 			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
 			registry := mcpruntime.NewToolRegistry()
 			if err := RegisterTools(registry,
@@ -349,6 +389,65 @@ func TestAgentLocalInstallPlanMapsUnpublishedSoulToTypedPublishError(t *testing.
 			}
 			if issuer.calls != 0 {
 				t.Fatalf("grant issuer calls = %d, want 0 before publication", issuer.calls)
+			}
+		})
+	}
+}
+
+func TestAgentLocalInstallPlanMapsMissingContentToExact404Repair(t *testing.T) {
+	for _, tc := range []struct {
+		contentType agentcontent.ContentType
+		fixTool     string
+		nextTool    string
+	}{
+		{
+			contentType: agentcontent.ContentTypeAgentSoul,
+			fixTool:     "agent_soul_upsert",
+			nextTool:    "agent_soul_publish",
+		},
+		{
+			contentType: agentcontent.ContentTypeAgentInstructions,
+			fixTool:     "agent_instructions_upsert",
+		},
+	} {
+		t.Run(string(tc.contentType), func(t *testing.T) {
+			store := newFakeContentStore("owner", "agent-one")
+			delete(store.records, key("owner", "agent-one", tc.contentType))
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry,
+				WithAgentContentStore(store),
+				WithDownloadGrantIssuer(issuer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+			); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+			result, err := registry.Call(
+				operatorToolContext("owner", []string{"write"}),
+				ToolAgentLocalInstallPlan,
+				json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			payload := toolError(t, result)
+			if payload["code"] != "not_found" || statusValue(payload["status"]) != http.StatusNotFound {
+				t.Fatalf("missing content payload = %+v", payload)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["content_type"] != string(tc.contentType) ||
+				details["fix_tool"] != tc.fixTool ||
+				details["next_tool"] != tc.nextTool {
+				t.Fatalf("missing content details = %+v", details)
+			}
+			message, _ := payload["message"].(string)
+			for _, required := range []string{string(tc.contentType), tc.fixTool, tc.nextTool} {
+				if required != "" && !strings.Contains(message, required) {
+					t.Fatalf("missing content message does not name %q: %q", required, message)
+				}
+			}
+			if issuer.calls != 0 {
+				t.Fatalf("missing content minted %d grants, want 0", issuer.calls)
 			}
 		})
 	}
