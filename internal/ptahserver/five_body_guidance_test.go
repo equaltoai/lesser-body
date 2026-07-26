@@ -429,6 +429,7 @@ func TestGenesisOutputSchemasDeclareStatusAndFailureEnums(t *testing.T) {
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "published")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "producer_contract_missing")
 	assertSchemaContainsEnum(t, genesisOutputSchema(), "microvm_unavailable")
+	assertSchemaContainsEnum(t, genesisOutputSchema(), "agent_instructions_seed_error")
 	var schema map[string]any
 	if err := json.Unmarshal(genesisOutputSchema(), &schema); err != nil {
 		t.Fatalf("genesis output schema invalid JSON: %v", err)

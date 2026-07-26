@@ -14,6 +14,8 @@ Body validates and stores the stable public schema at
 - Lifecycle/audit fields are server-owned.
 - Every upsert creates a new draft `soul_version`.
 - `agent_soul_publish` is the explicit, idempotent `draft -> published` owner act.
+- A pre-v2 opaque row returns typed `agent_soul_rewrite_required`; rewrite it with `agent_soul_upsert`, then publish the
+  validated v2 draft with `agent_soul_publish`. Lifecycle transitions never synthesize v2 history from opaque rows.
 - Only `published -> archived` is valid. Archived snapshots are never eligible for Ba rendering.
 - Each soul write updates the mutable current projection and appends a write-once history row in one TableTheory
   transaction. Published content therefore remains immutable when a later edit creates a new draft.
@@ -31,12 +33,15 @@ The storage `version` is the optimistic record version and is distinct from `sou
 3. verify the complete owner-review hash;
 4. extract the exact delimited canonical JSON and verify its candidate hash;
 5. decode the closed five-body overlay and the hash-authenticated canonical minting model;
-6. render one deterministic Markdown template;
-7. after Host publication and registry projection, idempotently seed that document as `published`.
+6. render one deterministic Markdown soul template and one deterministic
+   `ptah-hosted-genesis-agent-instructions.v1` operating note;
+7. after Host publication and registry projection, idempotently seed that soul document as `published` and create-only
+   seed the instructions note as a draft.
 
 This path performs only Go JSON decoding, SHA-256 checks, validation, and template rendering. It never invokes a
-MicroVM, LLM, provider, or sibling repository. A retry repairs a matching partial draft and does not overwrite
-different owner-authored content.
+MicroVM, LLM, provider, or sibling repository. A retry repairs a matching partial soul draft and does not overwrite
+different owner-authored soul content. Instructions seeding is conditional-create only: a matching replay preserves its
+version/audit fields, and an existing owner-authored instructions draft wins unchanged.
 
 Template excerpt:
 
@@ -65,3 +70,5 @@ Ba uses it when typed five-body structure is present. Ba otherwise renders the c
 The soul document and Body content-store key use the account-scoped registry `agent_id`. Host `local_id` (also used as
 the local agent username) remains a separate registry field, and Lesser Soul `soul_agent_id` remains the separate
 binding/identity identifier. Finalize seeding does not substitute one identifier for another.
+Ba resolves that exact account-scoped registry row and uses its Host-derived `local_id` for the `/mcp/{actor}` OAuth
+resource; it never renders the registry `agent_id` (including a `0x…` id) as the actor endpoint.

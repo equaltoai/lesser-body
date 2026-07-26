@@ -1,31 +1,4 @@
 $ bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test
-Building lesser-body.zip bootstrap (linux/arm64)...
-Packaging dist/lesser-body.zip...
-OK: dist/lesser-body.zip
-Building lesser-body-instance.zip bootstrap (linux/arm64)...
-Packaging dist/lesser-body-instance.zip...
-OK: dist/lesser-body-instance.zip
-Writing dist/checksums.txt...
-dist/lesser-body.zip: OK
-dist/lesser-body-instance.zip: OK
-OK: dist/checksums.txt
-
-added 10 packages, and audited 30 packages in 1s
-
-1 package is looking for funding
-  run `npm fund` for details
-
-1 high severity vulnerability
-
-To address all issues, run:
-  npm audit fix
-
-Run `npm audit` for details.
-
-> lesser-body-cdk@0.0.0 build
-> tsc
-
-Wrote release assets to dist/release-test
 lesser-body.zip: OK
 lesser-body-deploy.json: OK
 lesser-body-managed-dev.template.json: OK

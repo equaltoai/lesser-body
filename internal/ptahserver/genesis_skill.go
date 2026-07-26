@@ -265,7 +265,8 @@ transform performed during finalize. This skill is read-only.
    Persist the returned registration_id.
 3. **Advance candidate sections.** When Host status is ` + "`assistant_turn_ready`" + ` and candidate phase is
    ` + "`section`" + `, call ` + "`" + toolAgentGenesisAdvance + "`" + ` with the next normal owner message for the
-   exact current_section. Host invokes its private section tool. Persist conversation_id after every call.
+   exact current_section. On the first turn, model is optional: omit it to use Host's configured default alias, or pass
+   an explicit Host alias unchanged. Host invokes its private section tool. Persist conversation_id after every call.
 4. **Recover/navigation index when ids are unclear.** If resuming or the id pair is unknown, call ` + "`" + toolAgentGenesisList + "`" + ` with
    the ` + "`agent_id`" + ` first. Follow ` + "`structuredContent.data.recommended_start`" + ` exactly; it includes the next tool and
    arguments. The summary list does not include candidate review bindings; read the selected lane before owner input.
@@ -281,10 +282,12 @@ transform performed during finalize. This skill is read-only.
 7. **Preflight, then finalize.** When Host reports ` + "`declaration_ready`" + `, call
    ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` directly, then, only after preflight succeeds,
    ` + "`" + toolAgentGenesisFinalize + "`" + `. Body deterministically verifies and transforms Host's exact finalized
-   candidate before publication, then writes its Host-derived Ptah registry row and published Panonomous v2 soul seed
-   after Host succeeds. This application step invokes no MicroVM or model.
+   candidate before publication, then writes its Host-derived Ptah registry row, published Panonomous v2 soul seed, and
+   create-only default agent_instructions operating draft after Host succeeds. This application step invokes no
+   MicroVM or model.
 8. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
-   registry or merged registry/live view and confirm soul_seed lifecycle_state=published. ` + "`published`" + ` is terminal.
+   registry or merged registry/live view and confirm soul_seed lifecycle_state=published and instructions_seed
+   lifecycle_state=draft. ` + "`published`" + ` is terminal; Ba install planning needs no manual content-authoring step.
 
 ## Failure recovery
 
@@ -344,13 +347,13 @@ Bounded reference for LLM clients operating Body/Ptah Host-backed genesis. Contr
 | before any genesis call | ` + toolAgentGenesisSkillGet + ` |
 | skill fetched | ` + toolAgentGenesisBegin + ` |
 | resuming / ids unclear / multiple lanes | ` + toolAgentGenesisList + ` (then follow recommended_start) |
-| begin success | ` + toolAgentGenesisAdvance + ` (persist conversation_id) |
+| begin success | ` + toolAgentGenesisAdvance + ` (model optional; omission uses Host's default alias; persist conversation_id) |
 | assistant_turn_ready + candidate phase section | ` + toolAgentGenesisAdvance + ` with normal owner message |
 | assistant_turn_ready + candidate phase review | inspect exact review_text, then ` + toolAgentGenesisAdvance + ` with structural candidate_action and exact bindings |
 | in_progress | ` + toolAgentGenesisRead + ` (wait-only; never ` + toolAgentGenesisAdvance + ` to nudge) |
 | declaration_ready | ` + toolAgentGenesisFinalizePreflight + ` directly |
 | preflight-ready | ` + toolAgentGenesisFinalize + ` |
-| finalize success / published | ` + toolAgentGet + ` or ` + toolAgentList + `; terminal |
+| finalize success / published | ` + toolAgentGet + ` or ` + toolAgentList + `; verify published soul + draft instructions seeds; terminal |
 | failure.recovery.action=retry_same_step | ` + toolAgentGenesisRecover + ` exactly once after retry_after_seconds when present; same lane |
 | failure.recovery.action=restart_soul_bootstrap | ` + toolAgentGenesisBegin + ` (fresh lane; never ` + toolAgentGenesisRecover + `) |
 | failure.recovery.action=refresh_state | ` + toolAgentGenesisRead + ` exactly once; no write or endless read loop |

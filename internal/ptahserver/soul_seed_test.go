@@ -11,6 +11,7 @@ import (
 )
 
 const hostedGenesisStableBodySHA256 = "sha256:dcf25283fef4910719a378e6b6835a394293d8406710919680eda879a4b4c78f"
+const hostedGenesisStableInstructionsSHA256 = "sha256:502f4403729394712f5f1f717958bcf77cad9bb4cc6e53c2cd683f5c7334ec15"
 
 func TestFinalizedDeclarationTransformIsByteStableAndProvenanceComplete(t *testing.T) {
 	cases := []struct {
@@ -32,6 +33,7 @@ func TestFinalizedDeclarationTransformIsByteStableAndProvenanceComplete(t *testi
 
 	var firstBody string
 	var firstDocumentJSON string
+	var firstInstructions string
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := readGenesisFixture(t, tc.fixture)
@@ -82,6 +84,38 @@ func TestFinalizedDeclarationTransformIsByteStableAndProvenanceComplete(t *testi
 			if sourceOne.CandidateHash != sourceTwo.CandidateHash ||
 				string(sourceOne.CanonicalJSON) != string(sourceTwo.CanonicalJSON) {
 				t.Fatal("identical declaration produced unstable source extraction")
+			}
+			instructionsOne, err := renderHostedGenesisInstructions(sourceOne)
+			if err != nil {
+				t.Fatalf("renderHostedGenesisInstructions(first) error = %v", err)
+			}
+			instructionsTwo, err := renderHostedGenesisInstructions(sourceTwo)
+			if err != nil {
+				t.Fatalf("renderHostedGenesisInstructions(second) error = %v", err)
+			}
+			if instructionsOne != instructionsTwo {
+				t.Fatal("identical declaration produced non-identical instructions bytes")
+			}
+			if got := sha256Identifier([]byte(instructionsOne)); got != hostedGenesisStableInstructionsSHA256 {
+				t.Fatalf("instructions sha = %q, want stable %q\ninstructions:\n%s", got, hostedGenesisStableInstructionsSHA256, instructionsOne)
+			}
+			if firstInstructions == "" {
+				firstInstructions = instructionsOne
+			} else if instructionsOne != firstInstructions {
+				t.Fatal("declaration_ready and published projections rendered different instructions bytes")
+			}
+			for _, excerpt := range []string{
+				"# Agent operating instructions\n",
+				"ptah-hosted-genesis-agent-instructions.v1",
+				"Read the published agent soul before acting.",
+				"Honor its boundaries and refusals.",
+				"Ground → Act → Record → Re-ground",
+				sourceOne.AgentID,
+				sourceOne.CandidateHash,
+			} {
+				if !strings.Contains(instructionsOne, excerpt) {
+					t.Fatalf("instructions missing deterministic operating excerpt %q:\n%s", excerpt, instructionsOne)
+				}
 			}
 			if got := documentOne.Structure.FiveBodies.Soul.Refusals[0].ClosestSafePath; got != "submit a matching structural affirmation" {
 				t.Fatalf("five-body values were not preserved verbatim: %q", got)

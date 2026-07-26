@@ -16,6 +16,37 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
+func TestArticleDraftToolDescriptionsDeclareOwnerScoping(t *testing.T) {
+	registry := mcpruntime.NewToolRegistry()
+	if err := registerArticleTools(registry); err != nil {
+		t.Fatalf("registerArticleTools: %v", err)
+	}
+
+	want := map[string]bool{
+		"article_draft_create":  false,
+		"article_draft_update":  false,
+		"article_draft_get":     false,
+		"article_draft_list":    false,
+		"article_draft_preview": false,
+		"article_draft_publish": false,
+	}
+	for _, def := range registry.List() {
+		if _, ok := want[def.Name]; !ok {
+			continue
+		}
+		want[def.Name] = true
+		description := strings.ToLower(def.Description)
+		if !strings.Contains(description, "owner-scoped") {
+			t.Errorf("%s description does not declare owner scoping: %q", def.Name, def.Description)
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("draft tool %s was not registered", name)
+		}
+	}
+}
+
 func TestArticleDraftByIDToolsRejectOwnedNonArticleDrafts(t *testing.T) {
 	testArticleDraftByIDToolsRejectDraft(t, cmsapi.Draft{
 		ID:            "draft-non-article",

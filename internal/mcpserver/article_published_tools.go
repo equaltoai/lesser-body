@@ -14,7 +14,7 @@ import (
 func articleDraftPublishDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_publish",
-		Description:  "Publish an existing Article draft through Lesser CMS. Returns the canonical published Article ID and URL.",
+		Description:  "Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS. Returns the canonical published Article ID and URL; cross-actor draft ids return not found.",
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{

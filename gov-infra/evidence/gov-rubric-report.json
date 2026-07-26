@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-26T17:09:25.234553Z",
+  "generated_at": "2026-07-26T19:44:44.061784Z",
   "git": {
-    "head": "35164c9f6b19b84de8f6c3182b66ddc6c1b168bf",
-    "head_tree": "6769b590b4370266e55f32c458b536212c0e018e",
-    "merge_base_origin_staging": "15b47f70ae9a0dc82524d85229f27e3f48b50bd4",
-    "ref": "theorymcp/equaltoai/body/issue-464-soul-document-v2",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "head": "e632db5731132c9630039328e06160773125c65b",
+    "head_tree": "378dff76b67441ae50e614a6c079f9ccda7cdc8f",
+    "merge_base_origin_staging": "160284258bd8c4307e05abb581f893a880ebc0d7",
+    "ref": "theorymcp/equaltoai/body/ka-mcp-genesis-materialization",
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
