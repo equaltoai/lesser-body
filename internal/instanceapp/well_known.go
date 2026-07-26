@@ -175,6 +175,18 @@ func instanceProtectedResourceMetadataPath(surface string) string {
 	return "/.well-known/oauth-protected-resource/instance/" + strings.TrimSpace(surface) + "/mcp"
 }
 
+func instanceProtectedResourceMetadataURLForRequest(ctx *apptheory.Context, endpointTemplate string, surface string) string {
+	resource, err := instanceEndpointForRequest(ctx, endpointTemplate, surface)
+	if err != nil {
+		return ""
+	}
+	metadataURL, ok := oauthruntime.ResourceMetadataURLFromMcpEndpoint(resource)
+	if !ok {
+		return ""
+	}
+	return metadataURL
+}
+
 func authorizationServerURLForInstanceEndpoint(resource string, surface string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(resource))
 	if err != nil {
