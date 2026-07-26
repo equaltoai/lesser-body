@@ -8,11 +8,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/baserver"
+	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
@@ -463,6 +466,29 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 		!strings.Contains(firstInstructions.Content, "Read the published agent soul before acting.") {
 		t.Fatalf("fresh finalize agent_instructions = %+v", firstInstructions)
 	}
+	installIssuer := &genesisInstallGrantIssuer{}
+	baTools := mcpruntime.NewToolRegistry()
+	if err := baserver.RegisterTools(
+		baTools,
+		baserver.WithAgentContentStore(contentStore),
+		baserver.WithAgentRegistryStore(registryStore),
+		baserver.WithDownloadGrantIssuer(installIssuer),
+		baserver.WithInstanceEndpoint("https://api.dev.example.com/instance/{surface}/mcp"),
+	); err != nil {
+		t.Fatalf("Register Ba tools: %v", err)
+	}
+	plan, err := baTools.Call(
+		ctx,
+		baserver.ToolAgentLocalInstallPlan,
+		json.RawMessage(`{"agent_id":"agent-0xabc","client":"codex"}`),
+	)
+	if err != nil || plan == nil || plan.IsError {
+		t.Fatalf("freshly finalized agent install plan = %+v/%v, want zero-manual-step success", plan, err)
+	}
+	planData, _ := plan.StructuredContent["data"].(map[string]any)
+	if planData["mcp_endpoint_url"] != "https://api.dev.example.com/mcp/ada" || installIssuer.calls != 1 {
+		t.Fatalf("freshly finalized agent install plan data=%+v issuer_calls=%d", planData, installIssuer.calls)
+	}
 	ownerInstructions, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
 		Account:            "owner",
 		AgentID:            "agent-0xabc",
@@ -555,6 +581,22 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	if agents[0]["source"] != agentListRegistrySourceCode || listRegistry["agent_id"] != "agent-0xabc" {
 		t.Fatalf("agent_list minted item = %+v", agents[0])
 	}
+}
+
+type genesisInstallGrantIssuer struct {
+	calls int
+}
+
+func (f *genesisInstallGrantIssuer) Issue(_ context.Context, in downloadgrant.IssueInput) (*downloadgrant.IssuedGrant, error) {
+	f.calls++
+	expires := time.Date(2026, 7, 26, 22, 0, 0, 0, time.UTC)
+	return &downloadgrant.IssuedGrant{
+		Binding:        in.Binding,
+		GrantID:        "dg_genesis_materialization",
+		Token:          "genesis-materialization-download-token",
+		ExpiresAt:      expires,
+		ExpiresAtEpoch: expires.Unix(),
+	}, nil
 }
 
 func TestGenesisFinalizeRejectsInvalidDeclarationBeforeHostPublication(t *testing.T) {

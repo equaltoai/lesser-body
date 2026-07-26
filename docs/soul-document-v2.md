@@ -70,3 +70,5 @@ Ba uses it when typed five-body structure is present. Ba otherwise renders the c
 The soul document and Body content-store key use the account-scoped registry `agent_id`. Host `local_id` (also used as
 the local agent username) remains a separate registry field, and Lesser Soul `soul_agent_id` remains the separate
 binding/identity identifier. Finalize seeding does not substitute one identifier for another.
+Ba resolves that exact account-scoped registry row and uses its Host-derived `local_id` for the `/mcp/{actor}` OAuth
+resource; it never renders the registry `agent_id` (including a `0x…` id) as the actor endpoint.

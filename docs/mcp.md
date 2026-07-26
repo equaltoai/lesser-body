@@ -1179,7 +1179,7 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_local_install_plan` | Write | Render a deterministic local install pack only from a currently published account-scoped soul plus instructions and mint a one-time header-free download grant. |
+| `agent_local_install_plan` | Write | Render a deterministic local install pack from a currently published account-scoped soul plus instructions, use that registry row's Host-derived `local_id` for the OAuth actor endpoint, and mint a one-time header-free download grant. |
 
 `agent_local_install_plan` input:
 
@@ -1189,7 +1189,8 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
   must match that principal after normalization. Callers cannot supply an account override.
 - Derived: the stage domain and download origin come from the CDK-provided `INSTANCE_MCP_ENDPOINT` template
   (`https://api.<stageDomain>/instance/{surface}/mcp`), not from caller input or unvalidated `Host` headers. Rendered
-  packs still target the canonical actor MCP endpoint `https://api.<stageDomain>/mcp/{actor}`.
+  packs target `https://api.<stageDomain>/mcp/{local_id}` using the Host-derived `local_id` stored on the exact
+  account-scoped registry row selected by `agent_id`. The registry `agent_id` and OAuth resource actor remain distinct.
 
 `agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
 installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
@@ -1214,7 +1215,7 @@ content. The grant binding is fixed to:
 ```json
 {
   "account": "<authenticated account username>",
-  "actor": "<safe local actor segment derived from agent_id>",
+  "actor": "<Host-derived registry local_id>",
   "namespace": "equaltoai",
   "route": "/instance/ba/mcp",
   "client": "codex",
