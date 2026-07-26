@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
+	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/installpack"
@@ -21,6 +22,8 @@ import (
 	"github.com/theory-cloud/apptheory/v2/testkit"
 )
 
+const baPlanRegistryAgentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
 func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing.T) {
 	const endpoint = "https://api.dev.example.com/instance/{surface}/mcp"
 	t.Setenv("JWT_SECRET", "test-secret")
@@ -28,13 +31,17 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 	auth.ResetForTests()
 
 	grantStore := newDownloadGrantStore(t)
-	content := newBaPlanContentStore("agent1", "agent-one")
+	content := newBaPlanContentStore("agent1", baPlanRegistryAgentID)
+	registryStore := newBaPlanAgentRegistry("agent1", baPlanRegistryAgentID, "prototype-11")
 	app, err := instanceapp.New("lesser-body-instance", "dev",
 		instanceapp.WithDownloadGrantStore(grantStore),
 		instanceapp.WithBaContentStore(content),
 		instanceapp.WithBaInstanceEndpoint(endpoint),
 		instanceapp.WithBaNamespace("equaltoai"),
-		instanceapp.WithBaToolOptions(baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute))),
+		instanceapp.WithBaToolOptions(
+			baserver.WithAgentRegistryStore(registryStore),
+			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
+		),
 	)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -44,7 +51,7 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 	headers := initializedMCPHeaders(t, env, app, "/instance/ba/mcp", token)
 
 	out := callMCPTool(t, env, app, "/instance/ba/mcp", headers, baserver.ToolAgentLocalInstallPlan, map[string]any{
-		"agent_id":       "agent-one",
+		"agent_id":       baPlanRegistryAgentID,
 		"client":         "codex",
 		"actor_username": "agent1",
 	})
@@ -55,7 +62,7 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 	if data["schema"] != "lesserbody.agent_local_install_plan.v1" || data["grant_id"] == "" || data["download_url"] == "" {
 		t.Fatalf("plan missing identity/download fields: %+v", data)
 	}
-	if data["mcp_endpoint_url"] != "https://api.dev.example.com/mcp/agent-one" || data["mcp_server_name"] == "" {
+	if data["mcp_endpoint_url"] != "https://api.dev.example.com/mcp/prototype-11" || data["mcp_server_name"] == "" {
 		t.Fatalf("plan mcp fields = %+v", data)
 	}
 	packChecksum, _ := data["pack_checksum"].(string)
@@ -142,6 +149,24 @@ func verifyDownloadedInstallPack(t testing.TB, zipBytes []byte, plan map[string]
 	if manifest.PackID != plan["pack_id"] || manifest.PackDigest != plan["pack_digest"] {
 		t.Fatalf("manifest pack fields = %q/%q plan=%q/%q", manifest.PackID, manifest.PackDigest, plan["pack_id"], plan["pack_digest"])
 	}
+	endpoint, _ := plan["mcp_endpoint_url"].(string)
+	if manifest.Actor != "prototype-11" ||
+		manifest.MCPEndpointURL != endpoint ||
+		manifest.OAuth.ProtectedResourceMetadataURL != "https://api.dev.example.com/.well-known/oauth-protected-resource/mcp/prototype-11" ||
+		strings.Contains(manifest.MCPEndpointURL, "/mcp/0x") {
+		t.Fatalf(
+			"manifest actor/endpoint/oauth = %q/%q/%q, want AS-compatible local actor",
+			manifest.Actor,
+			manifest.MCPEndpointURL,
+			manifest.OAuth.ProtectedResourceMetadataURL,
+		)
+	}
+	for _, path := range []string{".mcp.json", ".codex/config.toml"} {
+		body := string(files[path])
+		if !strings.Contains(body, endpoint) || strings.Contains(body, "/mcp/0x") {
+			t.Fatalf("%s endpoint did not use registry local_id: %s", path, body)
+		}
+	}
 	for _, entry := range manifest.ManifestEntries {
 		body, ok := files[entry.Path]
 		if !ok {
@@ -161,6 +186,29 @@ func checksumHex(body []byte) string {
 
 type baPlanContentStore struct {
 	records map[string]*agentcontent.Record
+}
+
+type baPlanAgentRegistry struct {
+	records map[string]*agentregistry.Agent
+}
+
+func newBaPlanAgentRegistry(account, agentID, localID string) *baPlanAgentRegistry {
+	return &baPlanAgentRegistry{records: map[string]*agentregistry.Agent{
+		strings.ToLower(strings.TrimSpace(account)) + "\x00" + strings.TrimSpace(agentID): {
+			Account: strings.ToLower(strings.TrimSpace(account)),
+			AgentID: strings.TrimSpace(agentID),
+			LocalID: strings.TrimSpace(localID),
+		},
+	}}
+}
+
+func (s *baPlanAgentRegistry) Get(_ context.Context, account string, agentID string) (*agentregistry.Agent, error) {
+	record := s.records[strings.ToLower(strings.TrimSpace(account))+"\x00"+strings.TrimSpace(agentID)]
+	if record == nil {
+		return nil, agentregistry.ErrAgentNotFound
+	}
+	clone := *record
+	return &clone, nil
 }
 
 func newBaPlanContentStore(account, agentID string) *baPlanContentStore {

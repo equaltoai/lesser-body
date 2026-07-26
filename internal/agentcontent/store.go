@@ -81,6 +81,11 @@ var (
 	// ErrContentConflict is returned when a conditional write loses an optimistic
 	// concurrency race after bounded retries.
 	ErrContentConflict = errors.New("agent content write conflict")
+
+	// ErrSoulRewriteRequired is returned when a lifecycle action encounters a
+	// pre-v2 opaque agent_soul row. The owner must rewrite it through the v2
+	// authoring path before it can be published or archived.
+	ErrSoulRewriteRequired = errors.New("agent soul rewrite required")
 )
 
 // SizeError describes a content-size validation failure while preserving
@@ -126,6 +131,25 @@ const (
 	ContentActionPublish ContentAction = "publish"
 	ContentActionArchive ContentAction = "archive"
 )
+
+// SoulRewriteRequiredError preserves the lifecycle action rejected for a
+// pre-v2 opaque row and names the exact Ptah repair sequence.
+type SoulRewriteRequiredError struct {
+	Action ContentAction
+}
+
+func (e *SoulRewriteRequiredError) Error() string {
+	if e == nil {
+		return ErrSoulRewriteRequired.Error()
+	}
+	return fmt.Sprintf(
+		"%s: cannot %s a pre-v2 opaque agent_soul; rewrite via agent_soul_upsert, then publish via agent_soul_publish",
+		ErrSoulRewriteRequired,
+		e.Action,
+	)
+}
+
+func (e *SoulRewriteRequiredError) Unwrap() error { return ErrSoulRewriteRequired }
 
 // Record is the current account-scoped content projection for one account,
 // agent, and content type. AgentSoul records include the closed v2 Document;
@@ -173,6 +197,16 @@ type SeedPublishedInput struct {
 	Account            string
 	AgentID            string
 	SoulDocument       *SoulDocument
+	UpdatedBySubjectID string
+}
+
+// SeedInstructionsInput is the deterministic Ptah genesis application path for
+// the initial agent_instructions draft. It is create-only: any existing draft,
+// including an owner-authored replacement, wins unchanged.
+type SeedInstructionsInput struct {
+	Account            string
+	AgentID            string
+	Content            string
 	UpdatedBySubjectID string
 }
 
@@ -455,7 +489,8 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 
 	created := false
 	for attempt := 0; attempt < updateRetryLimit; attempt++ {
-		current, err := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		var current *Record
+		stored, err := s.loadRecord(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
 		switch {
 		case errors.Is(err, ErrContentNotFound):
 			draft, createErr := s.createInitialSoulDraft(ctx, validated)
@@ -470,6 +505,13 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 			}
 		case err != nil:
 			return nil, false, err
+		case stored.isLegacyOpaqueSoul():
+			return nil, false, &SoulRewriteRequiredError{Action: ContentActionPublish}
+		default:
+			current, err = stored.toRecord()
+			if err != nil {
+				return nil, false, err
+			}
 		}
 
 		if !sameSoulDocumentAuthoringContent(current.Document, validated.soulDocument) {
@@ -503,6 +545,50 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 		}
 	}
 	return nil, false, fmt.Errorf("%w: seed finalized agent soul", ErrContentConflict)
+}
+
+// SeedInstructions creates the deterministic Hosted Genesis operating note
+// only when the account-scoped agent has no instructions record. Matching
+// replays and later retries after an owner upsert return the exact current
+// version without modifying content, audit fields, lifecycle, or version.
+func (s *Store) SeedInstructions(ctx context.Context, in SeedInstructionsInput) (*Record, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent content store is nil")
+	}
+	validated, err := validateUpsertInput(UpsertInput{
+		Account:            in.Account,
+		AgentID:            in.AgentID,
+		Type:               ContentTypeAgentInstructions,
+		Content:            in.Content,
+		UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	now := time.Now().UTC()
+	created := s.recordFor(validated.account, validated.agentID, ContentTypeAgentInstructions)
+	created.Content = in.Content
+	created.Version = 1
+	created.LifecycleState = string(LifecycleStateDraft)
+	created.ContentCreatedAt = now
+	created.ContentUpdatedAt = now
+	created.UpdatedBySubjectID = validated.updatedBySubjectID
+
+	err = s.db.Model(created).WithContext(ctx).IfNotExists().Create()
+	switch {
+	case err == nil:
+		record, recordErr := created.toRecord()
+		return record, true, recordErr
+	case tableerrors.IsConditionFailed(err):
+		record, getErr := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentInstructions)
+		return record, false, getErr
+	default:
+		return nil, false, fmt.Errorf("create genesis agent instructions seed: %w", err)
+	}
 }
 
 func (s *Store) createInitialSoulDraft(ctx context.Context, validated validatedWriteInput) (*Record, error) {
@@ -601,6 +687,9 @@ func (s *Store) transitionSoul(
 		current, err := s.loadRecord(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
 		if err != nil {
 			return nil, err
+		}
+		if current.isLegacyOpaqueSoul() {
+			return nil, &SoulRewriteRequiredError{Action: action}
 		}
 		if expectedRecordVersion > 0 && current.Version != expectedRecordVersion {
 			return nil, fmt.Errorf("%w: %s agent soul source draft changed", ErrContentConflict, action)
@@ -726,6 +815,12 @@ func (r contentRecord) TableName() string {
 		return tableName
 	}
 	return strings.TrimSpace(os.Getenv(EnvInstanceContentTable))
+}
+
+func (r *contentRecord) isLegacyOpaqueSoul() bool {
+	return r != nil &&
+		ContentType(r.ContentType) == ContentTypeAgentSoul &&
+		strings.TrimSpace(r.DocumentJSON) == ""
 }
 
 func (r *contentRecord) toRecord() (*Record, error) {

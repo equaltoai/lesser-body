@@ -1335,6 +1335,44 @@ func TestAgentSoulMapsContentStoreErrorsWithoutLeakingScopeDetails(t *testing.T)
 	}
 }
 
+func TestAgentSoulPublishMapsLegacyRowToActionableTypedRewriteError(t *testing.T) {
+	store := &fakeAgentContentStore{
+		publishErr: &agentcontent.SoulRewriteRequiredError{
+			Action: agentcontent.ContentActionPublish,
+		},
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContextWithSubject("drone-ada", []string{"write"}, "owner-oauth-token", "subject-writer"),
+		toolAgentSoulPublish,
+		json.RawMessage(`{"agent_id":"agent-123"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_soul_rewrite_required", http.StatusConflict)
+	details, _ := payload["details"].(map[string]any)
+	if details["content_type"] != string(agentcontent.ContentTypeAgentSoul) ||
+		details["action"] != string(agentcontent.ContentActionPublish) ||
+		details["rewrite_tool"] != toolAgentSoulUpsert ||
+		details["publish_tool"] != toolAgentSoulPublish {
+		t.Fatalf("rewrite guidance details = %+v", details)
+	}
+	message, _ := payload["message"].(string)
+	for _, required := range []string{toolAgentSoulUpsert, toolAgentSoulPublish} {
+		if !strings.Contains(message, required) {
+			t.Fatalf("rewrite guidance message does not name %s: %q", required, message)
+		}
+	}
+	if strings.Contains(message, "Body failed to access") {
+		t.Fatalf("legacy row fell through to bare internal error: %q", message)
+	}
+}
+
 func TestAgentInstructionsGetReadsAccountScopedContentWithReadCapableScopes(t *testing.T) {
 	for _, scope := range []string{"read", "write", "admin"} {
 		t.Run(scope, func(t *testing.T) {
@@ -1691,6 +1729,12 @@ type fakeAgentContentStore struct {
 	seedPublishedCreated bool
 	seedPublishedErr     error
 
+	seedInstructionsCalls   int
+	seedInstructionsIn      agentcontent.SeedInstructionsInput
+	seedInstructionsRecord  *agentcontent.Record
+	seedInstructionsCreated bool
+	seedInstructionsErr     error
+
 	archiveCalls  int
 	archiveIn     agentcontent.ArchiveInput
 	archiveRecord *agentcontent.Record
@@ -1830,6 +1874,26 @@ func (f *fakeAgentContentStore) SeedPublished(_ context.Context, in agentcontent
 	record.Document.Version = 2
 	record.Document.UpdatedBySubjectID = in.UpdatedBySubjectID
 	return record, true, nil
+}
+
+func (f *fakeAgentContentStore) SeedInstructions(_ context.Context, in agentcontent.SeedInstructionsInput) (*agentcontent.Record, bool, error) {
+	f.seedInstructionsCalls++
+	f.seedInstructionsIn = in
+	if f.seedInstructionsErr != nil {
+		return nil, false, f.seedInstructionsErr
+	}
+	if f.seedInstructionsRecord != nil {
+		return f.seedInstructionsRecord, f.seedInstructionsCreated, nil
+	}
+	return agentContentRecord(
+		agentcontent.ContentTypeAgentInstructions,
+		in.Account,
+		in.AgentID,
+		in.Content,
+		1,
+		agentcontent.LifecycleStateDraft,
+		in.UpdatedBySubjectID,
+	), true, nil
 }
 
 func (f *fakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {
@@ -2047,6 +2111,21 @@ func (f *versionedFakeAgentContentStore) SeedPublished(ctx context.Context, in a
 		UpdatedBySubjectID: in.UpdatedBySubjectID,
 	})
 	return published, true, err
+}
+
+func (f *versionedFakeAgentContentStore) SeedInstructions(ctx context.Context, in agentcontent.SeedInstructionsInput) (*agentcontent.Record, bool, error) {
+	key := agentContentTestKey{account: in.Account, agentID: in.AgentID, typ: agentcontent.ContentTypeAgentInstructions}
+	if current := f.records[key]; current != nil {
+		return cloneAgentContentRecord(current), false, nil
+	}
+	record, err := f.Upsert(ctx, agentcontent.UpsertInput{
+		Account:            in.Account,
+		AgentID:            in.AgentID,
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            in.Content,
+		UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	return record, err == nil, err
 }
 
 func (f *versionedFakeAgentContentStore) Archive(_ context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error) {

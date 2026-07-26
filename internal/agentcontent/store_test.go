@@ -121,6 +121,69 @@ func TestIndependentVersionCounters(t *testing.T) {
 	}
 }
 
+func TestSeedInstructionsIsIdempotentAndNeverOverwritesOwnerDraft(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	seed := SeedInstructionsInput{
+		Account:            "account-a",
+		AgentID:            "agent-123",
+		Content:            "# Seeded operating note\n\nRead the soul first.",
+		UpdatedBySubjectID: "subject-genesis",
+	}
+
+	first, created, err := store.SeedInstructions(ctx, seed)
+	if err != nil {
+		t.Fatalf("SeedInstructions(first) error = %v", err)
+	}
+	if !created ||
+		first.Type != ContentTypeAgentInstructions ||
+		first.Version != 1 ||
+		first.LifecycleState != LifecycleStateDraft ||
+		first.Content != seed.Content ||
+		first.UpdatedBySubjectID != seed.UpdatedBySubjectID {
+		t.Fatalf("SeedInstructions(first) = created %t record %+v", created, first)
+	}
+
+	replay, created, err := store.SeedInstructions(ctx, SeedInstructionsInput{
+		Account:            seed.Account,
+		AgentID:            seed.AgentID,
+		Content:            seed.Content,
+		UpdatedBySubjectID: "subject-genesis-retry",
+	})
+	if err != nil {
+		t.Fatalf("SeedInstructions(replay) error = %v", err)
+	}
+	if created ||
+		replay.Version != first.Version ||
+		replay.Content != first.Content ||
+		replay.UpdatedBySubjectID != first.UpdatedBySubjectID ||
+		!replay.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("SeedInstructions(replay) mutated seed: first=%+v replay=%+v created=%t", first, replay, created)
+	}
+
+	owner, err := store.Upsert(ctx, UpsertInput{
+		Account:            seed.Account,
+		AgentID:            seed.AgentID,
+		Type:               ContentTypeAgentInstructions,
+		Content:            "# Owner operating note\n\nUse the owner-authored draft.",
+		UpdatedBySubjectID: "subject-owner",
+	})
+	if err != nil {
+		t.Fatalf("Upsert(owner draft) error = %v", err)
+	}
+	preserved, created, err := store.SeedInstructions(ctx, seed)
+	if err != nil {
+		t.Fatalf("SeedInstructions(after owner draft) error = %v", err)
+	}
+	if created ||
+		preserved.Version != owner.Version ||
+		preserved.Content != owner.Content ||
+		preserved.UpdatedBySubjectID != owner.UpdatedBySubjectID ||
+		!preserved.UpdatedAt.Equal(owner.UpdatedAt) {
+		t.Fatalf("retry overwrote owner instructions: owner=%+v preserved=%+v created=%t", owner, preserved, created)
+	}
+}
+
 func TestCrossAccountGetReturnsNotFound(t *testing.T) {
 	store, _ := newTestStore(t)
 	if _, err := store.Upsert(context.Background(), UpsertInput{
@@ -398,6 +461,102 @@ func TestBodyOnlyV1CompatibleSoulUpsertProducesValidV2Draft(t *testing.T) {
 	}
 	if err := ValidateSoulDocumentRecord(record.Document, "body-only"); err != nil {
 		t.Fatalf("body-only v2 record validation error = %v", err)
+	}
+}
+
+func TestLegacyOpaqueSoulTransitionsRequireTypedRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		state  LifecycleState
+		action ContentAction
+		run    func(*Store, string) error
+	}{
+		{
+			name:   "publish",
+			state:  LifecycleStateDraft,
+			action: ContentActionPublish,
+			run: func(store *Store, agentID string) error {
+				_, err := store.Publish(context.Background(), PublishInput{
+					Account:            "account-a",
+					AgentID:            agentID,
+					UpdatedBySubjectID: "subject-publisher",
+				})
+				return err
+			},
+		},
+		{
+			name:   "archive",
+			state:  LifecycleStatePublished,
+			action: ContentActionArchive,
+			run: func(store *Store, agentID string) error {
+				_, err := store.Archive(context.Background(), ArchiveInput{
+					Account:            "account-a",
+					AgentID:            agentID,
+					Type:               ContentTypeAgentSoul,
+					UpdatedBySubjectID: "subject-archiver",
+				})
+				return err
+			},
+		},
+		{
+			name:   "genesis seed",
+			state:  LifecycleStateDraft,
+			action: ContentActionPublish,
+			run: func(store *Store, agentID string) error {
+				_, _, err := store.SeedPublished(context.Background(), SeedPublishedInput{
+					Account: "account-a",
+					AgentID: agentID,
+					SoulDocument: &SoulDocument{
+						SchemaVersion: SoulDocumentSchemaVersion,
+						AgentID:       agentID,
+						Body:          "legacy opaque body",
+					},
+					UpdatedBySubjectID: "subject-genesis",
+				})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			agentID := "legacy-" + strings.ReplaceAll(tc.name, " ", "-")
+			now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+			legacy := store.recordFor("account-a", agentID, ContentTypeAgentSoul)
+			legacy.Content = "legacy opaque body"
+			legacy.Version = 1
+			legacy.LifecycleState = string(tc.state)
+			legacy.ContentCreatedAt = now
+			legacy.ContentUpdatedAt = now
+			legacy.UpdatedBySubjectID = "subject-legacy"
+			if err := store.db.Model(legacy).Create(); err != nil {
+				t.Fatalf("seed legacy row: %v", err)
+			}
+
+			err := tc.run(store, agentID)
+			if !errors.Is(err, ErrSoulRewriteRequired) {
+				t.Fatalf("%s legacy row error = %v, want ErrSoulRewriteRequired", tc.action, err)
+			}
+			var rewriteErr *SoulRewriteRequiredError
+			if !errors.As(err, &rewriteErr) || rewriteErr.Action != tc.action {
+				t.Fatalf("%s legacy row typed error = %#v / %v", tc.action, rewriteErr, err)
+			}
+			for _, fix := range []string{"agent_soul_upsert", "agent_soul_publish"} {
+				if !strings.Contains(err.Error(), fix) {
+					t.Fatalf("typed rewrite error does not name %s: %v", fix, err)
+				}
+			}
+
+			current, getErr := store.loadRecord(context.Background(), "account-a", agentID, ContentTypeAgentSoul)
+			if getErr != nil {
+				t.Fatalf("load legacy row after rejected transition: %v", getErr)
+			}
+			if current.Version != 1 || current.DocumentJSON != "" || current.LifecycleState != string(tc.state) {
+				t.Fatalf("legacy row mutated after rejected transition: %+v", current)
+			}
+			if history := loadSoulHistory(t, store, "account-a", agentID); len(history) != 0 {
+				t.Fatalf("legacy transition wrote history: %+v", history)
+			}
+		})
 	}
 }
 

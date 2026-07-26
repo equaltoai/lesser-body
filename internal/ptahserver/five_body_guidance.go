@@ -247,12 +247,12 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 				{"step": "skill", "tool": toolAgentGenesisSkillGet, "instruction": "Fetch and read the read-only genesis operator skill bundle before beginning."},
 				{"step": "begin", "tool": toolAgentGenesisBegin, "instruction": "Start the Host registration lane for the intended managed domain/local_id."},
 				{"step": "list", "tool": toolAgentGenesisList, "instruction": "When resuming or ids are unclear, list Host-backed summaries and follow recommended_start exactly."},
-				{"step": "section", "tool": toolAgentGenesisAdvance, "instruction": "When assistant_turn_ready and candidate phase is section, submit the next normal owner message for current_section; Host invokes its private provider section tool."},
+				{"step": "section", "tool": toolAgentGenesisAdvance, "instruction": "When assistant_turn_ready and candidate phase is section, submit the next normal owner message for current_section; model is optional on the first turn, with omission selecting Host's configured default alias; Host invokes its private provider section tool."},
 				{"step": "read", "tool": toolAgentGenesisRead, "instruction": "Poll Host status and follow structuredContent.data.guidance.next_tool; if guidance.wait=true, wait poll_after_seconds when present and never nudge with agent_genesis_advance."},
 				{"step": "review", "tool": toolAgentGenesisAdvance, "instruction": "Inspect exact review_text, select one of guidance.candidate_actions, then pass only its nested structural candidate_action unchanged: affirm has no section; the five edits each have one exact section plus owner revision message; all carry exact returned bindings."},
 				{"step": "preflight", "tool": toolAgentGenesisFinalizePreflight, "instruction": "Check Host readiness before finalization."},
-				{"step": "finalize", "tool": toolAgentGenesisFinalize, "instruction": "Body deterministically hash-verifies and transforms Host's finalized declaration before publication, then writes the Host-derived registry row and published Panonomous v2 soul seed after Host publication. Declaration application invokes no MicroVM or model."},
-				{"step": "verify", "tool": toolAgentGet, "instruction": "Verify account-scoped Body/Ptah registry visibility; use agent_list for the merged registry/live view."},
+				{"step": "finalize", "tool": toolAgentGenesisFinalize, "instruction": "Body deterministically hash-verifies and transforms Host's finalized declaration before publication, then writes the Host-derived registry row, published Panonomous v2 soul seed, and create-only default agent_instructions draft after Host publication. Declaration application invokes no MicroVM or model."},
+				{"step": "verify", "tool": toolAgentGet, "instruction": "Verify account-scoped Body/Ptah registry visibility plus published soul_seed and draft instructions_seed; use agent_list for the merged registry/live view. Ba needs no manual content-authoring step."},
 			},
 			"recovery": "Follow Host's exact failure.recovery.action: retry_same_step waits the bounded retry delay then calls agent_genesis_recover exactly once; refresh_state reads exactly once; restart_soul_bootstrap begins a fresh lane and forbids recover (its exact terminal untyped/stale hard-cut projection may omit declaration_candidate); operator_action stops automatic calls and requires operator contact.",
 			"recovery_actions": map[string]any{
@@ -288,7 +288,7 @@ func fiveBodyPlaybookResource(context.Context) ([]mcpruntime.ResourceContent, er
 				"declaration_ready": toolAgentGenesisFinalizePreflight,
 				"published":         []string{toolAgentGet, toolAgentList},
 			},
-			"model_guidance": "The mirrored Host contract does not publish a Body-consumable model allowlist artifact or endpoint; operators must use Host-configured models.",
+			"model_guidance": "The mirrored Host contract does not publish a Body-consumable model allowlist artifact or endpoint. agent_genesis_advance model is optional: omit it for Host's configured default alias, or pass an explicit Host alias unchanged and preserve Host's typed validation error.",
 		},
 	})
 }

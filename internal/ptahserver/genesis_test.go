@@ -8,11 +8,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/baserver"
+	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
@@ -31,6 +34,7 @@ type fakeGenesisClient struct {
 	listResponse      map[string]any
 	listErr           error
 	advanceResponse   map[string]any
+	advanceErr        error
 	readResponse      map[string]any
 	readResponses     []map[string]any
 	readCalls         int
@@ -63,6 +67,9 @@ func (f *fakeGenesisClient) AdvanceConversation(_ context.Context, bearer string
 	f.registrationID = registrationID
 	f.conversationID = req.ConversationID
 	f.advanceRequest = req
+	if f.advanceErr != nil {
+		return nil, f.advanceErr
+	}
 	return f.advanceResponse, nil
 }
 
@@ -323,6 +330,83 @@ func TestGenesisOwnerUsesHostStateMachineWithoutPreexistingAgent(t *testing.T) {
 	}
 }
 
+func TestAgentGenesisAdvanceModelIsOptionalAndHostDefaultReachesUpstream(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	def := agentGenesisAdvanceDef()
+	var schema struct {
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(def.InputSchema, &schema); err != nil {
+		t.Fatalf("Unmarshal advance schema: %v", err)
+	}
+	for _, required := range schema.Required {
+		if required == "model" {
+			t.Fatalf("advance schema still requires model: %v", schema.Required)
+		}
+	}
+	if model := schema.Properties["model"].Description; !strings.Contains(strings.ToLower(model), "optional") ||
+		!strings.Contains(strings.ToLower(model), "host") ||
+		!strings.Contains(strings.ToLower(model), "default") {
+		t.Fatalf("advance model schema does not explain Host defaulting: %q", model)
+	}
+
+	fake := &fakeGenesisClient{
+		advanceResponse: genesisConversationResponse("assistant_turn_ready", "private transcript"),
+	}
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(tools, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisAdvance,
+		json.RawMessage(`{"registration_id":"reg-123","message":"Start with the configured Host model alias."}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("advance without model result = %+v", result)
+	}
+	if fake.advanceRequest.Model != "" || fake.advanceRequest.ConversationID != "" {
+		t.Fatalf("Host request model/conversation = %q/%q, want omitted first-turn fields", fake.advanceRequest.Model, fake.advanceRequest.ConversationID)
+	}
+}
+
+func TestAgentGenesisAdvancePreservesExplicitUnknownAliasHostError(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	const hostCode = "soul_instance.invalid_model_alias"
+	fake := &fakeGenesisClient{
+		advanceErr: &hostapi.APIError{
+			Status: http.StatusBadRequest,
+			Code:   hostCode,
+		},
+	}
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(tools, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisAdvance,
+		json.RawMessage(`{"registration_id":"reg-123","model":"missing-alias","message":"Start."}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "invalid_request", http.StatusBadRequest)
+	details, _ := payload["details"].(map[string]any)
+	if details["hostCode"] != hostCode {
+		t.Fatalf("Host alias validation code = %#v, want unchanged %q", details["hostCode"], hostCode)
+	}
+	if fake.advanceRequest.Model != "missing-alias" {
+		t.Fatalf("explicit model alias changed before Host: %q", fake.advanceRequest.Model)
+	}
+}
+
 func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	const hostKey = "host-instance-key-test-only"
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", hostKey)
@@ -363,15 +447,6 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	}
 	registryStore := newMemoryAgentRegistry()
 	contentStore := newVersionedFakeAgentContentStore()
-	if _, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
-		Account:            "owner",
-		AgentID:            "agent-0xabc",
-		Type:               agentcontent.ContentTypeAgentInstructions,
-		Content:            "safe instructions summary source",
-		UpdatedBySubjectID: "subject-writer",
-	}); err != nil {
-		t.Fatalf("seed agent_instructions content: %v", err)
-	}
 
 	tools := mcpruntime.NewToolRegistry()
 	if err := RegisterTools(tools, WithGenesisClient(fake), WithAgentRegistryStore(registryStore), WithAgentContentStore(contentStore), WithAgentLiveClient(&fakeAgentLiveClient{})); err != nil {
@@ -381,6 +456,49 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	args := `{"registration_id":"reg-123","conversation_id":"conv-456"}`
 
 	first := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
+	firstInstructions, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentInstructions)
+	if err != nil {
+		t.Fatalf("fresh finalize did not seed agent_instructions: %v", err)
+	}
+	if firstInstructions.Version != 1 ||
+		firstInstructions.LifecycleState != agentcontent.LifecycleStateDraft ||
+		!strings.Contains(firstInstructions.Content, hostedGenesisInstructionsSeedV1) ||
+		!strings.Contains(firstInstructions.Content, "Read the published agent soul before acting.") {
+		t.Fatalf("fresh finalize agent_instructions = %+v", firstInstructions)
+	}
+	installIssuer := &genesisInstallGrantIssuer{}
+	baTools := mcpruntime.NewToolRegistry()
+	if err := baserver.RegisterTools(
+		baTools,
+		baserver.WithAgentContentStore(contentStore),
+		baserver.WithAgentRegistryStore(registryStore),
+		baserver.WithDownloadGrantIssuer(installIssuer),
+		baserver.WithInstanceEndpoint("https://api.dev.example.com/instance/{surface}/mcp"),
+	); err != nil {
+		t.Fatalf("Register Ba tools: %v", err)
+	}
+	plan, err := baTools.Call(
+		ctx,
+		baserver.ToolAgentLocalInstallPlan,
+		json.RawMessage(`{"agent_id":"agent-0xabc","client":"codex"}`),
+	)
+	if err != nil || plan == nil || plan.IsError {
+		t.Fatalf("freshly finalized agent install plan = %+v/%v, want zero-manual-step success", plan, err)
+	}
+	planData, _ := plan.StructuredContent["data"].(map[string]any)
+	if planData["mcp_endpoint_url"] != "https://api.dev.example.com/mcp/ada" || installIssuer.calls != 1 {
+		t.Fatalf("freshly finalized agent install plan data=%+v issuer_calls=%d", planData, installIssuer.calls)
+	}
+	ownerInstructions, err := contentStore.Upsert(context.Background(), agentcontent.UpsertInput{
+		Account:            "owner",
+		AgentID:            "agent-0xabc",
+		Type:               agentcontent.ContentTypeAgentInstructions,
+		Content:            "# Owner instructions\n\nPreserve this owner-authored draft.",
+		UpdatedBySubjectID: "subject-owner",
+	})
+	if err != nil {
+		t.Fatalf("owner agent_instructions upsert: %v", err)
+	}
 	second := callGenesisTool(t, tools, ctx, toolAgentGenesisFinalize, args)
 	if registryStore.upsertFinalizedCalls != 2 || len(registryStore.records) != 1 {
 		t.Fatalf("double finalize registry writes = calls %d rows %d, want two idempotent calls and one row", registryStore.upsertFinalizedCalls, len(registryStore.records))
@@ -410,6 +528,25 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 		firstSeed["lifecycle_state"] != string(agentcontent.LifecycleStatePublished) ||
 		secondSeed["soul_version"] != firstSeed["soul_version"] {
 		t.Fatalf("finalize seed replay first=%+v second=%+v", firstSeed, secondSeed)
+	}
+	firstInstructionsSeed, _ := firstData["instructions_seed"].(map[string]any)
+	secondInstructionsSeed, _ := secondData["instructions_seed"].(map[string]any)
+	if firstInstructionsSeed["created"] != true ||
+		firstInstructionsSeed["matched_seed"] != true ||
+		firstInstructionsSeed["owner_authored_preserved"] != false ||
+		firstInstructionsSeed["seed_version"] != hostedGenesisInstructionsSeedV1 ||
+		firstInstructionsSeed["declaration_candidate_hash"] != firstSeed["declaration_candidate_hash"] ||
+		secondInstructionsSeed["created"] != false ||
+		secondInstructionsSeed["matched_seed"] != false ||
+		secondInstructionsSeed["owner_authored_preserved"] != true {
+		t.Fatalf("finalize instructions seed replay first=%+v second=%+v", firstInstructionsSeed, secondInstructionsSeed)
+	}
+	preservedInstructions, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentInstructions)
+	if err != nil ||
+		preservedInstructions.Version != ownerInstructions.Version ||
+		preservedInstructions.Content != ownerInstructions.Content ||
+		preservedInstructions.UpdatedBySubjectID != ownerInstructions.UpdatedBySubjectID {
+		t.Fatalf("finalize retry overwrote owner instructions: preserved=%+v owner=%+v err=%v", preservedInstructions, ownerInstructions, err)
 	}
 	seededSoul, err := contentStore.Get(context.Background(), "owner", "agent-0xabc", agentcontent.ContentTypeAgentSoul)
 	if err != nil || seededSoul.Document == nil || seededSoul.Document.AgentID != "agent-0xabc" {
@@ -444,6 +581,22 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 	if agents[0]["source"] != agentListRegistrySourceCode || listRegistry["agent_id"] != "agent-0xabc" {
 		t.Fatalf("agent_list minted item = %+v", agents[0])
 	}
+}
+
+type genesisInstallGrantIssuer struct {
+	calls int
+}
+
+func (f *genesisInstallGrantIssuer) Issue(_ context.Context, in downloadgrant.IssueInput) (*downloadgrant.IssuedGrant, error) {
+	f.calls++
+	expires := time.Date(2026, 7, 26, 22, 0, 0, 0, time.UTC)
+	return &downloadgrant.IssuedGrant{
+		Binding:        in.Binding,
+		GrantID:        "dg_genesis_materialization",
+		Token:          "genesis-materialization-download-token",
+		ExpiresAt:      expires,
+		ExpiresAtEpoch: expires.Unix(),
+	}, nil
 }
 
 func TestGenesisFinalizeRejectsInvalidDeclarationBeforeHostPublication(t *testing.T) {
@@ -519,6 +672,49 @@ func TestGenesisFinalizeReportsRepairableSeedFailureAfterHostPublication(t *test
 	}
 	if registryStore.upsertFinalizedCalls != 1 || contentStore.seedPublishedCalls != 1 {
 		t.Fatalf("repairable finalize writes registry=%d seed=%d, want 1/1", registryStore.upsertFinalizedCalls, contentStore.seedPublishedCalls)
+	}
+}
+
+func TestGenesisFinalizeReportsRepairableInstructionsSeedFailureAfterSoulSeed(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{
+		readResponse:     seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-0xabc"),
+		finalizeResponse: map[string]any{"agent_id": "agent-0xabc"},
+	}
+	registryStore := newMemoryAgentRegistry()
+	contentStore := &fakeAgentContentStore{seedInstructionsErr: errors.New("private instructions write detail")}
+	tools := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(
+		tools,
+		WithGenesisClient(fake),
+		WithAgentRegistryStore(registryStore),
+		WithAgentContentStore(contentStore),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := tools.Call(
+		operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only"),
+		toolAgentGenesisFinalize,
+		json.RawMessage(`{"registration_id":"reg-123","conversation_id":"conv-456"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_instructions_seed_error", http.StatusInternalServerError)
+	encoded, _ := json.Marshal(payload)
+	if strings.Contains(string(encoded), "private instructions write detail") {
+		t.Fatalf("instructions seed failure leaked store detail: %s", encoded)
+	}
+	if registryStore.upsertFinalizedCalls != 1 ||
+		contentStore.seedPublishedCalls != 1 ||
+		contentStore.seedInstructionsCalls != 1 {
+		t.Fatalf(
+			"repairable finalize writes registry=%d soul_seed=%d instructions_seed=%d, want 1/1/1",
+			registryStore.upsertFinalizedCalls,
+			contentStore.seedPublishedCalls,
+			contentStore.seedInstructionsCalls,
+		)
 	}
 }
 

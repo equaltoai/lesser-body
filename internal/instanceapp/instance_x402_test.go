@@ -36,7 +36,10 @@ func TestInstancePlaneX402_BaInstallPlanRequiresGrantBeforeDownloadGrant(t *test
 		instanceapp.WithBaContentStore(content),
 		instanceapp.WithBaInstanceEndpoint(endpoint),
 		instanceapp.WithBaNamespace("equaltoai"),
-		instanceapp.WithBaToolOptions(baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute))),
+		instanceapp.WithBaToolOptions(
+			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
+			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
+		),
 	)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -92,7 +95,10 @@ func TestInstancePlaneX402_BaInstallPlanConsumesInstanceGrantThenMintsDownloadGr
 		instanceapp.WithBaContentStore(content),
 		instanceapp.WithBaInstanceEndpoint(endpoint),
 		instanceapp.WithBaNamespace("equaltoai"),
-		instanceapp.WithBaToolOptions(baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute))),
+		instanceapp.WithBaToolOptions(
+			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
+			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
+		),
 	)
 	if err != nil {
 		t.Fatalf("new app: %v", err)

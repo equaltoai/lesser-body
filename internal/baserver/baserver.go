@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
+	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/installpack"
@@ -47,11 +48,41 @@ const (
 
 var defaultRateWindow = time.Minute
 
-var ErrAgentSoulPublicationRequired = errors.New("agent soul publication is required")
+var (
+	ErrAgentSoulPublicationRequired = errors.New("agent soul publication is required")
+	ErrAgentContentMissing          = errors.New("required agent content is missing")
+)
+
+// AgentContentMissingError names the exact account-scoped record and Ptah
+// authoring tool needed before Ba can render an install pack.
+type AgentContentMissingError struct {
+	AgentID     string
+	ContentType agentcontent.ContentType
+	FixTool     string
+	NextTool    string
+}
+
+func (e *AgentContentMissingError) Error() string {
+	if e == nil {
+		return ErrAgentContentMissing.Error()
+	}
+	message := fmt.Sprintf(
+		"%s: %s record for agent_id %s is missing; call %s",
+		ErrAgentContentMissing,
+		e.ContentType,
+		e.AgentID,
+		e.FixTool,
+	)
+	if strings.TrimSpace(e.NextTool) != "" {
+		message += ", then call " + e.NextTool
+	}
+	return message
+}
+
+func (e *AgentContentMissingError) Unwrap() error { return ErrAgentContentMissing }
 
 // AgentSoulPublicationRequiredError is the typed Ba materialization gate. It
-// names the exact Ptah publish step rather than collapsing draft, archived, and
-// missing soul records into a generic renderer error.
+// names the exact Ptah publish step for an existing draft or archived record.
 type AgentSoulPublicationRequiredError struct {
 	AgentID        string
 	LifecycleState string
@@ -83,6 +114,13 @@ type AgentContentStore interface {
 	Get(ctx context.Context, account string, agentID string, contentType agentcontent.ContentType) (*agentcontent.Record, error)
 }
 
+// AgentRegistryStore resolves the Host-derived local actor id for one
+// account-scoped registry agent. The local id, never the registry agent_id, is
+// the OAuth resource path segment rendered into install packs.
+type AgentRegistryStore interface {
+	Get(ctx context.Context, account string, agentID string) (*agentregistry.Agent, error)
+}
+
 // DownloadGrantIssuer is the one-time download grant minting dependency used by
 // agent_local_install_plan. Production uses internal/downloadgrant.Store.
 type DownloadGrantIssuer interface {
@@ -95,19 +133,29 @@ type Renderer interface {
 }
 
 type config struct {
-	contentStore        AgentContentStore
-	contentStoreFactory func() (AgentContentStore, error)
-	grantIssuer         DownloadGrantIssuer
-	grantIssuerFactory  func() (DownloadGrantIssuer, error)
-	renderer            Renderer
-	instanceEndpoint    string
-	namespace           string
-	rateLimiter         GrantMintLimiter
-	now                 func() time.Time
+	contentStore         AgentContentStore
+	contentStoreFactory  func() (AgentContentStore, error)
+	registryStore        AgentRegistryStore
+	registryStoreFactory func() (AgentRegistryStore, error)
+	grantIssuer          DownloadGrantIssuer
+	grantIssuerFactory   func() (DownloadGrantIssuer, error)
+	renderer             Renderer
+	instanceEndpoint     string
+	namespace            string
+	rateLimiter          GrantMintLimiter
+	now                  func() time.Time
 }
 
 // Option configures Ba tool registration.
 type Option func(*config)
+
+// WithAgentRegistryStore injects the account-scoped registry used to resolve
+// the OAuth-compatible local actor id for Ba pack rendering.
+func WithAgentRegistryStore(store AgentRegistryStore) Option {
+	return func(cfg *config) {
+		cfg.registryStore = store
+	}
+}
 
 // WithAgentContentStore injects the content store used by Ba plan rendering.
 func WithAgentContentStore(store AgentContentStore) Option {
@@ -164,6 +212,9 @@ func defaultConfig() config {
 		contentStoreFactory: func() (AgentContentStore, error) {
 			return agentcontent.Default()
 		},
+		registryStoreFactory: func() (AgentRegistryStore, error) {
+			return agentregistry.Default()
+		},
 		grantIssuerFactory: func() (DownloadGrantIssuer, error) {
 			return downloadgrant.Default()
 		},
@@ -193,7 +244,7 @@ func agentLocalInstallPlanDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        ToolAgentLocalInstallPlan,
 		Title:       "Plan local agent install pack",
-		Description: "Render a deterministic Ba local-install pack for an account-scoped agent only when its current agent_soul lifecycle_state is published, mint a one-time header-free download grant, and return a TheoryMCP-compatible install-plan envelope. Typed five-body structure is rendered when present; otherwise the canonical Markdown body is used. Requires an account-holder OAuth principal with write scope.",
+		Description: "Render a deterministic Ba local-install pack for an account-scoped agent only when its current agent_soul lifecycle_state is published, using the selected registry row's Host-derived local_id for the OAuth actor endpoint; mint a one-time header-free download grant and return a TheoryMCP-compatible install-plan envelope. Typed five-body structure is rendered when present; otherwise the canonical Markdown body is used. Requires an account-holder OAuth principal with write scope.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -255,9 +306,36 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 		})
 	}
 
-	actor, err := actorFromAgentID(in.AgentID)
+	registryStore, err := cfg.agentRegistry()
 	if err != nil {
-		return toolErrorResult("invalid_request", err.Error(), http.StatusBadRequest, map[string]any{"source": "ba_install_plan"})
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+		})
+	}
+	registryAgent, err := registryStore.Get(ctx, account, in.AgentID)
+	if err != nil {
+		if errors.Is(err, agentregistry.ErrAgentNotFound) {
+			return toolErrorResult("not_found", "account-scoped agent registry record was not found; call agent_genesis_finalize before requesting an install plan", http.StatusNotFound, map[string]any{
+				"source":   "agent_registry",
+				"fix_tool": "agent_genesis_finalize",
+			})
+		}
+		return toolErrorResult("internal", "Body failed to resolve the account-scoped agent registry record", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry",
+		})
+	}
+	if registryAgent == nil {
+		return toolErrorResult("not_found", "account-scoped agent registry record was not found; call agent_genesis_finalize before requesting an install plan", http.StatusNotFound, map[string]any{
+			"source":   "agent_registry",
+			"fix_tool": "agent_genesis_finalize",
+		})
+	}
+	actor, err := actorFromLocalID(registryAgent.LocalID)
+	if err != nil {
+		return toolErrorResult("agent_local_id_unavailable", "the account-scoped registry record has no OAuth-compatible local_id; repair the Host-derived registry projection with agent_genesis_finalize", http.StatusConflict, map[string]any{
+			"source":   "agent_registry",
+			"fix_tool": "agent_genesis_finalize",
+		})
 	}
 	profile := installpack.Profile(in.Client)
 	packID, err := PackIDForAgent(in.AgentID, in.Client)
@@ -280,9 +358,9 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 		return packBuildToolResultFromError(err)
 	}
 
-	// The publication gate precedes the grant-mint limiter and issuer lookup:
-	// draft, archived, and missing souls are never grant attempts and always
-	// receive the typed Ptah publication guidance.
+	// Content readiness precedes the grant-mint limiter and issuer lookup:
+	// unpublished or missing records are never grant attempts and always receive
+	// the exact typed Ptah repair guidance.
 	decision := cfg.rateLimit(account)
 	if !decision.Allowed {
 		return toolErrorResult("rate_limited", "agent_local_install_plan grant minting rate limit exceeded for this account", http.StatusTooManyRequests, map[string]any{
@@ -363,6 +441,16 @@ func (cfg config) content() (AgentContentStore, error) {
 		return nil, fmt.Errorf("agent content store is not configured")
 	}
 	return cfg.contentStoreFactory()
+}
+
+func (cfg config) agentRegistry() (AgentRegistryStore, error) {
+	if cfg.registryStore != nil {
+		return cfg.registryStore, nil
+	}
+	if cfg.registryStoreFactory == nil {
+		return nil, fmt.Errorf("agent registry store is not configured")
+	}
+	return cfg.registryStoreFactory()
 }
 
 func (cfg config) grantIssuerStore() (DownloadGrantIssuer, error) {
@@ -556,13 +644,9 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
-	actor := strings.ToLower(strings.TrimSpace(in.Actor))
-	if actor == "" {
-		var err error
-		actor, err = actorFromAgentID(agentID)
-		if err != nil {
-			return nil, err
-		}
+	actor, err := actorFromLocalID(in.Actor)
+	if err != nil {
+		return nil, fmt.Errorf("actor local_id is required for install-pack OAuth resource rendering: %w", err)
 	}
 	client := normalizeClient(in.Client)
 	if client == "" {
@@ -597,22 +681,27 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	soul, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentSoul)
 	if err != nil {
 		if errors.Is(err, agentcontent.ErrContentNotFound) {
-			return nil, &AgentSoulPublicationRequiredError{
-				AgentID:        agentID,
-				LifecycleState: "missing",
-				PublishTool:    "agent_soul_publish",
+			return nil, &AgentContentMissingError{
+				AgentID:     agentID,
+				ContentType: agentcontent.ContentTypeAgentSoul,
+				FixTool:     "agent_soul_upsert",
+				NextTool:    "agent_soul_publish",
 			}
 		}
 		return nil, fmt.Errorf("read agent_soul: %w", err)
 	}
-	if soul == nil || soul.LifecycleState != agentcontent.LifecycleStatePublished {
-		state := "missing"
-		if soul != nil {
-			state = string(soul.LifecycleState)
+	if soul == nil {
+		return nil, &AgentContentMissingError{
+			AgentID:     agentID,
+			ContentType: agentcontent.ContentTypeAgentSoul,
+			FixTool:     "agent_soul_upsert",
+			NextTool:    "agent_soul_publish",
 		}
+	}
+	if soul.LifecycleState != agentcontent.LifecycleStatePublished {
 		return nil, &AgentSoulPublicationRequiredError{
 			AgentID:        agentID,
-			LifecycleState: state,
+			LifecycleState: string(soul.LifecycleState),
 			PublishTool:    "agent_soul_publish",
 		}
 	}
@@ -625,7 +714,21 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	}
 	instructions, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentInstructions)
 	if err != nil {
+		if errors.Is(err, agentcontent.ErrContentNotFound) {
+			return nil, &AgentContentMissingError{
+				AgentID:     agentID,
+				ContentType: agentcontent.ContentTypeAgentInstructions,
+				FixTool:     "agent_instructions_upsert",
+			}
+		}
 		return nil, fmt.Errorf("read agent_instructions: %w", err)
+	}
+	if instructions == nil {
+		return nil, &AgentContentMissingError{
+			AgentID:     agentID,
+			ContentType: agentcontent.ContentTypeAgentInstructions,
+			FixTool:     "agent_instructions_upsert",
+		}
 	}
 	packDigest := strings.TrimSpace(in.PackDigest)
 	if packDigest == "" {
@@ -655,7 +758,14 @@ func packBuildToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	}
 	details := map[string]any{"source": "ba_install_plan"}
 	var publicationErr *AgentSoulPublicationRequiredError
+	var missingErr *AgentContentMissingError
 	switch {
+	case errors.As(err, &missingErr):
+		details["agent_id"] = missingErr.AgentID
+		details["content_type"] = string(missingErr.ContentType)
+		details["fix_tool"] = missingErr.FixTool
+		details["next_tool"] = missingErr.NextTool
+		return toolErrorResult("not_found", missingErr.Error(), http.StatusNotFound, details)
 	case errors.As(err, &publicationErr):
 		details["agent_id"] = publicationErr.AgentID
 		details["lifecycle_state"] = publicationErr.LifecycleState
@@ -763,31 +873,23 @@ func AgentIDFromPackID(packID string) (string, error) {
 	return strings.TrimSpace(string(decoded)), nil
 }
 
-func actorFromAgentID(agentID string) (string, error) {
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return "", fmt.Errorf("agent_id is required")
+func actorFromLocalID(localID string) (string, error) {
+	localID = strings.TrimSpace(localID)
+	if localID == "" {
+		return "", fmt.Errorf("local_id is required")
 	}
-	candidate := agentID
-	if u, err := url.Parse(agentID); err == nil && u.Scheme != "" && u.Host != "" {
-		parts := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
-		if len(parts) > 0 {
-			candidate, _ = url.PathUnescape(parts[len(parts)-1])
-		}
+	if strings.ContainsAny(localID, "/\\?#") || strings.Contains(localID, "..") {
+		return "", fmt.Errorf("local_id must be a single safe actor path segment")
 	}
-	candidate = strings.ToLower(strings.TrimSpace(candidate))
-	if candidate == "" || strings.ContainsAny(candidate, "/\\?#") || strings.Contains(candidate, "..") {
-		return "", fmt.Errorf("agent_id must identify a single safe actor path segment or URL with a safe final path segment")
-	}
-	for _, r := range candidate {
+	for _, r := range localID {
 		if r <= 0x20 || r == 0x7f {
-			return "", fmt.Errorf("agent_id must identify a single safe actor path segment")
+			return "", fmt.Errorf("local_id must be a single safe actor path segment")
 		}
 	}
-	if url.PathEscape(candidate) != candidate {
-		return "", fmt.Errorf("agent_id must identify a single safe actor path segment")
+	if url.PathEscape(localID) != localID {
+		return "", fmt.Errorf("local_id must be a single safe actor path segment")
 	}
-	return candidate, nil
+	return localID, nil
 }
 
 // StageDomainFromInstanceEndpoint derives the stage domain from the CDK-injected

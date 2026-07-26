@@ -20,6 +20,7 @@ const (
 
 	hostedGenesisDeclarationSchemaV2 = "soul-five-body-schema.v2"
 	hostedGenesisOwnerReviewV1       = "hosted-genesis-owner-review.v1"
+	hostedGenesisInstructionsSeedV1  = "ptah-hosted-genesis-agent-instructions.v1"
 )
 
 var (
@@ -235,6 +236,27 @@ func renderHostedGenesisSoul(fiveBodies *agentcontent.FiveBodies) (string, error
 		return "", declarationSeedError("fiveBodies is required")
 	}
 	return agentcontent.RenderFiveBodiesMarkdown(fiveBodies)
+}
+
+func renderHostedGenesisInstructions(source *finalizedHostedGenesisDeclaration) (string, error) {
+	if source == nil ||
+		strings.TrimSpace(source.AgentID) == "" ||
+		!hostedGenesisSHA256Pattern.MatchString(strings.TrimSpace(source.CandidateHash)) {
+		return "", declarationSeedError("instructions source binding is incomplete")
+	}
+	return fmt.Sprintf(`# Agent operating instructions
+
+Seed version: %s
+Registry agent_id: %s
+Declaration candidate: %s
+
+This draft is the host-facing operating note for the materialized agent.
+
+1. Read the published agent soul before acting. Treat its identity, philosophy, discipline, boundaries, refusals, and stated cadence as authoritative.
+2. Honor its boundaries and refusals. Use each closest safe path instead of bypassing an invariant.
+3. Follow the soul's cadence. At minimum, use Ground → Act → Record → Re-ground at meaningful work boundaries.
+4. If this draft conflicts with the published soul, stop and follow the soul's stricter boundary. The owner may replace this draft through agent_instructions_upsert.
+`, hostedGenesisInstructionsSeedV1, source.AgentID, source.CandidateHash), nil
 }
 
 func sha256Identifier(value []byte) string {
