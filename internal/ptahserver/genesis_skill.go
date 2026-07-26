@@ -244,8 +244,9 @@ You are an LLM client operating Body/Ptah's instance-plane MCP surface to create
 (equaltoai/lesser-host) owns the durable HostedGenesisSession state machine and the ` + fiveBodySchemaVersion + ` /
 ` + fiveBodyGuidanceVersion + ` contract, typed declaration candidate, and candidate persistence. The five provider
 section tools run only inside Host's AppTheory MicroVM. Body uses AppTheory's MCP ToolDef/InputSchema/OutputSchema/
-StructuredContent path to validate and relay Host's bounded public projection; it has no declaration engine, private
-provider tools, or candidate store. This skill is read-only.
+StructuredContent path to validate and relay Host's bounded public projection. Body has no declaration authoring
+engine, private provider tools, or candidate store; its only application step is the deterministic hash/schema/template
+transform performed during finalize. This skill is read-only.
 
 ## Authority
 
@@ -279,9 +280,11 @@ provider tools, or candidate store. This skill is read-only.
    entries, plus an owner revision message.
 7. **Preflight, then finalize.** When Host reports ` + "`declaration_ready`" + `, call
    ` + "`" + toolAgentGenesisFinalizePreflight + "`" + ` directly, then, only after preflight succeeds,
-   ` + "`" + toolAgentGenesisFinalize + "`" + `. Body then writes its Host-derived Ptah registry row.
+   ` + "`" + toolAgentGenesisFinalize + "`" + `. Body deterministically verifies and transforms Host's exact finalized
+   candidate before publication, then writes its Host-derived Ptah registry row and published Panonomous v2 soul seed
+   after Host succeeds. This application step invokes no MicroVM or model.
 8. **Verify.** Verify with ` + "`" + toolAgentGet + "`" + ` / ` + "`" + toolAgentList + "`" + ` for the account-scoped
-   registry or merged registry/live view. ` + "`published`" + ` is terminal.
+   registry or merged registry/live view and confirm soul_seed lifecycle_state=published. ` + "`published`" + ` is terminal.
 
 ## Failure recovery
 
