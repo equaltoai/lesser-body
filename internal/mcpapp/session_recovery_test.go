@@ -1,19 +1,29 @@
 package mcpapp_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
+	"github.com/equaltoai/lesser-body/internal/memory"
 	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 	"github.com/theory-cloud/apptheory/v2/testkit"
 )
 
-func TestActorMCPOAuthSessionDeathReturnsInvalidTokenChallenge(t *testing.T) {
+func TestActorMCPOAuthDeadSessionTransparentlyRebindsReadCall(t *testing.T) {
+	previousLogger := slog.Default()
+	var logOutput strings.Builder
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logOutput, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_STREAM_TABLE", "")
 	t.Setenv("MCP_TASK_TABLE", "")
@@ -36,97 +46,202 @@ func TestActorMCPOAuthSessionDeathReturnsInvalidTokenChallenge(t *testing.T) {
 		[]string{"https://api.example.com/mcp/agent1"},
 	)
 
-	initResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
-		"authorization": {"Bearer " + token},
-	}, &mcpruntime.Request{
-		JSONRPC: "2.0",
-		ID:      "initialize",
-		Method:  "initialize",
-		Params:  json.RawMessage(`{"protocolVersion":"2025-11-25"}`),
+	const deadSessionID = "dead-session"
+	callParams, err := json.Marshal(map[string]any{
+		"name":      "echo",
+		"arguments": map[string]any{"message": "rebound"},
 	})
-	if initResp.Status != 200 {
-		t.Fatalf("initialize status = %d, want 200; body = %s", initResp.Status, string(initResp.Body))
+	if err != nil {
+		t.Fatalf("marshal echo params: %v", err)
 	}
-	sessionID := firstHeader(initResp.Headers, "mcp-session-id")
-	if sessionID == "" {
-		t.Fatal("initialize response missing mcp-session-id")
-	}
-
-	validResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
+	reboundResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
 		"authorization":        {"Bearer " + token},
 		"mcp-protocol-version": {"2025-11-25"},
-		"mcp-session-id":       {sessionID},
+		"mcp-session-id":       {deadSessionID},
 	}, &mcpruntime.Request{
 		JSONRPC: "2.0",
-		ID:      "valid-session",
-		Method:  "tools/list",
+		ID:      "rebound-read",
+		Method:  "tools/call",
+		Params:  callParams,
 	})
-	if validResp.Status != 200 {
-		t.Fatalf("valid session status = %d, want 200; body = %s", validResp.Status, string(validResp.Body))
+	if reboundResp.Status != 200 {
+		t.Fatalf("rebound read status = %d, want 200; body = %s", reboundResp.Status, string(reboundResp.Body))
+	}
+	freshSessionID := firstHeader(reboundResp.Headers, "mcp-session-id")
+	if freshSessionID == "" || freshSessionID == deadSessionID {
+		t.Fatalf("rebound response session id = %q, want a fresh id", freshSessionID)
+	}
+	if got := firstHeader(reboundResp.Headers, "www-authenticate"); got != "" {
+		t.Fatalf("successful rebind gained WWW-Authenticate: %q", got)
 	}
 
-	unknownResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
+	var rpc mcpruntime.Response
+	if err := json.Unmarshal(reboundResp.Body, &rpc); err != nil {
+		t.Fatalf("decode rebound read response: %v", err)
+	}
+	if rpc.Error != nil {
+		t.Fatalf("rebound read returned JSON-RPC error: %+v", rpc.Error)
+	}
+	var tool mcpruntime.ToolResult
+	resultBody, err := json.Marshal(rpc.Result)
+	if err != nil {
+		t.Fatalf("marshal rebound tool result: %v", err)
+	}
+	if err := json.Unmarshal(resultBody, &tool); err != nil {
+		t.Fatalf("decode rebound tool result: %v", err)
+	}
+	if len(tool.Content) != 1 || tool.Content[0].Text != "rebound" {
+		t.Fatalf("rebound echo result = %+v", tool)
+	}
+
+	nextResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
 		"authorization":        {"Bearer " + token},
 		"mcp-protocol-version": {"2025-11-25"},
-		"mcp-session-id":       {"unknown-session"},
+		"mcp-session-id":       {freshSessionID},
 	}, &mcpruntime.Request{
 		JSONRPC: "2.0",
-		ID:      "unknown-session",
+		ID:      "fresh-session-next-call",
 		Method:  "tools/list",
 	})
-	assertActorSessionInvalidTokenResponse(t, unknownResp)
+	if nextResp.Status != 200 {
+		t.Fatalf("fresh session next call status = %d, want 200; body = %s", nextResp.Status, string(nextResp.Body))
+	}
 
-	deleteResp := env.Invoke(context.Background(), app, apptheory.Request{
-		Method: "DELETE",
+	assertSanitizedSessionRebindAudit(t, logOutput.String(), "agent1", deadSessionID, freshSessionID)
+}
+
+func TestActorMCPOAuthDeadSessionWriteCallExecutesExactlyOnce(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_STREAM_TABLE", "")
+	t.Setenv("MCP_TASK_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_SECRET_ARN", "")
+	t.Setenv("LESSER_BODY_MEMORY_STORE", "memory")
+	auth.ResetForTests()
+	memory.ResetForTests()
+	t.Cleanup(auth.ResetForTests)
+	t.Cleanup(memory.ResetForTests)
+
+	app, err := mcpapp.New("lesser-body", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	token := newTestTokenWithAudience(
+		t,
+		"test-secret",
+		"agent1",
+		[]string{"write"},
+		[]string{"https://api.example.com/mcp/agent1"},
+	)
+
+	const sentinel = "dead-session write must execute exactly once"
+	callParams, err := json.Marshal(map[string]any{
+		"name":      "memory_append",
+		"arguments": map[string]any{"content": sentinel},
+	})
+	if err != nil {
+		t.Fatalf("marshal memory_append params: %v", err)
+	}
+	resp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
+		"authorization":        {"Bearer " + token},
+		"mcp-protocol-version": {"2025-11-25"},
+		"mcp-session-id":       {"dead-write-session"},
+	}, &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      "rebound-write",
+		Method:  "tools/call",
+		Params:  callParams,
+	})
+	if resp.Status != 200 {
+		t.Fatalf("rebound write status = %d, want 200; body = %s", resp.Status, string(resp.Body))
+	}
+	if freshSessionID := firstHeader(resp.Headers, "mcp-session-id"); freshSessionID == "" || freshSessionID == "dead-write-session" {
+		t.Fatalf("rebound write response session id = %q, want a fresh id", freshSessionID)
+	}
+
+	store, err := memory.Default()
+	if err != nil {
+		t.Fatalf("memory store: %v", err)
+	}
+	got, err := store.Query(context.Background(), "agent1", memory.QueryInput{
+		Query: sentinel,
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("query memory after rebound write: %v", err)
+	}
+	if len(got.Events) != 1 {
+		t.Fatalf("rebound write executed %d times, want exactly once; events = %+v", len(got.Events), got.Events)
+	}
+}
+
+func TestActorMCPOAuthDeadSessionSSEStreamIsNotRebound(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_STREAM_TABLE", "")
+	t.Setenv("MCP_TASK_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_SECRET_ARN", "")
+	auth.ResetForTests()
+	t.Cleanup(auth.ResetForTests)
+
+	app, err := mcpapp.New("lesser-body", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	token := newTestTokenWithAudience(
+		t,
+		"test-secret",
+		"agent1",
+		[]string{"read"},
+		[]string{"https://api.example.com/mcp/agent1"},
+	)
+
+	resp := testkit.New().Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
 		Path:   "/mcp/agent1",
 		Headers: map[string][]string{
 			"authorization":        {"Bearer " + token},
+			"accept":               {"text/event-stream"},
 			"mcp-protocol-version": {"2025-11-25"},
-			"mcp-session-id":       {sessionID},
+			"mcp-session-id":       {"dead-stream-session"},
+			"last-event-id":        {"event-from-dead-session"},
 		},
 	})
-	if deleteResp.Status != 202 {
-		t.Fatalf("delete live session status = %d, want 202; body = %s", deleteResp.Status, string(deleteResp.Body))
+	assertActorSessionInvalidTokenResponse(t, resp)
+	if got := firstHeader(resp.Headers, "mcp-session-id"); got != "" {
+		t.Fatalf("dead SSE resume was rebound to session %q", got)
 	}
+}
 
-	for _, method := range []string{"POST", "GET", "DELETE"} {
-		t.Run(strings.ToLower(method), func(t *testing.T) {
-			headers := map[string][]string{
-				"authorization":        {"Bearer " + token},
-				"accept":               {"application/json, text/event-stream"},
-				"mcp-protocol-version": {"2025-11-25"},
-				"mcp-session-id":       {sessionID},
-			}
-			var body []byte
-			if method == "POST" {
-				headers["content-type"] = []string{"application/json"}
-				body = []byte(`{"jsonrpc":"2.0","id":"dead-session","method":"tools/list"}`)
-			} else if method == "GET" {
-				headers["accept"] = []string{"text/event-stream"}
-			}
+func TestOAuthSessionRebindLeavesUnauthenticatedDeadSessionAs404(t *testing.T) {
+	server := mcpruntime.NewServer("unauthenticated-session-test", "dev")
+	app := apptheory.New()
+	app.Post("/mcp", mcpapp.WithOAuthSessionRecovery(server.Handler(), nil, mcpapp.MCPAuthorizationScopes))
 
-			resp := env.Invoke(context.Background(), app, apptheory.Request{
-				Method:  method,
-				Path:    "/mcp/agent1",
-				Headers: headers,
-				Body:    body,
-			})
-			assertActorSessionInvalidTokenResponse(t, resp)
-		})
+	body, err := json.Marshal(&mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      "unauthenticated-dead-session",
+		Method:  "tools/list",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
 	}
+	resp := testkit.New().Invoke(context.Background(), app, apptheory.Request{
+		Method: "POST",
+		Path:   "/mcp",
+		Headers: map[string][]string{
+			"accept":               {"application/json, text/event-stream"},
+			"content-type":         {"application/json"},
+			"mcp-protocol-version": {"2025-11-25"},
+			"mcp-session-id":       {"dead-session"},
+		},
+		Body: body,
+	})
 
-	modernResp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
-		"authorization":        {"Bearer " + token},
-		"mcp-protocol-version": {"2026-07-28"},
-		"mcp-method":           {"tools/list"},
-		"mcp-session-id":       {sessionID},
-	}, bodyModernRequest("modern-stateless", "tools/list", map[string]any{}))
-	if modernResp.Status != 200 {
-		t.Fatalf("modern stateless status = %d, want 200; body = %s", modernResp.Status, string(modernResp.Body))
-	}
-	if got := firstHeader(modernResp.Headers, "www-authenticate"); got != "" {
-		t.Fatalf("modern stateless response gained WWW-Authenticate: %q", got)
-	}
+	assertSessionNotFound404(t, resp)
 }
 
 func TestActorMCPSessionNotFoundRemains404ForNonOAuthPrincipal(t *testing.T) {
@@ -156,14 +271,62 @@ func TestActorMCPSessionNotFoundRemains404ForNonOAuthPrincipal(t *testing.T) {
 		Method:  "tools/list",
 	})
 
+	assertSessionNotFound404(t, resp)
+}
+
+func TestActorMCP20260728StatelessRequestIsNotRebound(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_STREAM_TABLE", "")
+	t.Setenv("MCP_TASK_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_SECRET_ARN", "")
+	auth.ResetForTests()
+	t.Cleanup(auth.ResetForTests)
+
+	app, err := mcpapp.New("lesser-body", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	token := newTestTokenWithAudience(
+		t,
+		"test-secret",
+		"agent1",
+		[]string{"read"},
+		[]string{"https://api.example.com/mcp/agent1"},
+	)
+
+	resp := invokeJSONAtPath(t, testkit.New(), app, "/mcp/agent1", map[string][]string{
+		"authorization":        {"Bearer " + token},
+		"mcp-protocol-version": {"2026-07-28"},
+		"mcp-method":           {"tools/list"},
+		"mcp-session-id":       {"dead-session-is-ignored"},
+	}, bodyModernRequest("modern-stateless", "tools/list", map[string]any{}))
+	if resp.Status != 200 {
+		t.Fatalf("modern stateless status = %d, want 200; body = %s", resp.Status, string(resp.Body))
+	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != "" {
+		t.Fatalf("modern stateless response gained WWW-Authenticate: %q", got)
+	}
+	if got := firstHeader(resp.Headers, "mcp-session-id"); got != "" {
+		t.Fatalf("modern stateless response gained mcp-session-id: %q", got)
+	}
+}
+
+func assertSessionNotFound404(t testing.TB, resp apptheory.Response) {
+	t.Helper()
+
 	if resp.Status != 404 {
-		t.Fatalf("non-OAuth session-not-found status = %d, want 404; body = %s", resp.Status, string(resp.Body))
+		t.Fatalf("session-not-found status = %d, want 404; body = %s", resp.Status, string(resp.Body))
 	}
 	if strings.TrimSpace(string(resp.Body)) != `{"error":"session not found"}` {
-		t.Fatalf("non-OAuth session-not-found body changed: %s", string(resp.Body))
+		t.Fatalf("session-not-found body changed: %s", string(resp.Body))
 	}
 	if got := firstHeader(resp.Headers, "www-authenticate"); got != "" {
 		t.Fatalf("non-OAuth 404 gained WWW-Authenticate: %q", got)
+	}
+	if got := firstHeader(resp.Headers, "mcp-session-id"); got != "" {
+		t.Fatalf("non-OAuth 404 gained mcp-session-id: %q", got)
 	}
 }
 
@@ -198,5 +361,54 @@ func assertActorSessionInvalidTokenResponse(t testing.TB, resp apptheory.Respons
 		out.Error.Details["authAction"] != "reauthorize" ||
 		out.Error.Details["refreshRequired"] != true {
 		t.Fatalf("unauthorized session recovery details = %+v", out.Error.Details)
+	}
+}
+
+func assertSanitizedSessionRebindAudit(t testing.TB, logs string, forbiddenValues ...string) {
+	t.Helper()
+
+	count := 0
+	scanner := bufio.NewScanner(strings.NewReader(logs))
+	for scanner.Scan() {
+		var event map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatalf("decode structured log event: %v; line = %s", err, scanner.Text())
+		}
+		if event["msg"] != "mcp session rebound" {
+			continue
+		}
+		count++
+		if event["principal_type"] != string(auth.PrincipalTypeOAuthToken) ||
+			event["reason"] != "mcp_session_rebound" {
+			t.Fatalf("rebind audit fields = %+v", event)
+		}
+		for _, forbiddenKey := range []string{
+			"actor",
+			"body",
+			"identity",
+			"new_session_id",
+			"old_session_id",
+			"request_body",
+			"session_id",
+		} {
+			if _, ok := event[forbiddenKey]; ok {
+				t.Fatalf("rebind audit exposed %q: %+v", forbiddenKey, event)
+			}
+		}
+		serialized, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal rebind audit event: %v", err)
+		}
+		for _, forbiddenValue := range forbiddenValues {
+			if forbiddenValue != "" && strings.Contains(string(serialized), forbiddenValue) {
+				t.Fatalf("rebind audit exposed sensitive value %q: %s", forbiddenValue, serialized)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan structured logs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("rebind audit event count = %d, want 1; logs = %s", count, logs)
 	}
 }
