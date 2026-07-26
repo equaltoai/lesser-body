@@ -247,7 +247,7 @@ func agentGenesisAdvanceDef() mcpruntime.ToolDef {
 			"properties":{
 				"registration_id":{"type":"string","description":"Host registration id returned by agent_genesis_begin."},
 				"conversation_id":{"type":"string","description":"Host conversation id returned by the first advance; omit only for the first turn."},
-				"model":{"type":"string","description":"Host model identifier. Required when starting the first conversation."},
+				"model":{"type":"string","description":"Optional Host model alias. When omitted, lesser-host applies its configured default alias."},
 				"message":{"type":"string","description":"Owner's next genesis conversation message."},
 				"candidate_action":{"type":"object","description":"Structural owner action required only for Host candidate review.","additionalProperties":false,"properties":{
 					"action":{"type":"string","enum":["affirm","edit"]},
@@ -726,9 +726,6 @@ func parseAgentGenesisAdvanceInput(args json.RawMessage) (agentGenesisAdvanceInp
 	}
 	if in.Model, err = optionalGenesisString(in.Model, "model", 128); err != nil {
 		return in, mustToolErrorResult("invalid_request", "agent_genesis_advance model is invalid", http.StatusBadRequest, nil), nil
-	}
-	if in.ConversationID == "" && in.Model == "" {
-		return in, mustToolErrorResult("invalid_request", "agent_genesis_advance requires model for the first conversation turn", http.StatusBadRequest, nil), nil
 	}
 	if in.Message, err = requiredGenesisMessage(in.Message); err != nil {
 		return in, mustToolErrorResult("invalid_request", "agent_genesis_advance requires a bounded message", http.StatusBadRequest, nil), nil
