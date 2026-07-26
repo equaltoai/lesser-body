@@ -609,6 +609,9 @@ Scope key:
 | `conversations_read` | Read | Read direct-message conversations; supports opt-in compact conversation refs. |
 | `conversation_get` | Read | Expand one direct-message conversation into bounded recent message previews; defaults to compact and requires explicit standard/full opt-in for message bodies/raw payloads. |
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
+| `message_requests_list` | Read | List the authenticated recipient's pending direct-message requests through Lesser GraphQL with bounded previews and explicit decision actions. |
+| `message_request_accept` | Write | Accept a recipient-owned pending direct-message request through Lesser and move it into the recipient's inbox. |
+| `message_request_decline` | Write | Decline a recipient-owned pending direct-message request through Lesser and remove it from the active request folder. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
@@ -1291,6 +1294,9 @@ index/ref pages and expand only the items they need:
   Lesser's named-counterpart one-to-one lookup and returns compact message previews for that conversation. Use the
   returned conversation ref's `expand` metadata, or call
   `conversation_get({"conversationId":"<conversation-id>","view":"compact"})`, to continue a focused expansion path.
+- `message_requests_list({"limit":10})` reads Lesser's recipient-scoped `REQUESTS` folder. Each bounded request ref
+  carries its stable `conversationId`, request state, actor refs, last-message preview, and explicit
+  `message_request_accept` / `message_request_decline` arguments. Full message bodies are not returned by this list.
 - `soul_read({"self":true,"view":"summary"})` returns bounded public identity essentials. Use the summary `expand`
   metadata, or call `soul_read(..., "view":"standard")` for the compatibility bundle and `view:"full"` for explicit
   sanitized audit/debug raw public payloads.
@@ -1338,11 +1344,39 @@ search:
   {"tool":"conversation_get","arguments":{"conversationId":"<structuredContent.data.id>","limit":20,"view":"compact"}}
   ```
 
+- Resolve a pending first-contact request as the recipient:
+
+  ```json
+  {"tool":"message_requests_list","arguments":{"limit":10}}
+  ```
+
+  Then accept the selected request to allow the conversation and subsequent DMs into the inbox:
+
+  ```json
+  {"tool":"message_request_accept","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  ```
+
+  Or explicitly decline it:
+
+  ```json
+  {"tool":"message_request_decline","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  ```
+
 `direct_messages_read` uses Lesser's named counterpart lookup and returns either the focused one-to-one conversation or
 an explicit `not_found` tool error with suggested fallbacks. It never silently scans unrelated conversations,
 notifications, timelines, or email. Existing advisor check-in workflows should migrate from broad mailbox/email search
 to "read DMs from the named advisor first; use `conversation_get` only for focused expansion; use `email_search` only
 when the DM path reports `not_found` or the advisor explicitly coordinated by email."
+
+First-contact DMs remain governed by Lesser's request lifecycle. Lesser may accept the initial direct message while
+rejecting a subsequent message with `403 Message request pending` until the recipient decides the request. Body does
+not bypass that guard: `message_requests_list` calls Lesser GraphQL
+`conversations(folder: REQUESTS, first:, after:)`, `message_request_accept` calls
+`acceptMessageRequest(conversationId:)`, and `message_request_decline` calls
+`declineMessageRequest(conversationId:)`, always with the recipient's OAuth bearer. Accepting moves the thread to the
+recipient's inbox; declining hides it from the active request folder. These social tools are available in both drone and
+souled runtime profiles, with the list read-scoped and both decisions write-scoped. No lesser-host delivery path or
+direct Lesser table write is involved.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with
@@ -1533,11 +1567,13 @@ Notes:
 - `timeline_read` remains upstream-shaped by default for compatibility. Use `view=compact` for bounded `StatusRef`
   lists with deterministic `post_get` expansion metadata. `post_search` follows the same opt-in model for status
   search results. Neither tool silently flips defaults to compact.
-- Mailbox, memory, skills, and Article tools publish MCP annotations in `tools/list`: read-only hints for mailbox
+- Mailbox, memory, skills, Article, and message-request tools publish MCP annotations in `tools/list`: read-only hints for mailbox
   reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, `skill_bundle_get`,
-  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, and `article_list`;
+  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, `article_list`, and
+  `message_requests_list`;
   destructive hints for send/reply/delete tools; non-destructive additive mutation hints for
-  `article_draft_create`, `article_draft_update`, `article_draft_publish`, and `article_update`; and idempotent
+  `article_draft_create`, `article_draft_update`, `article_draft_publish`, `article_update`, and
+  `message_request_accept`; destructive mutation hints for `message_request_decline`; and idempotent
   hints for mailbox read-state mutation tools. `memory_append` remains an additive write and is only idempotent when
   callers provide `event_id`, so it is not advertised as unconditionally idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,

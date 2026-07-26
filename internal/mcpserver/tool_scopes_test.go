@@ -155,6 +155,8 @@ func TestWriteScopedToolSurfaceIsPinned(t *testing.T) {
 		"email_send",
 		"follow",
 		"memory_append",
+		"message_request_accept",
+		"message_request_decline",
 		"notification_dismiss",
 		"post_boost",
 		"post_create",
