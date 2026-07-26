@@ -45,6 +45,7 @@ interface LesserBodyRuntimeProps {
 const MCP_SESSION_TABLE_LOGICAL_ID = "McpServerSessionTable469EA0FB";
 const MCP_STREAM_TABLE_LOGICAL_ID = "McpServerStreamTableC6A2DC7E";
 const MCP_TASK_TABLE_LOGICAL_ID = "McpServerTaskTable72DDFBBB";
+const MCP_SESSION_TTL_MINUTES = 1440;
 const INSTANCE_CONTENT_TABLE_LOGICAL_ID = "InstanceContentTable";
 const INSTANCE_REGISTRY_TABLE_LOGICAL_ID = "InstanceRegistryTable";
 const INSTANCE_GRANT_TABLE_LOGICAL_ID = "InstanceGrantTable";
@@ -218,7 +219,7 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
     } satisfies AppTheoryRestApiRouterCorsOptions,
     enableSessionTable: true,
     sessionTableName: cdk.Fn.join("-", [props.appName, props.stage, "mcp", "sessions"]),
-    sessionTtlMinutes: 60,
+    sessionTtlMinutes: MCP_SESSION_TTL_MINUTES,
     enableStreamTable: true,
     streamTableName: cdk.Fn.join("-", [props.appName, props.stage, "mcp", "streams", "v2"]),
     streamTtlMinutes: 60,
@@ -349,6 +350,7 @@ function configureInstancePlaneStack(
       INSTANCE_SESSION_TABLE: tables.session.tableName,
     },
   });
+  handler.addEnvironment("MCP_SESSION_TTL_MINUTES", String(MCP_SESSION_TTL_MINUTES));
 
   jwtSecret.grantRead(handler);
   handler.addToRolePolicy(new iam.PolicyStatement({

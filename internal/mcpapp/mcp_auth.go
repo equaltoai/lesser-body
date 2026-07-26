@@ -10,7 +10,9 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 )
 
-const basicMCPAuthorizationScopes = "read write"
+// MCPAuthorizationScopes is the OAuth scope set needed to use Body's
+// authenticated MCP transport surfaces.
+const MCPAuthorizationScopes = "read write"
 
 type mcpAuthorizationChallengeOptions struct {
 	Error            string
@@ -63,23 +65,56 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 }
 
 func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
-	headers := map[string][]string{}
-	headers["www-authenticate"] = []string{mcpAuthorizationChallenge(mcpAuthorizationChallengeOptions{
+	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
 		ResourceMetadata: protectedResourceMetadataURLForRequest(ctx),
-		Scope:            basicMCPAuthorizationScopes,
-	})}
-	headers["content-type"] = []string{"application/json; charset=utf-8"}
+		Scope:            MCPAuthorizationScopes,
+	}, map[string]any{
+		"source":          "lesser_body",
+		"reauthorize":     true,
+		"authAction":      "authorize",
+		"refreshRequired": false,
+		"reason":          "missing_or_invalid_bearer",
+	})
+}
+
+func actorSessionNotFoundMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
+	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
+		Error:            "invalid_token",
+		ResourceMetadata: resourceMetadataURL,
+		Scope:            scopes,
+	}, map[string]any{
+		"source":          "lesser_body",
+		"reauthorize":     true,
+		"authAction":      "reauthorize",
+		"refreshRequired": true,
+		"reason":          "mcp_session_not_found",
+	})
+}
+
+func genericSessionNotFoundMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
+	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
+		Error:            "invalid_token",
+		ResourceMetadata: resourceMetadataURL,
+		Scope:            scopes,
+	}, nil)
+}
+
+func unauthorizedMCPResponseWithOptions(
+	ctx *apptheory.Context,
+	challengeOptions mcpAuthorizationChallengeOptions,
+	details map[string]any,
+) *apptheory.Response {
+	headers := map[string][]string{
+		"www-authenticate": {mcpAuthorizationChallenge(challengeOptions)},
+		"content-type":     {"application/json; charset=utf-8"},
+	}
 
 	errBody := map[string]any{
 		"code":    "app.unauthorized",
 		"message": "unauthorized",
-		"details": map[string]any{
-			"source":          "lesser_body",
-			"reauthorize":     true,
-			"authAction":      "authorize",
-			"refreshRequired": false,
-			"reason":          "missing_or_invalid_bearer",
-		},
+	}
+	if len(details) > 0 {
+		errBody["details"] = details
 	}
 	if ctx != nil && strings.TrimSpace(ctx.RequestID) != "" {
 		errBody["request_id"] = ctx.RequestID
