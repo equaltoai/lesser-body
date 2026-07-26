@@ -369,6 +369,24 @@ AppTheory’s MCP server implements:
 - `tasks/result` (when `MCP_TASK_TABLE` enables the task runtime)
 - `tasks/cancel` (when `MCP_TASK_TABLE` enables the task runtime)
 
+### Transport-version behavior
+
+The Ka actor surface accepts both AppTheory v2.0.1 transport shapes on the same `/mcp/{actor}` route:
+
+- **MCP `2026-07-28`** is stateless. Discovery uses `server/discover`, not `initialize`. Every request carries
+  `MCP-Protocol-Version: 2026-07-28`, a matching `Mcp-Method`, and matching
+  `params._meta.io.modelcontextprotocol/protocolVersion` plus
+  `params._meta.io.modelcontextprotocol/clientCapabilities`. Stateless responses do not mint or require
+  `Mcp-Session-Id`; complete results carry `resultType: "complete"`, `ttlMs: 0`, `cacheScope: "private"`, and the
+  server identity under `_meta.io.modelcontextprotocol/serverInfo`. Header/metadata mismatches fail with HTTP `400`
+  and JSON-RPC code `-32020`.
+- **MCP `2025-11-25`** keeps the existing session transport. Clients call `initialize`, retain the returned
+  `Mcp-Session-Id`, and send that session id on later calls.
+
+Sending only `MCP-Protocol-Version: 2026-07-28` to `initialize` is not a modern handshake: missing modern `_meta`
+fields fail as invalid params, while a fully shaped modern `initialize` request fails as method-not-found. Modern
+clients start with `server/discover`.
+
 Task support is an additive MCP 2025-11-25 pilot. When `MCP_TASK_TABLE` is configured, body wires AppTheory’s
 `TaskRuntime`, `initialize` advertises the `tasks` capability for 2025-11-25 sessions, and `skill_bundle_get` declares
 optional task execution. Existing synchronous `tools/call` behavior remains supported. Deployments without
@@ -436,7 +454,7 @@ provider, payment evidence, tenant, wallet, and message-body details.
 
 ## Examples (curl)
 
-### Initialize
+### Discover (MCP 2026-07-28, stateless)
 
 ```bash
 ACTOR="Arch"
@@ -446,7 +464,33 @@ curl -sS -i \
   -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
   -H "authorization: Bearer ${TOKEN}" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  -H 'mcp-protocol-version: 2026-07-28' \
+  -H 'mcp-method: server/discover' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"server/discover",
+    "params":{"_meta":{
+      "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities":{}
+    }}
+  }'
+```
+
+Do not copy a session id from this response; the modern transport is stateless.
+
+### Initialize (MCP 2025-11-25, session transport)
+
+```bash
+ACTOR="Arch"
+
+curl -sS -i \
+  -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "authorization: Bearer ${TOKEN}" \
+  -H 'mcp-protocol-version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}'
 ```
 
 Copy the `mcp-session-id` response header for subsequent calls.
