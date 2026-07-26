@@ -82,6 +82,7 @@ Protocol + tool catalog: `docs/mcp.md`
 - Local dev: `docs/development.md`
 - Architecture overview: `docs/architecture.md`
 - MCP surface: `docs/mcp.md`
+- Panonomous soul-document v2 validation/lifecycle/materialization: `docs/soul-document-v2.md`
 - Skills MCP client flow: `docs/skills-mcp.md`
 
 ## What is lesser-body?

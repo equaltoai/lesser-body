@@ -47,6 +47,36 @@ const (
 
 var defaultRateWindow = time.Minute
 
+var ErrAgentSoulPublicationRequired = errors.New("agent soul publication is required")
+
+// AgentSoulPublicationRequiredError is the typed Ba materialization gate. It
+// names the exact Ptah publish step rather than collapsing draft, archived, and
+// missing soul records into a generic renderer error.
+type AgentSoulPublicationRequiredError struct {
+	AgentID        string
+	LifecycleState string
+	PublishTool    string
+}
+
+func (e *AgentSoulPublicationRequiredError) Error() string {
+	if e == nil {
+		return ErrAgentSoulPublicationRequired.Error()
+	}
+	state := strings.TrimSpace(e.LifecycleState)
+	if state == "" {
+		state = "missing"
+	}
+	tool := strings.TrimSpace(e.PublishTool)
+	if tool == "" {
+		tool = "agent_soul_publish"
+	}
+	return fmt.Sprintf("%s: agent_id %s has lifecycle_state=%s; call %s after creating a draft", ErrAgentSoulPublicationRequired, e.AgentID, state, tool)
+}
+
+func (e *AgentSoulPublicationRequiredError) Unwrap() error {
+	return ErrAgentSoulPublicationRequired
+}
+
 // AgentContentStore is the body-owned Ba content read dependency. Production
 // uses internal/agentcontent.Store over INSTANCE_CONTENT_TABLE.
 type AgentContentStore interface {
@@ -163,7 +193,7 @@ func agentLocalInstallPlanDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        ToolAgentLocalInstallPlan,
 		Title:       "Plan local agent install pack",
-		Description: "Render a deterministic Ba local-install pack for an account-scoped agent, mint a one-time header-free download grant, and return a TheoryMCP-compatible install-plan envelope. Requires an account-holder OAuth principal with write scope.",
+		Description: "Render a deterministic Ba local-install pack for an account-scoped agent only when its current agent_soul lifecycle_state is published, mint a one-time header-free download grant, and return a TheoryMCP-compatible install-plan envelope. Typed five-body structure is rendered when present; otherwise the canonical Markdown body is used. Requires an account-holder OAuth principal with write scope.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -218,27 +248,10 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 		return gateResult, err
 	}
 
-	decision := cfg.rateLimit(account)
-	if !decision.Allowed {
-		return toolErrorResult("rate_limited", "agent_local_install_plan grant minting rate limit exceeded for this account", http.StatusTooManyRequests, map[string]any{
-			"source":      "ba_grant_mint_rate_limit",
-			"limit":       decision.Limit,
-			"window":      decision.Window.String(),
-			"reset_at":    formatTime(decision.ResetAt),
-			"retry_after": maxInt(0, int(time.Until(decision.ResetAt).Seconds())),
-		})
-	}
-
 	contentStore, err := cfg.content()
 	if err != nil {
 		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
 			"source": "agent_content",
-		})
-	}
-	grantIssuer, err := cfg.grantIssuerStore()
-	if err != nil {
-		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
-			"source": "download_grant",
 		})
 	}
 
@@ -265,6 +278,26 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 	})
 	if err != nil {
 		return packBuildToolResultFromError(err)
+	}
+
+	// The publication gate precedes the grant-mint limiter and issuer lookup:
+	// draft, archived, and missing souls are never grant attempts and always
+	// receive the typed Ptah publication guidance.
+	decision := cfg.rateLimit(account)
+	if !decision.Allowed {
+		return toolErrorResult("rate_limited", "agent_local_install_plan grant minting rate limit exceeded for this account", http.StatusTooManyRequests, map[string]any{
+			"source":      "ba_grant_mint_rate_limit",
+			"limit":       decision.Limit,
+			"window":      decision.Window.String(),
+			"reset_at":    formatTime(decision.ResetAt),
+			"retry_after": maxInt(0, int(time.Until(decision.ResetAt).Seconds())),
+		})
+	}
+	grantIssuer, err := cfg.grantIssuerStore()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "download_grant",
+		})
 	}
 
 	pack, err := cfg.render(ctx, packInput.RenderRequest)
@@ -563,7 +596,32 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 
 	soul, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentSoul)
 	if err != nil {
+		if errors.Is(err, agentcontent.ErrContentNotFound) {
+			return nil, &AgentSoulPublicationRequiredError{
+				AgentID:        agentID,
+				LifecycleState: "missing",
+				PublishTool:    "agent_soul_publish",
+			}
+		}
 		return nil, fmt.Errorf("read agent_soul: %w", err)
+	}
+	if soul == nil || soul.LifecycleState != agentcontent.LifecycleStatePublished {
+		state := "missing"
+		if soul != nil {
+			state = string(soul.LifecycleState)
+		}
+		return nil, &AgentSoulPublicationRequiredError{
+			AgentID:        agentID,
+			LifecycleState: state,
+			PublishTool:    "agent_soul_publish",
+		}
+	}
+	renderedSoul := soul.Content
+	if soul.Document != nil {
+		renderedSoul, err = agentcontent.RenderSoulDocument(soul.Document)
+		if err != nil {
+			return nil, fmt.Errorf("render published agent_soul: %w", err)
+		}
 	}
 	instructions, err := in.ContentStore.Get(ctx, account, agentID, agentcontent.ContentTypeAgentInstructions)
 	if err != nil {
@@ -571,7 +629,7 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 	}
 	packDigest := strings.TrimSpace(in.PackDigest)
 	if packDigest == "" {
-		packDigest = packInputDigest(account, actor, namespace, agentID, client, soul, instructions)
+		packDigest = packInputDigest(account, actor, namespace, agentID, client, renderedSoul, soul, instructions)
 	}
 
 	return &PackInput{
@@ -583,7 +641,7 @@ func BuildPackInput(ctx context.Context, in PackInputRequest) (*PackInput, error
 			Account:           account,
 			PackID:            packID,
 			PackDigest:        packDigest,
-			AgentSoul:         soul.Content,
+			AgentSoul:         renderedSoul,
 			AgentInstructions: instructions.Content,
 		},
 		SoulRecord:   soul,
@@ -596,7 +654,13 @@ func packBuildToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 		return nil, nil
 	}
 	details := map[string]any{"source": "ba_install_plan"}
+	var publicationErr *AgentSoulPublicationRequiredError
 	switch {
+	case errors.As(err, &publicationErr):
+		details["agent_id"] = publicationErr.AgentID
+		details["lifecycle_state"] = publicationErr.LifecycleState
+		details["publish_tool"] = publicationErr.PublishTool
+		return toolErrorResult("agent_soul_publish_required", publicationErr.Error(), http.StatusConflict, details)
 	case errors.Is(err, agentcontent.ErrContentNotFound):
 		return toolErrorResult("not_found", "required account-scoped agent_soul or agent_instructions content was not found", http.StatusNotFound, details)
 	default:
@@ -608,7 +672,7 @@ func packBuildToolResultFromError(err error) (*mcpruntime.ToolResult, error) {
 	}
 }
 
-func packInputDigest(account, actor, namespace, agentID, client string, soul *agentcontent.Record, instructions *agentcontent.Record) string {
+func packInputDigest(account, actor, namespace, agentID, client, renderedSoul string, soul *agentcontent.Record, instructions *agentcontent.Record) string {
 	payload := struct {
 		Schema                     string `json:"schema"`
 		Account                    string `json:"account"`
@@ -631,7 +695,7 @@ func packInputDigest(account, actor, namespace, agentID, client string, soul *ag
 		Client:                     client,
 		AgentSoulVersion:           recordVersion(soul),
 		AgentSoulLifecycle:         recordLifecycle(soul),
-		AgentSoulContentHash:       contentHash(recordContent(soul)),
+		AgentSoulContentHash:       contentHash(renderedSoul),
 		AgentInstructionsVersion:   recordVersion(instructions),
 		AgentInstructionsLifecycle: recordLifecycle(instructions),
 		AgentInstructionsHash:      contentHash(recordContent(instructions)),

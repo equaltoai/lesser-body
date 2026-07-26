@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
@@ -73,7 +74,7 @@ func genesisOutputSchema() json.RawMessage {
 					"operation":{"type":"string","enum":["begin","list","read","advance","recover","finalize_preflight","finalize"]},
 					"status":{"type":"string","enum":["begin","not_available","created","assistant_turn_ready","in_progress","declaration_ready","published","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
 					"failure":{"type":"object","properties":{
-						"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]},
+							"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","host_genesis_declaration_invalid","agent_registry_error","agent_soul_seed_error"]},
 						"recovery":{"type":"object","properties":{
 							"action":{"type":"string","enum":["refresh_state","retry_same_step","restart_soul_bootstrap","operator_action"]},
 							"max_attempts":{"type":"integer","minimum":0,"maximum":10},
@@ -152,7 +153,7 @@ func genesisOutputSchema() json.RawMessage {
 					}}
 				}
 			},
-			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","agent_registry_error"]}}}
+			"error":{"type":"object","description":"Structured tool error when isError=true.","properties":{"code":{"type":"string","enum":["host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","host_genesis_declaration_invalid","agent_registry_error","agent_soul_seed_error"]}}}
 		}
 	}`)
 }
@@ -294,7 +295,7 @@ func agentGenesisFinalizeDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         toolAgentGenesisFinalize,
 		Title:        "Finalize Host-backed agent genesis",
-		Description:  "Finalize and publish the Host-owned instance-trust genesis result. Host publishes the new agent identity; Body then idempotently writes a Host-derived Ptah registry row for agent_get/agent_list visibility. Body does not sign a wallet, accept a private declaration, or delegate an existing Lesser account. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
+		Description:  "Finalize and publish the Host-owned instance-trust genesis result. Before publication Body reads and hash-verifies Host's finalized canonical declaration; after Host publishes the identity, Body idempotently writes the Host-derived Ptah registry row and deterministically seeds the matching Panonomous soul-document v2 as a published snapshot. Declaration application is provider-free: no MicroVM or model is invoked. Requires explicit instance owner/operator OAuth authority and write scope; no x402 payment is used.",
 		Annotations:  additiveMutationToolAnnotations(),
 		InputSchema:  genesisConversationInputSchema(),
 		OutputSchema: genesisOutputSchema(),
@@ -480,7 +481,34 @@ func (cfg config) handleAgentGenesisFinalize(ctx context.Context, args json.RawM
 	if result != nil || err != nil {
 		return result, err
 	}
+	subjectID, result := authenticatedSubjectID(auth.PrincipalFromToolContext(ctx), toolAgentGenesisFinalize)
+	if result != nil {
+		return result, nil
+	}
+
 	genesisAudit(ctx, toolAgentGenesisFinalize, actor, true)
+	// Read and verify the exact finalized candidate before Host publication.
+	// This is a deterministic Body-side precondition, not a second declaration
+	// producer and not a MicroVM/model path.
+	declarationRaw, err := client.ReadConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
+	if err != nil {
+		return genesisToolResultFromError(toolAgentGenesisFinalize, err)
+	}
+	soulDocument, source, err := transformFinalizedHostedGenesisDeclaration(declarationRaw, in.RegistrationID, in.ConversationID)
+	if err != nil {
+		return mustToolErrorResult("host_genesis_declaration_invalid", "lesser-host finalized declaration did not pass Body's deterministic hash/schema application gate", http.StatusBadGateway, map[string]any{
+			"source": "lesser_host_genesis",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+	contentStore, err := cfg.content()
+	if err != nil || contentStore == nil {
+		return mustToolErrorResult("not_configured", "Body/Ptah agent content storage is required before Host genesis publication", http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+
 	raw, err := client.FinalizeConversation(ctx, bearer, in.RegistrationID, in.ConversationID)
 	if err != nil {
 		return genesisToolResultFromError(toolAgentGenesisFinalize, err)
@@ -488,6 +516,12 @@ func (cfg config) handleAgentGenesisFinalize(ctx context.Context, args json.RawM
 	data, sanitizeErr := sanitizeGenesisResponse("finalize", raw)
 	if sanitizeErr != nil {
 		return genesisProjectionInvalidResult(toolAgentGenesisFinalize)
+	}
+	if finalizedAgentID := finalizedGenesisAgentID(data); finalizedAgentID == "" || finalizedAgentID != source.AgentID {
+		return mustToolErrorResult("host_genesis_projection_invalid", "lesser-host finalized agent_id did not match the hash-verified declaration source", http.StatusBadGateway, map[string]any{
+			"source": "lesser_host_genesis",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
 	}
 	registryAgent, created, result, err := cfg.registerFinalizedGenesisAgent(ctx, actor, in, data)
 	if result != nil || err != nil {
@@ -501,7 +535,46 @@ func (cfg config) handleAgentGenesisFinalize(ctx context.Context, args json.RawM
 			"idempotent": true,
 		}
 	}
+	seeded, seedCreated, err := contentStore.SeedPublished(ctx, agentcontent.SeedPublishedInput{
+		Account:            actor,
+		AgentID:            source.AgentID,
+		SoulDocument:       soulDocument,
+		UpdatedBySubjectID: subjectID,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "ptah genesis finalized soul seed failed",
+			"tool", toolAgentGenesisFinalize,
+			"source", "agent_content",
+			"agent_id", source.AgentID,
+			"error", "soul seed write failed",
+		)
+		return mustToolErrorResult("agent_soul_seed_error", "Host finalized the genesis agent, but Body failed to seed the published Panonomous soul-document v2; retry agent_genesis_finalize to repair materialization readiness", http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
+	data["soul_seed"] = finalizedSoulSeedSummary(seeded, seedCreated)
 	return genesisSuccessResultFromData(toolAgentGenesisFinalize, "finalize", data)
+}
+
+func finalizedSoulSeedSummary(record *agentcontent.Record, created bool) map[string]any {
+	if record == nil {
+		return map[string]any{}
+	}
+	summary := map[string]any{
+		"source":          "agent_content",
+		"schema_version":  agentcontent.SoulDocumentSchemaVersion,
+		"agent_id":        record.AgentID,
+		"soul_version":    record.SoulVersion,
+		"lifecycle_state": string(record.LifecycleState),
+		"created":         created,
+		"idempotent":      true,
+	}
+	if record.Document != nil && record.Document.Provenance != nil {
+		summary["provenance_source"] = record.Document.Provenance.Source
+		summary["declaration_candidate_hash"] = record.Document.Provenance.DeclarationCandidateHash
+	}
+	return summary
 }
 
 type genesisConversationAction func(client hostapi.GenesisClient, bearer string, in agentGenesisConversationInput) (map[string]any, error)
@@ -789,6 +862,9 @@ func genesisSuccessResultFromData(toolName string, operation string, data map[st
 	if registry, ok := data["registry"].(map[string]any); ok && len(registry) > 0 {
 		text["registry"] = registry
 	}
+	if soulSeed, ok := data["soul_seed"].(map[string]any); ok && len(soulSeed) > 0 {
+		text["soul_seed"] = soulSeed
+	}
 	if guidance, ok := data["guidance"].(map[string]any); ok && len(guidance) > 0 {
 		text["guidance"] = guidance
 	}
@@ -921,11 +997,11 @@ func genesisNextToolGuidance(operation string, data map[string]any) map[string]a
 		guidance["instruction"] = genesisProcessingWaitInstruction(data)
 	case operation == "finalize_preflight":
 		guidance["next_tool"] = toolAgentGenesisFinalize
-		guidance["instruction"] = "Host preflight succeeded. Call agent_genesis_finalize; Body writes a Host-derived Ptah registry row only after Host publishes the identity."
+		guidance["instruction"] = "Host preflight succeeded. Call agent_genesis_finalize; Body deterministically hash-verifies and transforms the finalized declaration before publication, then writes the Host-derived registry row and published v2 soul seed after Host publishes the identity. No MicroVM or model runs in declaration application."
 	case operation == "finalize" || status == "published":
 		guidance["next_tool"] = toolAgentGet
 		guidance["alternate_next_tool"] = toolAgentList
-		guidance["instruction"] = "This Host lane is published and terminal. Verify the minted agent with agent_get for the returned agent_id, or agent_list for the account-scoped registry view."
+		guidance["instruction"] = "This Host lane is published and terminal. Verify the minted agent and published Panonomous soul-document v2 seed with agent_get for the returned agent_id, or agent_list for the account-scoped registry view."
 	case status == "declaration_ready":
 		guidance["next_tool"] = toolAgentGenesisFinalizePreflight
 		guidance["instruction"] = "Host reports declaration_ready. Call agent_genesis_finalize_preflight directly, then agent_genesis_finalize only after the preflight succeeds."

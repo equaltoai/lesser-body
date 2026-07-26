@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -40,14 +41,12 @@ const (
 
 	toolAgentSoulGet     = "agent_soul_get"
 	toolAgentSoulUpsert  = "agent_soul_upsert"
+	toolAgentSoulPublish = "agent_soul_publish"
 	toolAgentSoulArchive = "agent_soul_archive"
 
 	toolAgentInstructionsGet     = "agent_instructions_get"
 	toolAgentInstructionsUpsert  = "agent_instructions_upsert"
 	toolAgentInstructionsArchive = "agent_instructions_archive"
-
-	agentSoulProvisionalMarker = "provisional_agent_soul_schema_pending_lesser_soul_s1"
-	agentSoulProvisionalText   = "Provisional schema marker " + agentSoulProvisionalMarker + ": agent_soul content is an opaque Ptah-authored draft string pending lesser-soul S1 governance-policy unblock; clients must not treat it as the final Panonomous soul contract."
 )
 
 type soulBindingClient interface {
@@ -64,6 +63,8 @@ type hostIdentityClient interface {
 type AgentContentStore interface {
 	Get(ctx context.Context, account string, agentID string, contentType agentcontent.ContentType) (*agentcontent.Record, error)
 	Upsert(ctx context.Context, in agentcontent.UpsertInput) (*agentcontent.Record, error)
+	Publish(ctx context.Context, in agentcontent.PublishInput) (*agentcontent.Record, error)
+	SeedPublished(ctx context.Context, in agentcontent.SeedPublishedInput) (*agentcontent.Record, bool, error)
 	Archive(ctx context.Context, in agentcontent.ArchiveInput) (*agentcontent.Record, error)
 }
 
@@ -234,6 +235,9 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 	if err := r.RegisterTool(agentSoulUpsertDef(), cfg.handleAgentSoulUpsert); err != nil {
 		return err
 	}
+	if err := r.RegisterTool(agentSoulPublishDef(), cfg.handleAgentSoulPublish); err != nil {
+		return err
+	}
 	if err := r.RegisterTool(agentSoulArchiveDef(), cfg.handleAgentSoulArchive); err != nil {
 		return err
 	}
@@ -399,15 +403,15 @@ func agentListDef() mcpruntime.ToolDef {
 func agentSoulGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentSoulGet,
-		Title:       "Get draft agent soul",
-		Description: "Read the current account-scoped Ptah agent_soul draft/archived record for the authenticated account-holder principal. Requires read scope. " + agentSoulProvisionalText,
+		Title:       "Get agent soul document",
+		Description: "Read the current account-scoped Panonomous soul-document v2 record for the authenticated account-holder principal, including its server-owned draft/published/archived lifecycle. Requires read scope.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: json.RawMessage(`{
-			"type":"object",
-			"properties":{
-				"agent_id":{"type":"string","description":"Agent id whose agent_soul content is read from the authenticated account-holder's Ptah content partition."},
-				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
-			},
+				"type":"object",
+				"properties":{
+					"agent_id":{"type":"string","minLength":1,"maxLength":128,"not":{"pattern":"[|=/]"},"description":"Route-local account-scoped registry agent_id whose agent_soul content is read. It is not local_id/agent_username or soul_agent_id."},
+					"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+				},
 			"required":["agent_id"],
 			"additionalProperties":false
 		}`),
@@ -419,16 +423,76 @@ func agentSoulUpsertDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentSoulUpsert,
 		Title:       "Upsert draft agent soul",
-		Description: "Create or update an account-scoped Ptah agent_soul draft through the canonical internal/agentcontent Store. Requires write scope and increments the per-content version via the store. " + agentSoulProvisionalText,
+		Description: "Create a new account-scoped Panonomous soul-document v2 draft through the canonical internal/agentcontent Store. Every successful upsert creates a new soul_version; a published snapshot is never edited in place. body-only v1-compatible authoring remains valid. Requires write scope.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"agent_id":{"type":"string","description":"Agent id whose agent_soul draft is written in the authenticated account-holder's Ptah content partition."},
-				"content":{"type":"string","description":"Provisional agent_soul draft payload. Opaque string pending lesser-soul S1; maximum 65536 bytes."},
+				"schema_version":{"type":"string","const":"lessersoul.panonomous.soul-document.v2"},
+				"agent_id":{"type":"string","minLength":1,"maxLength":128,"not":{"pattern":"[|=/]"},"description":"Route-local account-scoped registry agent_id. It is not local_id/agent_username or soul_agent_id."},
+				"body":{"type":"string","minLength":1,"maxLength":49152,"description":"Canonical Markdown-friendly body, bounded to 49152 UTF-8 bytes by the store."},
+				"content":{"type":"string","minLength":1,"maxLength":49152,"description":"Deprecated compatibility alias for body. Supply exactly one of body or content."},
+				"summary":{"type":"string","minLength":1,"maxLength":2048,"description":"Optional trimmed summary, bounded to 2048 UTF-8 bytes by the store."},
+				"structure":{"type":"object","additionalProperties":false,"required":["five_bodies"],"properties":{
+					"five_bodies":{"$ref":"#/$defs/fiveBodies"}
+				}},
+				"provenance":{"type":"object","additionalProperties":false,"required":["declaration_schema_version","declaration_candidate_hash","registration_id","conversation_id","model","source"],"properties":{
+					"declaration_schema_version":{"type":"string","minLength":1},
+					"declaration_candidate_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+					"registration_id":{"type":"string","minLength":1},
+					"conversation_id":{"type":"string","minLength":1},
+					"model":{"type":"string","minLength":1},
+					"source":{"type":"string","enum":["host_genesis_finalize","ptah_seed","owner"]}
+				}},
 				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
 			},
-			"required":["agent_id","content"],
+			"required":["agent_id"],
+			"oneOf":[
+				{"required":["body"],"not":{"required":["content"]}},
+				{"required":["content"],"not":{"required":["body"]}}
+			],
+			"additionalProperties":false,
+			"$defs":{
+				"declarationSection":{"type":"object","additionalProperties":false,"required":["summary"],"properties":{
+					"summary":{"type":"string"},
+					"notes":{"type":"array","items":{"type":"string"}}
+				}},
+				"refusal":{"type":"object","additionalProperties":false,"required":["bypass","invariant","closestSafePath"],"properties":{
+					"bypass":{"type":"string"},
+					"invariant":{"type":"string"},
+					"closestSafePath":{"type":"string"}
+				}},
+				"soulSection":{"type":"object","additionalProperties":false,"required":["summary","refusals"],"properties":{
+					"summary":{"type":"string"},
+					"notes":{"type":"array","items":{"type":"string"}},
+					"refusals":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/refusal"}}
+				}},
+				"fiveBodies":{"type":"object","additionalProperties":false,"required":["identity","philosophy","discipline","boundaries","soul"],"properties":{
+					"identity":{"$ref":"#/$defs/declarationSection"},
+					"philosophy":{"$ref":"#/$defs/declarationSection"},
+					"discipline":{"$ref":"#/$defs/declarationSection"},
+					"boundaries":{"$ref":"#/$defs/declarationSection"},
+					"soul":{"$ref":"#/$defs/soulSection"}
+				}}
+			}
+		}`),
+		OutputSchema: agentSoulOutputSchema(),
+	}
+}
+
+func agentSoulPublishDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:        toolAgentSoulPublish,
+		Title:       "Publish agent soul",
+		Description: "Explicitly transition the current account-scoped Panonomous soul-document v2 draft to a published immutable snapshot. Replaying publication of the same snapshot is idempotent. Requires write scope.",
+		Annotations: idempotentMutationToolAnnotations(),
+		InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"agent_id":{"type":"string","minLength":1,"maxLength":128,"not":{"pattern":"[|=/]"},"description":"Route-local account-scoped registry agent_id whose current draft is published. It is not local_id/agent_username or soul_agent_id."},
+					"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+				},
+			"required":["agent_id"],
 			"additionalProperties":false
 		}`),
 		OutputSchema: agentSoulOutputSchema(),
@@ -438,15 +502,15 @@ func agentSoulUpsertDef() mcpruntime.ToolDef {
 func agentSoulArchiveDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        toolAgentSoulArchive,
-		Title:       "Archive draft agent soul",
-		Description: "Idempotently archive the current account-scoped Ptah agent_soul record through the canonical internal/agentcontent Store. Requires write scope. " + agentSoulProvisionalText,
+		Title:       "Archive published agent soul",
+		Description: "Idempotently retire the current published account-scoped Panonomous soul-document v2 snapshot from rendering. Drafts must be published explicitly before archival. Requires write scope.",
 		Annotations: idempotentMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
-			"type":"object",
-			"properties":{
-				"agent_id":{"type":"string","description":"Agent id whose agent_soul record is archived in the authenticated account-holder's Ptah content partition."},
-				"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
-			},
+				"type":"object",
+				"properties":{
+					"agent_id":{"type":"string","minLength":1,"maxLength":128,"not":{"pattern":"[|=/]"},"description":"Route-local account-scoped registry agent_id whose published agent_soul record is archived. It is not local_id/agent_username or soul_agent_id."},
+					"actor_username":{"type":"string","description":"Optional explicit account-holder actor username. When supplied it must match the authenticated principal."}
+				},
 			"required":["agent_id"],
 			"additionalProperties":false
 		}`),
@@ -458,7 +522,7 @@ func agentSoulOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
 		"properties":{
-			"data":{"type":"object","description":"Structured account-scoped agent_soul record, provisional schema marker, and archive idempotency metadata when applicable."},
+			"data":{"type":"object","description":"Structured account-scoped Panonomous soul-document v2 record and lifecycle idempotency metadata when applicable."},
 			"error":{"type":"object","description":"Structured tool error when isError=true."}
 		}
 	}`)
@@ -621,10 +685,17 @@ type agentSoulGetInput struct {
 }
 
 type agentSoulUpsertInput struct {
-	AgentID       string  `json:"agent_id"`
-	Content       *string `json:"content"`
-	ActorUsername string  `json:"actor_username"`
+	SchemaVersion string                      `json:"schema_version"`
+	AgentID       string                      `json:"agent_id"`
+	Body          *string                     `json:"body"`
+	Content       *string                     `json:"content"`
+	Summary       *string                     `json:"summary"`
+	Structure     *agentcontent.SoulStructure `json:"structure"`
+	Provenance    *agentcontent.Provenance    `json:"provenance"`
+	ActorUsername string                      `json:"actor_username"`
 }
+
+type agentSoulPublishInput = agentSoulGetInput
 
 type agentSoulArchiveInput struct {
 	AgentID       string `json:"agent_id"`
@@ -1087,27 +1158,89 @@ func (cfg config) handleAgentSoulUpsert(ctx context.Context, args json.RawMessag
 		})
 	}
 
-	content := ""
-	if in.Content != nil {
-		content = *in.Content
+	body := ""
+	if in.Body != nil {
+		body = *in.Body
+	} else if in.Content != nil {
+		body = *in.Content
+	}
+	document := &agentcontent.SoulDocument{
+		SchemaVersion: in.SchemaVersion,
+		AgentID:       in.AgentID,
+		Body:          body,
+		Summary:       in.Summary,
+		Structure:     in.Structure,
+		Provenance:    in.Provenance,
+	}
+	if err := agentcontent.ValidateSoulDocumentDraft(document, in.AgentID); err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	slog.InfoContext(ctx, "ptah tool invocation",
 		"tool", toolAgentSoulUpsert,
 		"actor_username", actorUsername,
-		"content_bytes", len([]byte(content)),
+		"content_bytes", len([]byte(body)),
 	)
 
 	record, err := store.Upsert(ctx, agentcontent.UpsertInput{
 		Account:            actorUsername,
 		AgentID:            in.AgentID,
 		Type:               agentcontent.ContentTypeAgentSoul,
-		Content:            content,
+		SoulDocument:       document,
 		UpdatedBySubjectID: subjectID,
 	})
 	if err != nil {
 		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
 	}
 	return agentSoulSuccessResult("Ptah agent_soul draft upserted", actorUsername, record, nil)
+}
+
+func (cfg config) handleAgentSoulPublish(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	principal := auth.PrincipalFromToolContext(ctx)
+	actorUsername, errResult, err := authenticatedAccountHolderActor(principal, toolAgentSoulPublish)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	if !principalHasWriteScope(principal) {
+		return toolErrorResult("insufficient_scope", "agent_soul_publish requires write scope", http.StatusForbidden, map[string]any{
+			"requiredScopes": []string{"write"},
+			"grantedScopes":  normalizedScopes(principal.Claims.Scopes),
+		})
+	}
+	subjectID, errResult := authenticatedSubjectID(principal, toolAgentSoulPublish)
+	if errResult != nil {
+		return errResult, nil
+	}
+	in, errResult, err := parseAgentSoulGetInput(args, actorUsername)
+	if errResult != nil || err != nil {
+		return errResult, err
+	}
+	store, err := cfg.content()
+	if err != nil {
+		return toolErrorResult("not_configured", err.Error(), http.StatusInternalServerError, map[string]any{
+			"source": "agent_content",
+		})
+	}
+	slog.InfoContext(ctx, "ptah tool invocation",
+		"tool", toolAgentSoulPublish,
+		"actor_username", actorUsername,
+	)
+	current, err := store.Get(ctx, actorUsername, in.AgentID, agentcontent.ContentTypeAgentSoul)
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
+	}
+	alreadyPublished := current != nil && current.LifecycleState == agentcontent.LifecycleStatePublished
+	record, err := store.Publish(ctx, agentcontent.PublishInput{
+		Account:            actorUsername,
+		AgentID:            in.AgentID,
+		UpdatedBySubjectID: subjectID,
+	})
+	if err != nil {
+		return agentContentToolResultFromError(err, agentcontent.ContentTypeAgentSoul)
+	}
+	return agentSoulSuccessResult("Ptah agent_soul snapshot published", actorUsername, record, map[string]any{
+		"already_published": alreadyPublished,
+		"idempotent":        true,
+	})
 }
 
 func (cfg config) handleAgentSoulArchive(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -1600,10 +1733,17 @@ func parseAgentSoulGetInput(args json.RawMessage, actorUsername string) (agentSo
 	if err := dec.Decode(&in); err != nil {
 		return agentSoulGetInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
 	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return agentSoulGetInput{}, mustToolErrorResult("invalid_request", "invalid args: expected one JSON object", http.StatusBadRequest, nil), nil
+	}
+	if field := explicitJSONNullField([]byte(raw)); field != "" {
+		return agentSoulGetInput{}, mustToolErrorResult("invalid_request", field+" must not be null", http.StatusBadRequest, nil), nil
+	}
 	in.AgentID = strings.TrimSpace(in.AgentID)
 	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
-	if in.AgentID == "" {
-		return agentSoulGetInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	if err := agentcontent.ValidateSoulAgentID(in.AgentID); err != nil {
+		return agentSoulGetInput{}, mustToolErrorResult("invalid_request", err.Error(), http.StatusBadRequest, nil), nil
 	}
 	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
 		return agentSoulGetInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
@@ -1625,13 +1765,25 @@ func parseAgentSoulUpsertInput(args json.RawMessage, actorUsername string) (agen
 	if err := dec.Decode(&in); err != nil {
 		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
 	}
-	in.AgentID = strings.TrimSpace(in.AgentID)
-	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
-	if in.AgentID == "" {
-		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", "invalid args: expected one JSON object", http.StatusBadRequest, nil), nil
 	}
-	if in.Content == nil {
-		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", "content is required", http.StatusBadRequest, nil), nil
+	if field := explicitJSONNullField([]byte(raw)); field != "" {
+		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", field+" must not be null", http.StatusBadRequest, nil), nil
+	}
+	in.AgentID = strings.TrimSpace(in.AgentID)
+	in.SchemaVersion = strings.TrimSpace(in.SchemaVersion)
+	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
+	if err := agentcontent.ValidateSoulAgentID(in.AgentID); err != nil {
+		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", err.Error(), http.StatusBadRequest, nil), nil
+	}
+	if (in.Body == nil) == (in.Content == nil) {
+		return agentSoulUpsertInput{}, mustToolErrorResult("invalid_request", "exactly one of body or content is required", http.StatusBadRequest, nil), nil
+	}
+	if in.Summary != nil {
+		summary := strings.TrimSpace(*in.Summary)
+		in.Summary = &summary
 	}
 	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
 		return agentSoulUpsertInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
@@ -1639,6 +1791,24 @@ func parseAgentSoulUpsertInput(args json.RawMessage, actorUsername string) (agen
 		}), nil
 	}
 	return in, nil, nil
+}
+
+func explicitJSONNullField(raw []byte) string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return ""
+	}
+	names := make([]string, 0, len(fields))
+	for name, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }
 
 func parseAgentSoulArchiveInput(args json.RawMessage, actorUsername string) (agentSoulArchiveInput, *mcpruntime.ToolResult, error) {
@@ -1653,10 +1823,17 @@ func parseAgentSoulArchiveInput(args json.RawMessage, actorUsername string) (age
 	if err := dec.Decode(&in); err != nil {
 		return agentSoulArchiveInput{}, mustToolErrorResult("invalid_request", "invalid args: "+err.Error(), http.StatusBadRequest, nil), nil
 	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return agentSoulArchiveInput{}, mustToolErrorResult("invalid_request", "invalid args: expected one JSON object", http.StatusBadRequest, nil), nil
+	}
+	if field := explicitJSONNullField([]byte(raw)); field != "" {
+		return agentSoulArchiveInput{}, mustToolErrorResult("invalid_request", field+" must not be null", http.StatusBadRequest, nil), nil
+	}
 	in.AgentID = strings.TrimSpace(in.AgentID)
 	in.ActorUsername = normalizeActorUsername(in.ActorUsername)
-	if in.AgentID == "" {
-		return agentSoulArchiveInput{}, mustToolErrorResult("invalid_request", "agent_id is required", http.StatusBadRequest, nil), nil
+	if err := agentcontent.ValidateSoulAgentID(in.AgentID); err != nil {
+		return agentSoulArchiveInput{}, mustToolErrorResult("invalid_request", err.Error(), http.StatusBadRequest, nil), nil
 	}
 	if in.ActorUsername != "" && in.ActorUsername != actorUsername {
 		return agentSoulArchiveInput{}, mustToolErrorResult("forbidden", "actor_username must match authenticated principal", http.StatusForbidden, map[string]any{
@@ -1962,13 +2139,14 @@ func agentSoulSuccessResult(summary string, actorUsername string, record *agentc
 	text := map[string]any{
 		"summary": summary,
 		"agent_soul": map[string]any{
-			"account":          recordSummary["account"],
-			"agent_id":         recordSummary["agent_id"],
-			"version":          recordSummary["version"],
-			"lifecycle_state":  recordSummary["lifecycle_state"],
-			"content_bytes":    recordSummary["content_bytes"],
-			"schema_marker":    agentSoulProvisionalMarker,
-			"content_location": "structuredContent.data.agent_soul.content",
+			"account":           recordSummary["account"],
+			"agent_id":          recordSummary["agent_id"],
+			"version":           recordSummary["version"],
+			"soul_version":      recordSummary["soul_version"],
+			"lifecycle_state":   recordSummary["lifecycle_state"],
+			"content_bytes":     recordSummary["content_bytes"],
+			"content_location":  "structuredContent.data.agent_soul.content",
+			"document_location": "structuredContent.data.agent_soul.document",
 		},
 		"schema": agentSoulSchemaMarker(),
 		"data":   map[string]any{"location": "structuredContent.data"},
@@ -2044,6 +2222,8 @@ func agentContentToolResultFromError(err error, contentType agentcontent.Content
 		"content_type": contentName,
 	}
 	var sizeErr *agentcontent.SizeError
+	var validationErr *agentcontent.ValidationError
+	var transitionErr *agentcontent.TransitionError
 	switch {
 	case errors.Is(err, agentcontent.ErrContentNotFound):
 		return toolErrorResult("not_found", contentName+" record not found in this account-scoped Ptah content store", http.StatusNotFound, details)
@@ -2051,6 +2231,21 @@ func agentContentToolResultFromError(err error, contentType agentcontent.Content
 		details["limit_bytes"] = sizeErr.Limit
 		details["actual_bytes"] = sizeErr.Actual
 		return toolErrorResult("invalid_request", contentName+" content exceeds the per-record size limit", http.StatusBadRequest, details)
+	case errors.As(err, &validationErr):
+		details["field"] = validationErr.Field
+		return toolErrorResult("invalid_request", contentName+" does not satisfy the Panonomous soul-document v2 contract", http.StatusBadRequest, details)
+	case errors.As(err, &transitionErr):
+		details["action"] = string(transitionErr.Action)
+		details["from"] = string(transitionErr.From)
+		details["to"] = string(transitionErr.To)
+		message := contentName + " lifecycle transition is not allowed"
+		switch transitionErr.Action {
+		case agentcontent.ContentActionArchive:
+			message += "; publish the current draft explicitly before archival"
+		case agentcontent.ContentActionPublish:
+			message += "; only a current draft can be published, so create a new draft with agent_soul_upsert"
+		}
+		return toolErrorResult("invalid_lifecycle_transition", message, http.StatusConflict, details)
 	case errors.Is(err, agentcontent.ErrInvalidContentType):
 		return toolErrorResult("invalid_request", "invalid agent content type", http.StatusBadRequest, details)
 	case errors.Is(err, agentcontent.ErrMissingUpdatedBySubjectID):
@@ -2414,26 +2609,31 @@ func agentContentRecordSummary(record *agentcontent.Record) map[string]any {
 	if record == nil {
 		return map[string]any{}
 	}
-	return map[string]any{
+	summary := map[string]any{
 		"account":               record.Account,
 		"agent_id":              record.AgentID,
 		"type":                  string(record.Type),
 		"content":               record.Content,
 		"content_bytes":         len([]byte(record.Content)),
 		"version":               record.Version,
+		"soul_version":          record.SoulVersion,
 		"lifecycle_state":       string(record.LifecycleState),
 		"created_at":            formatTime(record.CreatedAt),
 		"updated_at":            formatTime(record.UpdatedAt),
 		"updated_by_subject_id": record.UpdatedBySubjectID,
 	}
+	if record.Document != nil {
+		summary["document"] = record.Document
+	}
+	return summary
 }
 
 func agentSoulSchemaMarker() map[string]any {
 	return map[string]any{
-		"content_type": string(agentcontent.ContentTypeAgentSoul),
-		"status":       "provisional",
-		"marker":       agentSoulProvisionalMarker,
-		"description":  agentSoulProvisionalText,
+		"content_type":   string(agentcontent.ContentTypeAgentSoul),
+		"status":         "stable",
+		"schema_version": agentcontent.SoulDocumentSchemaVersion,
+		"schema_url":     agentcontent.SoulDocumentSchemaURL,
 	}
 }
 

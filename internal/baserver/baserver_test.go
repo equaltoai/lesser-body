@@ -3,6 +3,8 @@ package baserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -162,7 +164,7 @@ func TestAgentLocalInstallPlanMintsGrantEnvelopeWithoutTextTokenLeak(t *testing.
 	}
 
 	text := result.Content[0].Text
-	for _, forbidden := range []string{"raw-plan-token", "draft soul content", "follow the operator", "tokenHash", "sha256:token"} {
+	for _, forbidden := range []string{"raw-plan-token", "published soul body", "follow the operator", "tokenHash", "sha256:token"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("text result leaked forbidden material %q: %s", forbidden, text)
 		}
@@ -259,6 +261,186 @@ func TestAgentLocalInstallPlanEnforcesPerAccountInProcessRateCap(t *testing.T) {
 	}
 }
 
+func TestBuildPackInputRequiresPublishedSoulAndNamesPublishStep(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state string
+	}{
+		{name: "published passes", state: string(agentcontent.LifecycleStatePublished)},
+		{name: "draft rejected", state: string(agentcontent.LifecycleStateDraft)},
+		{name: "archived rejected", state: string(agentcontent.LifecycleStateArchived)},
+		{name: "missing rejected", state: "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeContentStore("owner", "agent-one")
+			key := key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)
+			if tc.state == "missing" {
+				delete(store.records, key)
+			} else {
+				store.records[key].LifecycleState = agentcontent.LifecycleState(tc.state)
+				if store.records[key].Document != nil {
+					store.records[key].Document.LifecycleState = agentcontent.LifecycleState(tc.state)
+				}
+			}
+			pack, err := BuildPackInput(context.Background(), PackInputRequest{
+				ContentStore:     store,
+				InstanceEndpoint: testInstanceEndpoint,
+				Namespace:        "equaltoai",
+				Account:          "owner",
+				AgentID:          "agent-one",
+				Actor:            "agent-one",
+				Client:           "codex",
+			})
+			if tc.state == string(agentcontent.LifecycleStatePublished) {
+				if err != nil || pack == nil {
+					t.Fatalf("BuildPackInput(published) = %+v/%v, want pass", pack, err)
+				}
+				return
+			}
+			if pack != nil || !errors.Is(err, ErrAgentSoulPublicationRequired) {
+				t.Fatalf("BuildPackInput(%s) = %+v/%v, want typed publication error", tc.state, pack, err)
+			}
+			var publicationErr *AgentSoulPublicationRequiredError
+			if !errors.As(err, &publicationErr) ||
+				publicationErr.LifecycleState != tc.state ||
+				publicationErr.PublishTool != "agent_soul_publish" ||
+				!strings.Contains(err.Error(), "call agent_soul_publish") {
+				t.Fatalf("publication error = %#v / %v", publicationErr, err)
+			}
+		})
+	}
+}
+
+func TestAgentLocalInstallPlanMapsUnpublishedSoulToTypedPublishError(t *testing.T) {
+	for _, state := range []string{
+		string(agentcontent.LifecycleStateDraft),
+		string(agentcontent.LifecycleStateArchived),
+		"missing",
+	} {
+		t.Run(state, func(t *testing.T) {
+			store := newFakeContentStore("owner", "agent-one")
+			soulKey := key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)
+			if state == "missing" {
+				delete(store.records, soulKey)
+			} else {
+				store.records[soulKey].LifecycleState = agentcontent.LifecycleState(state)
+			}
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry,
+				WithAgentContentStore(store),
+				WithDownloadGrantIssuer(issuer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+				WithRateLimiter(NewInMemoryGrantMintLimiter(10, time.Minute)),
+			); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+			result, err := registry.Call(operatorToolContext("owner", []string{"write"}), ToolAgentLocalInstallPlan, json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`))
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			payload := toolError(t, result)
+			if payload["code"] != "agent_soul_publish_required" || statusValue(payload["status"]) != http.StatusConflict {
+				t.Fatalf("publish gate payload = %+v", payload)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["lifecycle_state"] != state || details["publish_tool"] != "agent_soul_publish" {
+				t.Fatalf("publish gate details = %+v", details)
+			}
+			if issuer.calls != 0 {
+				t.Fatalf("grant issuer calls = %d, want 0 before publication", issuer.calls)
+			}
+		})
+	}
+}
+
+func TestUnpublishedSoulDoesNotConsumeGrantMintRateLimit(t *testing.T) {
+	store := newFakeContentStore("owner", "agent-one")
+	store.records[key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)].LifecycleState = agentcontent.LifecycleStateDraft
+	limiter := NewInMemoryGrantMintLimiter(1, time.Minute)
+	issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry,
+		WithAgentContentStore(store),
+		WithDownloadGrantIssuer(issuer),
+		WithInstanceEndpoint(testInstanceEndpoint),
+		WithRateLimiter(limiter),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := registry.Call(
+			operatorToolContext("owner", []string{"write"}),
+			ToolAgentLocalInstallPlan,
+			json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+		)
+		if err != nil {
+			t.Fatalf("Call(attempt %d): %v", attempt, err)
+		}
+		payload := toolError(t, result)
+		if payload["code"] != "agent_soul_publish_required" {
+			t.Fatalf("attempt %d payload = %+v, want typed publication gate", attempt, payload)
+		}
+	}
+	if got := len(limiter.hits["owner"]); got != 0 {
+		t.Fatalf("unpublished calls consumed %d grant-mint rate slots, want 0", got)
+	}
+	if issuer.calls != 0 {
+		t.Fatalf("grant issuer calls = %d, want 0", issuer.calls)
+	}
+}
+
+func TestBuildPackInputRendersTypedFiveBodiesElseCanonicalBody(t *testing.T) {
+	store := newFakeContentStore("owner", "agent-one")
+	soulKey := key("owner", "agent-one", agentcontent.ContentTypeAgentSoul)
+	soul := store.records[soulKey]
+	soul.Document.Body = "body fallback must not replace typed structure"
+	soul.Content = soul.Document.Body
+	soul.Document.Structure = &agentcontent.SoulStructure{FiveBodies: &agentcontent.FiveBodies{
+		Identity:   &agentcontent.DeclarationSection{Summary: "typed identity"},
+		Philosophy: &agentcontent.DeclarationSection{Summary: "typed philosophy"},
+		Discipline: &agentcontent.DeclarationSection{Summary: "typed discipline"},
+		Boundaries: &agentcontent.DeclarationSection{Summary: "typed boundaries"},
+		Soul: &agentcontent.SoulDeclarationSection{
+			Summary: "typed soul",
+			Refusals: []agentcontent.Refusal{{
+				Bypass:          "render the body over typed truth",
+				Invariant:       "typed structure is selected when present",
+				ClosestSafePath: "render the five-body overlay",
+			}},
+		},
+	}}
+	pack, err := BuildPackInput(context.Background(), PackInputRequest{
+		ContentStore:     store,
+		InstanceEndpoint: testInstanceEndpoint,
+		Namespace:        "equaltoai",
+		Account:          "owner",
+		AgentID:          "agent-one",
+		Actor:            "agent-one",
+		Client:           "codex",
+	})
+	if err != nil {
+		t.Fatalf("BuildPackInput(structured) error = %v", err)
+	}
+	if !strings.Contains(pack.RenderRequest.AgentSoul, "## Identity\n\ntyped identity") ||
+		strings.Contains(pack.RenderRequest.AgentSoul, "body fallback must not replace typed structure") {
+		t.Fatalf("structured AgentSoul render = %q", pack.RenderRequest.AgentSoul)
+	}
+
+	soul.Document.Structure = nil
+	pack, err = BuildPackInput(context.Background(), PackInputRequest{
+		ContentStore: store, InstanceEndpoint: testInstanceEndpoint, Namespace: "equaltoai",
+		Account: "owner", AgentID: "agent-one", Actor: "agent-one", Client: "codex",
+	})
+	if err != nil {
+		t.Fatalf("BuildPackInput(body-only) error = %v", err)
+	}
+	if pack.RenderRequest.AgentSoul != soul.Document.Body {
+		t.Fatalf("body-only AgentSoul = %q, want exact body %q", pack.RenderRequest.AgentSoul, soul.Document.Body)
+	}
+}
+
 func TestPackIDEndpointAndActorDerivation(t *testing.T) {
 	packID, err := PackIDForAgent("https://lesser.example/users/Ptah_Agent", "claude-code")
 	if err != nil {
@@ -302,17 +484,31 @@ type fakeContentStore struct {
 }
 
 func newFakeContentStore(account, agentID string) *fakeContentStore {
+	createdAt := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
 	return &fakeContentStore{records: map[string]*agentcontent.Record{
 		key(account, agentID, agentcontent.ContentTypeAgentSoul): {
 			Account:            account,
 			AgentID:            agentID,
 			Type:               agentcontent.ContentTypeAgentSoul,
-			Content:            "draft soul content",
+			Content:            "published soul body",
 			Version:            3,
-			LifecycleState:     agentcontent.LifecycleStateDraft,
-			CreatedAt:          time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
-			UpdatedAt:          time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC),
+			SoulVersion:        2,
+			LifecycleState:     agentcontent.LifecycleStatePublished,
+			CreatedAt:          createdAt,
+			UpdatedAt:          updatedAt,
 			UpdatedBySubjectID: "subject-owner",
+			Document: &agentcontent.SoulDocument{
+				SchemaVersion:      agentcontent.SoulDocumentSchemaVersion,
+				AgentID:            agentID,
+				Body:               "published soul body",
+				SoulVersion:        2,
+				LifecycleState:     agentcontent.LifecycleStatePublished,
+				UpdatedBySubjectID: "subject-owner",
+				CreatedAt:          createdAt.Format(time.RFC3339Nano),
+				UpdatedAt:          updatedAt.Format(time.RFC3339Nano),
+				Version:            3,
+			},
 		},
 		key(account, agentID, agentcontent.ContentTypeAgentInstructions): {
 			Account:            account,
