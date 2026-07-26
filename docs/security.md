@@ -181,6 +181,10 @@ It also logs MCP task method invocations (`tasks/list`, `tasks/get`, `tasks/resu
 identity, method, and task id when present. It does not log bearer tokens, tool arguments, task request bodies, task
 results, or communication payloads by default.
 
+When an authenticated OAuth caller presents a dead MCP session id, the HTTP `401` recovery mapping emits a sanitized
+authorization-rejection event with only the request id, principal type, and `mcp_session_not_found` reason. It does not
+log the actor identity, session id, bearer token, or request body.
+
 ## Private soul self-scope reads
 
 Project 21 M2 private mint-conversation reads use a Lesser-mediated trust seam:

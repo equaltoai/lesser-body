@@ -88,7 +88,8 @@ are separate from Lesser's actor data table (`LESSER_TABLE_NAME`).
 - `MCP_SESSION_TABLE` (string, optional)
   - If set, enables DynamoDB-backed MCP sessions.
 - `MCP_SESSION_TTL_MINUTES` (string, optional)
-  - Session TTL in minutes (default is runtime-defined; deployments typically use `60`).
+  - Session TTL in minutes. AppTheory defaults to `60`; Body CDK sets `1440` on every MCP-serving handler as a
+    recoverability mitigation for sessionful clients.
 - `MCP_STREAM_TABLE` (string, optional)
   - If set, enables AppTheory's durable DynamoDB-backed MCP stream replay store.
 - `MCP_STREAM_TTL_MINUTES` (string, optional)

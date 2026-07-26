@@ -326,10 +326,25 @@ If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are 
 
 Body CDK sets `MCP_SESSION_TTL_MINUTES=1440` (24 hours) on the Ka handler and the shared Ptah/Ba instance handler. This
 is a pragmatic mitigation for long-lived clients that retain a Streamable HTTP session id but do not re-initialize
-after AppTheory expires it; it does not change AppTheory's session semantics. An expired or unknown session still
-returns HTTP `404` (`session not found`). The durable client fix is to treat that response as a signal to initialize a
-new session and replace the stale id. An upstream AppTheory session-renewal affordance is a separate possible
-improvement.
+after AppTheory expires it; it does not change AppTheory's session semantics.
+
+For an already authenticated OAuth principal, Body maps AppTheory's exact expired/unknown-session response to HTTP
+`401` with:
+
+```text
+WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<this surface's protected-resource metadata URL>", scope="read write"
+```
+
+The mapping applies on `/mcp/{actor}`, `/instance/ptah/mcp`, and `/instance/ba/mcp`. Each challenge points at that exact
+surface's RFC 9728 metadata URL. The JSON body keeps the surface's existing `app.unauthorized` envelope. Body performs
+the translation at the post-auth MCP error boundary and only for the runtime's exact `{"error":"session not found"}`
+response; it does not bind otherwise-valid Lesser OAuth JWTs to transient MCP session records. Non-OAuth callers keep
+AppTheory's `404` session-not-found response, and MCP `2026-07-28` stateless requests remain unaffected.
+
+The 24-hour TTL and the OAuth recovery signal are mitigations, not durable client state management. Sessionful clients
+must discard a dead `mcp-session-id`, complete any OAuth flow the `401` triggers, call `initialize`, and replace the
+stale id. The upstream kimi-class client recovery issue is outside this fleet and must be fixed in the client; Body
+does not refresh OAuth tokens or recreate sessions on a caller's behalf.
 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
