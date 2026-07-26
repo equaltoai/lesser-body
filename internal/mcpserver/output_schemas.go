@@ -198,6 +198,53 @@ func directMessagesReadOutputSchema() json.RawMessage {
 	}`)
 }
 
+func messageRequestsListOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"source":{"type":"string"},
+					"folder":{"type":"string"},
+					"requests":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"},
+					"limit":{"type":"integer"},
+					"cursor":{"type":"string"}
+				},
+				"required":["source","folder","requests","count","limit"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func messageRequestDecisionOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"source":{"type":"string"},
+					"conversationId":{"type":"string"},
+					"decision":{"type":"string","enum":["accepted","declined"]},
+					"requestState":{"type":"string","enum":["ACCEPTED","DECLINED"]},
+					"success":{"type":"boolean"},
+					"conversation":{"type":"object","additionalProperties":true},
+					"expand":{"type":"object","additionalProperties":true}
+				},
+				"required":["source","conversationId","decision","requestState"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func articleDraftSingleOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",

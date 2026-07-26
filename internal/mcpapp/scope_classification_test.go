@@ -72,11 +72,13 @@ func TestReadScopedTokenCannotInvokeWriteTools(t *testing.T) {
 	sessionID := initResp.Headers["mcp-session-id"][0]
 
 	writeTools := map[string]map[string]any{
-		"sms_send":      {"to": "+1 (555) 0143", "body": "On it."},
-		"email_send":    {"to": "someone@example.com", "subject": "hi", "body": "hello"},
-		"post_create":   {"content": "hello world"},
-		"memory_append": {"content": "remember this"},
-		"follow":        {"accountId": "acct-1"},
+		"sms_send":                {"to": "+1 (555) 0143", "body": "On it."},
+		"email_send":              {"to": "someone@example.com", "subject": "hi", "body": "hello"},
+		"post_create":             {"content": "hello world"},
+		"memory_append":           {"content": "remember this"},
+		"follow":                  {"accountId": "acct-1"},
+		"message_request_accept":  {"conversationId": "conv-1"},
+		"message_request_decline": {"conversationId": "conv-1"},
 	}
 
 	for tool, args := range writeTools {

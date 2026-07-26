@@ -369,6 +369,24 @@ AppTheory’s MCP server implements:
 - `tasks/result` (when `MCP_TASK_TABLE` enables the task runtime)
 - `tasks/cancel` (when `MCP_TASK_TABLE` enables the task runtime)
 
+### Transport-version behavior
+
+The Ka actor surface accepts both AppTheory v2.0.1 transport shapes on the same `/mcp/{actor}` route:
+
+- **MCP `2026-07-28`** is stateless. Discovery uses `server/discover`, not `initialize`. Every request carries
+  `MCP-Protocol-Version: 2026-07-28`, a matching `Mcp-Method`, and matching
+  `params._meta.io.modelcontextprotocol/protocolVersion` plus
+  `params._meta.io.modelcontextprotocol/clientCapabilities`. Stateless responses do not mint or require
+  `Mcp-Session-Id`; complete results carry `resultType: "complete"`, `ttlMs: 0`, `cacheScope: "private"`, and the
+  server identity under `_meta.io.modelcontextprotocol/serverInfo`. Header/metadata mismatches fail with HTTP `400`
+  and JSON-RPC code `-32020`.
+- **MCP `2025-11-25`** keeps the existing session transport. Clients call `initialize`, retain the returned
+  `Mcp-Session-Id`, and send that session id on later calls.
+
+Sending only `MCP-Protocol-Version: 2026-07-28` to `initialize` is not a modern handshake: missing modern `_meta`
+fields fail as invalid params, while a fully shaped modern `initialize` request fails as method-not-found. Modern
+clients start with `server/discover`.
+
 Task support is an additive MCP 2025-11-25 pilot. When `MCP_TASK_TABLE` is configured, body wires AppTheory’s
 `TaskRuntime`, `initialize` advertises the `tasks` capability for 2025-11-25 sessions, and `skill_bundle_get` declares
 optional task execution. Existing synchronous `tools/call` behavior remains supported. Deployments without
@@ -436,7 +454,7 @@ provider, payment evidence, tenant, wallet, and message-body details.
 
 ## Examples (curl)
 
-### Initialize
+### Discover (MCP 2026-07-28, stateless)
 
 ```bash
 ACTOR="Arch"
@@ -446,7 +464,33 @@ curl -sS -i \
   -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
   -H "authorization: Bearer ${TOKEN}" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  -H 'mcp-protocol-version: 2026-07-28' \
+  -H 'mcp-method: server/discover' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"server/discover",
+    "params":{"_meta":{
+      "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities":{}
+    }}
+  }'
+```
+
+Do not copy a session id from this response; the modern transport is stateless.
+
+### Initialize (MCP 2025-11-25, session transport)
+
+```bash
+ACTOR="Arch"
+
+curl -sS -i \
+  -X POST "https://api.<stageDomain>/mcp/${ACTOR}" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "authorization: Bearer ${TOKEN}" \
+  -H 'mcp-protocol-version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}'
 ```
 
 Copy the `mcp-session-id` response header for subsequent calls.
@@ -565,15 +609,18 @@ Scope key:
 | `conversations_read` | Read | Read direct-message conversations; supports opt-in compact conversation refs. |
 | `conversation_get` | Read | Expand one direct-message conversation into bounded recent message previews; defaults to compact and requires explicit standard/full opt-in for message bodies/raw payloads. |
 | `direct_messages_read` | Read | Read bounded recent direct-message previews from a named counterpart via Lesser's one-to-one conversation lookup; defaults to compact and returns explicit `not_found` instead of scanning unrelated surfaces. |
+| `message_requests_list` | Read | List the authenticated recipient's pending direct-message requests through Lesser GraphQL with bounded previews and explicit decision actions. |
+| `message_request_accept` | Write | Accept a recipient-owned pending direct-message request through Lesser and move it into the recipient's inbox. |
+| `message_request_decline` | Write | Decline a recipient-owned pending direct-message request through Lesser and remove it from the active request folder. |
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
-| `article_draft_create` | Write | Create an unpublished Article draft through Lesser CMS; defaults to a compact draft ref and never auto-publishes. |
-| `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
-| `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
-| `article_draft_list` | Read | List the authenticated actor's unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
-| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer; defaults to bounded rendered-HTML preview and never returns raw draft content. |
-| `article_draft_publish` | Write | Publish an existing Article draft through Lesser CMS; returns the canonical published Article ID and URL. |
+| `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
+| `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
+| `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
+| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
+| `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
+| `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
 | `article_list` | Read | List the authenticated actor's published Article refs through Lesser CMS; defaults compact. |
@@ -1247,6 +1294,9 @@ index/ref pages and expand only the items they need:
   Lesser's named-counterpart one-to-one lookup and returns compact message previews for that conversation. Use the
   returned conversation ref's `expand` metadata, or call
   `conversation_get({"conversationId":"<conversation-id>","view":"compact"})`, to continue a focused expansion path.
+- `message_requests_list({"limit":10})` reads Lesser's recipient-scoped `REQUESTS` folder. Each bounded request ref
+  carries its stable `conversationId`, request state, actor refs, last-message preview, and explicit
+  `message_request_accept` / `message_request_decline` arguments. Full message bodies are not returned by this list.
 - `soul_read({"self":true,"view":"summary"})` returns bounded public identity essentials. Use the summary `expand`
   metadata, or call `soul_read(..., "view":"standard")` for the compatibility bundle and `view:"full"` for explicit
   sanitized audit/debug raw public payloads.
@@ -1257,7 +1307,8 @@ index/ref pages and expand only the items they need:
   `article_draft_get({"id":"<draft-id>","view":"standard"})` when an agent explicitly needs draft content.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
-  draft id as a final published Article id.
+  draft id as a final published Article id. Every `article_draft_*` surface is owner-scoped to the authenticated actor;
+  passing another actor's draft id does not create reviewer access and returns not found.
 - `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
   returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
   byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
@@ -1294,11 +1345,78 @@ search:
   {"tool":"conversation_get","arguments":{"conversationId":"<structuredContent.data.id>","limit":20,"view":"compact"}}
   ```
 
+- Resolve a pending first-contact request as the recipient:
+
+  ```json
+  {"tool":"message_requests_list","arguments":{"limit":10}}
+  ```
+
+  Then accept the selected request to allow the conversation and subsequent DMs into the inbox:
+
+  ```json
+  {"tool":"message_request_accept","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  ```
+
+  Or explicitly decline it:
+
+  ```json
+  {"tool":"message_request_decline","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  ```
+
 `direct_messages_read` uses Lesser's named counterpart lookup and returns either the focused one-to-one conversation or
 an explicit `not_found` tool error with suggested fallbacks. It never silently scans unrelated conversations,
 notifications, timelines, or email. Existing advisor check-in workflows should migrate from broad mailbox/email search
 to "read DMs from the named advisor first; use `conversation_get` only for focused expansion; use `email_search` only
 when the DM path reports `not_found` or the advisor explicitly coordinated by email."
+
+First-contact DMs remain governed by Lesser's request lifecycle. Lesser may accept the initial direct message while
+rejecting a subsequent message with `403 Message request pending` until the recipient decides the request. Body does
+not bypass that guard: `message_requests_list` calls Lesser GraphQL
+`conversations(folder: REQUESTS, first:, after:)`, `message_request_accept` calls
+`acceptMessageRequest(conversationId:)`, and `message_request_decline` calls
+`declineMessageRequest(conversationId:)`, always with the recipient's OAuth bearer. Accepting moves the thread to the
+recipient's inbox; declining hides it from the active request folder. These social tools are available in both drone and
+souled runtime profiles, with the list read-scoped and both decisions write-scoped. No lesser-host delivery path or
+direct Lesser table write is involved.
+
+### Owner-scoped Article draft review fallback
+
+The pinned Lesser contract does not expose a durable draft reviewer grant or share token. Its draft reads are
+`myDrafts`, `draft(id:)`, and `draftPreview(id:)`, with authorization bound to the authenticated owner; its operations
+create, update, preview, or publish the owner's draft. There is no named-reviewer persistence, bounded-expiry grant,
+revocation mutation, or read-only shared reference for Body to consume. Body therefore cannot implement a secure
+first-class grant locally without bypassing Lesser's owner gate or inventing authorization state that Lesser does not
+enforce.
+
+Until Lesser owns that model, use the explicit post-based review loop below. This shares a deliberate review **copy**;
+it does not share the draft id, change draft ownership, or publish the Article:
+
+1. The author creates or updates the owner-scoped draft and, if needed, calls `article_draft_preview` while authenticated
+   as the owner. The draft remains `DRAFT`.
+2. The author selects the exact text safe to disclose and sends it to the named reviewer as a direct review post:
+
+   ```json
+   {"tool":"post_create","arguments":{"content":"@reviewer Pre-publication review copy for draft-1:\n<selected review text>","visibility":"direct"}}
+   ```
+
+   The direct post is a separate Lesser status containing the disclosed copy. Do not imply that its status id is a
+   revocable draft grant, and do not put content in it that the reviewer is not authorized to receive.
+3. If this is first contact and Lesser reports a pending request, the reviewer calls `message_requests_list` and
+   `message_request_accept` before continuing. The reviewer then reads the review copy with
+   `direct_messages_read({"counterpart":"author","view":"standard"})`.
+4. The reviewer sends feedback as a direct threaded reply to the review-post id:
+
+   ```json
+   {"tool":"post_create","arguments":{"content":"@author Feedback for draft-1: <feedback>","visibility":"direct","in_reply_to":"<review-post-id>"}}
+   ```
+
+5. The author reads `direct_messages_read({"counterpart":"reviewer","view":"standard"})`, verifies the threaded
+   feedback, and deliberately applies accepted changes with `article_draft_update`. Publication remains a separate
+   `article_draft_publish` action.
+
+A future first-class share requires Lesser-owned storage and authorization for owner issuance, a named reviewer,
+read-only scope, bounded expiry, revocation, audit, and enforcement on both `draft` and `draftPreview`. That is a
+Lesser-side capability ask, not a safe Body-only follow-up. The post-based loop delivered here requires no Lesser change.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with
@@ -1489,11 +1607,13 @@ Notes:
 - `timeline_read` remains upstream-shaped by default for compatibility. Use `view=compact` for bounded `StatusRef`
   lists with deterministic `post_get` expansion metadata. `post_search` follows the same opt-in model for status
   search results. Neither tool silently flips defaults to compact.
-- Mailbox, memory, skills, and Article tools publish MCP annotations in `tools/list`: read-only hints for mailbox
+- Mailbox, memory, skills, Article, and message-request tools publish MCP annotations in `tools/list`: read-only hints for mailbox
   reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, `skill_bundle_get`,
-  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, and `article_list`;
+  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, `article_list`, and
+  `message_requests_list`;
   destructive hints for send/reply/delete tools; non-destructive additive mutation hints for
-  `article_draft_create`, `article_draft_update`, `article_draft_publish`, and `article_update`; and idempotent
+  `article_draft_create`, `article_draft_update`, `article_draft_publish`, `article_update`, and
+  `message_request_accept`; destructive mutation hints for `message_request_decline`; and idempotent
   hints for mailbox read-state mutation tools. `memory_append` remains an additive write and is only idempotent when
   callers provide `event_id`, so it is not advertised as unconditionally idempotent.
 - Mailbox read/search tools pass host-side filters through instead of client-side filtering: `channelType`,
