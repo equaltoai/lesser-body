@@ -233,7 +233,7 @@ Resources:
             Ref: JWTSecretArnParamLookupParameter
           MCP_SESSION_TABLE:
             Ref: McpServerSessionTable469EA0FB
-          MCP_SESSION_TTL_MINUTES: "60"
+          MCP_SESSION_TTL_MINUTES: "1440"
           MCP_STREAM_TABLE:
             Ref: McpServerStreamTableC6A2DC7E
           MCP_STREAM_TTL_MINUTES: "60"
@@ -1359,6 +1359,7 @@ Resources:
             Ref: InstanceGrantTable
           INSTANCE_SESSION_TABLE:
             Ref: InstanceSessionTable
+          MCP_SESSION_TTL_MINUTES: "1440"
           LESSER_API_BASE_URL: https://api.dev.example.com
           LESSER_TABLE_NAME:
             Ref: LesserTableNameParamLookupParameter

@@ -324,6 +324,13 @@ MCP uses stateless HTTP requests, with optional session continuity via a header:
 
 If `MCP_SESSION_TABLE` is set, sessions persist in DynamoDB; otherwise they are in-memory (best-effort).
 
+Body CDK sets `MCP_SESSION_TTL_MINUTES=1440` (24 hours) on the Ka handler and the shared Ptah/Ba instance handler. This
+is a pragmatic mitigation for long-lived clients that retain a Streamable HTTP session id but do not re-initialize
+after AppTheory expires it; it does not change AppTheory's session semantics. An expired or unknown session still
+returns HTTP `404` (`session not found`). The durable client fix is to treat that response as a signal to initialize a
+new session and replace the stale id. An upstream AppTheory session-renewal affordance is a separate possible
+improvement.
+
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
 

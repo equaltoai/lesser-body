@@ -169,6 +169,26 @@ test("managed template pins MCP table logical IDs", () => {
   }
 });
 
+test("every MCP-serving lambda uses the 24-hour session TTL", () => {
+  for (const [templateName, template] of [
+    ["runtime", synthRuntimeTemplate()],
+    ["managed", synthManagedTemplate()],
+  ] as const) {
+    const handlers = mcpServingLambdaFunctions(mustResources(template));
+    assert.equal(handlers.length, 2, `${templateName} template must contain the Ka and shared Ptah/Ba MCP handlers`);
+
+    for (const handler of handlers) {
+      const props = mustRecord(handler.Properties, `${templateName} MCP lambda missing Properties`);
+      const vars = lambdaEnvironmentVariables(handler);
+      assert.equal(
+        vars.MCP_SESSION_TTL_MINUTES,
+        "1440",
+        `${templateName} ${String(props.Handler)} MCP handler must use the 24-hour session TTL`,
+      );
+    }
+  }
+});
+
 test("runtime stack uses AppTheory durable stream table schema", () => {
   const template = synthRuntimeTemplate();
   const resources = mustResources(template);
@@ -598,6 +618,27 @@ function instanceMcpHandlerLambdaFunction(resources: Record<string, CloudFormati
     }
   }
   throw new Error("template missing instance MCP handler AWS::Lambda::Function resource");
+}
+
+function mcpServingLambdaFunctions(resources: Record<string, CloudFormationResource>): CloudFormationResource[] {
+  return Object.values(resources).filter((resource) => {
+    if (resource.Type !== "AWS::Lambda::Function") {
+      return false;
+    }
+    if (typeof resource.Properties !== "object" || resource.Properties === null || Array.isArray(resource.Properties)) {
+      return false;
+    }
+    const properties = resource.Properties as CloudFormationRecord;
+    const environment = properties.Environment;
+    if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
+      return false;
+    }
+    const vars = (environment as CloudFormationRecord).Variables;
+    if (typeof vars !== "object" || vars === null || Array.isArray(vars)) {
+      return false;
+    }
+    return Object.hasOwn(vars, "MCP_ENDPOINT") || Object.hasOwn(vars, "INSTANCE_MCP_ENDPOINT");
+  });
 }
 
 function lambdaEnvironmentVariables(lambdaResource: CloudFormationResource): CloudFormationRecord {
