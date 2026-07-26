@@ -48,7 +48,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 func articleDraftCreateDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_create",
-		Description:  "Create a draft-only Article through Lesser CMS. Defaults to a compact draft ref; nothing auto-publishes.",
+		Description:  "Create an owner-scoped, draft-only Article for the authenticated actor through Lesser CMS. Defaults to a compact draft ref; nothing auto-publishes and no cross-actor read grant is created.",
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleDraftSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -71,7 +71,7 @@ func articleDraftCreateDef() mcpruntime.ToolDef {
 func articleDraftUpdateDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_update",
-		Description:  "Update an existing draft-only Article through Lesser CMS. Does not preview or publish.",
+		Description:  "Update an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS. Does not grant reviewer access, preview, or publish.",
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleDraftSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -94,7 +94,7 @@ func articleDraftUpdateDef() mcpruntime.ToolDef {
 func articleDraftGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_get",
-		Description:  "Read one Article draft by draft id. Defaults to a compact ref with bounded preview and expansion metadata.",
+		Description:  "Read one owner-scoped Article draft belonging to the authenticated actor by draft id. Cross-actor draft ids return not found; defaults to a compact ref with bounded preview and expansion metadata.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -113,7 +113,7 @@ func articleDraftGetDef() mcpruntime.ToolDef {
 func articleDraftPreviewDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_preview",
-		Description:  "Render one Article draft through Lesser's canonical publication renderer/sanitizer. Defaults compact and never returns raw draft content.",
+		Description:  "Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical publication renderer/sanitizer. Cross-actor draft ids return not found; defaults compact and never returns raw draft content.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftPreviewOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -132,7 +132,7 @@ func articleDraftPreviewDef() mcpruntime.ToolDef {
 func articleDraftListDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_list",
-		Description:  "List unpublished Article draft refs for the authenticated actor. Defaults compact and filters to DRAFT status.",
+		Description:  "List only the authenticated actor's owner-scoped unpublished Article draft refs. Defaults compact, filters to DRAFT status, and does not list drafts shared by identifier from another actor.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftListOutputSchema(),
 		InputSchema: json.RawMessage(`{

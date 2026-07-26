@@ -615,12 +615,12 @@ Scope key:
 | `notifications_read` | Read | Read recent notifications; supports opt-in compact notification refs and secondary actor/source filtering. |
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
-| `article_draft_create` | Write | Create an unpublished Article draft through Lesser CMS; defaults to a compact draft ref and never auto-publishes. |
-| `article_draft_update` | Write | Update an unpublished Article draft through Lesser CMS; defaults to compact and does not preview or publish. |
-| `article_draft_get` | Read | Read one Article draft by draft id; defaults to a compact ref with bounded preview and `article_draft_get(view=standard)` expansion. |
-| `article_draft_list` | Read | List the authenticated actor's unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
-| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer; defaults to bounded rendered-HTML preview and never returns raw draft content. |
-| `article_draft_publish` | Write | Publish an existing Article draft through Lesser CMS; returns the canonical published Article ID and URL. |
+| `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
+| `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
+| `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
+| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
+| `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
+| `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
 | `article_list` | Read | List the authenticated actor's published Article refs through Lesser CMS; defaults compact. |
@@ -1307,7 +1307,8 @@ index/ref pages and expand only the items they need:
   `article_draft_get({"id":"<draft-id>","view":"standard"})` when an agent explicitly needs draft content.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
-  draft id as a final published Article id.
+  draft id as a final published Article id. Every `article_draft_*` surface is owner-scoped to the authenticated actor;
+  passing another actor's draft id does not create reviewer access and returns not found.
 - `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
   returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
   byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
@@ -1377,6 +1378,45 @@ not bypass that guard: `message_requests_list` calls Lesser GraphQL
 recipient's inbox; declining hides it from the active request folder. These social tools are available in both drone and
 souled runtime profiles, with the list read-scoped and both decisions write-scoped. No lesser-host delivery path or
 direct Lesser table write is involved.
+
+### Owner-scoped Article draft review fallback
+
+The pinned Lesser contract does not expose a durable draft reviewer grant or share token. Its draft reads are
+`myDrafts`, `draft(id:)`, and `draftPreview(id:)`, with authorization bound to the authenticated owner; its operations
+create, update, preview, or publish the owner's draft. There is no named-reviewer persistence, bounded-expiry grant,
+revocation mutation, or read-only shared reference for Body to consume. Body therefore cannot implement a secure
+first-class grant locally without bypassing Lesser's owner gate or inventing authorization state that Lesser does not
+enforce.
+
+Until Lesser owns that model, use the explicit post-based review loop below. This shares a deliberate review **copy**;
+it does not share the draft id, change draft ownership, or publish the Article:
+
+1. The author creates or updates the owner-scoped draft and, if needed, calls `article_draft_preview` while authenticated
+   as the owner. The draft remains `DRAFT`.
+2. The author selects the exact text safe to disclose and sends it to the named reviewer as a direct review post:
+
+   ```json
+   {"tool":"post_create","arguments":{"content":"@reviewer Pre-publication review copy for draft-1:\n<selected review text>","visibility":"direct"}}
+   ```
+
+   The direct post is a separate Lesser status containing the disclosed copy. Do not imply that its status id is a
+   revocable draft grant, and do not put content in it that the reviewer is not authorized to receive.
+3. If this is first contact and Lesser reports a pending request, the reviewer calls `message_requests_list` and
+   `message_request_accept` before continuing. The reviewer then reads the review copy with
+   `direct_messages_read({"counterpart":"author","view":"standard"})`.
+4. The reviewer sends feedback as a direct threaded reply to the review-post id:
+
+   ```json
+   {"tool":"post_create","arguments":{"content":"@author Feedback for draft-1: <feedback>","visibility":"direct","in_reply_to":"<review-post-id>"}}
+   ```
+
+5. The author reads `direct_messages_read({"counterpart":"reviewer","view":"standard"})`, verifies the threaded
+   feedback, and deliberately applies accepted changes with `article_draft_update`. Publication remains a separate
+   `article_draft_publish` action.
+
+A future first-class share requires Lesser-owned storage and authorization for owner issuance, a named reviewer,
+read-only scope, bounded expiry, revocation, audit, and enforcement on both `draft` and `draftPreview`. That is a
+Lesser-side capability ask, not a safe Body-only follow-up. The post-based loop delivered here requires no Lesser change.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with
