@@ -401,6 +401,102 @@ func TestBodyOnlyV1CompatibleSoulUpsertProducesValidV2Draft(t *testing.T) {
 	}
 }
 
+func TestLegacyOpaqueSoulTransitionsRequireTypedRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		state  LifecycleState
+		action ContentAction
+		run    func(*Store, string) error
+	}{
+		{
+			name:   "publish",
+			state:  LifecycleStateDraft,
+			action: ContentActionPublish,
+			run: func(store *Store, agentID string) error {
+				_, err := store.Publish(context.Background(), PublishInput{
+					Account:            "account-a",
+					AgentID:            agentID,
+					UpdatedBySubjectID: "subject-publisher",
+				})
+				return err
+			},
+		},
+		{
+			name:   "archive",
+			state:  LifecycleStatePublished,
+			action: ContentActionArchive,
+			run: func(store *Store, agentID string) error {
+				_, err := store.Archive(context.Background(), ArchiveInput{
+					Account:            "account-a",
+					AgentID:            agentID,
+					Type:               ContentTypeAgentSoul,
+					UpdatedBySubjectID: "subject-archiver",
+				})
+				return err
+			},
+		},
+		{
+			name:   "genesis seed",
+			state:  LifecycleStateDraft,
+			action: ContentActionPublish,
+			run: func(store *Store, agentID string) error {
+				_, _, err := store.SeedPublished(context.Background(), SeedPublishedInput{
+					Account: "account-a",
+					AgentID: agentID,
+					SoulDocument: &SoulDocument{
+						SchemaVersion: SoulDocumentSchemaVersion,
+						AgentID:       agentID,
+						Body:          "legacy opaque body",
+					},
+					UpdatedBySubjectID: "subject-genesis",
+				})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			agentID := "legacy-" + strings.ReplaceAll(tc.name, " ", "-")
+			now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+			legacy := store.recordFor("account-a", agentID, ContentTypeAgentSoul)
+			legacy.Content = "legacy opaque body"
+			legacy.Version = 1
+			legacy.LifecycleState = string(tc.state)
+			legacy.ContentCreatedAt = now
+			legacy.ContentUpdatedAt = now
+			legacy.UpdatedBySubjectID = "subject-legacy"
+			if err := store.db.Model(legacy).Create(); err != nil {
+				t.Fatalf("seed legacy row: %v", err)
+			}
+
+			err := tc.run(store, agentID)
+			if !errors.Is(err, ErrSoulRewriteRequired) {
+				t.Fatalf("%s legacy row error = %v, want ErrSoulRewriteRequired", tc.action, err)
+			}
+			var rewriteErr *SoulRewriteRequiredError
+			if !errors.As(err, &rewriteErr) || rewriteErr.Action != tc.action {
+				t.Fatalf("%s legacy row typed error = %#v / %v", tc.action, rewriteErr, err)
+			}
+			for _, fix := range []string{"agent_soul_upsert", "agent_soul_publish"} {
+				if !strings.Contains(err.Error(), fix) {
+					t.Fatalf("typed rewrite error does not name %s: %v", fix, err)
+				}
+			}
+
+			current, getErr := store.loadRecord(context.Background(), "account-a", agentID, ContentTypeAgentSoul)
+			if getErr != nil {
+				t.Fatalf("load legacy row after rejected transition: %v", getErr)
+			}
+			if current.Version != 1 || current.DocumentJSON != "" || current.LifecycleState != string(tc.state) {
+				t.Fatalf("legacy row mutated after rejected transition: %+v", current)
+			}
+			if history := loadSoulHistory(t, store, "account-a", agentID); len(history) != 0 {
+				t.Fatalf("legacy transition wrote history: %+v", history)
+			}
+		})
+	}
+}
+
 func TestSeedPublishedIsIdempotentAndNeverOverwritesDifferentContent(t *testing.T) {
 	store, _ := newTestStore(t)
 	document := &SoulDocument{

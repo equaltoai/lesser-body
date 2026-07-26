@@ -81,6 +81,11 @@ var (
 	// ErrContentConflict is returned when a conditional write loses an optimistic
 	// concurrency race after bounded retries.
 	ErrContentConflict = errors.New("agent content write conflict")
+
+	// ErrSoulRewriteRequired is returned when a lifecycle action encounters a
+	// pre-v2 opaque agent_soul row. The owner must rewrite it through the v2
+	// authoring path before it can be published or archived.
+	ErrSoulRewriteRequired = errors.New("agent soul rewrite required")
 )
 
 // SizeError describes a content-size validation failure while preserving
@@ -126,6 +131,25 @@ const (
 	ContentActionPublish ContentAction = "publish"
 	ContentActionArchive ContentAction = "archive"
 )
+
+// SoulRewriteRequiredError preserves the lifecycle action rejected for a
+// pre-v2 opaque row and names the exact Ptah repair sequence.
+type SoulRewriteRequiredError struct {
+	Action ContentAction
+}
+
+func (e *SoulRewriteRequiredError) Error() string {
+	if e == nil {
+		return ErrSoulRewriteRequired.Error()
+	}
+	return fmt.Sprintf(
+		"%s: cannot %s a pre-v2 opaque agent_soul; rewrite via agent_soul_upsert, then publish via agent_soul_publish",
+		ErrSoulRewriteRequired,
+		e.Action,
+	)
+}
+
+func (e *SoulRewriteRequiredError) Unwrap() error { return ErrSoulRewriteRequired }
 
 // Record is the current account-scoped content projection for one account,
 // agent, and content type. AgentSoul records include the closed v2 Document;
@@ -455,7 +479,8 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 
 	created := false
 	for attempt := 0; attempt < updateRetryLimit; attempt++ {
-		current, err := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+		var current *Record
+		stored, err := s.loadRecord(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
 		switch {
 		case errors.Is(err, ErrContentNotFound):
 			draft, createErr := s.createInitialSoulDraft(ctx, validated)
@@ -470,6 +495,13 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 			}
 		case err != nil:
 			return nil, false, err
+		case stored.isLegacyOpaqueSoul():
+			return nil, false, &SoulRewriteRequiredError{Action: ContentActionPublish}
+		default:
+			current, err = stored.toRecord()
+			if err != nil {
+				return nil, false, err
+			}
 		}
 
 		if !sameSoulDocumentAuthoringContent(current.Document, validated.soulDocument) {
@@ -602,6 +634,9 @@ func (s *Store) transitionSoul(
 		if err != nil {
 			return nil, err
 		}
+		if current.isLegacyOpaqueSoul() {
+			return nil, &SoulRewriteRequiredError{Action: action}
+		}
 		if expectedRecordVersion > 0 && current.Version != expectedRecordVersion {
 			return nil, fmt.Errorf("%w: %s agent soul source draft changed", ErrContentConflict, action)
 		}
@@ -726,6 +761,12 @@ func (r contentRecord) TableName() string {
 		return tableName
 	}
 	return strings.TrimSpace(os.Getenv(EnvInstanceContentTable))
+}
+
+func (r *contentRecord) isLegacyOpaqueSoul() bool {
+	return r != nil &&
+		ContentType(r.ContentType) == ContentTypeAgentSoul &&
+		strings.TrimSpace(r.DocumentJSON) == ""
 }
 
 func (r *contentRecord) toRecord() (*Record, error) {

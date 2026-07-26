@@ -2224,9 +2224,20 @@ func agentContentToolResultFromError(err error, contentType agentcontent.Content
 	var sizeErr *agentcontent.SizeError
 	var validationErr *agentcontent.ValidationError
 	var transitionErr *agentcontent.TransitionError
+	var rewriteErr *agentcontent.SoulRewriteRequiredError
 	switch {
 	case errors.Is(err, agentcontent.ErrContentNotFound):
 		return toolErrorResult("not_found", contentName+" record not found in this account-scoped Ptah content store", http.StatusNotFound, details)
+	case errors.As(err, &rewriteErr):
+		details["action"] = string(rewriteErr.Action)
+		details["rewrite_tool"] = toolAgentSoulUpsert
+		details["publish_tool"] = toolAgentSoulPublish
+		return toolErrorResult(
+			"agent_soul_rewrite_required",
+			"pre-v2 opaque agent_soul must be rewritten via agent_soul_upsert, then published via agent_soul_publish",
+			http.StatusConflict,
+			details,
+		)
 	case errors.As(err, &sizeErr):
 		details["limit_bytes"] = sizeErr.Limit
 		details["actual_bytes"] = sizeErr.Actual

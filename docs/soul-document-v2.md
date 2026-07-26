@@ -14,6 +14,8 @@ Body validates and stores the stable public schema at
 - Lifecycle/audit fields are server-owned.
 - Every upsert creates a new draft `soul_version`.
 - `agent_soul_publish` is the explicit, idempotent `draft -> published` owner act.
+- A pre-v2 opaque row returns typed `agent_soul_rewrite_required`; rewrite it with `agent_soul_upsert`, then publish the
+  validated v2 draft with `agent_soul_publish`. Lifecycle transitions never synthesize v2 history from opaque rows.
 - Only `published -> archived` is valid. Archived snapshots are never eligible for Ba rendering.
 - Each soul write updates the mutable current projection and appends a write-once history row in one TableTheory
   transaction. Published content therefore remains immutable when a later edit creates a new draft.

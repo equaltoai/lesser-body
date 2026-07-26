@@ -1025,6 +1025,10 @@ Current projection changes and immutable history appends are one TableTheory tra
 `agent_soul_publish` requires write scope and is the only explicit `draft -> published` transition. Publication appends
 an immutable published snapshot while advancing the optimistic storage `version` without changing `soul_version`.
 Replaying publication of the same current snapshot is idempotent and does not rewrite audit fields.
+Pre-v2 opaque soul rows cannot be transitioned as though they were v2 documents. `agent_soul_publish` returns the
+typed `agent_soul_rewrite_required` conflict with `details.rewrite_tool="agent_soul_upsert"` and
+`details.publish_tool="agent_soul_publish"`; the owner must rewrite the legacy body through the validated v2 upsert
+path and then publish that new draft. The same typed repair requirement applies before archiving a legacy row.
 
 `agent_soul_archive` input:
 

@@ -1335,6 +1335,44 @@ func TestAgentSoulMapsContentStoreErrorsWithoutLeakingScopeDetails(t *testing.T)
 	}
 }
 
+func TestAgentSoulPublishMapsLegacyRowToActionableTypedRewriteError(t *testing.T) {
+	store := &fakeAgentContentStore{
+		publishErr: &agentcontent.SoulRewriteRequiredError{
+			Action: agentcontent.ContentActionPublish,
+		},
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithAgentContentStore(store)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContextWithSubject("drone-ada", []string{"write"}, "owner-oauth-token", "subject-writer"),
+		toolAgentSoulPublish,
+		json.RawMessage(`{"agent_id":"agent-123"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_soul_rewrite_required", http.StatusConflict)
+	details, _ := payload["details"].(map[string]any)
+	if details["content_type"] != string(agentcontent.ContentTypeAgentSoul) ||
+		details["action"] != string(agentcontent.ContentActionPublish) ||
+		details["rewrite_tool"] != toolAgentSoulUpsert ||
+		details["publish_tool"] != toolAgentSoulPublish {
+		t.Fatalf("rewrite guidance details = %+v", details)
+	}
+	message, _ := payload["message"].(string)
+	for _, required := range []string{toolAgentSoulUpsert, toolAgentSoulPublish} {
+		if !strings.Contains(message, required) {
+			t.Fatalf("rewrite guidance message does not name %s: %q", required, message)
+		}
+	}
+	if strings.Contains(message, "Body failed to access") {
+		t.Fatalf("legacy row fell through to bare internal error: %q", message)
+	}
+}
+
 func TestAgentInstructionsGetReadsAccountScopedContentWithReadCapableScopes(t *testing.T) {
 	for _, scope := range []string{"read", "write", "admin"} {
 		t.Run(scope, func(t *testing.T) {
