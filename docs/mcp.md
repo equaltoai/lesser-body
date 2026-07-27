@@ -328,23 +328,36 @@ Body CDK sets `MCP_SESSION_TTL_MINUTES=1440` (24 hours) on the Ka handler and th
 is a pragmatic mitigation for long-lived clients that retain a Streamable HTTP session id but do not re-initialize
 after AppTheory expires it; it does not change AppTheory's session semantics.
 
-For an already authenticated OAuth principal, Body maps AppTheory's exact expired/unknown-session response to HTTP
-`401` with:
+For an already authenticated OAuth principal, Body transparently rebinds a sessionful non-stream request when
+AppTheory returns its exact `{"error":"session not found"}` response. This applies on `/mcp/{actor}`,
+`/instance/ptah/mcp`, and `/instance/ba/mcp`:
+
+1. Body has already authenticated and authorized the original request, including actor/principal, scope, and runtime
+   profile gates.
+2. AppTheory rejects the unknown session before method or tool dispatch.
+3. Body invokes the same AppTheory server's `initialize` machinery internally, negotiating the request's sessionful
+   protocol version and capturing the newly minted session id.
+4. Body replays the exact inbound request through that runtime with only `Mcp-Session-Id` replaced.
+5. Body returns the replay response with the fresh `Mcp-Session-Id` response header so clients such as kimi-code can
+   adopt it without an OAuth or initialize round trip.
+
+The replay cannot double-execute the operation: AppTheory's session requirement runs before JSON-RPC dispatch, so the
+original dead-session request has no tool, resource, prompt, task, notification, or other method execution to repeat.
+Body keeps the recovery wrapper directly around the raw AppTheory handler and inside the authorization/audit
+middleware, which makes those gates run once on the original request and makes the replay the sole runtime dispatch.
+
+SSE `GET` listeners and `Last-Event-ID` resumes are deliberately not rebound because stream/event state belongs to the
+old session. An authenticated OAuth `GET` with a dead session retains the surface-specific HTTP `401 invalid_token`
+challenge:
 
 ```text
 WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<this surface's protected-resource metadata URL>", scope="read write"
 ```
 
-The mapping applies on `/mcp/{actor}`, `/instance/ptah/mcp`, and `/instance/ba/mcp`. Each challenge points at that exact
-surface's RFC 9728 metadata URL. The JSON body keeps the surface's existing `app.unauthorized` envelope. Body performs
-the translation at the post-auth MCP error boundary and only for the runtime's exact `{"error":"session not found"}`
-response; it does not bind otherwise-valid Lesser OAuth JWTs to transient MCP session records. Non-OAuth callers keep
-AppTheory's `404` session-not-found response, and MCP `2026-07-28` stateless requests remain unaffected.
-
-The 24-hour TTL and the OAuth recovery signal are mitigations, not durable client state management. Sessionful clients
-must discard a dead `mcp-session-id`, complete any OAuth flow the `401` triggers, call `initialize`, and replace the
-stale id. The upstream kimi-class client recovery issue is outside this fleet and must be fixed in the client; Body
-does not refresh OAuth tokens or recreate sessions on a caller's behalf.
+The 24-hour TTL remains a load/continuity mitigation rather than an authorization mechanism. Non-OAuth and
+unauthenticated recovery contexts keep AppTheory's spec-shaped `404` session-not-found response. MCP `2026-07-28`
+requests remain stateless: they neither mint nor consume a session id and never enter the rebind path. Transparent
+session rebind does not refresh or replace the caller's valid OAuth token.
 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
