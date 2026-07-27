@@ -17,12 +17,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-26T22:30:07.525201Z",
+  "generated_at": "2026-07-26T23:59:38.764125Z",
   "git": {
-    "head": "e87ac7b3bc8dd3b405aafec5dc6ee0e2722f28a9",
-    "head_tree": "5047809413c8e0bf1d859b03102b6238cd929c81",
-    "merge_base_origin_staging": "840aa5cc18292b7aa76bd5b8e6a0f6e8347dce99",
-    "ref": "theorymcp/equaltoai/body/mcp-session-ttl-mitigation",
+    "head": "047dd8eb04631a22ac24e2e8e9821822830ec730",
+    "head_tree": "77d393b4862503471455d6a99702b3108f529051",
+    "merge_base_origin_staging": "c4edb1a335271077178cf6be2f3ae5e9daa4d561",
+    "ref": "theorymcp/equaltoai/body/kimi-mcp-session-rebind",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
