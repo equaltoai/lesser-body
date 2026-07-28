@@ -141,6 +141,41 @@ func TestAgentGenesisBeginResultMatchesDeclaredOutputSchemaForHostRegistrationSt
 	}
 }
 
+// A Host registration status outside the declared contract must not leak into
+// data.status and re-break the envelope: the successful begin is preserved and
+// reported as unknown, with the raw Host value still visible under
+// data.registration.status.
+func TestAgentGenesisBeginClampsUnknownHostRegistrationStatus(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	registry := mcpruntime.NewToolRegistry()
+	fake := &fakeGenesisClient{beginResponse: map[string]any{
+		"registration": map[string]any{
+			"id":       "reg-123",
+			"agent_id": "agent-123",
+			"status":   "awaiting_dns_verification",
+		},
+	}}
+	if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only")
+
+	result := callGenesisTool(t, registry, ctx, toolAgentGenesisBegin,
+		`{"domain":"dev.trenchcoat.greater.website","local_id":"casekeeper"}`)
+	data := structuredGenesisData(t, result)
+	if got := data["status"]; got != "unknown" {
+		t.Fatalf("begin data.status = %#v, want unknown for an unclassifiable Host status", got)
+	}
+	registration, _ := data["registration"].(map[string]any)
+	if got := registration["status"]; got != "awaiting_dns_verification" {
+		t.Fatalf("data.registration.status = %#v, want the raw Host value preserved", got)
+	}
+	if got := data["registration_id"]; got != "reg-123" {
+		t.Fatalf("begin dropped the successful registration: %#v", data)
+	}
+	assertMatchesDeclaredOutputSchema(t, toolAgentGenesisBegin, agentGenesisBeginDef().OutputSchema, result.StructuredContent)
+}
+
 // Audit guard for the same mismatch class across the conversation-backed
 // genesis tools. Their Host vocabularies are validated by
 // sanitizeGenesisConversation before reaching the envelope, so these assert the

@@ -923,8 +923,17 @@ func genesisCanonicalStatus(operation string, data map[string]any) string {
 	if status := strings.TrimSpace(nestedString(data, "conversation", "status")); status != "" {
 		return strings.ToLower(status)
 	}
-	if status := strings.TrimSpace(nestedString(data, "registration", "status")); status != "" {
-		return strings.ToLower(status)
+	if status := strings.ToLower(strings.TrimSpace(nestedString(data, "registration", "status"))); status != "" {
+		// Unlike the conversation projection, Body does not validate Host's
+		// registration status before propagating it, so an unrecognized value
+		// would otherwise leave a successful — and already side-effecting —
+		// begin failing its own output schema at a strict client. Report the
+		// unclassifiable case as "unknown" and keep the raw Host value under
+		// data.registration.status.
+		if validGenesisRegistrationStatus(status) {
+			return status
+		}
+		return "unknown"
 	}
 	if guidance := nestedMap(data, "guidance"); len(guidance) > 0 {
 		if status := strings.TrimSpace(stringValue(guidance, "status")); status != "" {
