@@ -1358,7 +1358,10 @@ under text JSON `diagnosticPayload` and `structuredContent.diagnostics`, with du
 
 Expansion metadata preserves the legacy machine-readable `resultPath` for structured clients. Where a text alternative
 is available, additive `textResultPath` and `resultAccess` fields identify the text location and phrase the choice as
-text content or `structuredContent`; clients should prefer `resultAccess` for human/agent guidance.
+text content or `structuredContent`; clients should prefer `resultAccess` for human/agent guidance. Compact social
+per-item refs use the budget-safe text-path form directly: `expand.resultPath="content[0].text"`. Their expanded tool
+result still retains its unchanged `structuredContent` projection, while the per-item pointer never requires a client
+to expose that surface.
 
 Project 33 P4.1 compatibility decision: compact defaults remain opt-in for now. `timeline_read`, `post_search`,
 `soul_read`, and `email_read` keep their omitted/default behavior equivalent to `view=standard`; callers must request

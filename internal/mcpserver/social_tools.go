@@ -1060,7 +1060,7 @@ func compactSocialConversationRef(raw map[string]any, previewRunes int) map[stri
 	ref := map[string]any{}
 	putIfNotEmpty(ref, "id", id)
 	if id != "" {
-		ref["expand"] = socialConversationGetExpansion(id, readViewCompact, "structuredContent.data.conversation")
+		ref["expand"] = socialConversationGetExpansion(id, readViewCompact)
 	}
 	if unread, ok := firstBoolMap(raw, "unread", "is_unread", "isUnread"); ok {
 		ref["unread"] = unread
@@ -1202,7 +1202,7 @@ func compactConversationLastPostRef(raw map[string]any, previewRunes int) map[st
 	putIfNotEmpty(ref, "contentPreview", preview)
 	ref["contentTruncated"] = truncated
 	if id != "" {
-		ref["expand"] = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+		ref["expand"] = socialPostGetExpansion(id, readViewStandard)
 	} else if content != "" {
 		ref["missingFields"] = []string{"id"}
 		ref["omitted"] = []map[string]any{{
@@ -1636,7 +1636,7 @@ func compactSocialNotificationRef(raw map[string]any, previewRunes int) map[stri
 		ref["missingFields"] = missing
 	}
 	if id != "" {
-		ref["expand"] = socialNotificationGetExpansion(id, readViewStandard, "structuredContent.data.notification")
+		ref["expand"] = socialNotificationGetExpansion(id, readViewStandard)
 	}
 	if len(ref) == 0 {
 		return nil
@@ -1662,7 +1662,7 @@ func compactNotificationStatusRef(raw map[string]any, previewRunes int) map[stri
 	putIfNotEmpty(ref, "contentPreview", preview)
 	ref["contentTruncated"] = truncated
 	if expandID := compactNotificationStatusPostGetID(raw); expandID != "" {
-		ref["expand"] = socialPostGetExpansion(expandID, readViewStandard, "structuredContent.data.status")
+		ref["expand"] = socialPostGetExpansion(expandID, readViewStandard)
 	}
 	if len(ref) == 1 {
 		return nil
@@ -1732,7 +1732,7 @@ func compactSocialNotificationCommunicationRef(raw map[string]any) map[string]an
 	return out
 }
 
-func socialNotificationGetExpansion(id string, view string, resultPath string) *SocialExpansionRef {
+func socialNotificationGetExpansion(id string, view string) *SocialExpansionRef {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
@@ -1747,7 +1747,7 @@ func socialNotificationGetExpansion(id string, view string, resultPath string) *
 			"id":   id,
 			"view": view,
 		},
-		ResultPath: strings.TrimSpace(resultPath),
+		ResultPath: socialExpansionResultPath,
 	}
 }
 
@@ -1763,7 +1763,7 @@ func compactNotificationListOmissions() []any {
 			"reason":                "debug_payload",
 			"expansionTool":         "notification_get",
 			"expansionArgsTemplate": map[string]any{"id": "structuredContent.data.notifications[].id", "view": readViewFull},
-			"resultPath":            "structuredContent.data.notification",
+			"resultPath":            socialExpansionResultPath,
 		},
 		map[string]any{
 			"path":      "notifications[].targetPost.content",

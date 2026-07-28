@@ -838,7 +838,7 @@ func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
 	}
 	expand, _ := statusRef["expand"].(map[string]any)
 	expandArgs, _ := expand["arguments"].(map[string]any)
-	if expand["tool"] != "post_get" || expandArgs["id"] != "post-1" || expandArgs["view"] != "standard" || expand["resultPath"] != "structuredContent.data.status" {
+	if expand["tool"] != "post_get" || expandArgs["id"] != "post-1" || expandArgs["view"] != "standard" || expand["resultPath"] != "content[0].text" {
 		t.Fatalf("unexpected statusRef expansion metadata: %+v", expand)
 	}
 	omitted, _ := statusRef["omitted"].([]any)
@@ -847,7 +847,7 @@ func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
 	}
 	omittedRecord, _ := omitted[0].(map[string]any)
 	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
-	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
+	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "content[0].text" {
 		t.Fatalf("unexpected omitted expansion metadata: %+v", omittedRecord)
 	}
 
@@ -947,7 +947,7 @@ func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 	}
 	omittedRecord, _ := omitted[0].(map[string]any)
 	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
-	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
+	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "content[0].text" {
 		t.Fatalf("unexpected omitted metadata: %+v", omittedRecord)
 	}
 	topOmitted, _ := data["omitted"].([]any)
@@ -1322,7 +1322,7 @@ func TestM5_ConversationsReadCompactRefsAdvertiseConversationGet(t *testing.T) {
 	}
 	convExpand, _ := first["expand"].(map[string]any)
 	convArgs, _ := convExpand["arguments"].(map[string]any)
-	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "structuredContent.data.conversation" {
+	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "content[0].text" {
 		t.Fatalf("expected conversation_get expansion metadata, got %+v", convExpand)
 	}
 	participantRefs, _ := first["participantRefs"].([]any)
