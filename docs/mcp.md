@@ -1343,11 +1343,21 @@ parameter during the migration. The shared names are:
 - `include_diagnostics` — optional timing/size diagnostics for Ops probes. It defaults to `false` for user-facing
   reads; diagnostics are never emitted by default for large read tools.
 
-Structured-first result shaping is additive. Existing tools that use `content[0].text` as JSON keep their current
-`standard` behavior until explicitly migrated. New compact/summary responses should keep `content[0].text` concise
-(JSON summaries and locators for text-only clients) while preserving authoritative full data in
-`structuredContent.data`. If diagnostics are requested, concise text should point to `structuredContent.diagnostics`
-rather than duplicating timing/size payloads.
+Structured-first result shaping is dual-surface and text-accessible. Existing tools that use `content[0].text` as JSON
+keep their current `standard` behavior until explicitly migrated. Compact/summary tools first build their bounded
+projection, then expose substantive content under `content[0].text` JSON `payload` and the unchanged typed projection
+under `structuredContent.data`. For structured-first social reads, `payload` is a concise newline-delimited rendering
+of stable ids and already-bounded previews; other structured-first tools return the bounded JSON projection there. The
+legacy text `data.location` locator remains, while the sibling `access` field says
+`payload or structuredContent.data`. Schema-capable clients retain the structured shape, and text-only clients no
+longer need to follow the locator. A tool's existing `preview_chars` projection is applied before the result surfaces
+are rendered, and `max_output_bytes` continues to measure the final MCP JSON-RPC envelope. Requested diagnostics appear
+under text JSON `diagnosticPayload` and `structuredContent.diagnostics`, with dual-surface guidance in
+`diagnosticsAccess`.
+
+Expansion metadata preserves the legacy machine-readable `resultPath` for structured clients. Where a text alternative
+is available, additive `textResultPath` and `resultAccess` fields identify the text location and phrase the choice as
+text content or `structuredContent`; clients should prefer `resultAccess` for human/agent guidance.
 
 Project 33 P4.1 compatibility decision: compact defaults remain opt-in for now. `timeline_read`, `post_search`,
 `soul_read`, and `email_read` keep their omitted/default behavior equivalent to `view=standard`; callers must request
@@ -1371,7 +1381,8 @@ index/ref pages and expand only the items they need:
   `notification_get` expansion as the reliable snapshot path.
 - `notifications_read({"actor":"ops","limit":10,"view":"compact"})` is a secondary discovery aid for "things from
   Ops". It filters the normalized notification actor/source after a bounded Lesser over-fetch and declares the strategy
-  under `structuredContent.data.filter`. Use `direct_messages_read(counterpart=...)` as the primary DM retrieval path.
+  at the start of `content[0].text` JSON `payload` or under `structuredContent.data.filter`. Use
+  `direct_messages_read(counterpart=...)` as the primary DM retrieval path.
 - `conversations_read({"limit":10,"view":"compact"})` returns conversation refs with bounded participant and last-post
   metadata. Use `conversation_get({"conversationId":"<conversation-id>","limit":20,"view":"compact"})` to expand one
   conversation into recent message previews. `lastPostRef` can still expand through `post_get` when Lesser supplies a
@@ -1428,7 +1439,7 @@ search:
 - Expand this conversation after a compact result:
 
   ```json
-  {"tool":"conversation_get","arguments":{"conversationId":"<structuredContent.data.id>","limit":20,"view":"compact"}}
+  {"tool":"conversation_get","arguments":{"conversationId":"<id listed in content[0].text JSON payload or structuredContent.data.conversations[].id>","limit":20,"view":"compact"}}
   ```
 
 - Resolve a pending first-contact request as the recipient:
@@ -1440,13 +1451,13 @@ search:
   Then accept the selected request to allow the conversation and subsequent DMs into the inbox:
 
   ```json
-  {"tool":"message_request_accept","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  {"tool":"message_request_accept","arguments":{"conversationId":"<content[0].text JSON payload.requests[].conversationId or structuredContent.data.requests[].conversationId>"}}
   ```
 
   Or explicitly decline it:
 
   ```json
-  {"tool":"message_request_decline","arguments":{"conversationId":"<structuredContent.data.requests[].conversationId>"}}
+  {"tool":"message_request_decline","arguments":{"conversationId":"<content[0].text JSON payload.requests[].conversationId or structuredContent.data.requests[].conversationId>"}}
   ```
 
 `direct_messages_read` uses Lesser's named counterpart lookup and returns either the focused one-to-one conversation or
@@ -1519,9 +1530,9 @@ When a compact status omits full content, its `omitted[]` record points at `post
 `timeline_read` and `post_search` now advertise opt-in `view=compact` plus `preview_chars` and `max_output_bytes`.
 Their omitted-`view` default and `view=standard` / `view=full` behavior preserves the current upstream-shaped response.
 Compact timeline/search responses return `StatusRef` lists, compact `AccountRef` search account matches, list-level
-omitted-field metadata, and concise structured-first text that points clients to `structuredContent.data` instead of
-duplicating every compact entry in `content[0].text`. The default compact budgets target `timeline_read(limit=5,
-view=compact)` under 6 KB and `post_search(limit=10, view=compact)` under 8 KB as MCP JSON-RPC responses. If a compact
+omitted-field metadata, ids plus bounded content previews in `content[0].text` JSON `payload`, and the unchanged typed
+projection in `structuredContent.data`. The default compact budgets target `timeline_read(limit=5, view=compact)` under
+6 KB and `post_search(limit=10, view=compact)` under 8 KB as final MCP JSON-RPC responses. If the dual-surface compact
 response exceeds its default or caller-supplied `max_output_bytes`, body returns a `response_too_large` tool error with
 measured byte details rather than silently dropping fields.
 
@@ -1561,25 +1572,29 @@ Notes:
   host-backed communication sender metadata (`communication.from.soulAgentId`, `agentId`, `email`/`address`, and
   `identifier` where Lesser/host include it). Because Lesser does not yet expose an upstream actor filter, body
   over-fetches a bounded notification page (`min(limit*4, 80)`) and returns
+  `filter=mcp_side_overfetch` at the start of `content[0].text` JSON `payload`; schema-capable clients also receive
   `structuredContent.data.filter.strategy="mcp_side_overfetch"` with `requestedLimit`, `overFetchLimit`,
   `upstreamCount`, `matchedCount`, `returnedCount`, and `windowOffset`. If an over-fetched page contains more actor
   matches than the requested return `limit`, `nextCursor` is an opaque body actor-filter cursor that re-reads the same
   over-fetch window and returns the remaining matches before advancing to Lesser's upstream cursor. This prevents
-  matched-but-not-returned notifications inside the over-fetch window from becoming unreachable. Actor-filtered compact
-  reads still use the normal compact budget and return `response_too_large` rather than silently dropping fields.
+  matched-but-not-returned notifications inside the over-fetch window from becoming unreachable. Actor-filtered
+  compact reads still use the normal compact budget and return `response_too_large` rather than silently dropping
+  fields.
 - `notifications_read` omits full upstream `raw` notification objects by default and accepts optional
   `include_raw=true`, which returns `_raw` on each notification for expensive audit/debug use. Default notifications
   contain compact `actor`, bounded `targetPost`, optional bounded `communication` summaries, normalized read state
   (`read` when Lesser exposes it, inferred from `unread` where needed), and cursor/since metadata.
   `include_diagnostics=true` adds best-effort timing/size fields for Ops probes; user-facing default reads omit
   diagnostics.
-- `notifications_read(view=compact)` is opt-in and returns compact notification refs under
-  `structuredContent.data.notifications[]` with stable id/type/timestamps/read state, `actorRef`, bounded
+- `notifications_read(view=compact)` is opt-in and returns notification ids plus bounded target previews in
+  `content[0].text` JSON `payload`, and typed compact refs under `structuredContent.data.notifications[]`, with stable
+  id/type/timestamps/read state, `actorRef`, bounded
   `targetPostRef`, optional communication previews, and deterministic expansion metadata. Per-notification
   `expand` points at `notification_get(id, view=standard)`. `targetPostRef.expand` points at `post_get` only when the
   target exposes a direct Lesser status lookup key; remote/generated snapshot-only target ids keep id/url/preview
   metadata but omit `post_get` so clients do not follow an expansion that can only 404. `notifications_read(limit=10,
-  view=compact)` targets an 8 KB MCP JSON-RPC payload budget.
+  view=compact)` uses an 8-rune default target preview so all ten refs remain text-visible within the existing 8 KB
+  final-envelope budget.
   If the compact response exceeds its default or caller-supplied `max_output_bytes`, body returns `response_too_large`
   with measured byte details rather than silently dropping fields. `notification_get(id, view=standard)` returns a
   normalized notification from Lesser's `GET /api/v1/notifications/{id}` route; `notification_get(id, view=full)`
@@ -1588,7 +1603,8 @@ Notes:
   upstream `_raw` payloads.
 - `conversations_read` defaults to `limit=20` (maximum `80`) and preserves the existing normalized conversation-list
   response unless a view is requested. `conversations_read(view=compact)` is opt-in and returns compact conversation
-  summaries under `structuredContent.data.conversations[]`: stable conversation id, read/unread/update metadata,
+  ids plus bounded last-post previews in `content[0].text` JSON `payload`, and typed summaries under
+  `structuredContent.data.conversations[]`: stable conversation id, read/unread/update metadata,
   `participantRefs`, bounded `lastPostRef` previews, and per-conversation `expand` metadata pointing at
   `conversation_get({"conversationId":"<id>","view":"compact"})`. `lastPostRef.expand`
   uses `post_get(id, view=standard)` when Lesser supplies a stable post/status id; otherwise the ref reports missing
@@ -1600,7 +1616,8 @@ Notes:
 - `conversation_get` defaults to `view=compact`, `limit=20` (maximum `80`), a 160-character message preview budget,
   and a 12 KB compact MCP JSON-RPC payload budget. It calls Lesser's
   `GET /api/v1/conversations/{conversationId}` route with the MCP caller bearer and returns one conversation under
-  `structuredContent.data.conversation`. Compact output contains stable conversation metadata, `participantRefs`,
+  `structuredContent.data.conversation`; `content[0].text` JSON `summary` and `payload` expose the conversation id plus
+  bounded message previews to text-only clients. Compact output contains stable conversation metadata, `participantRefs`,
   bounded `messageRefs` with author refs/timestamps/visibility/content previews, omission metadata, and `post_get`
   expansion metadata when a message id is available. `view=standard` explicitly includes normalized message content;
   `view=full` also includes the upstream Lesser conversation payload under `_raw` for audit/debug. A 404 from Lesser is
@@ -1610,14 +1627,16 @@ Notes:
   `GET /api/v1/conversations/lookup?counterpart=<name>` route with the MCP caller bearer and does **not** fall back to
   notifications, timelines, email, or broad conversation scans. `counterpart` may be a local id, acct, or actor URL
   where Lesser supports that resolution. Compact output returns the matched conversation ref plus top-level compact
-  `messages[]` preview refs under `structuredContent.data`; `view=standard` explicitly includes normalized message
+  message ids plus bounded previews in `content[0].text` JSON `payload`, and typed `messages[]` refs under
+  `structuredContent.data`; `view=standard` explicitly includes normalized message
   content and `view=full` adds the upstream Lesser payload under `_raw` for audit/debug. `unreadOnly=true` returns
   message previews only when the matched conversation is unread; read conversations return zero message previews rather
   than leaking already-read bodies. A Lesser 404 is returned as a `not_found` tool error with suggested fallbacks,
   while Lesser 401/403 responses preserve OAuth reauthorization guidance.
 - `soul_read` advertises `view=summary|standard|full`. Omitted/default and `view=standard` preserve the existing public
   soul bundle shape. `view=summary` is opt-in and returns bounded agent-facing essentials under
-  `structuredContent.data.souls[]`: stable identity/lifecycle fields, public capability names (not full capability
+  `content[0].text` JSON `payload.souls[]` or `structuredContent.data.souls[]`: stable identity/lifecycle fields,
+  public capability names (not full capability
   bodies), public channel availability markers, provenance/source markers, omission metadata, and deterministic
   `soul_read(..., view=standard|full)` expansion refs. `soul_read(self=true, view=summary)` targets an 8 KB MCP
   JSON-RPC payload budget; if a summary still exceeds that budget, body returns `response_too_large` with measured byte

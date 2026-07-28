@@ -547,9 +547,11 @@ func shapeArticleDraftPreview(preview *cmsapi.DraftPreview, params articleDraftV
 func compactArticleDraftPreview(preview *cmsapi.DraftPreview, params articleDraftViewParams) map[string]any {
 	out := baseArticleDraftPreview(preview)
 	out["expand"] = map[string]any{
-		"tool":       "article_draft_preview",
-		"arguments":  map[string]any{"id": strings.TrimSpace(preview.DraftID), "view": readViewStandard},
-		"resultPath": "structuredContent.data.preview",
+		"tool":           "article_draft_preview",
+		"arguments":      map[string]any{"id": strings.TrimSpace(preview.DraftID), "view": readViewStandard},
+		"resultPath":     "structuredContent.data.preview",
+		"textResultPath": "payload.preview",
+		"resultAccess":   toolResultAccessPath("payload.preview", "data.preview"),
 	}
 	if preview.Success && preview.RenderedHTML != nil && strings.TrimSpace(*preview.RenderedHTML) != "" {
 		renderedPreview, truncated := compactStringWithTruncation(*preview.RenderedHTML, params.PreviewRunes)
@@ -591,9 +593,11 @@ func compactArticleDraftCursorRef(draftID string) map[string]any {
 		"status":       cmsapi.DraftStatusDraft,
 		"depthSafeRef": true,
 		"expand": map[string]any{
-			"tool":       "article_draft_get",
-			"arguments":  map[string]any{"id": draftID, "view": readViewStandard},
-			"resultPath": "structuredContent.data.draft",
+			"tool":           "article_draft_get",
+			"arguments":      map[string]any{"id": draftID, "view": readViewStandard},
+			"resultPath":     "structuredContent.data.draft",
+			"textResultPath": "payload.draft",
+			"resultAccess":   toolResultAccessPath("payload.draft", "data.draft"),
 		},
 	}
 }
@@ -604,9 +608,11 @@ func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, 
 		"status":        strings.TrimSpace(draft.Status),
 		"contentFormat": strings.TrimSpace(draft.ContentFormat),
 		"expand": map[string]any{
-			"tool":       "article_draft_get",
-			"arguments":  map[string]any{"id": strings.TrimSpace(draft.ID), "view": readViewStandard},
-			"resultPath": "structuredContent.data.draft",
+			"tool":           "article_draft_get",
+			"arguments":      map[string]any{"id": strings.TrimSpace(draft.ID), "view": readViewStandard},
+			"resultPath":     "structuredContent.data.draft",
+			"textResultPath": "payload.draft",
+			"resultAccess":   toolResultAccessPath("payload.draft", "data.draft"),
 		},
 	}
 	putIfNotEmpty(out, "title", stringPtrValue(draft.Title))

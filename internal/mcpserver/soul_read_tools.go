@@ -331,9 +331,11 @@ func soulReadExpansionRef(agentID string, view string, in soulReadInput, accessM
 		args["include_raw"] = true
 	}
 	return &SocialExpansionRef{
-		Tool:       "soul_read",
-		Arguments:  args,
-		ResultPath: "structuredContent.data",
+		Tool:           "soul_read",
+		Arguments:      args,
+		ResultPath:     "structuredContent.data",
+		TextResultPath: "document",
+		ResultAccess:   toolResultAccessPath("document", "data"),
 	}
 }
 

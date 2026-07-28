@@ -379,9 +379,11 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 		"canonicalUrl":  canonicalArticleURL(article),
 		"contentFormat": strings.TrimSpace(article.ContentFormat),
 		"expand": map[string]any{
-			"tool":       "article_get",
-			"arguments":  map[string]any{"id": strings.TrimSpace(article.ID), "view": readViewStandard},
-			"resultPath": "structuredContent.data.article",
+			"tool":           "article_get",
+			"arguments":      map[string]any{"id": strings.TrimSpace(article.ID), "view": readViewStandard},
+			"resultPath":     "structuredContent.data.article",
+			"textResultPath": "payload.article",
+			"resultAccess":   toolResultAccessPath("payload.article", "data.article"),
 		},
 	}
 	putIfNotEmpty(out, "title", article.Title)

@@ -12,6 +12,7 @@ type structuredFirstResultOptions struct {
 	Summary            string
 	Data               any
 	Text               map[string]any
+	TextPayload        any
 	Structured         map[string]any
 	Diagnostics        map[string]any
 	IncludeDiagnostics bool
@@ -49,18 +50,29 @@ func toolStructuredFirstResult(opts structuredFirstResultOptions) (*mcpruntime.T
 	if summary := strings.TrimSpace(opts.Summary); summary != "" {
 		textPayload["summary"] = summary
 	} else {
-		textPayload["summary"] = "Result available in structuredContent.data"
+		textPayload["summary"] = "Result data follows"
 	}
 	for key, value := range opts.Text {
 		key = strings.TrimSpace(key)
-		if key == "" || key == "data" || key == "diagnostics" {
+		if key == "" || key == "access" || key == "data" || key == "payload" ||
+			key == "diagnostics" || key == "diagnosticPayload" || key == "diagnosticsAccess" {
 			continue
 		}
 		textPayload[key] = value
 	}
 	textPayload["data"] = map[string]any{"location": "structuredContent.data"}
+	textData := opts.TextPayload
+	if textData == nil {
+		textData = data
+	}
+	textPayload["payload"] = textData
+	textPayload["access"] = "payload or structuredContent.data"
 	if opts.IncludeDiagnostics && opts.Diagnostics != nil {
-		textPayload["diagnostics"] = map[string]any{"location": "structuredContent.diagnostics"}
+		textPayload["diagnostics"] = map[string]any{
+			"location": "structuredContent.diagnostics",
+		}
+		textPayload["diagnosticPayload"] = opts.Diagnostics
+		textPayload["diagnosticsAccess"] = "diagnosticPayload or structuredContent.diagnostics"
 	}
 
 	b, err := json.Marshal(textPayload)
@@ -74,6 +86,18 @@ func toolStructuredFirstResult(opts structuredFirstResultOptions) (*mcpruntime.T
 		}},
 		StructuredContent: structured,
 	}, nil
+}
+
+func toolResultAccessPath(textPath string, structuredPath string) string {
+	textPath = strings.TrimSpace(textPath)
+	if textPath == "" {
+		textPath = "document"
+	}
+	structuredPath = strings.Trim(strings.TrimSpace(structuredPath), ".")
+	if structuredPath == "" {
+		return fmt.Sprintf("content[0].text JSON %s or structuredContent", textPath)
+	}
+	return fmt.Sprintf("content[0].text JSON %s or structuredContent.%s", textPath, structuredPath)
 }
 
 func measureToolResultPayload(result *mcpruntime.ToolResult) (toolPayloadMeasurement, error) {
