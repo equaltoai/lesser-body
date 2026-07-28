@@ -438,6 +438,11 @@ func mailboxCompactListResult(standard map[string]any) map[string]any {
 		messages = append(messages, compactMailboxMessage(message))
 	}
 
+	notes := mailboxListNotes()
+	notes["messageRef"] = "messageRef is the canonical opaque host reference for email_get, email_get_content, state, and reply calls"
+	notes["preview"] = "compact preview is not duplicated into body; call email_get_content for full content when content.available is true"
+	notes["standardView"] = "call email_read with view=standard for compatibility aliases and repeated legacy notes"
+
 	out := map[string]any{
 		"source":     standard["source"],
 		"view":       readViewCompact,
@@ -445,14 +450,10 @@ func mailboxCompactListResult(standard map[string]any) map[string]any {
 		"count":      standard["count"],
 		"hasMore":    standard["hasMore"],
 		"nextCursor": standard["nextCursor"],
+		"nextSince":  standard["nextSince"],
 		"filters":    mailboxCompactFilters(standard),
-		"notes": map[string]any{
-			"authority":    "lesser-host Soul Comm Mailbox",
-			"messageRef":   "messageRef is the canonical opaque host reference for email_get, email_get_content, state, and reply calls",
-			"preview":      "compact preview is not duplicated into body; call email_get_content for full content when content.available is true",
-			"standardView": "call email_read with view=standard for compatibility aliases and repeated legacy notes",
-		},
-		"omitted": compactMailboxListOmissions(),
+		"notes":      notes,
+		"omitted":    compactMailboxListOmissions(),
 	}
 	if v := strings.TrimSpace(stringFromMap(standard, "folder")); v != "" {
 		out["folder"] = v
