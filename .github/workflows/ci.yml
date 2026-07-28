@@ -2,12 +2,6 @@ name: ci
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
-      # Git branch staging is the source-control integration branch,
-      # not the CDK/release deploy-stage staging.
-      - staging
 
 permissions:
   contents: read
