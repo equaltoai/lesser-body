@@ -81,7 +81,7 @@ func TestCompactSocialStatusRefNamesOmissionsAndExpansionPath(t *testing.T) {
 	if omitted.Path != "content" || omitted.Reason != "content_preview" {
 		t.Fatalf("unexpected omitted metadata: %+v", omitted)
 	}
-	if omitted.Expand.Tool != "post_get" || omitted.Expand.Arguments["id"] != "post-1" || omitted.Expand.ResultPath != "structuredContent.data.status.content" {
+	if omitted.Expand.Tool != "post_get" || omitted.Expand.Arguments["id"] != "post-1" || omitted.Expand.ResultPath != socialExpansionResultPath {
 		t.Fatalf("unexpected omitted expansion path: %+v", omitted.Expand)
 	}
 
@@ -118,5 +118,41 @@ func TestSocialStatusStandardPayloadIncludesFullContentForExpansion(t *testing.T
 	author, _ := status["authorRef"].(*AccountRef)
 	if author == nil || author.ID != "acct-2" || author.Acct != "bob@example.com" {
 		t.Fatalf("expected standard expansion author ref, got %+v", status["authorRef"])
+	}
+}
+
+func TestSocialPerItemExpansionsPointAtTextResultSurface(t *testing.T) {
+	tests := []struct {
+		name      string
+		expansion *SocialExpansionRef
+	}{
+		{
+			name:      "post",
+			expansion: socialPostGetExpansion("post-1", readViewStandard),
+		},
+		{
+			name:      "post content",
+			expansion: socialPostGetExpansion("post-1", readViewStandard),
+		},
+		{
+			name:      "conversation",
+			expansion: socialConversationGetExpansion("conversation-1", readViewCompact),
+		},
+		{
+			name:      "notification",
+			expansion: socialNotificationGetExpansion("notification-1", readViewStandard),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.expansion == nil {
+				t.Fatal("expected expansion metadata")
+			}
+			if tt.expansion.ResultPath != socialExpansionResultPath ||
+				strings.Contains(tt.expansion.ResultPath, "structuredContent") {
+				t.Fatalf("per-item expansion is structuredContent-only: %+v", tt.expansion)
+			}
+		})
 	}
 }

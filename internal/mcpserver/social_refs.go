@@ -3,6 +3,7 @@ package mcpserver
 import "strings"
 
 const socialStatusContentPreviewRunes = 500
+const socialExpansionResultPath = "content[0].text"
 
 type AccountRef struct {
 	ID            string   `json:"id,omitempty"`
@@ -97,12 +98,12 @@ func compactSocialStatusRefWithPreview(raw map[string]any, previewRunes int) *St
 		"visibility": ref.Visibility,
 	})
 	if id != "" {
-		ref.Expand = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+		ref.Expand = socialPostGetExpansion(id, readViewStandard)
 		if content != "" {
 			ref.Omitted = []SocialOmittedRef{{
 				Path:   "content",
 				Reason: "content_preview",
-				Expand: *socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status.content"),
+				Expand: *socialPostGetExpansion(id, readViewStandard),
 			}}
 		}
 	}
@@ -141,7 +142,7 @@ func socialStatusStandardPayload(raw map[string]any) map[string]any {
 	return status
 }
 
-func socialPostGetExpansion(id string, view string, resultPath string) *SocialExpansionRef {
+func socialPostGetExpansion(id string, view string) *SocialExpansionRef {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
@@ -156,11 +157,11 @@ func socialPostGetExpansion(id string, view string, resultPath string) *SocialEx
 			"id":   id,
 			"view": view,
 		},
-		ResultPath: strings.TrimSpace(resultPath),
+		ResultPath: socialExpansionResultPath,
 	}
 }
 
-func socialConversationGetExpansion(conversationID string, view string, resultPath string) *SocialExpansionRef {
+func socialConversationGetExpansion(conversationID string, view string) *SocialExpansionRef {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return nil
@@ -175,7 +176,7 @@ func socialConversationGetExpansion(conversationID string, view string, resultPa
 			"conversationId": conversationID,
 			"view":           view,
 		},
-		ResultPath: strings.TrimSpace(resultPath),
+		ResultPath: socialExpansionResultPath,
 	}
 }
 

@@ -41,7 +41,12 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	}
 	assertSchemaPropertyType(t, matchItemSchema, "email", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["identity_verify"], "data"), "verified", "boolean")
-	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["post_get"], "data"), "statusRef", "object")
+	postGetDataSchema := nestedOutputSchemaObject(t, toolsByName["post_get"], "data")
+	assertSchemaPropertyType(t, postGetDataSchema, "status", "object")
+	postGetProperties, _ := postGetDataSchema["properties"].(map[string]any)
+	if _, ok := postGetProperties["statusRef"]; ok {
+		t.Fatalf("post_get output schema must not advertise duplicate statusRef: %+v", postGetProperties)
+	}
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["notification_get"], "data"), "notificationRef", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["conversation_get"], "data"), "conversation", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["direct_messages_read"], "data"), "messages", "array")
