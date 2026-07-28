@@ -543,10 +543,9 @@ func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		statusID = in.ID
 	}
 	payload := map[string]any{
-		"id":        statusID,
-		"view":      view,
-		"source":    "lesser-api",
-		"statusRef": compactSocialStatusRef(status),
+		"id":     statusID,
+		"view":   view,
+		"source": "lesser-api",
 	}
 	if view == readViewFull {
 		payload["status"] = status
@@ -1060,7 +1059,7 @@ func compactSocialConversationRef(raw map[string]any, previewRunes int) map[stri
 	ref := map[string]any{}
 	putIfNotEmpty(ref, "id", id)
 	if id != "" {
-		ref["expand"] = socialConversationGetExpansion(id, readViewCompact, "structuredContent.data.conversation")
+		ref["expand"] = socialConversationGetExpansion(id, readViewCompact)
 	}
 	if unread, ok := firstBoolMap(raw, "unread", "is_unread", "isUnread"); ok {
 		ref["unread"] = unread
@@ -1202,7 +1201,7 @@ func compactConversationLastPostRef(raw map[string]any, previewRunes int) map[st
 	putIfNotEmpty(ref, "contentPreview", preview)
 	ref["contentTruncated"] = truncated
 	if id != "" {
-		ref["expand"] = socialPostGetExpansion(id, readViewStandard, "structuredContent.data.status")
+		ref["expand"] = socialPostGetExpansion(id, readViewStandard)
 	} else if content != "" {
 		ref["missingFields"] = []string{"id"}
 		ref["omitted"] = []map[string]any{{
@@ -1636,7 +1635,7 @@ func compactSocialNotificationRef(raw map[string]any, previewRunes int) map[stri
 		ref["missingFields"] = missing
 	}
 	if id != "" {
-		ref["expand"] = socialNotificationGetExpansion(id, readViewStandard, "structuredContent.data.notification")
+		ref["expand"] = socialNotificationGetExpansion(id, readViewStandard)
 	}
 	if len(ref) == 0 {
 		return nil
@@ -1662,7 +1661,7 @@ func compactNotificationStatusRef(raw map[string]any, previewRunes int) map[stri
 	putIfNotEmpty(ref, "contentPreview", preview)
 	ref["contentTruncated"] = truncated
 	if expandID := compactNotificationStatusPostGetID(raw); expandID != "" {
-		ref["expand"] = socialPostGetExpansion(expandID, readViewStandard, "structuredContent.data.status")
+		ref["expand"] = socialPostGetExpansion(expandID, readViewStandard)
 	}
 	if len(ref) == 1 {
 		return nil
@@ -1732,7 +1731,7 @@ func compactSocialNotificationCommunicationRef(raw map[string]any) map[string]an
 	return out
 }
 
-func socialNotificationGetExpansion(id string, view string, resultPath string) *SocialExpansionRef {
+func socialNotificationGetExpansion(id string, view string) *SocialExpansionRef {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
@@ -1747,7 +1746,7 @@ func socialNotificationGetExpansion(id string, view string, resultPath string) *
 			"id":   id,
 			"view": view,
 		},
-		ResultPath: strings.TrimSpace(resultPath),
+		ResultPath: socialExpansionResultPath,
 	}
 }
 
@@ -1763,7 +1762,7 @@ func compactNotificationListOmissions() []any {
 			"reason":                "debug_payload",
 			"expansionTool":         "notification_get",
 			"expansionArgsTemplate": map[string]any{"id": "structuredContent.data.notifications[].id", "view": readViewFull},
-			"resultPath":            "structuredContent.data.notification",
+			"resultPath":            socialExpansionResultPath,
 		},
 		map[string]any{
 			"path":      "notifications[].targetPost.content",
@@ -1810,54 +1809,55 @@ func socialStructuredFirstResult(toolName string, summary string, payload map[st
 	})
 }
 
-func socialTextAccessibleProjection(toolName string, payload map[string]any) string {
+func socialTextAccessibleProjection(toolName string, payload map[string]any) map[string]any {
 	switch toolName {
 	case "timeline_read", "post_search":
-		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "statuses"), "contentPreview", 32, true); projection != "" {
-			return projection
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "statuses"), "contentPreview", 32, true); len(projection) > 0 {
+			return map[string]any{"items": projection}
 		}
 	case "conversations_read":
-		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "conversations"), "lastPostRef.contentPreview", 20, true); projection != "" {
-			return projection
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "conversations"), "lastPostRef.contentPreview", 20, true); len(projection) > 0 {
+			return map[string]any{"items": projection}
 		}
 	case "notifications_read":
-		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "notifications"), "targetPostRef.contentPreview", notificationCompactListPreviewRunes, true); projection != "" {
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "notifications"), "targetPostRef.contentPreview", notificationCompactListPreviewRunes, true); len(projection) > 0 {
+			textPayload := map[string]any{"items": projection}
 			if filter, _ := payload["filter"].(map[string]any); filter != nil {
 				if strategy := firstNonEmptyStringMap(filter, "strategy"); strategy != "" {
-					return "filter=" + strategy + "\n" + projection
+					textPayload["filter"] = strategy
 				}
 			}
-			return projection
+			return textPayload
 		}
 	case "conversation_get":
 		if conversation, _ := payload["conversation"].(map[string]any); conversation != nil {
-			if projection := socialTextProjectionFromItems(firstArrayFromAny(conversation, "messageRefs"), "contentPreview", 48, true); projection != "" {
-				return projection
+			if projection := socialTextProjectionFromItems(firstArrayFromAny(conversation, "messageRefs"), "contentPreview", 48, true); len(projection) > 0 {
+				return map[string]any{"items": projection}
 			}
 			messages := firstArrayFromAny(conversation, "messages")
-			if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); projection != "" {
-				return projection
+			if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); len(projection) > 0 {
+				return map[string]any{"items": projection}
 			}
-			if projection := socialTextProjectionFromItems(messages, "content", 96, true); projection != "" {
-				return projection
+			if projection := socialTextProjectionFromItems(messages, "content", 96, true); len(projection) > 0 {
+				return map[string]any{"items": projection}
 			}
 		}
 	case "direct_messages_read":
 		messages := firstArrayFromAny(payload, "messages")
-		if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); projection != "" {
-			return projection
+		if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); len(projection) > 0 {
+			return map[string]any{"items": projection}
 		}
-		if projection := socialTextProjectionFromItems(messages, "content", 96, true); projection != "" {
-			return projection
+		if projection := socialTextProjectionFromItems(messages, "content", 96, true); len(projection) > 0 {
+			return map[string]any{"items": projection}
 		}
 	}
 	return socialTextProjectionFallback(payload, 1024)
 }
 
-func socialTextProjectionFromItems(items []any, previewPath string, previewRunes int, includeID bool) string {
+func socialTextProjectionFromItems(items []any, previewPath string, previewRunes int, includeID bool) []string {
 	lines := make([]string, 0, len(items))
 	for _, item := range items {
-		record, _ := item.(map[string]any)
+		record := socialTextProjectionRecord(item)
 		if record == nil {
 			continue
 		}
@@ -1869,13 +1869,28 @@ func socialTextProjectionFromItems(items []any, previewPath string, previewRunes
 		id := firstNonEmptyStringMap(record, "id", "conversationId", "messageId")
 		line := preview
 		if includeID && id != "" {
-			line = id + ": " + preview
+			line = id + ":" + preview
 		}
 		if strings.TrimSpace(line) != "" {
 			lines = append(lines, line)
 		}
 	}
-	return strings.Join(lines, "\n")
+	return lines
+}
+
+func socialTextProjectionRecord(item any) map[string]any {
+	if record, ok := item.(map[string]any); ok {
+		return record
+	}
+	b, err := json.Marshal(item)
+	if err != nil {
+		return nil
+	}
+	var record map[string]any
+	if err := json.Unmarshal(b, &record); err != nil {
+		return nil
+	}
+	return record
 }
 
 func nestedStringMap(record map[string]any, path string) string {
@@ -1892,17 +1907,14 @@ func nestedStringMap(record map[string]any, path string) string {
 	return strings.TrimSpace(value)
 }
 
-func socialTextProjectionFallback(payload map[string]any, maxRunes int) string {
+func socialTextProjectionFallback(payload map[string]any, maxRunes int) map[string]any {
 	values := make([]string, 0)
 	collectSocialTextProjectionValues(payload, "", &values)
 	if len(values) == 0 {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return ""
-		}
-		return compactString(string(b), maxRunes)
+		return map[string]any{"items": []string{}}
 	}
-	return compactString(strings.Join(values, "\n"), maxRunes)
+	rendered := compactString(strings.Join(values, "\n"), maxRunes)
+	return map[string]any{"items": strings.Split(rendered, "\n")}
 }
 
 func collectSocialTextProjectionValues(value any, path string, values *[]string) {

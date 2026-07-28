@@ -29,8 +29,9 @@ const StrictestToolScope = ScopeAdmin
 // registered tool. Adding a tool without adding it here is a test failure, not a
 // silent read-scope grant.
 var toolScopes = map[string][]string{
-	// Diagnostics.
-	"echo": {ScopeRead},
+	// Bootstrap and diagnostics.
+	"describe_interface": {ScopeRead},
+	"echo":               {ScopeRead},
 
 	// Social reads.
 	"profile_read":          {ScopeRead},

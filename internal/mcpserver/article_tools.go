@@ -661,7 +661,7 @@ func stringPtrValue(value *string) string {
 
 func articleDraftOmissions(view string, list bool) []any {
 	if view == readViewStandard {
-		return nil
+		return []any{}
 	}
 	path := "draft.content"
 	if list {
@@ -693,7 +693,7 @@ func articleDraftListOmissions() []any {
 
 func articleDraftPreviewOmissions(preview *cmsapi.DraftPreview, view string) []any {
 	if view == readViewStandard || preview == nil || !preview.Success || preview.RenderedHTML == nil {
-		return nil
+		return []any{}
 	}
 	return []any{
 		map[string]any{

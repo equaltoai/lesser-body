@@ -734,7 +734,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 	}
 }
 
-func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
+func TestM5_PostGetReturnsStatusOnceViaLesserRoute(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
@@ -829,26 +829,8 @@ func TestM5_PostGetExpandsStatusRefViaLesserRoute(t *testing.T) {
 	if authorRef["id"] != "acct-1" || authorRef["acct"] != "alice@example.com" || authorRef["displayName"] != "Alice" || authorRef["url"] != "https://example.com/@alice" {
 		t.Fatalf("standard post_get author ref = %+v", authorRef)
 	}
-	statusRef, _ := standard["statusRef"].(map[string]any)
-	if statusRef["id"] != "post-1" || statusRef["contentTruncated"] != true {
-		t.Fatalf("expected compact statusRef with truncation marker, got %+v", statusRef)
-	}
-	if preview, _ := statusRef["contentPreview"].(string); preview == "" || len([]rune(preview)) > 500 {
-		t.Fatalf("expected bounded contentPreview, got %d runes", len([]rune(preview)))
-	}
-	expand, _ := statusRef["expand"].(map[string]any)
-	expandArgs, _ := expand["arguments"].(map[string]any)
-	if expand["tool"] != "post_get" || expandArgs["id"] != "post-1" || expandArgs["view"] != "standard" || expand["resultPath"] != "structuredContent.data.status" {
-		t.Fatalf("unexpected statusRef expansion metadata: %+v", expand)
-	}
-	omitted, _ := statusRef["omitted"].([]any)
-	if len(omitted) != 1 {
-		t.Fatalf("expected compact statusRef omitted metadata, got %+v", statusRef["omitted"])
-	}
-	omittedRecord, _ := omitted[0].(map[string]any)
-	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
-	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
-		t.Fatalf("unexpected omitted expansion metadata: %+v", omittedRecord)
+	if _, ok := standard["statusRef"]; ok {
+		t.Fatalf("post_get must return the status once without a circular statusRef: %+v", standard)
 	}
 
 	full := call(3, map[string]any{"id": "post-1", "view": "full"})
@@ -947,7 +929,7 @@ func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 	}
 	omittedRecord, _ := omitted[0].(map[string]any)
 	omittedExpand, _ := omittedRecord["expand"].(map[string]any)
-	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "structuredContent.data.status.content" {
+	if omittedRecord["path"] != "content" || omittedExpand["tool"] != "post_get" || omittedExpand["resultPath"] != "content[0].text" {
 		t.Fatalf("unexpected omitted metadata: %+v", omittedRecord)
 	}
 	topOmitted, _ := data["omitted"].([]any)
@@ -1322,7 +1304,7 @@ func TestM5_ConversationsReadCompactRefsAdvertiseConversationGet(t *testing.T) {
 	}
 	convExpand, _ := first["expand"].(map[string]any)
 	convArgs, _ := convExpand["arguments"].(map[string]any)
-	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "structuredContent.data.conversation" {
+	if convExpand["tool"] != "conversation_get" || convArgs["conversationId"] != "conv-1" || convArgs["view"] != "compact" || convExpand["resultPath"] != "content[0].text" {
 		t.Fatalf("expected conversation_get expansion metadata, got %+v", convExpand)
 	}
 	participantRefs, _ := first["participantRefs"].([]any)
