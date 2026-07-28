@@ -141,6 +141,61 @@ func TestAgentGenesisBeginResultMatchesDeclaredOutputSchemaForHostRegistrationSt
 	}
 }
 
+// Audit guard for the same mismatch class across the conversation-backed
+// genesis tools. Their Host vocabularies are validated by
+// sanitizeGenesisConversation before reaching the envelope, so these assert the
+// declared enums stay aligned with what the handlers emit.
+func TestGenesisConversationToolResultsMatchDeclaredOutputSchema(t *testing.T) {
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+	fake := &fakeGenesisClient{
+		beginResponse: map[string]any{
+			"registration": map[string]any{"id": "reg-123", "agent_id": "agent-123", "status": "pending"},
+		},
+		advanceResponse: genesisConversationResponse("assistant_turn_ready", "transcript"),
+		readResponses: []map[string]any{
+			genesisConversationResponse("assistant_turn_ready", "transcript"),
+			seedableGenesisConversationResponse(t, "declaration_ready", "reg-123", "conv-456", "agent-123"),
+		},
+		recoverResponse: genesisConversationResponse("assistant_turn_ready", "transcript"),
+		preflightResponse: map[string]any{
+			"conversation": map[string]any{
+				"registration_id":       "reg-123",
+				"conversation_id":       "conv-456",
+				"status":                "declaration_ready",
+				"declaration_candidate": genesisFinalizedCandidateProjection("preflight owner review"),
+			},
+			"authority_model": "instance_trust",
+		},
+		finalizeResponse: map[string]any{
+			"agent_id": "agent-123",
+			"publication": map[string]any{
+				"agent_id":          "agent-123",
+				"published_version": 1,
+				"stage":             "hosted_offchain",
+			},
+		},
+	}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithGenesisClient(fake), WithAgentRegistryStore(newMemoryAgentRegistry()), WithAgentContentStore(newVersionedFakeAgentContentStore())); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	ctx := operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only")
+
+	for _, tc := range []struct {
+		tool string
+		args string
+	}{
+		{toolAgentGenesisAdvance, `{"registration_id":"reg-123","message":"Start the genesis conversation."}`},
+		{toolAgentGenesisRead, `{"registration_id":"reg-123","conversation_id":"conv-456"}`},
+		{toolAgentGenesisRecover, `{"registration_id":"reg-123","conversation_id":"conv-456"}`},
+		{toolAgentGenesisFinalizePreflight, `{"registration_id":"reg-123","conversation_id":"conv-456"}`},
+		{toolAgentGenesisFinalize, `{"registration_id":"reg-123","conversation_id":"conv-456"}`},
+	} {
+		result := callGenesisTool(t, registry, ctx, tc.tool, tc.args)
+		assertMatchesDeclaredOutputSchema(t, tc.tool, genesisOutputSchema(), result.StructuredContent)
+	}
+}
+
 // Pin the declared status enum to lesser-host's SoulAgentRegistration
 // vocabulary so a Host contract change is caught here rather than by a client.
 func TestGenesisStatusEnumCoversHostRegistrationVocabulary(t *testing.T) {
