@@ -72,7 +72,7 @@ func genesisOutputSchema() json.RawMessage {
 				"description":"Sanitized Host-backed genesis state. Conversation messages, when present, are structured data only.",
 				"properties":{
 					"operation":{"type":"string","enum":["begin","list","read","advance","recover","finalize_preflight","finalize"]},
-					"status":{"type":"string","enum":["begin","not_available","created","assistant_turn_ready","in_progress","declaration_ready","published","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
+					"status":{"type":"string","description":"Canonical lane status. agent_genesis_begin reports lesser-host's SoulAgentRegistration vocabulary (pending, completed); the conversation tools report Host's HostedGenesisSession vocabulary. Values Body cannot classify are reported as unknown.","enum":["begin","pending","completed","not_available","created","assistant_turn_ready","in_progress","declaration_ready","published","failed","restart_soul_bootstrap","read","advance","recover","finalize_preflight","finalize","unknown"]},
 					"failure":{"type":"object","properties":{
 							"code":{"type":"string","enum":["llm_unavailable","assistant_turn_failed","invalid_completion_state","missing_produced_declarations","invalid_produced_declarations","tenant_boundary_violation","operator_action_required","microvm_unavailable","producer_contract_missing","soul_bootstrap_restart_required","host_genesis_unavailable","invalid_request","unauthorized","forbidden","not_found","conflict","not_configured","insufficient_scope","owner_operator_required","host_genesis_projection_invalid","host_genesis_declaration_invalid","agent_registry_error","agent_soul_seed_error","agent_instructions_seed_error"]},
 						"recovery":{"type":"object","properties":{
@@ -1685,6 +1685,18 @@ var (
 	genesisDeclarationSections     = []string{"identity", "philosophy", "discipline", "boundaries", "soul"}
 	genesisSHA256IdentifierPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
+
+// validGenesisRegistrationStatus mirrors lesser-host's SoulAgentRegistration
+// status vocabulary (host-contract openapi.yaml: enum [pending, completed]),
+// which agent_genesis_begin reports and the genesis output schema declares.
+func validGenesisRegistrationStatus(status string) bool {
+	switch status {
+	case "pending", "completed":
+		return true
+	default:
+		return false
+	}
+}
 
 func validGenesisConversationStatus(status string) bool {
 	switch status {

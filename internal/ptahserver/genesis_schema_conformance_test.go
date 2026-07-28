@@ -1,0 +1,179 @@
+package ptahserver
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"testing"
+
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+)
+
+// Strict MCP clients validate tools/call structuredContent against the tool's
+// declared OutputSchema and surface a mismatch as a tool error, even when the
+// server already applied the side effect. These tests hold Body's genesis
+// output schemas to what the handlers actually emit so a successful,
+// side-effecting call can never fail its own contract at the envelope.
+
+// assertMatchesDeclaredOutputSchema checks produced structuredContent against
+// the declared schema for the two mismatch classes an MCP client rejects on:
+// a value outside a declared enum, and an undeclared key under a closed object.
+// It is deliberately not a general JSON Schema engine.
+func assertMatchesDeclaredOutputSchema(t *testing.T, label string, schema json.RawMessage, structured map[string]any) {
+	t.Helper()
+	var declared any
+	if err := json.Unmarshal(schema, &declared); err != nil {
+		t.Fatalf("%s: declared output schema is invalid JSON: %v", label, err)
+	}
+	encoded, err := json.Marshal(structured)
+	if err != nil {
+		t.Fatalf("%s: structuredContent is not JSON-encodable: %v", label, err)
+	}
+	var produced any
+	if err := json.Unmarshal(encoded, &produced); err != nil {
+		t.Fatalf("%s: structuredContent did not round-trip through JSON: %v", label, err)
+	}
+	var violations []string
+	walkDeclaredOutputSchema("structuredContent", declared, produced, &violations)
+	if len(violations) == 0 {
+		return
+	}
+	sort.Strings(violations)
+	t.Fatalf("%s: structuredContent does not match the declared output schema:\n  %s\nproduced: %s",
+		label, joinLines(violations), string(encoded))
+}
+
+func walkDeclaredOutputSchema(path string, schema any, value any, violations *[]string) {
+	node, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+	if allowed, ok := node["enum"].([]any); ok {
+		match := false
+		for _, candidate := range allowed {
+			if candidate == value {
+				match = true
+				break
+			}
+		}
+		if !match {
+			*violations = append(*violations, fmt.Sprintf("%s: value %#v is outside the declared enum %v", path, value, allowed))
+		}
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		properties, _ := node["properties"].(map[string]any)
+		if open, declared := node["additionalProperties"].(bool); declared && !open {
+			for key := range typed {
+				if _, ok := properties[key]; !ok {
+					*violations = append(*violations, fmt.Sprintf("%s.%s: undeclared key under additionalProperties:false", path, key))
+				}
+			}
+		}
+		for key, child := range typed {
+			if childSchema, ok := properties[key]; ok {
+				walkDeclaredOutputSchema(path+"."+key, childSchema, child, violations)
+			}
+		}
+	case []any:
+		items, ok := node["items"]
+		if !ok {
+			return
+		}
+		for i, child := range typed {
+			walkDeclaredOutputSchema(fmt.Sprintf("%s[%d]", path, i), items, child, violations)
+		}
+	}
+}
+
+func joinLines(lines []string) string {
+	out := ""
+	for i, line := range lines {
+		if i > 0 {
+			out += "\n  "
+		}
+		out += line
+	}
+	return out
+}
+
+// lesser-body#480: Host returns SoulAgentRegistration.status (contract enum
+// [pending, completed]) from the begin endpoint and Body promotes it to
+// data.status, but the declared enum omitted both — so every real
+// agent_genesis_begin failed its own output schema in a strict client.
+func TestAgentGenesisBeginResultMatchesDeclaredOutputSchemaForHostRegistrationStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		hostStatus string
+		wantStatus string
+	}{
+		{"host_reports_pending", "pending", "pending"},
+		{"host_reports_completed", "completed", "completed"},
+		{"host_omits_status", "", "begin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-test-only")
+			registration := map[string]any{
+				"id":              "reg-123",
+				"agent_id":        "agent-123",
+				"domain":          "dev.trenchcoat.greater.website",
+				"local_id":        "casekeeper",
+				"authority_model": "instance_trust",
+			}
+			if tc.hostStatus != "" {
+				registration["status"] = tc.hostStatus
+			}
+			registry := mcpruntime.NewToolRegistry()
+			fake := &fakeGenesisClient{beginResponse: map[string]any{"registration": registration}}
+			if err := RegisterTools(registry, WithGenesisClient(fake)); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+			ctx := operatorToolContext("owner", []string{"read", "write"}, "owner-oauth-bearer-test-only")
+
+			result := callGenesisTool(t, registry, ctx, toolAgentGenesisBegin,
+				`{"domain":"dev.trenchcoat.greater.website","local_id":"casekeeper"}`)
+			data := structuredGenesisData(t, result)
+			if got := data["status"]; got != tc.wantStatus {
+				t.Fatalf("begin data.status = %#v, want %q", got, tc.wantStatus)
+			}
+			assertMatchesDeclaredOutputSchema(t, toolAgentGenesisBegin, agentGenesisBeginDef().OutputSchema, result.StructuredContent)
+		})
+	}
+}
+
+// Pin the declared status enum to lesser-host's SoulAgentRegistration
+// vocabulary so a Host contract change is caught here rather than by a client.
+func TestGenesisStatusEnumCoversHostRegistrationVocabulary(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(genesisOutputSchema(), &schema); err != nil {
+		t.Fatalf("genesis output schema invalid JSON: %v", err)
+	}
+	statusSchema := schema["properties"].(map[string]any)["data"].(map[string]any)["properties"].(map[string]any)["status"].(map[string]any)
+	declared := map[string]bool{}
+	for _, value := range statusSchema["enum"].([]any) {
+		text, ok := value.(string)
+		if !ok {
+			t.Fatalf("genesis status enum has a non-string member: %#v", value)
+		}
+		declared[text] = true
+	}
+	for _, want := range []string{"pending", "completed"} {
+		if !declared[want] {
+			t.Fatalf("genesis status enum missing Host registration status %q: %v", want, statusSchema["enum"])
+		}
+		if !validGenesisRegistrationStatus(want) {
+			t.Fatalf("validGenesisRegistrationStatus rejects declared Host registration status %q", want)
+		}
+	}
+	for _, want := range []string{"created", "in_progress", "assistant_turn_ready", "declaration_ready", "published", "failed"} {
+		if !declared[want] {
+			t.Fatalf("genesis status enum missing Host conversation status %q: %v", want, statusSchema["enum"])
+		}
+		if !validGenesisConversationStatus(want) {
+			t.Fatalf("validGenesisConversationStatus rejects declared Host conversation status %q", want)
+		}
+	}
+	if !declared["unknown"] {
+		t.Fatalf("genesis status enum must declare the unknown fallback: %v", statusSchema["enum"])
+	}
+}
