@@ -1346,8 +1346,9 @@ parameter during the migration. The shared names are:
 Structured-first result shaping is dual-surface and text-accessible. Existing tools that use `content[0].text` as JSON
 keep their current `standard` behavior until explicitly migrated. Compact/summary tools first build their bounded
 projection, then expose substantive content under `content[0].text` JSON `payload` and the unchanged typed projection
-under `structuredContent.data`. For structured-first social reads, `payload` is a concise newline-delimited rendering
-of stable ids and already-bounded previews; other structured-first tools return the bounded JSON projection there. The
+under `structuredContent.data`. `payload` is always a nested JSON value, never a JSON-encoded string. For
+structured-first social reads it is a compact object whose `items[]` strings carry stable ids and already-bounded
+previews; other structured-first tools return the bounded JSON projection there. The
 legacy text `data.location` locator remains, while the sibling `access` field says
 `payload or structuredContent.data`. Schema-capable clients retain the structured shape, and text-only clients no
 longer need to follow the locator. A tool's existing `preview_chars` projection is applied before the result surfaces
@@ -1572,7 +1573,7 @@ Notes:
   host-backed communication sender metadata (`communication.from.soulAgentId`, `agentId`, `email`/`address`, and
   `identifier` where Lesser/host include it). Because Lesser does not yet expose an upstream actor filter, body
   over-fetches a bounded notification page (`min(limit*4, 80)`) and returns
-  `filter=mcp_side_overfetch` at the start of `content[0].text` JSON `payload`; schema-capable clients also receive
+  `content[0].text` JSON `payload.filter="mcp_side_overfetch"`; schema-capable clients also receive
   `structuredContent.data.filter.strategy="mcp_side_overfetch"` with `requestedLimit`, `overFetchLimit`,
   `upstreamCount`, `matchedCount`, `returnedCount`, and `windowOffset`. If an over-fetched page contains more actor
   matches than the requested return `limit`, `nextCursor` is an opaque body actor-filter cursor that re-reads the same

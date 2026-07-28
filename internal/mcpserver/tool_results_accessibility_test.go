@@ -114,6 +114,9 @@ func TestStructuredFirstReadToolsExposeSubstantiveTextData(t *testing.T) {
 			if text["access"] != "payload or structuredContent.data" {
 				t.Fatalf("text guidance must name both result surfaces: %#v", text["access"])
 			}
+			if _, stringEncoded := text["payload"].(string); stringEncoded {
+				t.Fatalf("text payload must be a nested JSON value, not a string: %#v", text["payload"])
+			}
 			structuredData, _ := result.StructuredContent["data"].(map[string]any)
 			if structuredData["marker"] != sentinel {
 				t.Fatalf("structuredContent.data changed: %#v", result.StructuredContent)
@@ -178,9 +181,12 @@ func TestCompactTimelineTextHonorsPreviewChars(t *testing.T) {
 		t.Fatalf("unexpected tool error: %+v", result)
 	}
 	text := toolResultTextJSON(t, result)
-	textPayload, _ := text["payload"].(string)
-	if !strings.Contains(textPayload, "abcdefg…") {
-		t.Fatalf("preview_chars was not preserved in text payload: %q", textPayload)
+	textPayload, ok := text["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("text payload must be a nested JSON object, got %#v", text["payload"])
+	}
+	if !strings.Contains(result.Content[0].Text, "abcdefg…") {
+		t.Fatalf("preview_chars was not preserved in text payload: %#v", textPayload)
 	}
 	if strings.Contains(result.Content[0].Text, fullContent) {
 		t.Fatalf("text data leaked content beyond preview_chars: %s", result.Content[0].Text)
