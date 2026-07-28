@@ -62,7 +62,7 @@ func (r *Renderer) Render(ctx context.Context, req Request) (*Pack, error) {
 	if !ok {
 		return nil, fmt.Errorf("unsupported install pack profile")
 	}
-	serverName, err := MCPServerName(req.Namespace, stageDomain, actor, profile)
+	serverName, err := MCPServerName(stageDomain, actor)
 	if err != nil {
 		return nil, err
 	}
