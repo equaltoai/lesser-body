@@ -53,6 +53,7 @@ var profileContracts = map[Profile]Contract{
 		CommunicationsEnabled: false,
 		WalletAccessEnabled:   false,
 		Tools: []string{
+			"describe_interface",
 			"echo",
 			"profile_read",
 			"timeline_read",
@@ -115,6 +116,7 @@ var profileContracts = map[Profile]Contract{
 		CommunicationsEnabled: true,
 		WalletAccessEnabled:   true,
 		Tools: []string{
+			"describe_interface",
 			"echo",
 			"profile_read",
 			"timeline_read",
