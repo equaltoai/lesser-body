@@ -441,7 +441,7 @@ func standardArticle(article *cmsapi.Article) map[string]any {
 
 func articleOmissions(view string, list bool) []any {
 	if view == readViewStandard {
-		return nil
+		return []any{}
 	}
 	path := "article.content"
 	if list {
