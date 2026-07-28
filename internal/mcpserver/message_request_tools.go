@@ -107,9 +107,11 @@ func handleMessageRequestAccept(ctx context.Context, args json.RawMessage) (*mcp
 		"requestState":   state,
 		"conversation":   ref,
 		"expand": map[string]any{
-			"tool":       "conversation_get",
-			"arguments":  map[string]any{"conversationId": conversationID, "view": "compact"},
-			"resultPath": "structuredContent.data.conversation",
+			"tool":           "conversation_get",
+			"arguments":      map[string]any{"conversationId": conversationID, "view": "compact"},
+			"resultPath":     "structuredContent.data.conversation",
+			"textResultPath": "payload",
+			"resultAccess":   toolResultAccessPath("payload", "data.conversation"),
 		},
 	}
 	return toolStructuredFirstResult(structuredFirstResultOptions{
