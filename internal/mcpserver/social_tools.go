@@ -34,6 +34,7 @@ const (
 	notificationReadMaxTypes             = 8
 	notificationCompactMaxOutputBytes    = 8000
 	notificationCompactPreviewRunes      = 24
+	notificationCompactListPreviewRunes  = 8
 	notificationContentPreviewRunes      = 500
 	notificationCommPreviewRunes         = 240
 	conversationReadDefaultLimit         = 20
@@ -337,7 +338,7 @@ func socialCompactTimelineResult(timeline string, since string, limit int, raw a
 	}
 
 	previewRunes := socialCompactPreviewRunes(params)
-	statuses, statusIDs, err := compactSocialStatusRefsFromItems(items, previewRunes)
+	statuses, err := compactSocialStatusRefsFromItems(items, previewRunes)
 	if err != nil {
 		return nil, err
 	}
@@ -357,14 +358,7 @@ func socialCompactTimelineResult(timeline string, since string, limit int, raw a
 		payload["limit"] = limit
 	}
 
-	return socialCompactListToolResult("timeline_read", fmt.Sprintf("%d compact %s timeline statuses", len(statuses), timeline), payload, map[string]any{
-		"tool":      "timeline_read",
-		"view":      readViewCompact,
-		"timeline":  timeline,
-		"count":     len(statuses),
-		"statusIds": statusIDs,
-		"omitted":   socialCompactStatusListTextOmissions("statuses"),
-	}, budget)
+	return socialCompactListToolResult("timeline_read", fmt.Sprintf("%d compact %s timeline statuses", len(statuses), timeline), payload, budget)
 }
 
 func socialCompactPostSearchResult(query string, limit int, raw any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
@@ -378,7 +372,7 @@ func socialCompactPostSearchResult(query string, limit int, raw any, params shar
 	}
 
 	previewRunes := socialCompactPreviewRunes(params)
-	statuses, statusIDs, err := compactSocialStatusRefsFromItems(statusesRaw, previewRunes)
+	statuses, err := compactSocialStatusRefsFromItems(statusesRaw, previewRunes)
 	if err != nil {
 		return nil, err
 	}
@@ -401,34 +395,23 @@ func socialCompactPostSearchResult(query string, limit int, raw any, params shar
 		payload["hashtags"] = hashtags
 	}
 
-	return socialCompactListToolResult("post_search", fmt.Sprintf("%d compact post search results", len(statuses)), payload, map[string]any{
-		"tool":      "post_search",
-		"view":      readViewCompact,
-		"query":     query,
-		"count":     len(statuses),
-		"statusIds": statusIDs,
-		"omitted":   socialCompactStatusListTextOmissions("statuses"),
-	}, budget)
+	return socialCompactListToolResult("post_search", fmt.Sprintf("%d compact post search results", len(statuses)), payload, budget)
 }
 
-func compactSocialStatusRefsFromItems(items []any, previewRunes int) ([]any, []string, error) {
+func compactSocialStatusRefsFromItems(items []any, previewRunes int) ([]any, error) {
 	statuses := make([]any, 0, len(items))
-	statusIDs := make([]string, 0, len(items))
 	for _, item := range items {
 		raw, ok := item.(map[string]any)
 		if !ok || raw == nil {
-			return nil, nil, fmt.Errorf("unexpected status item")
+			return nil, fmt.Errorf("unexpected status item")
 		}
 		ref := compactSocialStatusRefWithPreview(raw, previewRunes)
 		if ref == nil {
-			return nil, nil, fmt.Errorf("unexpected empty status item")
+			return nil, fmt.Errorf("unexpected empty status item")
 		}
 		statuses = append(statuses, ref)
-		if strings.TrimSpace(ref.ID) != "" {
-			statusIDs = append(statusIDs, strings.TrimSpace(ref.ID))
-		}
 	}
-	return statuses, statusIDs, nil
+	return statuses, nil
 }
 
 func compactSocialAccountRefsFromItems(raw any) []any {
@@ -511,50 +494,8 @@ func socialCompactStatusListOmissions(statusPath string) []any {
 	}
 }
 
-func socialCompactStatusListTextOmissions(statusPath string) []any {
-	return []any{
-		map[string]any{
-			"path":      statusPath + "[].content",
-			"reason":    "content_preview",
-			"expansion": "structuredContent.data." + statusPath + "[].omitted[].expand",
-		},
-		map[string]any{
-			"path":      statusPath + "[].account",
-			"reason":    "author_ref_only",
-			"expansion": "structuredContent.data." + statusPath + "[].expand with view=full",
-		},
-	}
-}
-
-func socialCompactListToolResult(toolName string, summary string, payload map[string]any, text map[string]any, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
-	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
-		Summary: summary,
-		Data:    payload,
-		Text:    text,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if maxOutputBytes <= 0 {
-		return result, nil
-	}
-	measurement, err := measureToolResultPayload(result)
-	if err != nil {
-		return nil, err
-	}
-	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
-		return result, nil
-	}
-	return toolErrorResult("response_too_large", toolName+" compact response exceeds max_output_bytes", http.StatusRequestEntityTooLarge, map[string]any{
-		"tool":                 toolName,
-		"view":                 readViewCompact,
-		"measuredBytes":        measurement.JSONRPCEnvelopeBytes,
-		"maxOutputBytes":       maxOutputBytes,
-		"contentTextBytes":     measurement.ContentTextBytes,
-		"structuredBytes":      measurement.StructuredContentBytes,
-		"guidance":             "reduce limit or increase max_output_bytes",
-		"omittedFieldMetadata": "available under structuredContent.data.omitted for successful compact responses",
-	})
+func socialCompactListToolResult(toolName string, summary string, payload map[string]any, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	return socialStructuredFirstResult(toolName, summary, payload, nil, false, maxOutputBytes)
 }
 
 func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -798,12 +739,7 @@ func socialCompactConversationsResult(standardPayload map[string]any, conversati
 		"omitted":       compactConversationListOmissions(),
 		"budget":        socialCompactBudgetMetadata(budget, previewRunes),
 	}
-	text := map[string]any{
-		"tool":  "conversations_read",
-		"view":  readViewCompact,
-		"count": len(refs),
-	}
-	return toolStructuredFirstResultWithBudget("conversations_read", fmt.Sprintf("%d compact conversations", len(refs)), payload, text, nil, false, budget)
+	return toolStructuredFirstResultWithBudget("conversations_read", fmt.Sprintf("%d compact conversations", len(refs)), payload, nil, false, budget)
 }
 
 func handleConversationGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -983,17 +919,8 @@ func validateConversationGetView(view string) error {
 }
 
 func socialConversationGetStructuredResult(payload map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
-	view := strings.ToLower(strings.TrimSpace(firstNonEmptyStringMap(payload, "view")))
-	if view == "" {
-		view = readViewStandard
-	}
 	budget := params.MaxOutputBytes
-	text := map[string]any{
-		"tool": "conversation_get",
-		"view": view,
-		"id":   firstNonEmptyStringMap(payload, "id"),
-	}
-	return toolStructuredFirstResultWithBudget("conversation_get", "conversation details", payload, text, nil, false, budget)
+	return toolStructuredFirstResultWithBudget("conversation_get", "conversation details", payload, nil, false, budget)
 }
 
 func socialCompactConversationGetResult(standardPayload map[string]any, conversation map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
@@ -1026,32 +953,16 @@ func socialCompactConversationGetResult(standardPayload map[string]any, conversa
 	if nextCursor, _ := standardPayload["nextCursor"].(string); strings.TrimSpace(nextCursor) != "" {
 		payload["nextCursor"] = strings.TrimSpace(nextCursor)
 	}
-	text := map[string]any{
-		"tool": "conversation_get",
-		"view": readViewCompact,
-		"id":   id,
-	}
 	messageCount := 0
 	if refs, _ := ref["messageRefs"].([]any); len(refs) > 0 {
 		messageCount = len(refs)
 	}
-	return toolStructuredFirstResultWithBudget("conversation_get", fmt.Sprintf("conversation %s with %d compact message previews", id, messageCount), payload, text, nil, false, budget)
+	return toolStructuredFirstResultWithBudget("conversation_get", fmt.Sprintf("conversation %s with %d compact message previews", id, messageCount), payload, nil, false, budget)
 }
 
 func socialDirectMessagesReadStructuredResult(payload map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
-	view := strings.ToLower(strings.TrimSpace(firstNonEmptyStringMap(payload, "view")))
-	if view == "" {
-		view = readViewStandard
-	}
 	budget := params.MaxOutputBytes
-	text := map[string]any{
-		"tool":        "direct_messages_read",
-		"view":        view,
-		"counterpart": firstNonEmptyStringMap(payload, "counterpart"),
-		"id":          firstNonEmptyStringMap(payload, "id"),
-		"count":       payload["count"],
-	}
-	return toolStructuredFirstResultWithBudget("direct_messages_read", "direct message conversation details", payload, text, nil, false, budget)
+	return toolStructuredFirstResultWithBudget("direct_messages_read", "direct message conversation details", payload, nil, false, budget)
 }
 
 func socialCompactDirectMessagesReadResult(standardPayload map[string]any, conversation map[string]any, params sharedReadParams) (*mcpruntime.ToolResult, error) {
@@ -1099,14 +1010,7 @@ func socialCompactDirectMessagesReadResult(standardPayload map[string]any, conve
 	if nextCursor, _ := standardPayload["nextCursor"].(string); strings.TrimSpace(nextCursor) != "" {
 		payload["nextCursor"] = strings.TrimSpace(nextCursor)
 	}
-	text := map[string]any{
-		"tool":        "direct_messages_read",
-		"view":        readViewCompact,
-		"counterpart": payload["counterpart"],
-		"id":          id,
-		"count":       len(messageRefs),
-	}
-	return toolStructuredFirstResultWithBudget("direct_messages_read", fmt.Sprintf("direct messages with %s: %d compact message previews", payload["counterpart"], len(messageRefs)), payload, text, nil, false, budget)
+	return toolStructuredFirstResultWithBudget("direct_messages_read", fmt.Sprintf("direct messages with %s: %d compact message previews", payload["counterpart"], len(messageRefs)), payload, nil, false, budget)
 }
 
 func conversationGetToolResultFromError(conversationID string, err error) (*mcpruntime.ToolResult, error) {
@@ -1648,7 +1552,7 @@ func validateNotificationReadView(view string) error {
 }
 
 func socialCompactNotificationsResult(standardPayload map[string]any, notifications []any, params sharedReadParams, includeDiagnostics bool) (*mcpruntime.ToolResult, error) {
-	previewRunes := notificationCompactPreviewRunes
+	previewRunes := notificationCompactListPreviewRunes
 	if params.PreviewChars > 0 {
 		previewRunes = params.PreviewChars
 	}
@@ -1694,12 +1598,7 @@ func socialCompactNotificationsResult(standardPayload map[string]any, notificati
 			diagnostics = d
 		}
 	}
-	text := map[string]any{
-		"tool":  "notifications_read",
-		"view":  readViewCompact,
-		"count": len(refs),
-	}
-	return toolStructuredFirstResultWithBudget("notifications_read", fmt.Sprintf("%d compact notifications", len(refs)), payload, text, diagnostics, includeDiagnostics, budget)
+	return toolStructuredFirstResultWithBudget("notifications_read", fmt.Sprintf("%d compact notifications", len(refs)), payload, diagnostics, includeDiagnostics, budget)
 }
 
 func compactSocialNotificationRef(raw map[string]any, previewRunes int) map[string]any {
@@ -1874,11 +1773,15 @@ func compactNotificationListOmissions() []any {
 	}
 }
 
-func toolStructuredFirstResultWithBudget(toolName string, summary string, payload map[string]any, text map[string]any, diagnostics map[string]any, includeDiagnostics bool, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+func toolStructuredFirstResultWithBudget(toolName string, summary string, payload map[string]any, diagnostics map[string]any, includeDiagnostics bool, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	return socialStructuredFirstResult(toolName, summary, payload, diagnostics, includeDiagnostics, maxOutputBytes)
+}
+
+func socialStructuredFirstResult(toolName string, summary string, payload map[string]any, diagnostics map[string]any, includeDiagnostics bool, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
 	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
 		Summary:            summary,
 		Data:               payload,
-		Text:               text,
+		TextPayload:        socialTextAccessibleProjection(toolName, payload),
 		Diagnostics:        diagnostics,
 		IncludeDiagnostics: includeDiagnostics,
 	})
@@ -1905,6 +1808,145 @@ func toolStructuredFirstResultWithBudget(toolName string, summary string, payloa
 		"guidance":             "reduce limit or increase max_output_bytes",
 		"omittedFieldMetadata": "available under structuredContent.data.omitted for successful compact responses",
 	})
+}
+
+func socialTextAccessibleProjection(toolName string, payload map[string]any) string {
+	switch toolName {
+	case "timeline_read", "post_search":
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "statuses"), "contentPreview", 32, true); projection != "" {
+			return projection
+		}
+	case "conversations_read":
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "conversations"), "lastPostRef.contentPreview", 20, true); projection != "" {
+			return projection
+		}
+	case "notifications_read":
+		if projection := socialTextProjectionFromItems(firstArrayFromAny(payload, "notifications"), "targetPostRef.contentPreview", notificationCompactListPreviewRunes, true); projection != "" {
+			if filter, _ := payload["filter"].(map[string]any); filter != nil {
+				if strategy := firstNonEmptyStringMap(filter, "strategy"); strategy != "" {
+					return "filter=" + strategy + "\n" + projection
+				}
+			}
+			return projection
+		}
+	case "conversation_get":
+		if conversation, _ := payload["conversation"].(map[string]any); conversation != nil {
+			if projection := socialTextProjectionFromItems(firstArrayFromAny(conversation, "messageRefs"), "contentPreview", 48, true); projection != "" {
+				return projection
+			}
+			messages := firstArrayFromAny(conversation, "messages")
+			if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); projection != "" {
+				return projection
+			}
+			if projection := socialTextProjectionFromItems(messages, "content", 96, true); projection != "" {
+				return projection
+			}
+		}
+	case "direct_messages_read":
+		messages := firstArrayFromAny(payload, "messages")
+		if projection := socialTextProjectionFromItems(messages, "contentPreview", 48, true); projection != "" {
+			return projection
+		}
+		if projection := socialTextProjectionFromItems(messages, "content", 96, true); projection != "" {
+			return projection
+		}
+	}
+	return socialTextProjectionFallback(payload, 1024)
+}
+
+func socialTextProjectionFromItems(items []any, previewPath string, previewRunes int, includeID bool) string {
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		record, _ := item.(map[string]any)
+		if record == nil {
+			continue
+		}
+		preview := nestedStringMap(record, previewPath)
+		preview, _ = compactStringWithTruncation(preview, previewRunes)
+		if preview == "" {
+			continue
+		}
+		id := firstNonEmptyStringMap(record, "id", "conversationId", "messageId")
+		line := preview
+		if includeID && id != "" {
+			line = id + ": " + preview
+		}
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func nestedStringMap(record map[string]any, path string) string {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	var current any = record
+	for _, part := range parts {
+		next, _ := current.(map[string]any)
+		if next == nil {
+			return ""
+		}
+		current = next[part]
+	}
+	value, _ := current.(string)
+	return strings.TrimSpace(value)
+}
+
+func socialTextProjectionFallback(payload map[string]any, maxRunes int) string {
+	values := make([]string, 0)
+	collectSocialTextProjectionValues(payload, "", &values)
+	if len(values) == 0 {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return ""
+		}
+		return compactString(string(b), maxRunes)
+	}
+	return compactString(strings.Join(values, "\n"), maxRunes)
+}
+
+func collectSocialTextProjectionValues(value any, path string, values *[]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "budget", "diagnostics", "expand", "omitted", "policy", "_raw":
+				continue
+			}
+			nextPath := key
+			if path != "" {
+				nextPath = path + "." + key
+			}
+			collectSocialTextProjectionValues(typed[key], nextPath, values)
+		}
+	case []any:
+		for index, item := range typed {
+			collectSocialTextProjectionValues(item, fmt.Sprintf("%s[%d]", path, index), values)
+		}
+	case string:
+		if !socialTextProjectionSubstantivePath(path) {
+			return
+		}
+		preview, _ := compactStringWithTruncation(typed, 96)
+		if preview != "" {
+			*values = append(*values, path+"="+preview)
+		}
+	}
+}
+
+func socialTextProjectionSubstantivePath(path string) bool {
+	path = strings.ToLower(path)
+	for _, marker := range []string{"body", "content", "description", "displayname", "marker", "message", "name", "preview", "subject", "summary", "text", "title"} {
+		if strings.Contains(path, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {

@@ -26,9 +26,11 @@ type StatusRef struct {
 }
 
 type SocialExpansionRef struct {
-	Tool       string         `json:"tool"`
-	Arguments  map[string]any `json:"arguments"`
-	ResultPath string         `json:"resultPath,omitempty"`
+	Tool           string         `json:"tool"`
+	Arguments      map[string]any `json:"arguments"`
+	ResultPath     string         `json:"resultPath,omitempty"`
+	TextResultPath string         `json:"textResultPath,omitempty"`
+	ResultAccess   string         `json:"resultAccess,omitempty"`
 }
 
 type SocialOmittedRef struct {

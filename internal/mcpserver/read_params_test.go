@@ -71,7 +71,7 @@ func TestSharedReadParamSchemaPropertiesAreAdditiveFragments(t *testing.T) {
 	}
 }
 
-func TestToolStructuredFirstResultKeepsFullDataStructured(t *testing.T) {
+func TestToolStructuredFirstResultKeepsDataOnBothSurfaces(t *testing.T) {
 	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
 		Summary: "2 compact posts",
 		Data: map[string]any{
@@ -102,9 +102,18 @@ func TestToolStructuredFirstResultKeepsFullDataStructured(t *testing.T) {
 	if text["summary"] != "2 compact posts" {
 		t.Fatalf("summary = %#v", text["summary"])
 	}
-	dataLocator, _ := text["data"].(map[string]any)
-	if dataLocator["location"] != "structuredContent.data" {
-		t.Fatalf("data locator = %#v", dataLocator)
+	locator, _ := text["data"].(map[string]any)
+	if locator["location"] != "structuredContent.data" {
+		t.Fatalf("data locator must preserve the structured path: %#v", locator)
+	}
+	if text["access"] != "payload or structuredContent.data" {
+		t.Fatalf("text access guidance must name both result surfaces: %#v", text["access"])
+	}
+	textData, _ := text["payload"].(map[string]any)
+	textItems, _ := textData["items"].([]any)
+	textItem, _ := textItems[0].(map[string]any)
+	if textItem["content"] != "full text" {
+		t.Fatalf("text payload must retain substantive data, got %#v", textData)
 	}
 	if _, ok := text["diagnostics"]; ok {
 		t.Fatalf("diagnostics must be opt-in in text payload: %#v", text)
@@ -123,60 +132,64 @@ func TestToolStructuredFirstResultKeepsFullDataStructured(t *testing.T) {
 	}
 }
 
-func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *testing.T) {
+func TestToolStructuredFirstResultPreservesPreBoundedCompactProjection(t *testing.T) {
 	const heavyPostSentinel = "FULL_HEAVY_POST_BODY_SHOULD_NOT_APPEAR_IN_COMPACT_TEXT"
 	const heavyAccountSentinel = "FULL_HEAVY_ACCOUNT_NOTE_SHOULD_NOT_APPEAR_IN_COMPACT_TEXT"
 
 	fullData := map[string]any{
 		"view": "standard",
-		"items": []any{
-			map[string]any{
-				"id":        "post-1",
-				"postRef":   "post:post-1",
-				"createdAt": "2026-05-17T15:00:00Z",
-				"content":   heavyPostSentinel + " " + strings.Repeat("post body ", 500),
-				"account": map[string]any{
-					"id":         "acct-1",
-					"accountRef": "account:acct-1",
-					"note":       heavyAccountSentinel + " " + strings.Repeat("profile note ", 300),
-				},
+		"items": []any{map[string]any{
+			"id":        "post-1",
+			"postRef":   "post:post-1",
+			"createdAt": "2026-05-17T15:00:00Z",
+			"content":   heavyPostSentinel + " " + strings.Repeat("post body ", 500),
+			"account": map[string]any{
+				"id":         "acct-1",
+				"accountRef": "account:acct-1",
+				"note":       heavyAccountSentinel + " " + strings.Repeat("profile note ", 300),
+			},
+		}},
+		"nextCursor": "cursor-post-1",
+	}
+	compactItem := map[string]any{
+		"postRef":    "post:post-1",
+		"accountRef": "account:acct-1",
+		"createdAt":  "2026-05-17T15:00:00Z",
+		"preview":    "short preview",
+	}
+	compactOmissions := []any{
+		map[string]any{
+			"path":   "items[].content",
+			"reason": "heavy_text",
+			"expand": map[string]any{
+				"ref":      "post:post-1",
+				"location": toolResultAccessPath("payload.items[0].content", "data.items[0].content"),
 			},
 		},
+		map[string]any{
+			"path":   "items[].account.note",
+			"reason": "profile_bio",
+			"expand": map[string]any{
+				"ref":      "account:acct-1",
+				"location": toolResultAccessPath("payload.items[0].account.note", "data.items[0].account.note"),
+			},
+		},
+	}
+	compactData := map[string]any{
+		"view":       readViewCompact,
+		"items":      []any{compactItem},
+		"omitted":    compactOmissions,
 		"nextCursor": "cursor-post-1",
 	}
 	result, err := toolStructuredFirstResult(structuredFirstResultOptions{
 		Summary: "1 compact post",
-		Data:    fullData,
+		Data:    compactData,
 		Text: map[string]any{
-			"view": "compact",
-			"items": []any{
-				map[string]any{
-					"postRef":    "post:post-1",
-					"accountRef": "account:acct-1",
-					"createdAt":  "2026-05-17T15:00:00Z",
-					"preview":    "short preview",
-				},
-			},
-			"omitted": []any{
-				map[string]any{
-					"path":   "items[].content",
-					"reason": "heavy_text",
-					"expand": map[string]any{
-						"ref":      "post:post-1",
-						"location": "structuredContent.data.items[0].content",
-					},
-				},
-				map[string]any{
-					"path":   "items[].account.note",
-					"reason": "profile_bio",
-					"expand": map[string]any{
-						"ref":      "account:acct-1",
-						"location": "structuredContent.data.items[0].account.note",
-					},
-				},
-			},
+			"view":    readViewCompact,
+			"items":   []any{compactItem},
+			"omitted": compactOmissions,
 			"budget": map[string]any{
-				"maxOutputBytes": 2048,
+				"maxOutputBytes": 4096,
 				"enforcement":    "test_gate_only",
 				"truncation":     "none; gate fails instead of silently dropping fields",
 			},
@@ -197,22 +210,20 @@ func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *
 	if err := json.Unmarshal([]byte(textJSON), &text); err != nil {
 		t.Fatalf("unmarshal compact text: %v", err)
 	}
-	if text["view"] != readViewCompact {
-		t.Fatalf("compact text view = %#v", text["view"])
-	}
-	items, _ := text["items"].([]any)
+	textData, _ := text["payload"].(map[string]any)
+	items, _ := textData["items"].([]any)
 	if len(items) != 1 {
-		t.Fatalf("compact text should retain one item ref, got %#v", text["items"])
+		t.Fatalf("compact text data should retain one item ref, got %#v", textData["items"])
 	}
 	item, _ := items[0].(map[string]any)
-	if item["postRef"] != "post:post-1" || item["accountRef"] != "account:acct-1" {
-		t.Fatalf("compact text lost stable refs: %#v", item)
+	if item["postRef"] != "post:post-1" || item["accountRef"] != "account:acct-1" || item["preview"] != "short preview" {
+		t.Fatalf("compact text data lost substantive refs/preview: %#v", item)
 	}
 	if _, ok := item["content"]; ok {
-		t.Fatalf("compact text item must omit content: %#v", item)
+		t.Fatalf("compact text data must omit full content: %#v", item)
 	}
 	if _, ok := item["account"]; ok {
-		t.Fatalf("compact text item must omit nested account payload: %#v", item)
+		t.Fatalf("compact text data must omit nested account payload: %#v", item)
 	}
 
 	omitted, _ := text["omitted"].([]any)
@@ -220,8 +231,8 @@ func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *
 		t.Fatalf("expected two omitted-field records, got %#v", text["omitted"])
 	}
 	wantOmitted := map[string]string{
-		"items[].content":      "structuredContent.data.items[0].content",
-		"items[].account.note": "structuredContent.data.items[0].account.note",
+		"items[].content":      toolResultAccessPath("payload.items[0].content", "data.items[0].content"),
+		"items[].account.note": toolResultAccessPath("payload.items[0].account.note", "data.items[0].account.note"),
 	}
 	for _, raw := range omitted {
 		record, _ := raw.(map[string]any)
@@ -238,14 +249,13 @@ func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *
 	}
 
 	data, _ := result.StructuredContent["data"].(map[string]any)
-	fullItems, _ := data["items"].([]any)
-	fullItem, _ := fullItems[0].(map[string]any)
-	if content, _ := fullItem["content"].(string); !strings.Contains(content, heavyPostSentinel) {
-		t.Fatalf("structuredContent.data must retain full post content, got %#v", fullItem["content"])
+	structuredItems, _ := data["items"].([]any)
+	structuredItem, _ := structuredItems[0].(map[string]any)
+	if structuredItem["preview"] != "short preview" {
+		t.Fatalf("structuredContent.data lost compact preview: %#v", structuredItem)
 	}
-	account, _ := fullItem["account"].(map[string]any)
-	if note, _ := account["note"].(string); !strings.Contains(note, heavyAccountSentinel) {
-		t.Fatalf("structuredContent.data must retain full account note, got %#v", account["note"])
+	if _, ok := structuredItem["content"]; ok {
+		t.Fatalf("pre-bounded compact projection leaked full content: %#v", structuredItem)
 	}
 
 	compactMeasurement, err := measureToolResultPayload(result)
@@ -260,20 +270,12 @@ func TestToolStructuredFirstResultCompactOptInNamesOmissionsAndExpansionRefs(t *
 	if err != nil {
 		t.Fatalf("measure standard result payload: %v", err)
 	}
-	const compactTextBudgetBytes = 2048
-	t.Logf("compact structured-first text bytes=%d, envelope bytes=%d; standard envelope bytes=%d",
-		compactMeasurement.ContentTextBytes,
-		compactMeasurement.JSONRPCEnvelopeBytes,
-		standardMeasurement.JSONRPCEnvelopeBytes,
-	)
+	const compactTextBudgetBytes = 4096
 	if compactMeasurement.ContentTextBytes > compactTextBudgetBytes {
-		t.Fatalf("compact text bytes %d exceed explicit budget %d; do not silently truncate",
-			compactMeasurement.ContentTextBytes,
-			compactTextBudgetBytes,
-		)
+		t.Fatalf("compact text bytes %d exceed explicit budget %d", compactMeasurement.ContentTextBytes, compactTextBudgetBytes)
 	}
 	if compactMeasurement.JSONRPCEnvelopeBytes >= standardMeasurement.JSONRPCEnvelopeBytes {
-		t.Fatalf("compact structured-first envelope must be smaller than standard duplicated JSON: compact=%d standard=%d",
+		t.Fatalf("bounded compact envelope must be smaller than standard response: compact=%d standard=%d",
 			compactMeasurement.JSONRPCEnvelopeBytes,
 			standardMeasurement.JSONRPCEnvelopeBytes,
 		)
@@ -296,9 +298,16 @@ func TestToolStructuredFirstResultCanOptInDiagnostics(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &text); err != nil {
 		t.Fatalf("unmarshal text: %v", err)
 	}
-	diagLocator, _ := text["diagnostics"].(map[string]any)
-	if diagLocator["location"] != "structuredContent.diagnostics" {
-		t.Fatalf("diagnostics locator = %#v", diagLocator)
+	diagnosticsLocator, _ := text["diagnostics"].(map[string]any)
+	if diagnosticsLocator["location"] != "structuredContent.diagnostics" {
+		t.Fatalf("diagnostics locator must preserve the structured path: %#v", diagnosticsLocator)
+	}
+	if text["diagnosticsAccess"] != "diagnosticPayload or structuredContent.diagnostics" {
+		t.Fatalf("diagnostics guidance must name both result surfaces: %#v", text["diagnosticsAccess"])
+	}
+	textDiagnostics, _ := text["diagnosticPayload"].(map[string]any)
+	if textDiagnostics["responseBytes"] != float64(42) {
+		t.Fatalf("diagnostics payload must be available to text-only clients: %#v", textDiagnostics)
 	}
 }
 
