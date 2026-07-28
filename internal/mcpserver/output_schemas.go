@@ -108,10 +108,9 @@ func postGetOutputSchema() json.RawMessage {
 					"id":{"type":"string"},
 					"view":{"type":"string"},
 					"source":{"type":"string"},
-					"status":{"type":"object","additionalProperties":true},
-					"statusRef":{"type":"object","additionalProperties":true}
+					"status":{"type":"object","additionalProperties":true}
 				},
-				"required":["id","view","source","status","statusRef"],
+				"required":["id","view","source","status"],
 				"additionalProperties":true
 			}
 		},

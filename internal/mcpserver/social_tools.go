@@ -543,10 +543,9 @@ func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		statusID = in.ID
 	}
 	payload := map[string]any{
-		"id":        statusID,
-		"view":      view,
-		"source":    "lesser-api",
-		"statusRef": compactSocialStatusRef(status),
+		"id":     statusID,
+		"view":   view,
+		"source": "lesser-api",
 	}
 	if view == readViewFull {
 		payload["status"] = status

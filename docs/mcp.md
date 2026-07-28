@@ -1529,7 +1529,9 @@ fields (`id`, `acct`, `displayName`, and `url`) and report `missingFields` rathe
 values include `id`, `url`, `authorRef`, `createdAt`, `visibility`, `contentPreview`, and a `contentTruncated` marker.
 When a compact status omits full content, its `omitted[]` record points at `post_get` with the status id and the desired
 `view`. `post_get(id, view=standard)` returns normalized status fields from Lesser's `GET /api/v1/statuses/{id}` route;
-`post_get(id, view=full)` returns the upstream Lesser status payload for audit/debug expansion.
+`post_get(id, view=full)` returns the upstream Lesser status payload for audit/debug expansion. Both views return the
+status exactly once under `status`; `post_get` does not add a duplicate `statusRef` or an expansion that points back at
+`post_get`.
 
 `timeline_read` and `post_search` now advertise opt-in `view=compact` plus `preview_chars` and `max_output_bytes`.
 Their omitted-`view` default and `view=standard` / `view=full` behavior preserves the current upstream-shaped response.
