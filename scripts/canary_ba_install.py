@@ -57,9 +57,11 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 NO_REDIRECT_OPENER = urllib.request.build_opener(NoRedirectHandler)
-SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{0,255}$")
+SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%_-]{0,255}$")
 MANIFEST_NAME = "MANIFEST.json"
 PACK_SCHEMA = "lesserbody.agent_local_install_pack.v1"
+# internal/installpack.MCPServerName: lesser_ka[_<environment>]_<actor>.
+MCP_SERVER_NAME_RE = re.compile(r"^lesser_ka(?:_[a-z0-9]+)+$")
 
 
 USAGE = __doc__ or ""
@@ -364,6 +366,12 @@ def require_plan_fields(plan: dict[str, Any], client: str) -> tuple[str, str]:
     for key in ("grant_id", "pack_id", "pack_digest", "mcp_server_name", "mcp_endpoint_url"):
         if not str(plan.get(key) or "").strip():
             raise CanaryError(f"install plan missing {key}")
+    mcp_server_name = str(plan.get("mcp_server_name") or "").strip()
+    if not MCP_SERVER_NAME_RE.match(mcp_server_name):
+        raise CanaryError(
+            f"install plan mcp_server_name {mcp_server_name!r} is off-scheme; "
+            "expected lesser_ka[_<environment>]_<actor>"
+        )
     return download_url, pack_checksum
 
 

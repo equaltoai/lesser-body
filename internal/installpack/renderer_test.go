@@ -104,33 +104,115 @@ func TestRenderIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestMCPServerNameStableSafeAndCollisionResistant(t *testing.T) {
-	name, err := MCPServerName("equaltoai", "dev.example.com", "Arch", ProfileCodex)
+func TestMCPServerNameIsHumanReadableStableAndSafe(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stageDomain string
+		actor       string
+		want        string
+	}{
+		{"dev stage reads as lab", "dev.trenchcoat.greater.website", "verifier", "lesser_ka_lab_verifier"},
+		{"lab stage reads as lab", "lab.trenchcoat.greater.website", "verifier", "lesser_ka_lab_verifier"},
+		{"staging stage is named", "staging.trenchcoat.greater.website", "verifier", "lesser_ka_staging_verifier"},
+		{"production stage is plain", "trenchcoat.greater.website", "verifier", "lesser_ka_verifier"},
+		{"apex stage domain is plain", "example.com", "verifier", "lesser_ka_verifier"},
+		{"actor is normalized", "dev.example.com", "Arch", "lesser_ka_lab_arch"},
+		{"actor punctuation collapses", "dev.example.com", "greater.website-codex", "lesser_ka_lab_greater_website_codex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MCPServerName(tc.stageDomain, tc.actor)
+			if err != nil {
+				t.Fatalf("MCPServerName() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("MCPServerName(%q, %q) = %q, want %q", tc.stageDomain, tc.actor, got, tc.want)
+			}
+			if !regexp.MustCompile(`^lesser_ka(?:_[a-z0-9]+)+$`).MatchString(got) {
+				t.Fatalf("MCPServerName() not config-key safe or off-scheme: %q", got)
+			}
+			if len(got) > maxMCPServerNameBytes {
+				t.Fatalf("MCPServerName() = %q, longer than %d bytes", got, maxMCPServerNameBytes)
+			}
+		})
+	}
+}
+
+func TestMCPServerNameIsDeterministic(t *testing.T) {
+	first, err := MCPServerName("dev.trenchcoat.greater.website", "verifier")
 	if err != nil {
-		t.Fatalf("MCPServerName() error = %v", err)
+		t.Fatalf("MCPServerName(first) error = %v", err)
 	}
-	const want = "lesser-equaltoai-arch-dev-example-com-codex-7e8e5dda30f2"
-	if name != want {
-		t.Fatalf("MCPServerName() = %q, want %q", name, want)
+	second, err := MCPServerName("dev.trenchcoat.greater.website", "verifier")
+	if err != nil {
+		t.Fatalf("MCPServerName(second) error = %v", err)
 	}
-	if !regexp.MustCompile(`^[a-z0-9_-]+(?:-[a-f0-9]{12})$`).MatchString(name) {
-		t.Fatalf("MCPServerName() not config-key safe: %q", name)
+	if first != second {
+		t.Fatalf("MCPServerName() is not deterministic: %q vs %q", first, second)
+	}
+}
+
+// The collision rule the scheme guarantees: distinct within one stage
+// environment, which is what a workspace installing several agents side by
+// side depends on.
+func TestMCPServerNameIsDistinctPerActorAndEnvironment(t *testing.T) {
+	const stageDomain = "dev.trenchcoat.greater.website"
+	seen := map[string]string{}
+	for _, actor := range []string{"verifier", "casekeeper", "arch", "greater-website-codex", "greater_website_codex2"} {
+		name, err := MCPServerName(stageDomain, actor)
+		if err != nil {
+			t.Fatalf("MCPServerName(%q) error = %v", actor, err)
+		}
+		if previous, ok := seen[name]; ok {
+			t.Fatalf("actors %q and %q collided on MCP server name %q", previous, actor, name)
+		}
+		seen[name] = actor
 	}
 
-	collidingSlug, err := MCPServerName("equaltoai", "dev.example.com", "Arch.", ProfileCodex)
+	dev, err := MCPServerName("dev.trenchcoat.greater.website", "verifier")
 	if err != nil {
-		t.Fatalf("MCPServerName(colliding slug) error = %v", err)
+		t.Fatalf("MCPServerName(dev) error = %v", err)
 	}
-	if collidingSlug == name {
-		t.Fatalf("different identity tuple produced same MCP server name %q", name)
+	production, err := MCPServerName("trenchcoat.greater.website", "verifier")
+	if err != nil {
+		t.Fatalf("MCPServerName(production) error = %v", err)
 	}
+	if dev == production {
+		t.Fatalf("dev and production produced the same MCP server name %q", dev)
+	}
+}
 
-	otherProfile, err := MCPServerName("equaltoai", "dev.example.com", "Arch", ProfileClaudeCode)
+// Profile deliberately does not participate: the same actor rendered for two
+// clients names one server, because a workspace holds one entry per config
+// file and the profile is already expressed by which files the pack renders.
+func TestMCPServerNameIgnoresProfile(t *testing.T) {
+	codex, err := Render(context.Background(), testRequest(ProfileCodex))
 	if err != nil {
-		t.Fatalf("MCPServerName(other profile) error = %v", err)
+		t.Fatalf("Render(codex) error = %v", err)
 	}
-	if otherProfile == name {
-		t.Fatalf("different profile produced same MCP server name %q", name)
+	claude, err := Render(context.Background(), testRequest(ProfileClaudeCode))
+	if err != nil {
+		t.Fatalf("Render(claude_code) error = %v", err)
+	}
+	if codex.MCPServerName != claude.MCPServerName {
+		t.Fatalf("profiles produced different server names %q and %q", codex.MCPServerName, claude.MCPServerName)
+	}
+	if codex.MCPServerName != "lesser_ka_lab_arch" {
+		t.Fatalf("rendered server name = %q, want lesser_ka_lab_arch", codex.MCPServerName)
+	}
+}
+
+// A long actor is truncated rather than hashed, so the name stays readable and
+// within the config-key bound.
+func TestMCPServerNameBoundsLongActors(t *testing.T) {
+	name, err := MCPServerName("dev.example.com", strings.Repeat("a", 200))
+	if err != nil {
+		t.Fatalf("MCPServerName(long actor) error = %v", err)
+	}
+	if len(name) != maxMCPServerNameBytes {
+		t.Fatalf("MCPServerName(long actor) = %q (%d bytes), want %d", name, len(name), maxMCPServerNameBytes)
+	}
+	if !strings.HasPrefix(name, "lesser_ka_lab_") {
+		t.Fatalf("MCPServerName(long actor) lost its scheme prefix: %q", name)
 	}
 }
 
