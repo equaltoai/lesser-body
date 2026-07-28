@@ -1274,6 +1274,37 @@ content. The data envelope includes at least:
 - `mcp_server_name` and `mcp_endpoint_url`
 - `merge_instructions`, `update_guidance`, and `verification_steps`
 
+### MCP server name
+
+`mcp_server_name` is the config key the pack writes into `.mcp.json`, `.codex/config.toml`, the rendered
+`AGENTS.md` / `CLAUDE.md`, and the install marker, so it is a name a human reads rather than a machine key.
+`internal/installpack.MCPServerName` generates it deterministically as:
+
+```text
+lesser_ka[_<environment>]_<actor>
+```
+
+| Stage domain | Rendered name |
+| --- | --- |
+| `dev.trenchcoat.greater.website` | `lesser_ka_lab_verifier` |
+| `staging.trenchcoat.greater.website` | `lesser_ka_staging_verifier` |
+| `trenchcoat.greater.website` | `lesser_ka_verifier` |
+
+The environment token comes from the stage domain's leading DNS label: `dev` and `lab` render `lab`, `staging`
+and `stage` render `staging`, and everything else — including an apex stage domain — renders no token, so
+production names stay plain. A new deploy stage must be added to `stageEnvironmentToken` or its packs render
+production-style names.
+
+The name is unique per `(stage environment, actor)`, which is the scope a workspace config key needs when several
+agents from one environment are installed side by side. Profile does not participate: a workspace holds one
+server entry per config file, and the profile is already expressed by which files the pack renders, so a `codex`
+and a `claude_code` pack for the same actor name the same server. Namespace and the full stage domain do not
+participate either — installing the same actor from two different instances of the same stage into one workspace
+would collide, which is accepted in exchange for a readable name.
+
+Names are lowercase `[a-z0-9_]`, bounded to 80 bytes by truncating the actor component, and carry no digest
+suffix. Clients must treat the value as an opaque config key; nothing server-side derives meaning from it.
+
 The download URL is intentionally header-free for local installer clients and uses the public grant route:
 
 ```text
