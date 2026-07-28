@@ -167,6 +167,10 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 		return fmt.Errorf("tool registry is nil")
 	}
 
+	if err := r.RegisterTool(describeInterfaceDef(), handleDescribeInterface); err != nil {
+		return err
+	}
+
 	if err := r.RegisterTool(mcpruntime.ToolDef{
 		Name:        "echo",
 		Description: "Echo back the provided message.",
