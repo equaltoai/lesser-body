@@ -22,6 +22,8 @@ Do not assume the tool set from memory — it grows, and capabilities differ per
 - **Repository scope:** via TheoryMCP, only repositories `github_list_repos` returns are accessible. (Currently `equaltoai/lesser-body`.) Any other repo requires `gh` — and only within a repository you are authorized to touch.
 - **Attribution:** integrated writes are made as `body-theorymcp[bot]`, attributable to your principal. `gh` writes are made under the ambient personal account — not equivalent.
 - **Agent-scoped branches:** `github_create_branch` and `github_commit_files` operate on branches prefixed `theorymcp/equaltoai/lesser-body/<branch_suffix>` (the server derives the prefix from the route; you supply only the suffix). Arbitrary branch names are not accepted.
+- **Merge authority is not tool availability.** `github_merge_pr` and `github_closeout_pr` are exposed on this route; that is a capability, not a permission. Feature→`staging` merges belong to **factory**, under standing authority never granted per session. `main` belongs to the **operator** — merging, releasing, tagging, and force-pushing there are the operator's acts, and no authorization of any kind transfers them to you. Your terminal move on a PR is opening it and reporting the evidence.
+- **Branch targets:** feature branches cut from git branch `staging`; PRs target `staging`. A missing `staging` branch is a stop-and-ask — never retarget a PR at `main`, and never create that branch on your own authority.
 
 ## Tool inventory
 
@@ -57,10 +59,10 @@ Prefer read-only `gh` for gaps; treat a `gh` write that duplicates a governed to
 
 ## Red flags
 
-- Reaching for `gh pr merge` / `gh push` / `gh issue comment` / `gh pr review` when `github_merge_pr` / `github_commit_files` / `github_create_issue_comment` / `github_create_pr_review` exist.
+- Reaching for `gh push` / `gh issue comment` / `gh pr review` when `github_commit_files` / `github_create_issue_comment` / `github_create_pr_review` exist.
+- Merging a PR at all. Feature→`staging` is factory's act and `main` is the operator's; `github_merge_pr`, `github_closeout_pr`, and `gh pr merge` are the same bypass wearing three different clients.
 - Falling back to `gh` because a governed tool refused you — that refusal is policy; honor it.
 - Choosing `gh` without first calling `github_list_repos` to confirm the capability is actually missing.
 - Passing a `project_status` to `github_closeout_pr` (it will fail; Projects v2 policy is missing).
-- Merging via `github_merge_pr` / `github_closeout_pr` without re-confirming `expected_head_sha`.
 - Using `gh` with credentials or in repositories outside your authorized scope.
 - Treating `gh` output as governed/attributable — it is ambient personal-account work, not `body-theorymcp[bot]` provenance.

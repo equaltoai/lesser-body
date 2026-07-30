@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "equaltoai": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://theorymcp.ai/equaltoai/mcp"]
+    },
     "theorymcp": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://theorymcp.ai/equaltoai/agents/body/mcp"]

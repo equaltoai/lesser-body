@@ -85,3 +85,6 @@ Non-claims to keep honest regardless of a green report: `gov_infra_retired`,
 
 `parent-stages-genome-child-applies`, `checksum-verified-resource-materialization`,
 `smoke-test-the-built-artifact`, and the produced-agent `branch-profile-contract`.
+
+For the recurring push-boundary rubric run itself, see `run-rubric-gate` — this skill
+is the genome/profile application event; that one is the day-to-day gate.

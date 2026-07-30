@@ -10,13 +10,13 @@ description: Use to walk a merged change through per-stage CDK deploy — `lab`/
 Active git branch profile: **feature → staging → main**. Feature branches target git branch `staging`; feature→staging PRs require required review and the existing **`ci / verify`** check (`go test ./...` plus release-asset build/verify and `cdk synth`). `main` accepts PRs only from `staging`, uses default GitHub checks and branch rules only, and does not rerun the staging verify gate. Release is manual, operator-owned, tag-driven off `main`. Git branch `staging` is distinct from the deploy-stage `staging` in lab/dev → staging → live rollout language.
 
 
-After `implement-milestone` lands a PR to `main`, the change is ready to reach deployed instances. This skill is the discipline for walking a change through stages for a given `(<app>, <stage>)`, respecting the three-step deploy order with lesser (for first-time deploys), publishing SSM exports correctly, and handling release-artifact publication when applicable.
+After `implement-milestone` lands its PR on git branch `staging` — factory's merge, under its standing authority — the change is ready to reach deployed instances. This skill is the discipline for walking a change through stages for a given `(<app>, <stage>)`, respecting the three-step deploy order with lesser (for first-time deploys), publishing SSM exports correctly, and handling release-artifact publication when applicable.
 
 ## When this skill runs
 
 Invoke when:
 
-- A change has merged to `main` and is ready for rollout
+- A change has merged to git branch `staging` and is ready for rollout
 - An operational change needs to propagate across stages
 - A security / authorization fix is ready for compressed-cadence rollout (compression authorized separately)
 - A rollback to a prior Lambda version or CDK stack state is required
@@ -24,7 +24,7 @@ Invoke when:
 
 ## Preconditions
 
-- **The change is merged to `main`.**
+- **The change is merged to git branch `staging`.**
 - **The deployment is identified** — `(<app>, <stage>)` matching a lesser deployment.
 - **The stage sequence is planned** — typically `lab/dev → staging → live` or `lab/dev → live`.
 - **The roadmap's soak criteria are documented.**
@@ -141,6 +141,8 @@ Do not promote to live until staging soak criteria are met.
 
 ## Release-artifact publication (for managed-consumer ingestion)
 
+**The release cut is the operator's act.** Promotion is a `staging`→`main` release PR the operator merges; the tag, the GitHub Release, and the published assets follow from `main` under the operator's hand. You prepare the inputs, verify the checksums, and hand them over — you do not merge, tag, release, or publish off `main`, in any session, under any grant.
+
 When a release will be ingested by lesser-host's provisioning worker, the release cut requires:
 
 - **Git tag** on `main` — `v<version>` (e.g. `v0.2.29`)
@@ -157,7 +159,7 @@ Managed consumers (lesser-host's provisioning worker) verify checksums before de
 - **Stop.** Do not promote further.
 - **Diagnose quickly** — narrow or broad?
 - **Decide rollback scope**:
-  - **Full rollback**: revert the commit on `main`, redeploy via CDK with prior commit.
+  - **Full rollback**: open the revert PR against git branch `staging`, redeploy via CDK with prior commit. The revert reaches `main` only through the operator's release PR.
   - **Per-stage rollback**: roll back live while keeping staging / dev on the new commit.
   - **Lambda-version alias rollback** (emergency): point alias at prior Lambda version directly.
 - **Coordinate with operators through the user.**
@@ -232,6 +234,7 @@ Managed consumers (lesser-host's provisioning worker) verify checksums before de
 - **"Set a 10-minute timeout on the CDK deploy."** Never.
 - **"Skip publishing the SSM exports this deploy; they haven't changed."** Refuse. SSM exports publish on every deploy so the values reflect the current Lambda version and session table.
 - **"Run the live deploy without operator authorization."** Refuse.
+- **"Merge the staging→main release PR and cut the tag yourself; the operator is unavailable."** Refuse. Merging, tagging, releasing, and deploying from `main` are the operator's acts; no authorization of any kind transfers them to you.
 - **"Skip lab / dev soak; the change is small."** Refuse.
 - **"Deploy to live without a staging soak" (where staging is used).** Refuse without explicit authorization.
 - **"Delete this Lambda function version; we're past it."** Refuse. Rollback target.
