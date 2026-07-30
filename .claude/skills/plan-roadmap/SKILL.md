@@ -50,7 +50,7 @@ Every roadmap answers: **how does this reach `live` safely, for connected MCP cl
 
 Default rollout:
 
-1. **Feature branch work completes.** Required review and the repo's existing staging gate pass; merge to git branch `staging`. Operator-owned promotion from `staging` to `main` follows after evidence review.
+1. **Feature branch work completes.** Required review and the repo's existing staging gate pass; factory merges to git branch `staging` under its standing authority. Operator-owned promotion from `staging` to `main` follows after evidence review — the operator merges, releases, and deploys it, under any grant.
 2. **Deploy to `lab` / `dev`** via CDK. Observe MCP endpoint responds correctly, discovery metadata current, OAuth flow works, tool invocations succeed with correct scope / profile gating.
 3. **Soak in `lab`.** Evidence that MCP clients (test accounts) can connect, discover, authenticate, and invoke tools. Communication-tool delegation to lesser-host works. Session persistence retains across invocations (if enabled).
 4. **Deploy to `staging`** if used. Integration partners exercise real MCP flows.

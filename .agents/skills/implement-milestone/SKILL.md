@@ -142,13 +142,13 @@ When all tasks are committed and pushed:
 5. Promote PR out of draft.
 6. Update PR description: check all task boxes.
 7. Request required review.
-8. **Leave merging to a reviewer.**
+8. **Leave merging to factory.** Its authority over git branch `staging` is standing — never granted per session.
 
-The PR merges to git branch `staging`. Main promotion is operator-owned and PR-only from `staging`; do not deploy or release from this skill.
+Factory merges the PR into git branch `staging`. Promotion is a `staging`→`main` release PR the operator merges, releases, and deploys; neither you nor factory merges to `main`, in any session, under any grant. Do not deploy or release from this skill.
 
 ## Hand off to deploy-body
 
-After operator-owned promotion to `main`, `deploy-body` owns:
+After the milestone PR merges to git branch `staging`, `deploy-body` owns:
 
 - CDK deploys per stage (`lab / dev → staging → live`)
 - Soak criteria verification
@@ -162,7 +162,7 @@ After operator-owned promotion to `main`, `deploy-body` owns:
 
 - Will not implement more than one milestone per run.
 - Will not accept scope growth as a task — scope growth → `scope-need`.
-- Will not merge PRs — required review is the process.
+- Will not merge PRs — feature→`staging` merges belong to factory, and `main` belongs to the operator under any grant.
 - Will not skip required review for "small" changes.
 - Will not run deploy commands — that's `deploy-body`.
 - Will not skip specialist walks for tool-surface, MCP-contract, lesser-integration, host-delegation, framework, or advisor-brief work.
