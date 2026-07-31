@@ -59,17 +59,20 @@ var toolScopes = map[string][]string{
 	"message_request_decline": {ScopeWrite},
 
 	// Article reads.
-	"article_draft_get":     {ScopeRead},
-	"article_draft_list":    {ScopeRead},
-	"article_draft_preview": {ScopeRead},
-	"article_get":           {ScopeRead},
-	"article_list":          {ScopeRead},
+	"article_draft_get":         {ScopeRead},
+	"article_draft_list":        {ScopeRead},
+	"article_draft_preview":     {ScopeRead},
+	"article_draft_review_read": {ScopeRead},
+	"article_get":               {ScopeRead},
+	"article_list":              {ScopeRead},
 
 	// Article writes.
-	"article_draft_create":  {ScopeWrite},
-	"article_draft_update":  {ScopeWrite},
-	"article_draft_publish": {ScopeWrite},
-	"article_update":        {ScopeWrite},
+	"article_draft_create":         {ScopeWrite},
+	"article_draft_update":         {ScopeWrite},
+	"article_draft_review_submit":  {ScopeWrite},
+	"article_draft_review_verdict": {ScopeWrite},
+	"article_draft_publish":        {ScopeWrite},
+	"article_update":               {ScopeWrite},
 
 	// Memory.
 	"memory_query":  {ScopeRead},
