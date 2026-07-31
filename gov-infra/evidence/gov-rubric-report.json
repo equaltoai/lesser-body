@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-31T12:08:55.870657Z",
+  "generated_at": "2026-07-31T12:42:20.713723Z",
   "git": {
-    "head": "b8f4e641da2c91530e4178ef4eca6ef8aa1e2fba",
-    "head_tree": "52e4f24734b82ee0e70833046aa38e7259fc990f",
+    "head": "0c0ee53924978bf39ec8ff943ae273a749b63600",
+    "head_tree": "dd14034b8176766e515b544c1686d920da51864c",
     "merge_base_origin_staging": "ac55dbe67f230ab626afcdb813c278e538b72ce1",
     "ref": "theorymcp/equaltoai/body/m2b-review-workflow-mcp",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
