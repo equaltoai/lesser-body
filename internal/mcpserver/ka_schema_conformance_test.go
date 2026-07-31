@@ -433,6 +433,31 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 			PreviewRunes: articleDraftPreviewRunes,
 		}))
 	})
+	reviewFixture := func() *cmsapi.DraftReview {
+		return &cmsapi.DraftReview{
+			DraftID:       "draft-1",
+			ContentFormat: cmsapi.ContentFormatMarkdown,
+			Status:        cmsapi.DraftStatusDraft,
+			UpdatedAt:     "2026-07-31T12:00:00Z",
+			CreatedAt:     "2026-07-31T11:00:00Z",
+			Verdicts:      []cmsapi.DraftReviewVerdictRecord{},
+		}
+	}
+	for tool, operation := range map[string]string{
+		"article_draft_review_submit":  "submitted",
+		"article_draft_review_verdict": "verdict_submitted",
+	} {
+		tool, operation := tool, operation
+		add(tool, "review", func(t *testing.T) *mcpruntime.ToolResult {
+			return mustKaToolResult(articleDraftReviewSingleResult(tool, operation, reviewFixture(), articleDraftReviewBudgetBytes))
+		})
+	}
+	add("article_draft_review_read", "state", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(articleDraftReviewStateResult(reviewFixture(), articleDraftReviewBudgetBytes))
+	})
+	add("article_draft_review_read", "queue", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(articleDraftReviewQueueResult(&cmsapi.DraftReviewConnection{Edges: []cmsapi.DraftReviewEdge{}}, 20, articleDraftReviewBudgetBytes))
+	})
 	for _, fixture := range articleDraftPreviewOutputSchemaFixtures() {
 		fixture := fixture
 		add("article_draft_preview", fixture.name, fixture.build)

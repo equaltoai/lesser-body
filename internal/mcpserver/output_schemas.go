@@ -385,6 +385,55 @@ func articleListOutputSchema() json.RawMessage {
 	}`)
 }
 
+func articleDraftReviewSingleOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"review":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","review"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func articleDraftReviewReadOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"mode":{"type":"string","enum":["queue","state"]},
+					"review":{"type":"object","additionalProperties":true},
+					"reviews":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"},
+					"limit":{"type":"integer"},
+					"nextCursor":{"type":"string"},
+					"pageInfo":{"type":"object","additionalProperties":true},
+					"totalCount":{"type":"integer"}
+				},
+				"required":["tool","operation","source","mode","count"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
 func soulReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
