@@ -388,6 +388,7 @@ func articleListOutputSchema() json.RawMessage {
 func articleDraftReviewSingleOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
+		"description":"Every Article draft created through MCP is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing.",
 		"properties":{
 			"data":{
 				"type":"object",
@@ -409,6 +410,7 @@ func articleDraftReviewSingleOutputSchema() json.RawMessage {
 func articleDraftReviewReadOutputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type":"object",
+		"description":"Every Article draft created through MCP is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing; reviewStatus and verdicts are Lesser-authoritative publish-gate state, not Body-derived fields.",
 		"properties":{
 			"data":{
 				"type":"object",

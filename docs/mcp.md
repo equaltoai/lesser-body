@@ -656,9 +656,9 @@ Scope key:
 | `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
 | `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
 | `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
-| `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. |
-| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. |
-| `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. |
+| `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
@@ -1515,7 +1515,8 @@ both drone and souled runtime profiles, and use structured-first responses with 
 | `article_draft_review_verdict` | `draft_id: string`, `verdict: APPROVED \| CHANGES_REQUESTED` | `notes: string`, `max_output_bytes: integer >= 0` | `tool`, `operation:"verdict_submitted"`, `source`, `review` |
 
 All three default to a 12,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted. An oversized
-result fails explicitly with `response_too_large`; queue callers should reduce `limit` or raise the explicit budget.
+result fails explicitly with `response_too_large`; queue mode defaults to 5 realistic review records so the documented
+default page fits that budget, while callers requesting larger pages should reduce `limit` or raise the explicit budget.
 
 1. The author submits an owner-scoped draft to one Lesser username. This calls
    `shareDraftForReview(draftId:, reviewer:)` and creates or refreshes Lesser's revocable grant:
@@ -1527,7 +1528,7 @@ result fails explicitly with `response_too_large`; queue callers should reduce `
 2. The reviewer lists their active queue through `sharedDraftReviews(first:, after:)`:
 
    ```json
-   {"tool":"article_draft_review_read","arguments":{"limit":20}}
+   {"tool":"article_draft_review_read","arguments":{}}
    ```
 
    Queue mode returns `mode:"queue"`, `reviews[]` entries containing the Lesser `review` plus its opaque `cursor`,
@@ -1554,6 +1555,10 @@ Lesser alone enforces the approval rules. Human-authored drafts with active invi
 reviewer's current approval. Agent-generated drafts additionally require an active approval by the configured instance
 principal. Grants are revocable, and a re-grant requires a fresh verdict. `article_draft_publish` delegates to the same
 Lesser publish mutation, so Body neither duplicates nor relaxes these gates.
+
+Grant creation is authorized by Lesser's `shareDraftForReview` contract. Body deliberately adds no local owner check:
+the CSR-010 `draftOwnedByAuthenticatedActor` post-response layer is intentionally not applied to
+`article_draft_review_submit`, unlike sibling draft tools, because Body must not re-derive Lesser's access decision.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with

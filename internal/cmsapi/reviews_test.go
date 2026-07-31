@@ -1,6 +1,7 @@
 package cmsapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -10,50 +11,77 @@ import (
 )
 
 func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
+	const callerDraftID = "caller-draft-id-must-stay-in-variables"
+	const callerNotes = "caller notes must stay in GraphQL variables"
 	var operations []Operation
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var op Operation
 		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
-			t.Fatalf("decode operation: %v", err)
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusInternalServerError)
+			return
 		}
 		operations = append(operations, op)
 		w.Header().Set("Content-Type", "application/json")
 		switch op.OperationName {
 		case "BodySubmitArticleDraftForReview":
-			if op.Variables["draftId"] != "draft-1" || op.Variables["reviewer"] != "reviewer" {
-				t.Fatalf("share variables = %+v", op.Variables)
+			if op.Variables["draftId"] != callerDraftID || op.Variables["reviewer"] != "reviewer" {
+				t.Errorf("share variables = %+v", op.Variables)
+				http.Error(w, "unexpected share variables", http.StatusInternalServerError)
+				return
 			}
-			_, _ = w.Write([]byte(`{"data":{"shareDraftForReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","grant":{"grantedAt":"2026-07-31T12:00:00Z"},"verdicts":[]}}}`))
+			_, _ = w.Write([]byte(`{"data":{"shareDraftForReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","grant":{"grantedAt":"2026-07-31T12:00:00Z"},"verdicts":[]}}}`))
 		case "BodyArticleDraftReview":
-			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","verdicts":null}}}`))
-		case "BodyArticleDraftReviewQueue":
-			_, _ = w.Write([]byte(`{"data":{"sharedDraftReviews":{"edges":[{"node":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","verdicts":[]},"cursor":"queue-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
-		case "BodySubmitArticleDraftReviewVerdict":
-			if op.Variables["verdict"] != DraftReviewVerdictChangesRequested || op.Variables["notes"] != "revise intro" {
-				t.Fatalf("verdict variables = %+v", op.Variables)
+			if op.Variables["id"] != callerDraftID {
+				t.Errorf("state variables = %+v", op.Variables)
+				http.Error(w, "unexpected state variables", http.StatusInternalServerError)
+				return
 			}
-			_, _ = w.Write([]byte(`{"data":{"submitDraftReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","reviewedBy":{"id":"https://example.com/users/reviewer","username":"reviewer"},"reviewStatus":"CHANGES_REQUESTED","editorNotes":"revise intro","verdicts":[{"verdict":"CHANGES_REQUESTED","notes":"revise intro","recordedAt":"2026-07-31T12:01:00Z"}]}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","reviewStatus":"APPROVED","verdicts":[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","recordedAt":"2026-07-31T11:59:00Z"}]}}}`))
+		case "BodyArticleDraftReviewQueue":
+			_, _ = w.Write([]byte(`{"data":{"sharedDraftReviews":{"edges":[{"node":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","verdicts":[]},"cursor":"queue-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+		case "BodySubmitArticleDraftReviewVerdict":
+			if op.Variables["draftId"] != callerDraftID || op.Variables["verdict"] != DraftReviewVerdictChangesRequested || op.Variables["notes"] != callerNotes {
+				t.Errorf("verdict variables = %+v", op.Variables)
+				http.Error(w, "unexpected verdict variables", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"submitDraftReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","reviewedBy":{"id":"https://example.com/users/reviewer","username":"reviewer"},"reviewStatus":"CHANGES_REQUESTED","editorNotes":"caller notes must stay in GraphQL variables","verdicts":[{"verdict":"CHANGES_REQUESTED","notes":"caller notes must stay in GraphQL variables","recordedAt":"2026-07-31T12:01:00Z"}]}}}`))
 		default:
-			t.Fatalf("unexpected operation %q", op.OperationName)
+			t.Errorf("unexpected operation %q", op.OperationName)
+			http.Error(w, "unexpected operation", http.StatusInternalServerError)
 		}
 	}))
 	defer server.Close()
 
 	client := newTestClient(t, server.URL)
-	shared, err := client.SubmitArticleDraftForReview(context.Background(), "token", " draft-1 ", " reviewer ")
+	shared, err := client.SubmitArticleDraftForReview(context.Background(), "token", " "+callerDraftID+" ", " reviewer ")
 	if err != nil || shared.Grant == nil || shared.Grant.GrantedAt == "" || shared.Verdicts == nil {
 		t.Fatalf("SubmitArticleDraftForReview = %+v, %v", shared, err)
 	}
-	state, err := client.ReadArticleDraftReview(context.Background(), "token", "draft-1")
-	if err != nil || state.DraftID != "draft-1" || state.Verdicts == nil || len(state.Verdicts) != 0 {
+	state, err := client.ReadArticleDraftReview(context.Background(), "token", callerDraftID)
+	if err != nil || state.DraftID != callerDraftID || state.Verdicts == nil || len(state.Verdicts) != 1 {
 		t.Fatalf("ReadArticleDraftReview = %+v, %v", state, err)
 	}
+	wantStatus := []byte(`"APPROVED"`)
+	wantVerdicts := []byte(`[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","recordedAt":"2026-07-31T11:59:00Z"}]`)
+	gotStatus, err := json.Marshal(state.ReviewStatus)
+	if err != nil {
+		t.Fatalf("marshal reviewStatus: %v", err)
+	}
+	gotVerdicts, err := json.Marshal(state.Verdicts)
+	if err != nil {
+		t.Fatalf("marshal verdicts: %v", err)
+	}
+	if !bytes.Equal(gotStatus, wantStatus) || !bytes.Equal(gotVerdicts, wantVerdicts) {
+		t.Fatalf("Lesser review state changed in transit: reviewStatus=%s verdicts=%s", gotStatus, gotVerdicts)
+	}
 	queue, err := client.ListArticleDraftReviews(context.Background(), "token", 10, " queue-cursor ")
-	if err != nil || len(queue.Edges) != 1 || queue.Edges[0].Node == nil || queue.Edges[0].Node.DraftID != "draft-1" {
+	if err != nil || len(queue.Edges) != 1 || queue.Edges[0].Node == nil || queue.Edges[0].Node.DraftID != callerDraftID {
 		t.Fatalf("ListArticleDraftReviews = %+v, %v", queue, err)
 	}
-	notes := " revise intro "
-	verdict, err := client.SubmitArticleDraftReviewVerdict(context.Background(), "token", "draft-1", "changes_requested", &notes)
+	notes := " " + callerNotes + " "
+	verdict, err := client.SubmitArticleDraftReviewVerdict(context.Background(), "token", callerDraftID, "changes_requested", &notes)
 	if err != nil || verdict.ReviewStatus == nil || *verdict.ReviewStatus != DraftReviewVerdictChangesRequested || verdict.ReviewedBy == nil || verdict.ReviewedBy.Username != "reviewer" {
 		t.Fatalf("SubmitArticleDraftReviewVerdict = %+v, %v", verdict, err)
 	}
@@ -62,6 +90,11 @@ func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
 		t.Fatalf("operations = %d", len(operations))
 	}
 	for _, op := range operations {
+		for _, callerValue := range []string{callerDraftID, callerNotes} {
+			if strings.Contains(op.Query, callerValue) {
+				t.Fatalf("%s interpolated caller-controlled value %q into query: %s", op.OperationName, callerValue, op.Query)
+			}
+		}
 		for _, want := range []string{"draftId", "generatedBy { id username }", "reviewedBy { id username }", "reviewStatus", "editorNotes", "grant { grantedAt }", "verdicts { verdict notes recordedAt }"} {
 			if !strings.Contains(op.Query, want) {
 				t.Fatalf("%s query missing %q: %s", op.OperationName, want, op.Query)

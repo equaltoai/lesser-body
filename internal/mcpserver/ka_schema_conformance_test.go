@@ -22,7 +22,7 @@ import (
 // Strict MCP clients validate tools/call structuredContent against the tool's
 // declared OutputSchema. Keep the test validator deliberately scoped to the
 // JSON Schema vocabulary used by Ka's output schemas: type, required,
-// properties, additionalProperties, items, and enum.
+// properties, additionalProperties, items, enum, and descriptive annotations.
 func assertKaResultMatchesDeclaredOutputSchema(t *testing.T, label string, schema json.RawMessage, result *mcpruntime.ToolResult) {
 	t.Helper()
 	if result == nil {
@@ -104,6 +104,10 @@ func validateKaOutputSchemaVocabulary(path string, schema any, unsupported *[]st
 		case "enum":
 			if _, ok := value.([]any); !ok {
 				*unsupported = append(*unsupported, fmt.Sprintf("%s.enum: %T is not supported", path, value))
+			}
+		case "description":
+			if _, ok := value.(string); !ok {
+				*unsupported = append(*unsupported, fmt.Sprintf("%s.description: %T is not supported", path, value))
 			}
 		default:
 			*unsupported = append(*unsupported, fmt.Sprintf("%s.%s: unsupported JSON Schema keyword", path, keyword))

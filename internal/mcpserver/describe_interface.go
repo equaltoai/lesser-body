@@ -182,7 +182,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Conversation discovery: `conversations_read({\"limit\":10,\"view\":\"compact\"})` → select a conversation ID → `conversation_get({\"conversationId\":\"<conversation-id>\",\"limit\":20,\"view\":\"compact\"})`.\n")
 	out.WriteString("- Notification discovery: `notifications_read({\"limit\":10,\"view\":\"compact\"})` → select a notification ID → `notification_get({\"id\":\"<notification-id>\",\"view\":\"standard\"})`.\n")
 	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → inspect the rendered result → `article_draft_publish`.\n")
-	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer calls `article_draft_review_read` → reviewer calls `article_draft_review_verdict`; Lesser alone decides publish eligibility.\n")
+	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer calls `article_draft_review_read` → reviewer calls `article_draft_review_verdict`; every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing.\n")
 
 	out.WriteString("\n## Read-result budgeting and expansion\n")
 	out.WriteString("- When advertised by a tool, `view` selects the projection: `standard` preserves the compatibility shape, `compact`/`summary` bounds discovery context, and `full` is explicit audit/debug expansion.\n")

@@ -10,10 +10,10 @@ Required environment:
   ARTICLE_REVIEW_CANARY_CONFIRM_MUTATIONS=true
 
 Optional environment:
-  ARTICLE_REVIEW_DRAFT_ID          Existing author-owned draft. Omit to create a private canary draft.
+  ARTICLE_REVIEW_DRAFT_ID          Existing author-owned draft (preferred). Omit to create a private canary draft.
   ARTICLE_REVIEW_VERDICT           APPROVED or CHANGES_REQUESTED (default: CHANGES_REQUESTED)
   ARTICLE_REVIEW_NOTES             Default: a generated non-sensitive canary note.
-  ARTICLE_REVIEW_MAX_OUTPUT_BYTES  Default: 24000.
+  ARTICLE_REVIEW_MAX_OUTPUT_BYTES  Default: 24000 for explicit non-default calls.
 
 The probe mutates Lesser review state but never publishes. It refuses authenticated
 redirects and prints only bounded identifiers, booleans, counts, and hashes. It
@@ -302,10 +302,25 @@ def main() -> int:
         flush=True,
     )
 
-    queue = reviewer.tool(
-        "article_draft_review_read", {"limit": 20, "max_output_bytes": MAX_OUTPUT_BYTES}
+    # Intentionally omit both limit and max_output_bytes: this live proof must
+    # exercise the tool's documented default page and default envelope budget.
+    default_queue = reviewer.tool("article_draft_review_read", {})
+    if default_queue.get("mode") != "queue" or default_queue.get("limit") != 5:
+        raise CanaryError(f"unexpected default queue envelope: {payload_hash(default_queue)}")
+    print(
+        "ok article_draft_review_read default_budget "
+        f"count={default_queue.get('count')} limit={default_queue.get('limit')} responseB={reviewer.last_bytes}",
+        flush=True,
     )
-    queued_review = find_queue_review(queue, draft_id)
+
+    try:
+        queued_review = find_queue_review(default_queue, draft_id)
+        queue = default_queue
+    except CanaryError:
+        queue = reviewer.tool(
+            "article_draft_review_read", {"limit": 20, "max_output_bytes": MAX_OUTPUT_BYTES}
+        )
+        queued_review = find_queue_review(queue, draft_id)
     print(
         "ok article_draft_review_read queue "
         f"draft_id={safe_id(draft_id)} found=true count={queue.get('count')} totalCount={queue.get('totalCount')} "

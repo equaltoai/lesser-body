@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	articleDraftReviewDefaultLimit = 20
+	articleDraftReviewDefaultLimit = 5
 	articleDraftReviewMaxLimit     = 80
 	articleDraftReviewBudgetBytes  = 12000
 )
+
+const articleDraftReviewPublishGateNote = "Every Article draft created through MCP is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing."
 
 func registerArticleReviewTools(r *mcpruntime.ToolRegistry) error {
 	for _, tool := range []struct {
@@ -35,7 +37,7 @@ func registerArticleReviewTools(r *mcpruntime.ToolRegistry) error {
 func articleDraftReviewSubmitDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_submit",
-		Description:  "Submit an Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Lesser remains the queue, authorization, approval, attribution, and publish-gate authority.",
+		Description:  "Submit an Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Lesser remains the queue, authorization, approval, attribution, and publish-gate authority. " + articleDraftReviewPublishGateNote,
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleDraftReviewSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -54,14 +56,14 @@ func articleDraftReviewSubmitDef() mcpruntime.ToolDef {
 func articleDraftReviewReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_read",
-		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active review queue. Body returns Lesser's grant, verdict-history, and attribution fields without calculating publish eligibility.",
+		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active review queue. Body returns Lesser's grant, verdict-history, and attribution fields without calculating publish eligibility. " + articleDraftReviewPublishGateNote,
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftReviewReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"draft_id":{"type":"string","description":"Optional Lesser CMS draft id. When present, returns that caller-authorized review state; when omitted, lists the caller's active queue."},
-				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Queue mode only. Maximum review items to return; defaults to 20."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Queue mode only. Maximum review items to return; defaults to 5 so a realistic default page fits the 12000-byte response budget."},
 				"cursor":{"type":"string","description":"Queue mode only. Pagination cursor from a previous article_draft_review_read response."},
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 12000-byte default."}
 			},
@@ -73,7 +75,7 @@ func articleDraftReviewReadDef() mcpruntime.ToolDef {
 func articleDraftReviewVerdictDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_verdict",
-		Description:  "Submit an APPROVED or CHANGES_REQUESTED verdict, with optional notes, through Lesser's caller-authorized review contract. Body does not calculate approval or publish eligibility.",
+		Description:  "Submit an APPROVED or CHANGES_REQUESTED verdict, with optional notes, through Lesser's caller-authorized review contract. Body does not calculate approval or publish eligibility. " + articleDraftReviewPublishGateNote,
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleDraftReviewSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -119,6 +121,9 @@ func handleArticleDraftReviewSubmit(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
+	// Lesser's shareDraftForReview mutation owns grant-creation authorization.
+	// Unlike sibling draft tools, this handler deliberately does not apply
+	// draftOwnedByAuthenticatedActor (CSR-010) or re-derive Lesser's decision.
 	review, err := client.SubmitArticleDraftForReview(ctx, token, in.DraftID, in.Reviewer)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_review_submit", err)

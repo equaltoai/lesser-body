@@ -137,3 +137,5 @@ queue → reviewer state → verdict → author-observed state. It never publish
 because review grants and verdicts are durable Lesser state. Output contains only bounded identifiers, counts,
 booleans, response sizes, and hashes; tokens, draft content, notes, and raw error payloads remain redacted. Optional
 `ARTICLE_REVIEW_VERDICT`, `ARTICLE_REVIEW_NOTES`, and `ARTICLE_REVIEW_MAX_OUTPUT_BYTES` tune the proof.
+Prefer `ARTICLE_REVIEW_DRAFT_ID` with a reused fixture draft; canary-created drafts, grants, and verdicts are durable by
+design and accumulate.
