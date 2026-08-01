@@ -5,3 +5,8 @@ cdk/node_modules/
 dist/
 .agents/
 .claude/
+.codex/
+.kimi-code/
+.theorymcp/
+GEMINI.md
+.mcp.json
