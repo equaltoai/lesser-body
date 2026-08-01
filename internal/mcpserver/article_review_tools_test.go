@@ -146,7 +146,7 @@ func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 			}
 			for i := 0; i < tc.count; i++ {
 				queue.Edges = append(queue.Edges, cmsapi.DraftReviewEdge{
-					Node:   realisticDraftReviewFixture(i),
+					Node:   realisticDraftReviewFixture(i, 1),
 					Cursor: fmt.Sprintf("review-queue-cursor-%02d", i),
 				})
 			}
@@ -170,13 +170,64 @@ func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 	}
 }
 
-func realisticDraftReviewFixture(index int) *cmsapi.DraftReview {
+// Lesser keeps immutable verdict history without a finite record cap. Two pins
+// the first ordinary re-review round without pretending the history is bounded.
+const realisticDraftReviewPinnedVerdictCount = 2
+
+func TestArticleDraftReviewBudgetGuardRejectsPinnedVerdictHistoryDrift(t *testing.T) {
+	queue := &cmsapi.DraftReviewConnection{
+		Edges:      make([]cmsapi.DraftReviewEdge, 0, articleDraftReviewDefaultLimit),
+		TotalCount: articleDraftReviewDefaultLimit,
+	}
+	for i := 0; i < articleDraftReviewDefaultLimit; i++ {
+		queue.Edges = append(queue.Edges, cmsapi.DraftReviewEdge{
+			Node:   realisticDraftReviewFixture(i, realisticDraftReviewPinnedVerdictCount),
+			Cursor: fmt.Sprintf("review-queue-cursor-%02d", i),
+		})
+	}
+
+	result, err := articleDraftReviewQueueResult(queue, articleDraftReviewDefaultLimit, articleDraftReviewBudgetBytes)
+	if err != nil {
+		t.Fatalf("articleDraftReviewQueueResult: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected pinned %d-verdict history to trip the %d-byte default budget guard", realisticDraftReviewPinnedVerdictCount, articleDraftReviewBudgetBytes)
+	}
+
+	errorPayload, ok := result.StructuredContent["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("budget guard error payload = %+v", result.StructuredContent)
+	}
+	details, ok := errorPayload["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("budget guard details = %+v", errorPayload)
+	}
+	measuredBytes, ok := details["measuredBytes"].(int)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != 413 ||
+		!strings.Contains(fmt.Sprint(errorPayload["message"]), "exceeds max_output_bytes") ||
+		!ok || measuredBytes <= articleDraftReviewBudgetBytes ||
+		details["maxOutputBytes"] != articleDraftReviewBudgetBytes ||
+		details["guidance"] != "reduce queue limit or increase max_output_bytes" {
+		t.Fatalf("budget guard must fail loudly with measured recovery details: %+v", errorPayload)
+	}
+	t.Logf("realistic queue envelope at n=%d with %d verdicts/review: %d bytes (budget %d)", articleDraftReviewDefaultLimit, realisticDraftReviewPinnedVerdictCount, measuredBytes, articleDraftReviewBudgetBytes)
+}
+
+func realisticDraftReviewFixture(index, verdictCount int) *cmsapi.DraftReview {
 	title := fmt.Sprintf("Review-ready architecture note %02d: preserve Lesser authority", index)
 	subtitle := "An agent-generated draft with reviewer attribution and editorial context"
 	excerpt := "Body transports Lesser's caller-authorized review state without creating local review semantics."
 	reviewStatus := cmsapi.DraftReviewVerdictChangesRequested
 	editorNotes := "Clarify the authority boundary and retain the deployment evidence."
 	verdictNotes := "Revise the authority paragraph before requesting publication."
+	verdicts := make([]cmsapi.DraftReviewVerdictRecord, 0, verdictCount)
+	for range verdictCount {
+		verdicts = append(verdicts, cmsapi.DraftReviewVerdictRecord{
+			Verdict:    cmsapi.DraftReviewVerdictChangesRequested,
+			Notes:      &verdictNotes,
+			RecordedAt: "2026-07-31T12:01:00Z",
+		})
+	}
 	return &cmsapi.DraftReview{
 		DraftID:       fmt.Sprintf("draft-realistic-review-%02d", index),
 		Title:         &title,
@@ -191,11 +242,7 @@ func realisticDraftReviewFixture(index int) *cmsapi.DraftReview {
 		ReviewStatus:  &reviewStatus,
 		EditorNotes:   &editorNotes,
 		Grant:         &cmsapi.DraftReviewGrant{GrantedAt: "2026-07-31T11:30:00Z"},
-		Verdicts: []cmsapi.DraftReviewVerdictRecord{{
-			Verdict:    cmsapi.DraftReviewVerdictChangesRequested,
-			Notes:      &verdictNotes,
-			RecordedAt: "2026-07-31T12:01:00Z",
-		}},
+		Verdicts:      verdicts,
 	}
 }
 
