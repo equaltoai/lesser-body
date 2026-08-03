@@ -114,14 +114,20 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
     });
     const jwtSecretKeyParamPathParam = new cdk.CfnParameter(this, "JWTSecretKeyArnParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the shared KMS key ARN for the target app, for example /<app>/shared/kms/encryption-key-arn.",
     });
     const lesserStageDomainParamPathParam = new cdk.CfnParameter(this, "LesserStageDomainParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the Lesser stage domain for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/domain.",
     });
     const lesserTableParamPathParam = new cdk.CfnParameter(this, "LesserTableNameParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the Lesser table name for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/table_name.",
     });
     const lesserHostInstanceKeyArnParam = new cdk.CfnParameter(this, "LesserHostInstanceKeyARN", {

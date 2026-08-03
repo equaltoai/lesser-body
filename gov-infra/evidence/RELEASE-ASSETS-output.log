@@ -10,7 +10,7 @@ dist/lesser-body.zip: OK
 dist/lesser-body-instance.zip: OK
 OK: dist/checksums.txt
 
-added 10 packages, and audited 31 packages in 6s
+added 10 packages, and audited 31 packages in 1s
 
 1 package is looking for funding
   run `npm fund` for details

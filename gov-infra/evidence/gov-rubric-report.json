@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-03T11:32:36.606164Z",
+  "generated_at": "2026-08-03T11:51:33.054358Z",
   "git": {
-    "head": "a4b62f3d00076b2e07149cc21583a6a750079b63",
-    "head_tree": "7e43c909cc661b64b135bbea5aaf10c49dbdf116",
+    "head": "8f6cc6d2ea1bde96a9c2a295dcaf91e85188224e",
+    "head_tree": "6219ecadbd412f5602a700e91626483b767bb2ad",
     "merge_base_origin_staging": "096963012c4a9ad4f1cc6196710665c04fd14f7e",
     "ref": "chore-516-runtime-framework-v3",
-    "working_tree_after_run": "8 changed paths after verifier run"
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
