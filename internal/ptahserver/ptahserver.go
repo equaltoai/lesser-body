@@ -1603,6 +1603,7 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 		}
 	}
 
+	expectedLocalID := strings.TrimSpace(existing.LocalID)
 	updated, _, updateErr := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
 		Account:                accountActor,
 		AgentID:                existing.AgentID,
@@ -1616,8 +1617,16 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 		LifecycleStatus:        firstNonEmpty(identity.LifecycleStatus, identity.Status),
 		PublishedVersion:       firstNonZeroInt64(identity.PublishedVersion, existing.PublishedVersion),
 		SelfDescriptionVersion: firstNonZeroInt64(identity.SelfDescriptionVersion, existing.SelfDescriptionVersion),
+		ExpectedLocalID:        &expectedLocalID,
 	})
 	if updateErr != nil {
+		if errors.Is(updateErr, agentregistry.ErrFinalizedLocalIDChanged) {
+			return nil, "", mustToolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused because the registry local_id changed during Host identity refetch", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_host_refetch",
+				"tool":            toolAgentBindSoul,
+				"operator_action": "retry from the corrected registry state; Body did not overwrite the concurrent change",
+			}), nil
+		}
 		slog.WarnContext(ctx, "ptah soul binding Host identity registry repair failed",
 			"tool", toolAgentBindSoul,
 			"source", "agent_registry",

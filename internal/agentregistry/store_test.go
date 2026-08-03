@@ -98,6 +98,54 @@ func TestUpsertFinalizedCreatesAndReplaysHostDerivedRow(t *testing.T) {
 	}
 }
 
+func TestUpsertFinalizedConditionsExistingRowOnExpectedLocalID(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	base := FinalizedInput{Account: "owner", AgentID: "agent-0xabc", LocalID: "sentinel"}
+	if _, _, err := store.UpsertFinalized(ctx, base); err != nil {
+		t.Fatalf("create finalized row: %v", err)
+	}
+
+	expected := "sentinel"
+	guarded := base
+	guarded.ExpectedLocalID = &expected
+	guarded.PublishedVersion = 2
+	if updated, created, err := store.UpsertFinalized(ctx, guarded); err != nil || created || updated == nil || updated.LocalID != "sentinel" {
+		t.Fatalf("matching conditional update = agent:%+v created:%t err:%v", updated, created, err)
+	}
+
+	corrected := base
+	corrected.LocalID = "sentinelsentinel"
+	if _, _, err := store.UpsertFinalized(ctx, corrected); err != nil {
+		t.Fatalf("operator correction: %v", err)
+	}
+	if _, _, err := store.UpsertFinalized(ctx, guarded); !errors.Is(err, ErrFinalizedLocalIDChanged) {
+		t.Fatalf("stale conditional update error = %v, want ErrFinalizedLocalIDChanged", err)
+	}
+	got, err := store.Get(ctx, "owner", "agent-0xabc")
+	if err != nil || got.LocalID != "sentinelsentinel" {
+		t.Fatalf("corrected row after stale update = %+v/%v", got, err)
+	}
+}
+
+func TestUpsertFinalizedConditionsMissingLocalIDAttribute(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	if _, _, err := store.UpsertFinalized(ctx, FinalizedInput{Account: "owner", AgentID: "agent-0xabc"}); err != nil {
+		t.Fatalf("create empty finalized row: %v", err)
+	}
+	expected := ""
+	updated, created, err := store.UpsertFinalized(ctx, FinalizedInput{
+		Account:         "owner",
+		AgentID:         "agent-0xabc",
+		LocalID:         "sentinel",
+		ExpectedLocalID: &expected,
+	})
+	if err != nil || created || updated == nil || updated.LocalID != "sentinel" {
+		t.Fatalf("empty local-id conditional update = agent:%+v created:%t err:%v", updated, created, err)
+	}
+}
+
 func TestCrossAccountGetReturnsNotFound(t *testing.T) {
 	store, _ := newTestStore(t)
 	if _, err := store.Create(context.Background(), CreateInput{Account: "account-a", AgentID: "agent-123"}); err != nil {

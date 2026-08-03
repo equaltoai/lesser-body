@@ -62,6 +62,10 @@ var (
 	// ErrInvalidLimit is returned when callers request a nonsensical or
 	// unsupported registry list page size.
 	ErrInvalidLimit = errors.New("invalid limit")
+
+	// ErrFinalizedLocalIDChanged is returned when a replay-safe finalized
+	// update observes that LocalID changed after the caller read the row.
+	ErrFinalizedLocalIDChanged = errors.New("finalized agent local id changed")
 )
 
 // Agent is the account-scoped registry projection for a Ptah-created agent.
@@ -107,6 +111,10 @@ type FinalizedInput struct {
 	LifecycleStatus        string
 	PublishedVersion       int64
 	SelfDescriptionVersion int64
+	// ExpectedLocalID makes an update of an existing finalized row conditional
+	// on the LocalID observed by the caller. Nil preserves create-or-update
+	// behavior for callers without a prior read.
+	ExpectedLocalID *string
 }
 
 // ListInput describes an account-scoped registry list request.
@@ -216,12 +224,14 @@ func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent,
 	record.RegistryUpdatedAt = now
 	applyFinalizedFields(record, validated)
 
-	err = s.db.Model(record).WithContext(ctx).IfNotExists().Create()
-	switch {
-	case err == nil:
-		return record.toAgent(), true, nil
-	case !tableerrors.IsConditionFailed(err):
-		return nil, false, fmt.Errorf("create finalized agent registry record: %w", err)
+	if validated.ExpectedLocalID == nil {
+		err = s.db.Model(record).WithContext(ctx).IfNotExists().Create()
+		switch {
+		case err == nil:
+			return record.toAgent(), true, nil
+		case !tableerrors.IsConditionFailed(err):
+			return nil, false, fmt.Errorf("create finalized agent registry record: %w", err)
+		}
 	}
 
 	updated := s.emptyRecord()
@@ -264,7 +274,13 @@ func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent,
 	if validated.SelfDescriptionVersion > 0 {
 		builder = builder.Set("SelfDescriptionVersion", validated.SelfDescriptionVersion)
 	}
+	if validated.ExpectedLocalID != nil {
+		builder = builder.Condition("LocalID", "=", *validated.ExpectedLocalID)
+	}
 	if err := builder.ReturnValues("ALL_NEW").ExecuteWithResult(updated); err != nil {
+		if validated.ExpectedLocalID != nil && tableerrors.IsConditionFailed(err) {
+			return nil, false, fmt.Errorf("%w: conditional finalized registry update", ErrFinalizedLocalIDChanged)
+		}
 		return nil, false, fmt.Errorf("update finalized agent registry record: %w", err)
 	}
 	return updated.toAgent(), false, nil
@@ -452,6 +468,10 @@ func validateFinalizedInput(in FinalizedInput) (FinalizedInput, error) {
 	in.AnchorState = strings.TrimSpace(in.AnchorState)
 	in.OperationalBinding = strings.TrimSpace(in.OperationalBinding)
 	in.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
+	if in.ExpectedLocalID != nil {
+		expectedLocalID := strings.TrimSpace(*in.ExpectedLocalID)
+		in.ExpectedLocalID = &expectedLocalID
+	}
 	if in.PublishedVersion < 0 {
 		in.PublishedVersion = 0
 	}

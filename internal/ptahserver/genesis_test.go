@@ -643,6 +643,47 @@ func TestRegisterFinalizedGenesisAgentReplayDoesNotRewriteCorrectedLocalID(t *te
 	}
 }
 
+func TestRegisterFinalizedGenesisAgentReplayPreservesConcurrentCorrection(t *testing.T) {
+	registry := newMemoryAgentRegistry()
+	cfg := defaultConfig()
+	cfg.agentRegistry = registry
+	data := map[string]any{
+		"agent_id": "agent-0xabc",
+		"agent": map[string]any{
+			"agent_id": "agent-0xabc",
+			"local_id": "sentinel",
+		},
+	}
+	in := agentGenesisConversationInput{RegistrationID: "reg-123", ConversationID: "conv-456"}
+	if agent, created, result, err := cfg.registerFinalizedGenesisAgent(context.Background(), "owner", in, data); err != nil || result != nil || agent == nil || !created {
+		t.Fatalf("initial registry write = agent:%+v created:%t result:%+v err:%v", agent, created, result, err)
+	}
+
+	key := memoryAgentRegistryKey("owner", "agent-0xabc")
+	registry.beforeUpsertFinalized = func(agentregistry.FinalizedInput) {
+		registry.beforeUpsertFinalized = nil
+		registry.records[key].LocalID = "sentinelsentinel"
+	}
+	agent, created, result, err := cfg.registerFinalizedGenesisAgent(context.Background(), "owner", in, data)
+	if err != nil {
+		t.Fatalf("concurrent replay returned transport error: %v", err)
+	}
+	if agent != nil || created || result == nil || !result.IsError {
+		t.Fatalf("concurrent replay = agent:%+v created:%t result:%+v", agent, created, result)
+	}
+	payload := assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+	details, _ := payload["details"].(map[string]any)
+	if details["source"] != "agent_registry_replay" {
+		t.Fatalf("concurrent replay divergence details = %+v", details)
+	}
+	if registry.upsertFinalizedCalls != 2 {
+		t.Fatalf("registry write attempts = %d, want initial plus rejected replay", registry.upsertFinalizedCalls)
+	}
+	if got := registry.records[key].LocalID; got != "sentinelsentinel" {
+		t.Fatalf("stale replay rewrote concurrent correction to %q", got)
+	}
+}
+
 type genesisInstallGrantIssuer struct {
 	calls int
 }

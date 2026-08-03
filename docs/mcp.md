@@ -1234,7 +1234,9 @@ rows. The instance MCP Lambda's Lesser-table read grant is correspondingly limit
 `SOUL_BODY_BINDING_USERNAME#*`; it does not receive Lesser memory-write access. For newly minted Host-genesis agents,
 the Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
 caller-supplied binding input. A finalize replay first compares the new Host-derived `local_id` with the existing row;
-if they differ, typed `actor_endpoint_divergence` is returned and the existing row is not rewritten.
+if they differ, typed `actor_endpoint_divergence` is returned and the existing row is not rewritten. The ensuing write
+is conditional on that observed `local_id`, so a concurrent operator correction also wins and surfaces the same typed
+divergence instead of being overwritten by a stale replay.
 
 ### Instance-plane Ba tools
 

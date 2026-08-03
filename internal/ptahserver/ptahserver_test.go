@@ -2070,7 +2070,8 @@ type agentContentTestKey struct {
 type memoryAgentRegistry struct {
 	records map[string]*agentregistry.Agent
 
-	upsertFinalizedCalls int
+	upsertFinalizedCalls  int
+	beforeUpsertFinalized func(in agentregistry.FinalizedInput)
 }
 
 func newMemoryAgentRegistry() *memoryAgentRegistry {
@@ -2101,6 +2102,15 @@ func (m *memoryAgentRegistry) UpsertFinalized(_ context.Context, in agentregistr
 	}
 	m.upsertFinalizedCalls++
 	key := memoryAgentRegistryKey(in.Account, in.AgentID)
+	if m.beforeUpsertFinalized != nil {
+		m.beforeUpsertFinalized(in)
+	}
+	if in.ExpectedLocalID != nil {
+		current := m.records[key]
+		if current == nil || strings.TrimSpace(current.LocalID) != strings.TrimSpace(*in.ExpectedLocalID) {
+			return nil, false, agentregistry.ErrFinalizedLocalIDChanged
+		}
+	}
 	created := false
 	agent := m.records[key]
 	if agent == nil {

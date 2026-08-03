@@ -961,8 +961,11 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 	}
 	projectedLocalID := firstNonEmpty(nestedString(data, "agent", "local_id"), nestedString(data, "agent", "localId"), nestedString(data, "registration", "local_id"), nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id"))
 	existing, getErr := registry.Get(ctx, actor, agentID)
+	var expectedLocalID *string
 	switch {
 	case getErr == nil && existing != nil && strings.TrimSpace(existing.LocalID) != "" && strings.TrimSpace(projectedLocalID) != "":
+		expected := strings.TrimSpace(existing.LocalID)
+		expectedLocalID = &expected
 		if err := actorendpoint.Validate(projectedLocalID, existing.LocalID); err != nil {
 			return nil, false, mustToolErrorResult("actor_endpoint_divergence", "agent_genesis_finalize replay refused to overwrite a registry local_id that disagrees with the Host-derived projection", http.StatusConflict, map[string]any{
 				"source":          "agent_registry_replay",
@@ -970,6 +973,9 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 				"operator_action": "verify the authoritative Lesser actor and repair the divergent source before retrying; Body will not rewrite either value silently",
 			}), nil
 		}
+	case getErr == nil && existing != nil:
+		expected := strings.TrimSpace(existing.LocalID)
+		expectedLocalID = &expected
 	case getErr != nil && !errors.Is(getErr, agentregistry.ErrAgentNotFound):
 		return nil, false, mustToolErrorResult("agent_registry_error", "Body failed to read the existing registry row before replay-safe genesis finalization", http.StatusInternalServerError, map[string]any{
 			"source": "agent_registry_replay",
@@ -1004,8 +1010,16 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 		LifecycleStatus:        firstNonEmpty(nestedString(data, "agent", "lifecycle_status"), nestedString(data, "agent", "status"), nestedString(data, "publication", "lifecycle_status"), nestedString(data, "promotion", "lifecycle_status"), stringValue(data, "lifecycle_status"), stringValue(data, "status")),
 		PublishedVersion:       firstNonZeroInt64(nestedInt64(data, "publication", "published_version"), nestedInt64(data, "promotion", "published_version"), nestedInt64(data, "agent", "published_version"), int64Value(data["published_version"])),
 		SelfDescriptionVersion: firstNonZeroInt64(nestedInt64(data, "agent", "self_description_version"), nestedInt64(data, "agent", "selfDescriptionVersion"), int64Value(data["self_description_version"])),
+		ExpectedLocalID:        expectedLocalID,
 	})
 	if err != nil {
+		if errors.Is(err, agentregistry.ErrFinalizedLocalIDChanged) {
+			return nil, false, mustToolErrorResult("actor_endpoint_divergence", "agent_genesis_finalize replay refused because the registry local_id changed during finalization", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_replay",
+				"tool":            toolAgentGenesisFinalize,
+				"operator_action": "verify the authoritative Lesser actor and retry from the corrected registry state; Body did not overwrite the concurrent change",
+			}), nil
+		}
 		if errors.Is(err, agentregistry.ErrAgentAlreadyExists) {
 			existing, getErr := registry.Get(ctx, actor, agentID)
 			if getErr == nil {
