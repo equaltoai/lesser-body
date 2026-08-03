@@ -528,6 +528,49 @@ func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T
 	}
 }
 
+func TestAgentBindSoulRefusesWhenHostRefetchRegistryRepairFails(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{
+		getAgent: &agentregistry.Agent{
+			Account:         "theory",
+			AgentID:         "agent-0xabc",
+			Source:          agentregistry.SourceHostGenesisFinalize,
+			SourceAuthority: agentregistry.SourceAuthorityLesserHost,
+			SourceOperation: agentregistry.SourceOperationAgentGenesisFinalize,
+		},
+		upsertFinalizedErr: errors.New("registry write unavailable"),
+	}
+	identity := &fakeHostIdentityClient{identity: &hostapi.AgentIdentity{
+		AgentID:            "agent-0xabc",
+		LocalID:            "theo-marsh",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithHostIdentityClient(identity), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("theory", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_registry_error", http.StatusInternalServerError)
+	details, _ := payload["details"].(map[string]any)
+	if details["source"] != "agent_registry_host_refetch" || strings.TrimSpace(stringValue(details, "operator_action")) == "" {
+		t.Fatalf("registry repair error details = %+v", details)
+	}
+	if identity.calls != 1 || store.upsertFinalizedCalls != 1 || client.calls != 0 {
+		t.Fatalf("repair failure side effects = identity:%d registry_writes:%d Lesser_calls:%d", identity.calls, store.upsertFinalizedCalls, client.calls)
+	}
+}
+
 func TestAgentBindSoulHostRefetchDoesNotRewriteCorrectedRegistryLocalID(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
 	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{

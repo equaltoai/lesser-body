@@ -1632,7 +1632,11 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 			"source", "agent_registry",
 			"error", "registry update failed",
 		)
-		return existing, localActor, nil, nil
+		return nil, "", mustToolErrorResult("agent_registry_error", "agent_bind_soul verified a Host actor mapping but could not persist the registry repair", http.StatusInternalServerError, map[string]any{
+			"source":          "agent_registry_host_refetch",
+			"tool":            toolAgentBindSoul,
+			"operator_action": "restore the Body/Ptah registry write path and retry; Body did not submit the soul binding to Lesser",
+		}), nil
 	}
 	if updated == nil {
 		return existing, localActor, nil, nil
