@@ -122,20 +122,25 @@ import json
 from pathlib import Path
 marker = Path('.codex/theorymcp/body/install-marker.json')
 pack = Path('gov-infra/pack.json')
-if not marker.is_file():
-    raise SystemExit('missing install marker: .codex/theorymcp/body/install-marker.json')
+# The tracked pack manifest is the authoritative in-git profile declaration.
+# The install marker is a regenerated materialization receipt — never tracked,
+# so it is absent from clean CI checkouts by design; when present (local
+# steward checkouts) it must agree with the pack profile.
 if not pack.is_file():
     raise SystemExit('missing pack manifest: gov-infra/pack.json')
-marker_data = json.loads(marker.read_text())
 pack_data = json.loads(pack.read_text())
-marker_profile = marker_data.get('layout_profile_version')
 pack_profile = (pack_data.get('profile') or {}).get('id')
-print(f'marker layout_profile_version={marker_profile}')
 print(f'pack profile.id={pack_profile}')
-if marker_profile != 'software_repo_gov_infra':
-    raise SystemExit(f'unexpected marker profile: {marker_profile}')
 if pack_profile != 'software_repo_gov_infra':
     raise SystemExit(f'unexpected pack profile: {pack_profile}')
+if marker.is_file():
+    marker_data = json.loads(marker.read_text())
+    marker_profile = marker_data.get('layout_profile_version')
+    print(f'marker layout_profile_version={marker_profile}')
+    if marker_profile != 'software_repo_gov_infra':
+        raise SystemExit(f'unexpected marker profile: {marker_profile}')
+else:
+    print('marker absent (untracked materialized install; not required)')
 print('profile resolution PASS')
 PY
   then
@@ -463,6 +468,18 @@ if os.path.exists(results_file):
             line = line.strip()
             if line:
                 results.append(json.loads(line))
+authoritative_sources = [
+    "mcp__theorymcp.server_instructions published body overlay v10",
+    "AGENTS.md",
+    ".agents/skills/apply-and-verify-governance/SKILL.md",
+    "https://github.com/equaltoai/lesser-body/issues/401#issuecomment-4982280964",
+    "factory/products/progenitor/docs/agent-designs/2026-07-05-rubric-gate-skills.md",
+    "factory/products/progenitor/docs/patterns/parent-stages-genome-child-applies.md",
+]
+# The install marker is an untracked materialization receipt; cite it only when
+# this checkout actually carries it.
+if os.path.isfile('.codex/theorymcp/body/install-marker.json'):
+    authoritative_sources.insert(0, ".codex/theorymcp/body/install-marker.json")
 report = {
     "schema": "gov_rubric_report.v1",
     "schema_version": 1,
@@ -498,15 +515,7 @@ report = {
         "blocked": int(blocked),
         "total": len(results),
     },
-    "authoritative_sources": [
-        ".codex/theorymcp/body/install-marker.json",
-        "mcp__theorymcp.server_instructions published body overlay v10",
-        "AGENTS.md",
-        ".agents/skills/apply-and-verify-governance/SKILL.md",
-        "https://github.com/equaltoai/lesser-body/issues/401#issuecomment-4982280964",
-        "factory/products/progenitor/docs/agent-designs/2026-07-05-rubric-gate-skills.md",
-        "factory/products/progenitor/docs/patterns/parent-stages-genome-child-applies.md",
-    ],
+    "authoritative_sources": authoritative_sources,
     "namespace_genome": {
         "status": "not_staged_in_this_checkout",
         "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

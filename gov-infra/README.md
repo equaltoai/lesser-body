@@ -5,8 +5,12 @@ This directory contains the repo-local governance rubric materialization for the
 
 Authoritative profile facts inspected for this materialization:
 
-- `.codex/theorymcp/body/install-marker.json` resolves this steward install to
-  `layout_profile_version: software_repo_gov_infra`.
+- `gov-infra/pack.json` declares the resolved profile
+  (`profile.id: software_repo_gov_infra`) as the authoritative in-git source.
+- `.codex/theorymcp/body/install-marker.json` is the local materialization
+  receipt (`layout_profile_version: software_repo_gov_infra`) — never tracked;
+  when present it must agree with the pack profile, and clean CI checkouts
+  correctly lack it.
 - The routed TheoryMCP body agent instructions publish the body branch profile
   and CI expectations for feature -> `staging` PRs.
 - Factory issue #401 and its assignment comment define the required report path,
