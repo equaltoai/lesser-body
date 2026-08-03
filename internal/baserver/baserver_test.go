@@ -14,6 +14,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
+	"github.com/equaltoai/lesser-body/internal/installpack"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/golang-jwt/jwt/v5"
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
@@ -72,6 +74,8 @@ func TestAgentLocalInstallPlanMintsGrantEnvelopeWithoutTextTokenLeak(t *testing.
 	if err := RegisterTools(registry,
 		WithAgentContentStore(content),
 		WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", "prototype-11")),
+		WithActorBindingReader(&fakeActorBindingReader{actorUsername: "prototype-11"}),
+		WithSoulBindingIntegrationBearer("binding-secret"),
 		WithDownloadGrantIssuer(issuer),
 		WithInstanceEndpoint(testInstanceEndpoint),
 		WithNamespace("equaltoai"),
@@ -173,6 +177,71 @@ func TestAgentLocalInstallPlanMintsGrantEnvelopeWithoutTextTokenLeak(t *testing.
 	}
 }
 
+func TestAgentLocalInstallPlanValidatesRegistryActorAgainstAuthoritativeLesserBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		registryLocalID       string
+		authoritativeUsername string
+		wantError             bool
+	}{
+		{
+			name:                  "agreement renders",
+			registryLocalID:       "sentinelsentinel",
+			authoritativeUsername: "sentinelsentinel",
+		},
+		{
+			name:                  "disagreement fails closed",
+			registryLocalID:       "sentinel",
+			authoritativeUsername: "sentinelsentinel",
+			wantError:             true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			binding := &fakeActorBindingReader{actorUsername: tc.authoritativeUsername}
+			renderer := &countingRenderer{delegate: installpack.NewRenderer()}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry,
+				WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
+				WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", tc.registryLocalID)),
+				WithActorBindingReader(binding),
+				WithSoulBindingIntegrationBearer("binding-secret"),
+				WithDownloadGrantIssuer(issuer),
+				WithRenderer(renderer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+			); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				operatorToolContext("owner", []string{"write"}),
+				ToolAgentLocalInstallPlan,
+				json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if binding.calls != 1 || binding.agentID != "agent-one" || binding.bearer != "binding-secret" {
+				t.Fatalf("binding read = calls:%d agent:%q bearer:%q", binding.calls, binding.agentID, binding.bearer)
+			}
+			if !tc.wantError {
+				if result == nil || result.IsError || renderer.calls != 1 || issuer.calls != 1 {
+					t.Fatalf("agreement result=%+v render_calls=%d issuer_calls=%d", result, renderer.calls, issuer.calls)
+				}
+				return
+			}
+
+			payload := toolError(t, result)
+			if payload["code"] != "actor_endpoint_divergence" || statusValue(payload["status"]) != http.StatusConflict {
+				t.Fatalf("divergence payload = %+v", payload)
+			}
+			if renderer.calls != 0 || issuer.calls != 0 {
+				t.Fatalf("divergence side effects = render:%d grant:%d, want none", renderer.calls, issuer.calls)
+			}
+		})
+	}
+}
+
 func TestAgentLocalInstallPlanRejectsUnauthorizedPrincipalsBeforeSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -216,6 +285,8 @@ func TestAgentLocalInstallPlanRejectsActorMismatchBeforeGrant(t *testing.T) {
 	if err := RegisterTools(registry,
 		WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
 		WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", "agent-one")),
+		WithActorBindingReader(&fakeActorBindingReader{actorUsername: "agent-one"}),
+		WithSoulBindingIntegrationBearer("binding-secret"),
 		WithDownloadGrantIssuer(issuer),
 		WithInstanceEndpoint(testInstanceEndpoint),
 	); err != nil {
@@ -241,6 +312,8 @@ func TestAgentLocalInstallPlanEnforcesPerAccountInProcessRateCap(t *testing.T) {
 	if err := RegisterTools(registry,
 		WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
 		WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", "agent-one")),
+		WithActorBindingReader(&fakeActorBindingReader{actorUsername: "agent-one"}),
+		WithSoulBindingIntegrationBearer("binding-secret"),
 		WithDownloadGrantIssuer(issuer),
 		WithInstanceEndpoint(testInstanceEndpoint),
 		WithRateLimiter(NewInMemoryGrantMintLimiter(1, time.Minute)),
@@ -611,6 +684,43 @@ type fakeContentStore struct {
 
 type fakeAgentRegistryStore struct {
 	records map[string]*agentregistry.Agent
+}
+
+type fakeActorBindingReader struct {
+	calls         int
+	bearer        string
+	agentID       string
+	actorUsername string
+	err           error
+}
+
+func (f *fakeActorBindingReader) GetSoulBinding(_ context.Context, bearer string, agentID string, _ string) (*lesserapi.SoulBindingResponse, error) {
+	f.calls++
+	f.bearer = bearer
+	f.agentID = agentID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &lesserapi.SoulBindingResponse{
+		Status:       "bound",
+		BindingState: "bound",
+		Agent: lesserapi.SoulBindingAgent{
+			AgentID: agentID,
+		},
+		Binding: lesserapi.SoulAgentBinding{
+			AgentUsername: f.actorUsername,
+		},
+	}, nil
+}
+
+type countingRenderer struct {
+	calls    int
+	delegate Renderer
+}
+
+func (r *countingRenderer) Render(ctx context.Context, req installpack.Request) (*installpack.Pack, error) {
+	r.calls++
+	return r.delegate.Render(ctx, req)
 }
 
 func newFakeAgentRegistryStore(account, agentID, localID string) *fakeAgentRegistryStore {

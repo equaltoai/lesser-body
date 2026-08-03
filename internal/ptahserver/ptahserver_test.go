@@ -356,6 +356,33 @@ func TestAgentBindSoulAcceptsVerifiedBodyActorIDForms(t *testing.T) {
 	}
 }
 
+func TestAgentBindSoulRejectsAuthoritativeActorDivergence(t *testing.T) {
+	response := successfulBindingResponse(false)
+	response.Binding.AgentUsername = "sentinelsentinel"
+	client := &fakeSoulBindingClient{
+		resp:                  response,
+		preserveResponseActor: true,
+	}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "sentinel")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+	if client.calls != 1 {
+		t.Fatalf("Lesser binding calls = %d, want 1", client.calls)
+	}
+}
+
 func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
 	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
@@ -1609,12 +1636,13 @@ func TestAgentInstructionsAndSoulUseIndependentContentTypeCounters(t *testing.T)
 }
 
 type fakeSoulBindingClient struct {
-	calls             int
-	integrationBearer string
-	idempotencyKey    string
-	req               lesserapi.SoulBindingRequest
-	resp              *lesserapi.SoulBindingResponse
-	err               error
+	calls                 int
+	integrationBearer     string
+	idempotencyKey        string
+	req                   lesserapi.SoulBindingRequest
+	resp                  *lesserapi.SoulBindingResponse
+	err                   error
+	preserveResponseActor bool
 }
 
 func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrationBearer string, idempotencyKey string, req lesserapi.SoulBindingRequest) (*lesserapi.SoulBindingResponse, error) {
@@ -1625,7 +1653,13 @@ func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrati
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.resp, nil
+	if f.resp == nil || f.preserveResponseActor {
+		return f.resp, nil
+	}
+	clone := *f.resp
+	clone.Binding = f.resp.Binding
+	clone.Binding.AgentUsername = req.ActorUsername
+	return &clone, nil
 }
 
 type fakeHostIdentityClient struct {

@@ -54,10 +54,12 @@ Variables:
   - Do not remove this just because inbound MCP clients migrate to OAuth; host-backed communication tools still use it.
   - The long-term inbound replacement for operator automation is documented in `docs/operator-auth-replacement.md`.
 - `LESSER_SOUL_BINDING_INTEGRATION_BEARER` (string, optional; local/manual only)
-  - Dedicated Body/Ptah → Lesser server-to-server bearer for `agent_bind_soul`.
+  - Dedicated Body/Ptah/Ba → Lesser server-to-server bearer for `agent_bind_soul` and Ba's authoritative actor check
+    before install-pack rendering.
   - This is not caller OAuth, not `LESSER_HOST_INSTANCE_KEY`, and not a lesser-host communication delegation key.
   - Managed deployments should not inject this raw value directly.
-- `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` (string, optional but required to use `agent_bind_soul` safely in managed Ptah)
+- `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` (string, optional but required to use `agent_bind_soul` or
+  `agent_local_install_plan` safely in the managed instance plane)
   - Exact AWS Secrets Manager ARN containing the dedicated Body/Ptah → Lesser soul-binding bearer. The secret value may be
     plaintext or JSON like `{"secret":"..."}`.
   - CDK can inject this on the instance-plane Lambda through the `soulBindingIntegrationBearerArn` context value or the
@@ -66,7 +68,7 @@ Variables:
   - The instance Lambda role receives `secretsmanager:GetSecretValue`/`DescribeSecret` only for that exact ARN.
   - The resolved value must match Lesser's receiving-side `SOUL_BINDING_INTEGRATION_KEY` /
     `SOUL_BINDING_INTEGRATION_KEY_ARN` configuration. If neither the direct env nor ARN-backed path resolves,
-    `agent_bind_soul` fails closed with `not_configured`.
+    `agent_bind_soul` and `agent_local_install_plan` fail closed with `not_configured`.
 
 ### Instance-plane storage
 

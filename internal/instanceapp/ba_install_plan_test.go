@@ -18,6 +18,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/installpack"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 	"github.com/theory-cloud/apptheory/v3/testkit"
 )
@@ -40,6 +41,8 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(registryStore),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{actorUsername: "prototype-11"}),
+			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),
 	)
@@ -118,6 +121,23 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 	if replay.Status != 410 {
 		t.Fatalf("replay status = %d, want 410; body=%s", replay.Status, string(replay.Body))
 	}
+}
+
+type baPlanActorBindingReader struct {
+	actorUsername string
+}
+
+func (r *baPlanActorBindingReader) GetSoulBinding(_ context.Context, _ string, agentID string, _ string) (*lesserapi.SoulBindingResponse, error) {
+	return &lesserapi.SoulBindingResponse{
+		Status:       "bound",
+		BindingState: "bound",
+		Agent: lesserapi.SoulBindingAgent{
+			AgentID: agentID,
+		},
+		Binding: lesserapi.SoulAgentBinding{
+			AgentUsername: r.actorUsername,
+		},
+	}, nil
 }
 
 func verifyDownloadedInstallPack(t testing.TB, zipBytes []byte, plan map[string]any) installpack.Manifest {

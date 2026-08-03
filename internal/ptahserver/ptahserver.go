@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/actorendpoint"
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
@@ -791,6 +792,19 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 	resp, err := client.InitiateSoulBinding(ctx, integrationBearer, in.IdempotencyKey, req)
 	if err != nil {
 		return soulBindingToolResultFromError(err)
+	}
+	if resp == nil ||
+		strings.ToLower(strings.TrimSpace(resp.BindingState)) != "bound" ||
+		!strings.EqualFold(strings.TrimSpace(resp.Agent.AgentID), strings.TrimSpace(in.SoulAgentID)) {
+		return toolErrorResult("actor_endpoint_authority_unavailable", "Lesser did not return an active authoritative actor binding", http.StatusConflict, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	if err := actorendpoint.Validate(bindingActor, resp.Binding.AgentUsername); err != nil {
+		return toolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused a bound actor response that disagrees with the registry local_id", http.StatusConflict, map[string]any{
+			"source":          "lesser_soul_binding",
+			"operator_action": "repair the registry projection or authoritative Lesser actor binding before retrying",
+		})
 	}
 	return soulBindingSuccessResult(bindingActor, in.IdempotencyKey, resp)
 }

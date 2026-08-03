@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/equaltoai/lesser-body/internal/actorendpoint"
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
@@ -958,6 +959,23 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 			"tool":   toolAgentGenesisFinalize,
 		}), nil
 	}
+	projectedLocalID := firstNonEmpty(nestedString(data, "agent", "local_id"), nestedString(data, "agent", "localId"), nestedString(data, "registration", "local_id"), nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id"))
+	existing, getErr := registry.Get(ctx, actor, agentID)
+	switch {
+	case getErr == nil && existing != nil && strings.TrimSpace(existing.LocalID) != "" && strings.TrimSpace(projectedLocalID) != "":
+		if err := actorendpoint.Validate(projectedLocalID, existing.LocalID); err != nil {
+			return nil, false, mustToolErrorResult("actor_endpoint_divergence", "agent_genesis_finalize replay refused to overwrite a registry local_id that disagrees with the Host-derived projection", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_replay",
+				"tool":            toolAgentGenesisFinalize,
+				"operator_action": "verify the authoritative Lesser actor and repair the divergent source before retrying; Body will not rewrite either value silently",
+			}), nil
+		}
+	case getErr != nil && !errors.Is(getErr, agentregistry.ErrAgentNotFound):
+		return nil, false, mustToolErrorResult("agent_registry_error", "Body failed to read the existing registry row before replay-safe genesis finalization", http.StatusInternalServerError, map[string]any{
+			"source": "agent_registry_replay",
+			"tool":   toolAgentGenesisFinalize,
+		}), nil
+	}
 
 	registrationID := firstNonEmpty(
 		in.RegistrationID,
@@ -979,7 +997,7 @@ func (cfg config) registerFinalizedGenesisAgent(ctx context.Context, actor strin
 		HostRegistrationID:     registrationID,
 		HostConversationID:     conversationID,
 		Domain:                 firstNonEmpty(nestedString(data, "agent", "domain"), nestedString(data, "registration", "domain"), nestedString(data, "publication", "domain"), nestedString(data, "promotion", "domain"), stringValue(data, "domain")),
-		LocalID:                firstNonEmpty(nestedString(data, "agent", "local_id"), nestedString(data, "agent", "localId"), nestedString(data, "registration", "local_id"), nestedString(data, "publication", "local_id"), nestedString(data, "promotion", "local_id"), stringValue(data, "local_id")),
+		LocalID:                projectedLocalID,
 		AuthorityModel:         firstNonEmpty(nestedString(data, "agent", "authority_model"), nestedString(data, "publication", "authority_model"), nestedString(data, "promotion", "authority_model"), stringValue(data, "authority_model")),
 		AnchorState:            firstNonEmpty(nestedString(data, "agent", "anchor_state"), nestedString(data, "publication", "anchor_state"), nestedString(data, "promotion", "anchor_state"), stringValue(data, "anchor_state")),
 		OperationalBinding:     firstNonEmpty(nestedString(data, "agent", "operational_binding"), nestedString(data, "publication", "operational_binding"), nestedString(data, "promotion", "operational_binding"), stringValue(data, "operational_binding")),

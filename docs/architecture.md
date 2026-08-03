@@ -77,9 +77,13 @@ Notes:
   - serves the Ba header-free one-time installer-grant download route
 - `internal/ptahserver/`
   - registers account-holder orchestration tools for Host-backed genesis, agent registry, draft content, and binding
+  - validates Lesser's authoritative bound actor username against the registry `local_id` when binding succeeds and
+    prevents finalize replays from overwriting a divergent corrected registry projection
   - uses Body-owned instance tables and Lesser-owned APIs rather than direct Lesser table writes
 - `internal/baserver/`
   - registers `agent_local_install_plan`
+  - reads Lesser's authoritative soul binding before rendering and fails closed when its actor username disagrees with
+    the selected registry `local_id`
   - derives install-pack stage/domain and download origin from `INSTANCE_MCP_ENDPOINT`, not request Host headers
   - persists only one-time grant hashes and safe binding fields through `internal/downloadgrant`
 
