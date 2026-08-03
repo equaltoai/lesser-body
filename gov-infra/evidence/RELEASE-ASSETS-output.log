@@ -10,7 +10,7 @@ dist/lesser-body.zip: OK
 dist/lesser-body-instance.zip: OK
 OK: dist/checksums.txt
 
-added 10 packages, and audited 31 packages in 1s
+added 10 packages, and audited 31 packages in 2s
 
 1 package is looking for funding
   run `npm fund` for details
@@ -34,5 +34,5 @@ lesser-body-managed-live.template.json: OK
 deploy-lesser-body-from-release.sh: OK
 lesser-body-release.json: OK
 apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
-cdk-file-asset-bf62814554a9e177.zip: OK
+cdk-file-asset-4cf271df25ccecc9.zip: OK
 Verified release assets in dist/release-test

@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-03T18:48:30.391344Z",
+  "generated_at": "2026-08-03T19:29:11.148078Z",
   "git": {
-    "head": "669385dabb8f4f1e17ce7590da657d0be3d1908d",
-    "head_tree": "7911cba7c698150c5402585a40bd21c26bf7f15f",
+    "head": "2aaccb5c75ffbb373c3a1be5d01f369257426f1e",
+    "head_tree": "386256d8123ad48dd234a4b4ecf4820661517450",
     "merge_base_origin_staging": "c141c753f9aa4ec0ccd6df59d1e48642e31017b1",
     "ref": "theorymcp/equaltoai/body/518-actor-endpoint-fail-closed",
     "working_tree_after_run": "5 changed paths after verifier run"
