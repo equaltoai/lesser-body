@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-03T02:35:37.380536Z",
+  "generated_at": "2026-08-03T11:51:33.054358Z",
   "git": {
-    "head": "1f71f8103b0cc921bd100ae7055031dfc10f6875",
-    "head_tree": "2139356ea540f0929180c9cab2c84d08def93e05",
-    "merge_base_origin_staging": "1f71f8103b0cc921bd100ae7055031dfc10f6875",
-    "ref": "chore-513-apptheory-cdk-v3",
-    "working_tree_after_run": "12 changed paths after verifier run"
+    "head": "8f6cc6d2ea1bde96a9c2a295dcaf91e85188224e",
+    "head_tree": "6219ecadbd412f5602a700e91626483b767bb2ad",
+    "merge_base_origin_staging": "096963012c4a9ad4f1cc6196710665c04fd14f7e",
+    "ref": "chore-516-runtime-framework-v3",
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

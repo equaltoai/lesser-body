@@ -12,8 +12,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
 )
 
 type fakeTableTheoryDB struct {

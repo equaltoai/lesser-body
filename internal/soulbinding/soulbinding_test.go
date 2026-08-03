@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 )
 
 func TestResolveAgentID_NormalizesUsernameBeforeLookup(t *testing.T) {

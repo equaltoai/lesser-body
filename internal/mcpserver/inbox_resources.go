@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func resourceEmailInbox(ctx context.Context) ([]mcpruntime.ResourceContent, error) {

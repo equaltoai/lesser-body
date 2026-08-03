@@ -4,9 +4,9 @@ This roadmap converts `SPEC.md` into an **AppTheory-first**, **AgentCore-compati
 
 ## Hard constraints (non-negotiable)
 
-- **AppTheory:** `github.com/theory-cloud/apptheory@v0.15.1`
-- **TableTheory:** `github.com/theory-cloud/tabletheory@v1.4.1`
-- **MCP transport:** AppTheory MCP runtime (`github.com/theory-cloud/apptheory/runtime/mcp`)
+- **AppTheory:** `github.com/theory-cloud/apptheory/v3@v3.0.1`
+- **TableTheory:** `github.com/theory-cloud/tabletheory/v3@v3.0.2`
+- **MCP transport:** AppTheory MCP runtime (`github.com/theory-cloud/apptheory/v3/runtime/mcp`)
 - **No Lambda Function URLs.**
 - **No CloudFront required for MCP routing** (AgentCore calls API Gateway directly).
 - **Reuse the existing lesser API custom domain** (`api.<stageDomain>`). We add a **path** (no new domains).
@@ -34,8 +34,8 @@ AgentCore calls the tools methods today, but we can also ship resources/prompts 
 ### Runtime
 
 - **Lambda binary:** `cmd/lesser-body` (Go)
-- **HTTP framework:** `github.com/theory-cloud/apptheory/runtime`
-- **MCP handler:** `github.com/theory-cloud/apptheory/runtime/mcp`
+- **HTTP framework:** `github.com/theory-cloud/apptheory/v3/runtime`
+- **MCP handler:** `github.com/theory-cloud/apptheory/v3/runtime/mcp`
 - **Session persistence (prod):** DynamoDB-backed session store via TableTheory (`mcp.NewDynamoSessionStore(db)`).
 
 ### Infra & wiring (no exports/imports)
@@ -88,7 +88,7 @@ Acceptance criteria for the contract:
 
 ## Milestones
 
-### M0 — Alignment + version pins (AppTheory 0.15.1 / TableTheory 1.4.1)
+### M0 — Alignment + version pins (AppTheory 3.0.1 / TableTheory 3.0.2)
 
 Deliverables:
 - `ROADMAP.md` (this document) is the source of truth for implementation sequencing.
@@ -98,7 +98,8 @@ Deliverables:
   - `https://api.<stageDomain>/mcp` (primary)
 
 Acceptance criteria:
-- No files in `lesser-body/` reference AppTheory != `v0.15.1` or TableTheory != `v1.4.1`.
+- No files in `lesser-body/` reference an AppTheory Go module path other than `github.com/theory-cloud/apptheory/v3` or a TableTheory Go module path other than `github.com/theory-cloud/tabletheory/v3`.
+- This version-path invariant is documentary and is not machine-enforced by the repository verifier.
 - The roadmap contains enough detail to implement without re-interpreting `SPEC.md`.
 
 ---
@@ -107,13 +108,13 @@ Acceptance criteria:
 
 Deliverables:
 - Go module for `lesser-body` with pinned deps:
-  - `github.com/theory-cloud/apptheory@v0.15.1`
-  - `github.com/theory-cloud/tabletheory@v1.4.1`
+  - `github.com/theory-cloud/apptheory/v3@v3.0.1`
+  - `github.com/theory-cloud/tabletheory/v3@v3.0.2`
 - Lambda entrypoint `cmd/lesser-body/main.go`:
   - AppTheory app
   - `POST /mcp` handler via `mcp.NewServer(...)`
   - minimal “hello” tool (e.g. `echo`) to validate end-to-end
-- Deterministic unit tests using `github.com/theory-cloud/apptheory/testkit/mcp`.
+- Deterministic unit tests using `github.com/theory-cloud/apptheory/v3/testkit/mcp`.
 
 Acceptance criteria:
 - `go test ./...` passes locally.
@@ -265,7 +266,7 @@ Acceptance criteria:
 
 ---
 
-### M9 — Full MCP (resources + prompts) (available in AppTheory v0.15.1; optional for non-AgentCore clients)
+### M9 — Full MCP (resources + prompts) (available in AppTheory v3.0.1; optional for non-AgentCore clients)
 
 Deliverables:
 - Implement `SPEC.md` resources/prompts using AppTheory’s `runtime/mcp` registries:

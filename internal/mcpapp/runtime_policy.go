@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func WithRuntimePolicy(next apptheory.Handler) apptheory.Handler {

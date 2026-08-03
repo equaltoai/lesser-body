@@ -17,7 +17,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/golang-jwt/jwt/v5"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
