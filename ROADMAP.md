@@ -99,6 +99,7 @@ Deliverables:
 
 Acceptance criteria:
 - No files in `lesser-body/` reference an AppTheory Go module path other than `github.com/theory-cloud/apptheory/v3` or a TableTheory Go module path other than `github.com/theory-cloud/tabletheory/v3`.
+- This version-path invariant is documentary and is not machine-enforced by the repository verifier.
 - The roadmap contains enough detail to implement without re-interpreting `SPEC.md`.
 
 ---

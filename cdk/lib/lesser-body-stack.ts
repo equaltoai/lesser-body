@@ -104,6 +104,8 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
     });
     const jwtSecretArnParamPathParam = new cdk.CfnParameter(this, "JWTSecretArnParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the shared JWT secret ARN for the target app, for example /<app>/shared/secrets/jwt-secret-arn.",
     });
     cdk.Validations.of(jwtSecretArnParamPathParam).acknowledge({

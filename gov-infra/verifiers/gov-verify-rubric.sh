@@ -17,7 +17,12 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 GOV_INFRA="${REPO_ROOT}/gov-infra"
 EVIDENCE_DIR="${GOV_INFRA}/evidence"
 REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
-RESULTS_FILE="${EVIDENCE_DIR}/.gov-rubric-results.jsonl"
+RESULTS_FILE="$(mktemp)"
+
+cleanup() {
+  rm -f "${RESULTS_FILE}"
+}
+trap cleanup EXIT
 
 cd "${REPO_ROOT}"
 mkdir -p "${EVIDENCE_DIR}"
@@ -411,7 +416,7 @@ run_check "GO-TEST" "Quality" "go test ${GO_PACKAGE_PATTERNS}"
 run_check "GO-VET" "Consistency" "go vet ${GO_PACKAGE_PATTERNS}"
 run_check "GOFMT" "Consistency" "test -z \"\$(git ls-files -z '*.go' | xargs -0 gofmt -l)\""
 run_check "SOURCE-BUILD" "Completeness" "bash scripts/build.sh"
-run_check "RELEASE-ASSETS" "Completeness" "bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test"
+run_check "RELEASE-ASSETS" "Completeness" "bash scripts/build_release_assets.sh v0.0.0-test dist/release-test && bash scripts/verify_release_assets.sh v0.0.0-test dist/release-test"
 run_check "RELEASE-CHECKSUM-REGRESSION" "Quality" "bash scripts/check_release_asset_checksum_regression.sh v0.0.0-test dist/release-test"
 run_check "MANAGED-TEMPLATE-DEFAULTS" "Quality" "bash scripts/check_managed_template_default_regression.sh v0.0.0-test dist/release-test"
 run_check "MANAGED-TEMPLATE-NAMED-RESOURCES" "Quality" "bash scripts/check_managed_template_named_resource_regression.sh v0.0.0-test dist/release-test"

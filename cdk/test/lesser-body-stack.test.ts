@@ -80,6 +80,9 @@ test("managed template requires app-scoped Lesser parameter paths", () => {
     const param = mustRecord(params[name], `template missing ${name} parameter`);
     assert.equal(Object.hasOwn(param, "Default"), false, `${name} must not have a default`);
   }
+
+  const jwtSecretArnParamPath = mustRecord(params.JWTSecretArnParamPath, "template missing JWTSecretArnParamPath parameter");
+  assert.equal(jwtSecretArnParamPath.AllowedPattern, String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`);
 });
 
 test("lesser table policy uses least-privilege primary table access", () => {
