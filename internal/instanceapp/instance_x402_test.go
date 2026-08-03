@@ -38,7 +38,7 @@ func TestInstancePlaneX402_BaInstallPlanRequiresGrantBeforeDownloadGrant(t *test
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
-			baserver.WithActorBindingReader(&baPlanActorBindingReader{actorUsername: "agent-one"}),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{agentID: "agent-one", actorUsername: "agent-one"}),
 			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),
@@ -99,7 +99,7 @@ func TestInstancePlaneX402_BaInstallPlanConsumesInstanceGrantThenMintsDownloadGr
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
-			baserver.WithActorBindingReader(&baPlanActorBindingReader{actorUsername: "agent-one"}),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{agentID: "agent-one", actorUsername: "agent-one"}),
 			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),

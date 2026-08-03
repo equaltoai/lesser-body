@@ -41,7 +41,7 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(registryStore),
-			baserver.WithActorBindingReader(&baPlanActorBindingReader{actorUsername: "prototype-11"}),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{agentID: baPlanRegistryAgentID, actorUsername: "prototype-11"}),
 			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),
@@ -124,15 +124,16 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 }
 
 type baPlanActorBindingReader struct {
+	agentID       string
 	actorUsername string
 }
 
-func (r *baPlanActorBindingReader) GetSoulBinding(_ context.Context, _ string, agentID string, _ string) (*lesserapi.SoulBindingResponse, error) {
+func (r *baPlanActorBindingReader) GetSoulBinding(_ context.Context, _ string, _ string, _ string) (*lesserapi.SoulBindingResponse, error) {
 	return &lesserapi.SoulBindingResponse{
 		Status:       "bound",
 		BindingState: "bound",
 		Agent: lesserapi.SoulBindingAgent{
-			AgentID: agentID,
+			AgentID: r.agentID,
 		},
 		Binding: lesserapi.SoulAgentBinding{
 			AgentUsername: r.actorUsername,

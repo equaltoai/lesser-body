@@ -242,6 +242,101 @@ func TestAgentLocalInstallPlanValidatesRegistryActorAgainstAuthoritativeLesserBi
 	}
 }
 
+func TestAgentLocalInstallPlanAuthoritativeActorFaultsFailClosedBeforeRenderOrGrant(t *testing.T) {
+	bindingResponse := func(state, agentID, actorUsername string) *lesserapi.SoulBindingResponse {
+		return &lesserapi.SoulBindingResponse{
+			Status:       state,
+			BindingState: state,
+			Agent:        lesserapi.SoulBindingAgent{AgentID: agentID},
+			Binding:      lesserapi.SoulAgentBinding{AgentUsername: actorUsername},
+		}
+	}
+	type fixture struct {
+		name               string
+		registryLocalID    string
+		binding            *fakeActorBindingReader
+		bearerUnresolvable bool
+		readerUnconfigured bool
+		wantCode           string
+		wantStatus         int
+	}
+	cases := []fixture{
+		{name: "network error", binding: &fakeActorBindingReader{err: errors.New("dial tcp: i/o timeout")}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusBadGateway},
+		{name: "Lesser 404", binding: &fakeActorBindingReader{err: &lesserapi.APIError{Status: http.StatusNotFound}}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
+		{name: "Lesser 500", binding: &fakeActorBindingReader{err: &lesserapi.APIError{Status: http.StatusInternalServerError}}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusBadGateway},
+		{name: "nil response", binding: &fakeActorBindingReader{nilResponse: true}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
+		{name: "pending binding", binding: &fakeActorBindingReader{response: bindingResponse("pending", "agent-one", "prototype-11")}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
+		{name: "empty binding state", binding: &fakeActorBindingReader{response: bindingResponse("", "agent-one", "prototype-11")}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
+		{name: "agent id mismatch", binding: &fakeActorBindingReader{response: bindingResponse("bound", "agent-other", "prototype-11")}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
+		{name: "empty authoritative username", binding: &fakeActorBindingReader{actorUsername: ""}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
+		{name: "whitespace authoritative username", binding: &fakeActorBindingReader{actorUsername: " \t "}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
+		{name: "case variant username", registryLocalID: "Prototype-11", binding: &fakeActorBindingReader{actorUsername: "prototype-11"}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
+		{name: "substring username", registryLocalID: "sentinel", binding: &fakeActorBindingReader{actorUsername: "sentinelsentinel"}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
+		{name: "bearer unresolvable", binding: &fakeActorBindingReader{actorUsername: "prototype-11"}, bearerUnresolvable: true, wantCode: "not_configured", wantStatus: http.StatusInternalServerError},
+		{name: "reader unconfigured", readerUnconfigured: true, wantCode: "not_configured", wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			localID := tc.registryLocalID
+			if localID == "" {
+				localID = "prototype-11"
+			}
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			renderer := &countingRenderer{delegate: installpack.NewRenderer()}
+			opts := []Option{
+				WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
+				WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", localID)),
+				WithDownloadGrantIssuer(issuer),
+				WithRenderer(renderer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+				WithRateLimiter(NewInMemoryGrantMintLimiter(10, time.Minute)),
+			}
+			switch {
+			case tc.bearerUnresolvable:
+				opts = append(opts, func(cfg *config) {
+					cfg.integrationBearerFn = func(context.Context) (string, error) {
+						return "", errors.New("secret unavailable")
+					}
+				})
+				if tc.binding != nil {
+					opts = append(opts, WithActorBindingReader(tc.binding))
+				}
+			case tc.readerUnconfigured:
+				opts = append(opts,
+					WithSoulBindingIntegrationBearer("binding-secret"),
+					func(cfg *config) {
+						cfg.actorBindingReader = nil
+						cfg.actorBindingFactory = nil
+					},
+				)
+			default:
+				opts = append(opts, WithSoulBindingIntegrationBearer("binding-secret"), WithActorBindingReader(tc.binding))
+			}
+
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, opts...); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+			result, err := registry.Call(
+				operatorToolContext("owner", []string{"write"}),
+				ToolAgentLocalInstallPlan,
+				json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			payload := toolError(t, result)
+			if payload["code"] != tc.wantCode || statusValue(payload["status"]) != tc.wantStatus {
+				t.Fatalf("error payload = %+v, want %s/%d", payload, tc.wantCode, tc.wantStatus)
+			}
+			if renderer.calls != 0 || issuer.calls != 0 {
+				t.Fatalf("refusal side effects = render:%d grant:%d, want none", renderer.calls, issuer.calls)
+			}
+		})
+	}
+}
+
 func TestAgentLocalInstallPlanRejectsUnauthorizedPrincipalsBeforeSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -691,6 +786,8 @@ type fakeActorBindingReader struct {
 	bearer        string
 	agentID       string
 	actorUsername string
+	response      *lesserapi.SoulBindingResponse
+	nilResponse   bool
 	err           error
 }
 
@@ -701,11 +798,18 @@ func (f *fakeActorBindingReader) GetSoulBinding(_ context.Context, bearer string
 	if f.err != nil {
 		return nil, f.err
 	}
+	if f.nilResponse {
+		return nil, nil
+	}
+	if f.response != nil {
+		clone := *f.response
+		return &clone, nil
+	}
 	return &lesserapi.SoulBindingResponse{
 		Status:       "bound",
 		BindingState: "bound",
 		Agent: lesserapi.SoulBindingAgent{
-			AgentID: agentID,
+			AgentID: "agent-one",
 		},
 		Binding: lesserapi.SoulAgentBinding{
 			AgentUsername: f.actorUsername,

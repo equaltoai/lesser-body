@@ -473,7 +473,7 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 		baTools,
 		baserver.WithAgentContentStore(contentStore),
 		baserver.WithAgentRegistryStore(registryStore),
-		baserver.WithActorBindingReader(&genesisActorBindingReader{actorUsername: "ada"}),
+		baserver.WithActorBindingReader(&genesisActorBindingReader{agentID: "agent-0xabc", actorUsername: "ada"}),
 		baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 		baserver.WithDownloadGrantIssuer(installIssuer),
 		baserver.WithInstanceEndpoint("https://api.dev.example.com/instance/{surface}/mcp"),
@@ -587,15 +587,16 @@ func TestGenesisFinalizeWritesRegistryRowAndMintedAgentIsVisible(t *testing.T) {
 }
 
 type genesisActorBindingReader struct {
+	agentID       string
 	actorUsername string
 }
 
-func (r *genesisActorBindingReader) GetSoulBinding(_ context.Context, _ string, agentID string, _ string) (*lesserapi.SoulBindingResponse, error) {
+func (r *genesisActorBindingReader) GetSoulBinding(_ context.Context, _ string, _ string, _ string) (*lesserapi.SoulBindingResponse, error) {
 	return &lesserapi.SoulBindingResponse{
 		Status:       "bound",
 		BindingState: "bound",
 		Agent: lesserapi.SoulBindingAgent{
-			AgentID: agentID,
+			AgentID: r.agentID,
 		},
 		Binding: lesserapi.SoulAgentBinding{
 			AgentUsername: r.actorUsername,
