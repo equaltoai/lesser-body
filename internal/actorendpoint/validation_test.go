@@ -17,6 +17,10 @@ func TestValidateReturnsTypedDivergence(t *testing.T) {
 		{name: "ASCII case variant", projected: "SENTINEL", authoritative: "sentinel"},
 		{name: "different suffix", projected: "SentinelSentinel", authoritative: "SentinelSentinelX", wantError: true},
 		{name: "Unicode fold orbit", projected: "ſentinel", authoritative: "sentinel", wantError: true},
+		{name: "Unicode capital I with dot projected", projected: "İnstance", authoritative: "instance", wantError: true},
+		{name: "Unicode Kelvin sign projected", projected: "Kelvin", authoritative: "kelvin", wantError: true},
+		{name: "Unicode capital I with dot authoritative", projected: "instance", authoritative: "İnstance", wantError: true},
+		{name: "Unicode Kelvin sign authoritative", projected: "kelvin", authoritative: "Kelvin", wantError: true},
 		{name: "empty projected", projected: " ", authoritative: "sentinel", wantError: true},
 		{name: "empty authoritative", projected: "sentinel", authoritative: "\t", wantError: true},
 	} {

@@ -1674,11 +1674,11 @@ func hostActorMappingUnavailableResult(message string, source string) *mcpruntim
 }
 
 func normalizeSoulBindingLocalActor(value string) string {
-	value = normalizeActorUsername(value)
+	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") || url.PathEscape(value) != value {
 		return ""
 	}
-	return value
+	return normalizeActorUsername(value)
 }
 
 func normalizeBodyActorIDLocalActor(raw string) (string, error) {

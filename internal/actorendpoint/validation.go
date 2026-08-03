@@ -31,18 +31,28 @@ func (e *DivergenceError) Error() string {
 
 func (e *DivergenceError) Unwrap() error { return ErrDivergence }
 
-// Validate compares trimmed identifiers using the lowercase-canonical contract
-// Lesser applies to usernames while preserving the source values in a typed
-// error. Deliberately do not use strings.EqualFold: Unicode simple-fold orbits
-// can equate a non-ASCII identifier with a genuinely different ASCII actor.
+// Validate compares trimmed identifiers using Lesser's ASCII-lowercase
+// username contract while preserving the source values in a typed error.
+// Deliberately do not use strings.ToLower or strings.EqualFold: only ASCII A-Z
+// maps to a-z, so non-ASCII never folds into ASCII by construction.
 func Validate(projectedLocalID string, authoritativeActorUsername string) error {
 	projected := strings.TrimSpace(projectedLocalID)
 	authoritative := strings.TrimSpace(authoritativeActorUsername)
-	if projected == "" || authoritative == "" || strings.ToLower(projected) != strings.ToLower(authoritative) {
+	if projected == "" || authoritative == "" || asciiLower(projected) != asciiLower(authoritative) {
 		return &DivergenceError{
 			ProjectedLocalID:           projected,
 			AuthoritativeActorUsername: authoritative,
 		}
 	}
 	return nil
+}
+
+func asciiLower(value string) string {
+	lowered := []byte(value)
+	for i, b := range lowered {
+		if b >= 'A' && b <= 'Z' {
+			lowered[i] = b + ('a' - 'A')
+		}
+	}
+	return string(lowered)
 }

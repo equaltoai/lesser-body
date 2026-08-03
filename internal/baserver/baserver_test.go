@@ -191,8 +191,8 @@ func TestAgentLocalInstallPlanValidatesRegistryActorAgainstAuthoritativeLesserBi
 		},
 		{
 			name:                  "ASCII case variant renders",
-			registryLocalID:       "Prototype-11",
-			authoritativeUsername: "prototype-11",
+			registryLocalID:       "SENTINEL",
+			authoritativeUsername: "sentinel",
 		},
 		{
 			name:                  "disagreement fails closed",
@@ -342,36 +342,92 @@ func TestAgentLocalInstallPlanAuthoritativeActorFaultsFailClosedBeforeRenderOrGr
 }
 
 func TestAgentLocalInstallPlanRejectsUnicodeFoldOrbitLocalID(t *testing.T) {
-	binding := &fakeActorBindingReader{actorUsername: "sentinel"}
-	renderer := &countingRenderer{delegate: installpack.NewRenderer()}
-	issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
-	registry := mcpruntime.NewToolRegistry()
-	if err := RegisterTools(registry,
-		WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
-		WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", "ſentinel")),
-		WithActorBindingReader(binding),
-		WithSoulBindingIntegrationBearer("binding-secret"),
-		WithDownloadGrantIssuer(issuer),
-		WithRenderer(renderer),
-		WithInstanceEndpoint(testInstanceEndpoint),
-	); err != nil {
-		t.Fatalf("RegisterTools: %v", err)
-	}
+	for _, tc := range []struct {
+		name    string
+		localID string
+	}{
+		{name: "long s", localID: "ſentinel"},
+		{name: "capital I with dot", localID: "İnstance"},
+		{name: "Kelvin sign", localID: "Kelvin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binding := &fakeActorBindingReader{actorUsername: "sentinel"}
+			renderer := &countingRenderer{delegate: installpack.NewRenderer()}
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry,
+				WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
+				WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", tc.localID)),
+				WithActorBindingReader(binding),
+				WithSoulBindingIntegrationBearer("binding-secret"),
+				WithDownloadGrantIssuer(issuer),
+				WithRenderer(renderer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+			); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
 
-	result, err := registry.Call(
-		operatorToolContext("owner", []string{"write"}),
-		ToolAgentLocalInstallPlan,
-		json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
-	)
-	if err != nil {
-		t.Fatalf("Call: %v", err)
+			result, err := registry.Call(
+				operatorToolContext("owner", []string{"write"}),
+				ToolAgentLocalInstallPlan,
+				json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			payload := toolError(t, result)
+			if payload["code"] != "agent_local_id_unavailable" || statusValue(payload["status"]) != http.StatusConflict {
+				t.Fatalf("fold-orbit refusal payload = %+v", payload)
+			}
+			if binding.calls != 0 || renderer.calls != 0 || issuer.calls != 0 {
+				t.Fatalf("fold-orbit side effects = binding:%d render:%d grant:%d, want none", binding.calls, renderer.calls, issuer.calls)
+			}
+		})
 	}
-	payload := toolError(t, result)
-	if payload["code"] != "agent_local_id_unavailable" || statusValue(payload["status"]) != http.StatusConflict {
-		t.Fatalf("fold-orbit refusal payload = %+v", payload)
-	}
-	if binding.calls != 0 || renderer.calls != 0 || issuer.calls != 0 {
-		t.Fatalf("fold-orbit side effects = binding:%d render:%d grant:%d, want none", binding.calls, renderer.calls, issuer.calls)
+}
+
+func TestAgentLocalInstallPlanRejectsUnicodeLowercaseAuthoritativeActor(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		registryLocalID       string
+		authoritativeUsername string
+	}{
+		{name: "capital I with dot", registryLocalID: "instance", authoritativeUsername: "İnstance"},
+		{name: "Kelvin sign", registryLocalID: "kelvin", authoritativeUsername: "Kelvin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binding := &fakeActorBindingReader{actorUsername: tc.authoritativeUsername}
+			renderer := &countingRenderer{delegate: installpack.NewRenderer()}
+			issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry,
+				WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
+				WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", tc.registryLocalID)),
+				WithActorBindingReader(binding),
+				WithSoulBindingIntegrationBearer("binding-secret"),
+				WithDownloadGrantIssuer(issuer),
+				WithRenderer(renderer),
+				WithInstanceEndpoint(testInstanceEndpoint),
+			); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				operatorToolContext("owner", []string{"write"}),
+				ToolAgentLocalInstallPlan,
+				json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			payload := toolError(t, result)
+			if payload["code"] != "actor_endpoint_divergence" || statusValue(payload["status"]) != http.StatusConflict {
+				t.Fatalf("authoritative fold refusal payload = %+v", payload)
+			}
+			if binding.calls != 1 || renderer.calls != 0 || issuer.calls != 0 {
+				t.Fatalf("authoritative fold side effects = binding:%d render:%d grant:%d, want 1/0/0", binding.calls, renderer.calls, issuer.calls)
+			}
+		})
 	}
 }
 
