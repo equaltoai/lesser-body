@@ -1216,8 +1216,10 @@ The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API 
 `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` in managed deployments, and the supplied non-empty idempotency key. It
 never forwards the caller's OAuth token to that server-to-server surface and never substitutes
 `LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
-`hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
-status link, and agent summary. Before returning success, Body compares the registry-derived target actor with Lesser's
+`hosted_bound_soul`). Lesser's POST contract is synchronous-only: a successful 2xx response has
+`binding_state:"bound"`; Body refuses a hypothetical non-bound 2xx response rather than treating it as success. Body
+returns structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent
+summary. Before returning success, Body compares the registry-derived target actor with Lesser's
 authoritative `binding.agent_username` using the same case-insensitive identifier contract as Lesser's returned agent
 ID; genuinely different values return typed `actor_endpoint_divergence`.
 

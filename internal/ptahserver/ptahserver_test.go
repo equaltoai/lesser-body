@@ -412,6 +412,52 @@ func TestAgentBindSoulAcceptsMixedCaseAuthoritativeActorAgreement(t *testing.T) 
 	}
 }
 
+func TestAgentBindSoulRequiresSynchronousBoundResponse(t *testing.T) {
+	// Lesser's synchronous-only POST contract is pinned in its primary source:
+	// cmd/api/handlers/souls.go (toAPISoulBindingResponse always emits bound)
+	// and docs/architecture/adr/0011-soul-binding-ceremony-api.md (the sole
+	// terminal success state is bound). A hypothetical non-bound 2xx response
+	// must therefore fail closed rather than become a successful Ptah result.
+	for _, tc := range []struct {
+		name         string
+		bindingState string
+		wantError    bool
+	}{
+		{name: "bound 2xx succeeds", bindingState: "bound"},
+		{name: "hypothetical non-bound 2xx refuses", bindingState: "pending", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := successfulBindingResponse(false)
+			response.BindingState = tc.bindingState
+			client := &fakeSoulBindingClient{resp: response}
+			store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "sentinel")}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				toolContext("owner", []string{"write"}, "user-oauth-token"),
+				toolAgentBindSoul,
+				json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if client.calls != 1 {
+				t.Fatalf("Lesser binding calls = %d, want 1", client.calls)
+			}
+			if tc.wantError {
+				assertToolError(t, result, "actor_endpoint_authority_unavailable", http.StatusConflict)
+				return
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("bound result = %+v", result)
+			}
+		})
+	}
+}
+
 func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
 	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
