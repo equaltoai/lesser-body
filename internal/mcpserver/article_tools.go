@@ -42,7 +42,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 			return err
 		}
 	}
-	return nil
+	return registerArticleReviewTools(r)
 }
 
 func articleDraftCreateDef() mcpruntime.ToolDef {

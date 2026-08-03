@@ -69,7 +69,7 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		for _, tool := range out.Tools {
 			have[tool.Name] = true
 		}
-		if !have["post_create"] || !have["post_get"] || !have["conversation_get"] || !have["direct_messages_read"] || !have["message_requests_list"] || !have["message_request_accept"] || !have["message_request_decline"] || !have["notification_get"] || !have["memory_query"] || !have["soul_read"] || !have["skills_catalog"] || !have["skill_bundle_get"] {
+		if !have["post_create"] || !have["post_get"] || !have["conversation_get"] || !have["direct_messages_read"] || !have["message_requests_list"] || !have["message_request_accept"] || !have["message_request_decline"] || !have["notification_get"] || !have["article_draft_review_submit"] || !have["article_draft_review_read"] || !have["article_draft_review_verdict"] || !have["memory_query"] || !have["soul_read"] || !have["skills_catalog"] || !have["skill_bundle_get"] {
 			t.Fatalf("expected social, memory, public soul, and skills tools for drone runtime, got %+v", out.Tools)
 		}
 		for _, blocked := range []string{

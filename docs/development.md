@@ -116,3 +116,26 @@ omission/expansion metadata, booleans, and hashes. It never prints bearer tokens
 payloads, or raw upstream error payloads. Use `ARTICLE_CANARY_TITLE`, `ARTICLE_CANARY_SLUG`, `ARTICLE_CANARY_CONTENT`,
 `ARTICLE_CANARY_CONTENT_FORMAT`, `ARTICLE_CANARY_PREVIEW_CHARS`, and `ARTICLE_CANARY_MAX_OUTPUT_BYTES` only when a run
 needs deterministic inputs or tighter response budgets.
+
+### Article review MCP canary
+
+After the three review tools are available on a dev instance, run the two-actor live proof with author and reviewer
+OAuth tokens that carry both `read` and `write` scopes:
+
+```bash
+ARTICLE_REVIEW_AUTHOR_MCP_ENDPOINT="https://api.dev.example.com/mcp/<author>" \
+ARTICLE_REVIEW_AUTHOR_BEARER_TOKEN="<author-oauth-token>" \
+ARTICLE_REVIEW_REVIEWER_MCP_ENDPOINT="https://api.dev.example.com/mcp/<reviewer>" \
+ARTICLE_REVIEW_REVIEWER_BEARER_TOKEN="<reviewer-oauth-token>" \
+ARTICLE_REVIEW_REVIEWER_USERNAME="<reviewer>" \
+ARTICLE_REVIEW_CANARY_CONFIRM_MUTATIONS=true \
+scripts/canary_article_review_mcp.py
+```
+
+The probe creates an unpublished draft unless `ARTICLE_REVIEW_DRAFT_ID` is supplied, then proves submit → reviewer
+queue → reviewer state → verdict → author-observed state. It never publishes. The explicit confirmation is required
+because review grants and verdicts are durable Lesser state. Output contains only bounded identifiers, counts,
+booleans, response sizes, and hashes; tokens, draft content, notes, and raw error payloads remain redacted. Optional
+`ARTICLE_REVIEW_VERDICT`, `ARTICLE_REVIEW_NOTES`, and `ARTICLE_REVIEW_MAX_OUTPUT_BYTES` tune the proof.
+Prefer `ARTICLE_REVIEW_DRAFT_ID` with a reused fixture draft; canary-created drafts, grants, and verdicts are durable by
+design and accumulate.
