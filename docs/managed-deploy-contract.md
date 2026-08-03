@@ -105,11 +105,14 @@ Template behavior:
 - `BaseDomain` is optional.
 - `LesserHostInstanceKeyARN` is optional and defaults to the empty string.
 - `LesserSoulBindingIntegrationBearerSecretARN` retains an empty-string template default for release-template
-  compatibility, but managed consumers must provide it before rolling out `agent_local_install_plan` or
-  `agent_bind_soul`; both tools fail closed with `not_configured` without the bearer. Create and populate the dedicated
-  secret before deploying Body. The value must be an exact Secrets Manager ARN for the dedicated Body/Ptah/Ba → Lesser
-  soul-binding bearer; the instance MCP Lambda receives `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` and exact
-  secret-read IAM. Managed consumers must not pass the raw bearer.
+  compatibility. The release manifest nevertheless marks both the
+  `script_inputs[].name=soul_binding_integration_bearer_secret_arn` entry and the
+  `template_parameters[].name=LesserSoulBindingIntegrationBearerSecretARN` entry as `required:true`; managed consumers
+  must reject a rollout that omits it. Without the bearer, `agent_local_install_plan` and `agent_bind_soul` both fail
+  closed with `not_configured`. Create and populate the dedicated secret before deploying Body. The value must be an
+  exact Secrets Manager ARN for the dedicated Body/Ptah/Ba → Lesser soul-binding bearer; the instance MCP Lambda
+  receives `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` and exact secret-read IAM. Managed consumers must not pass the
+  raw bearer.
 - Every parameter `Default` emitted in the managed templates is a plain string. Intrinsics and object-valued defaults are not
   CloudFormation-legal for this deploy path.
 - `JWTSecretArnParamPath` defaults to `/<app>/shared/secrets/jwt-secret-arn`.

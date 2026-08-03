@@ -17,8 +17,10 @@ Optional:
                            Optional exact Secrets Manager ARN for the managed lesser-host instance key.
                            Defaults to $LESSER_HOST_INSTANCE_KEY_ARN when set.
   --soul-binding-integration-bearer-secret-arn <arn>
-                           Optional exact Secrets Manager ARN for the dedicated Body/Ptah -> Lesser
-                           soul-binding bearer. Defaults to $LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN
+                           Managed-deploy prerequisite: exact Secrets Manager ARN for the dedicated
+                           Body/Ptah/Ba -> Lesser soul-binding bearer. Without it,
+                           agent_local_install_plan and agent_bind_soul both fail closed with
+                           not_configured. Defaults to $LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN
                            when set. Do not pass a raw bearer value.
   --asset-prefix <prefix>  S3 key prefix for staged zip and auxiliary assets (default: releases/lesser-body/<version>)
   --no-execute-changeset   Pass through to aws cloudformation deploy for verification-only change set creation
