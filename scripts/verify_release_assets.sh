@@ -185,6 +185,23 @@ missing_template_parameters = sorted(expected_template_parameters.difference(dep
 if missing_template_parameters:
     err(f"lesser-body-deploy.json template_parameters missing {missing_template_parameters}")
 
+required_binding_prerequisites = {
+    "script_inputs": "soul_binding_integration_bearer_secret_arn",
+    "template_parameters": "LesserSoulBindingIntegrationBearerSecretARN",
+}
+for collection_name, parameter_name in required_binding_prerequisites.items():
+    entries = deploy.get(collection_name, [])
+    entry = next((item for item in entries if isinstance(item, dict) and item.get("name") == parameter_name), None)
+    if entry is None:
+        err(f"lesser-body-deploy.json {collection_name} missing {parameter_name}")
+        continue
+    if entry.get("required") is not True:
+        err(f"lesser-body-deploy.json {collection_name} {parameter_name} must be required")
+    description = str(entry.get("description") or "")
+    for expected_text in ("Body/Ptah/Ba", "agent_local_install_plan", "agent_bind_soul", "not_configured"):
+        if expected_text not in description:
+            err(f"lesser-body-deploy.json {collection_name} {parameter_name} description must name {expected_text}")
+
 expected_artifacts = {
     "lambda_zip": "lesser-body.zip",
     "deploy_manifest": "lesser-body-deploy.json",

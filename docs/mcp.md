@@ -855,8 +855,9 @@ The owner-operated sequence is:
    content or an existing owner-authored instructions draft.
 8. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
    account-scoped registry view. The returned `soul_seed.lifecycle_state` is `published`, and
-   `instructions_seed.lifecycle_state` is `draft`, so `agent_local_install_plan` is immediately eligible with no manual
-   content-authoring step. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
+   `instructions_seed.lifecycle_state` is `draft`, so no manual content-authoring step is required before
+   `agent_local_install_plan`; Ba still requires the authoritative Lesser soul binding and refuses a divergent actor
+   projection. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
    live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
 
@@ -1201,6 +1202,11 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
 - Derived target: Body reads the authenticated account's Host-finalized Ptah registry row for `soul_agent_id` and uses
   Host-derived `local_id` as Lesser `actor_username`. If the account-scoped row exists but lacks the local mapping, Body
   may refetch Host public identity `GET /api/v1/soul/agents/{agentId}` and repair the registry from that source truth.
+  The raw trimmed local mapping must be an ASCII-compatible actor path segment. Ptah applies its `PathEscape` guard
+  before username normalization, so any non-ASCII code point remaining after trimming is refused before Ptah can
+  submit a Lesser binding or persist a Host identity refetch.
+  A refetch never overwrites a non-empty stored `local_id` that disagrees with the Host projection; it returns typed
+  `actor_endpoint_divergence` and leaves the registry row unchanged.
   If no verified local actor mapping is available, the tool fails closed and does not fall back to the account-holder
   username.
 - Optional correlation/evidence: `body_actor_id` accepts `body://ptah/{local_id}` or `{local_id}` only when it matches
@@ -1213,8 +1219,15 @@ The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API 
 `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` in managed deployments, and the supplied non-empty idempotency key. It
 never forwards the caller's OAuth token to that server-to-server surface and never substitutes
 `LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
-`hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
-status link, and agent summary.
+`hosted_bound_soul`). Lesser's POST contract is synchronous-only: a successful 2xx response has
+`binding_state:"bound"`; Body refuses a hypothetical non-bound 2xx response rather than treating it as success. Body
+returns structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent
+summary. Before returning success, Body compares the registry-derived target actor with Lesser's
+authoritative `binding.agent_username` using one shared Ptah/Ba contract: trim both values and ASCII-lowercase them by
+mapping only `A-Z` to `a-z`. Lesser usernames are lowercase-canonical in storage, so ASCII case variants of the same
+name agree; empty values, genuinely different names, and Unicode lowercase/simple-fold lookalikes refuse. Non-ASCII
+never folds into ASCII in this comparison by construction; Body deliberately uses neither Unicode `strings.ToLower`
+nor `EqualFold` for this actor-endpoint authority decision. Divergence returns typed `actor_endpoint_divergence`.
 
 Cross-account or arbitrary target actor binding fails before Body calls Lesser: the target local actor must come from the
 authenticated account's Host-derived Ptah registry row or from a Host public identity refetch for that same
@@ -1226,7 +1239,11 @@ as `souled` through the existing `internal/soulbinding` read path over `SOUL_BOD
 rows. The instance MCP Lambda's Lesser-table read grant is correspondingly limited to `INSTANCE#CONFIG` and
 `SOUL_BODY_BINDING_USERNAME#*`; it does not receive Lesser memory-write access. For newly minted Host-genesis agents,
 the Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
-caller-supplied binding input.
+caller-supplied binding input. A finalize replay first compares the new Host-derived `local_id` with the existing row;
+if they differ under the same trimmed ASCII-lowercase comparison, typed `actor_endpoint_divergence` is returned and the
+existing row is not rewritten. The ensuing write
+is conditional on that observed `local_id`, so a concurrent operator correction also wins and surfaces the same typed
+divergence instead of being overwritten by a stale replay.
 
 ### Instance-plane Ba tools
 
@@ -1236,7 +1253,7 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_local_install_plan` | Write | Render a deterministic local install pack from a currently published account-scoped soul plus instructions, use that registry row's Host-derived `local_id` for the OAuth actor endpoint, and mint a one-time header-free download grant. |
+| `agent_local_install_plan` | Write | Render a deterministic local install pack from a currently published account-scoped soul plus instructions only after the registry `local_id` agrees with Lesser's authoritative bound actor username, and mint a one-time header-free download grant. |
 
 `agent_local_install_plan` input:
 
@@ -1246,8 +1263,10 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
   must match that principal after normalization. Callers cannot supply an account override.
 - Derived: the stage domain and download origin come from the CDK-provided `INSTANCE_MCP_ENDPOINT` template
   (`https://api.<stageDomain>/instance/{surface}/mcp`), not from caller input or unvalidated `Host` headers. Rendered
-  packs target `https://api.<stageDomain>/mcp/{local_id}` using the Host-derived `local_id` stored on the exact
-  account-scoped registry row selected by `agent_id`. The registry `agent_id` and OAuth resource actor remain distinct.
+  packs target `https://api.<stageDomain>/mcp/{local_id}` using the `local_id` stored on the exact account-scoped
+  registry row selected by `agent_id`, but only after Body reads Lesser's existing
+  `GET /api/v1/souls/bindings/{agent_id}` surface with the dedicated integration bearer and verifies that response's
+  `binding.agent_username`. The registry `agent_id` and OAuth resource actor remain distinct.
 
 `agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
 installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
@@ -1264,7 +1283,9 @@ one-time grant through `internal/downloadgrant.Store.Issue`. The soul record mus
 `agent_soul_publish_required` (`details.publish_tool="agent_soul_publish"`). A missing soul returns `404 not_found`
 naming `content_type:"agent_soul"`, `fix_tool:"agent_soul_upsert"`, and `next_tool:"agent_soul_publish"`; missing
 instructions name `content_type:"agent_instructions"` and `fix_tool:"agent_instructions_upsert"`. Archived content is
-never rendered.
+never rendered. Once content is ready, an unavailable/malformed authoritative binding returns typed
+`actor_endpoint_authority_unavailable`; a registry/binding disagreement returns typed `actor_endpoint_divergence`.
+Both fail before renderer invocation or download-grant minting, so Ba never ships an unresolvable actor endpoint.
 When `document.structure.five_bodies` is present, Ba renders that typed structure through Body's single deterministic
 five-body Markdown template; otherwise it renders `document.body` byte-for-byte. The digest binds the selected rendered
 content. The grant binding is fixed to:

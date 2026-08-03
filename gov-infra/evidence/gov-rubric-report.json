@@ -1,6 +1,5 @@
 {
   "authoritative_sources": [
-    ".codex/theorymcp/body/install-marker.json",
     "mcp__theorymcp.server_instructions published body overlay v10",
     "AGENTS.md",
     ".agents/skills/apply-and-verify-governance/SKILL.md",
@@ -17,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-03T17:26:49.842079Z",
+  "generated_at": "2026-08-03T19:58:27.769497Z",
   "git": {
-    "head": "46dcfca27082f1c5b22eb8773453902723b686c7",
-    "head_tree": "179e45de46a9a687b3a489eaee197c21b0007297",
-    "merge_base_origin_staging": "4804ab408feae608c42af26ac24e66709c8a6ec1",
-    "ref": "theorymcp/equaltoai/body/untrack-install-marker",
-    "working_tree_after_run": "8 changed paths after verifier run"
+    "head": "05b26310b8a60baed28104ceb9a0d9cc79adbf14",
+    "head_tree": "0f82b3ef0ac5e1ba53577c1e5dcb9e09dd678afb",
+    "merge_base_origin_staging": "c141c753f9aa4ec0ccd6df59d1e48642e31017b1",
+    "ref": "theorymcp/equaltoai/body/518-actor-endpoint-fail-closed",
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

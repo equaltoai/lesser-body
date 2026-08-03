@@ -142,7 +142,7 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
       default: "",
       allowedPattern: String.raw`^$|^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$`,
       constraintDescription: "Must be empty or an exact AWS Secrets Manager secret ARN without wildcards.",
-      description: "Optional exact Secrets Manager ARN for the dedicated Body/Ptah to Lesser soul-binding integration bearer. When provided, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret.",
+      description: "Managed-deploy prerequisite: exact Secrets Manager ARN for the dedicated Body/Ptah/Ba to Lesser soul-binding integration bearer. Without it, agent_local_install_plan and agent_bind_soul both fail closed with not_configured. The empty default remains for release-template compatibility; when provided, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret.",
     });
 
     const stageDomain = resolvedStageDomainFromDeployInputs(

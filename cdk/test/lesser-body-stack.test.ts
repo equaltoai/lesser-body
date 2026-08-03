@@ -41,7 +41,7 @@ test("managed template supports an exact lesser-host instance key ARN", () => {
   assert.equal(hasConditionalExactGrant, true);
 });
 
-test("managed template supports Ptah soul-binding bearer secret ARN", () => {
+test("managed template declares the Ptah and Ba soul-binding bearer prerequisite", () => {
   const template = synthManagedTemplate();
   const params = mustRecord(template.Parameters, "template missing Parameters");
   const param = mustRecord(
@@ -53,6 +53,10 @@ test("managed template supports Ptah soul-binding bearer secret ARN", () => {
   assert.equal(typeof param.AllowedPattern, "string");
   assert.match(param.AllowedPattern as string, /\^\$\|\^arn:/);
   assert.match(param.AllowedPattern as string, /secretsmanager/);
+  assert.match(param.Description as string, /Body\/Ptah\/Ba/);
+  assert.match(param.Description as string, /agent_local_install_plan/);
+  assert.match(param.Description as string, /agent_bind_soul/);
+  assert.match(param.Description as string, /not_configured/);
 
   const resources = mustResources(template);
   const instanceHandler = instanceMcpHandlerLambdaFunction(resources);

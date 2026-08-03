@@ -225,7 +225,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 99146a03384df6fac386a1ae7f2d423542e5d399f6061bed367f5067916d9246.zip
+        S3Key: 60427cd7ccedafd189b37558a7bebbd5146b35a6510775e950733f787e4b2384.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -266,7 +266,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.99146a03384df6fac386a1ae7f2d423542e5d399f6061bed367f5067916d9246.zip
+      aws:asset:path: asset.60427cd7ccedafd189b37558a7bebbd5146b35a6510775e950733f787e4b2384.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1344,7 +1344,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: c31c56ac51fda365d121c03d87733c3fbe37d7f406fb021ee8c26639ea4ac66b.zip
+        S3Key: afb39b00f86feaf7d0ddddf2c0a9b7d358965994d1dc03cc35489717179d1ab5.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1379,7 +1379,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.c31c56ac51fda365d121c03d87733c3fbe37d7f406fb021ee8c26639ea4ac66b.zip
+      aws:asset:path: asset.afb39b00f86feaf7d0ddddf2c0a9b7d358965994d1dc03cc35489717179d1ab5.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:
