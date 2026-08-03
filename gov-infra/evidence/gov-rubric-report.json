@@ -17,13 +17,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-03T11:51:33.054358Z",
+  "generated_at": "2026-08-03T17:26:49.842079Z",
   "git": {
-    "head": "8f6cc6d2ea1bde96a9c2a295dcaf91e85188224e",
-    "head_tree": "6219ecadbd412f5602a700e91626483b767bb2ad",
-    "merge_base_origin_staging": "096963012c4a9ad4f1cc6196710665c04fd14f7e",
-    "ref": "chore-516-runtime-framework-v3",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "head": "46dcfca27082f1c5b22eb8773453902723b686c7",
+    "head_tree": "179e45de46a9a687b3a489eaee197c21b0007297",
+    "merge_base_origin_staging": "4804ab408feae608c42af26ac24e66709c8a6ec1",
+    "ref": "theorymcp/equaltoai/body/untrack-install-marker",
+    "working_tree_after_run": "8 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
