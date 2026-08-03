@@ -800,7 +800,7 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 			"source": "lesser_soul_binding",
 		})
 	}
-	if !strings.EqualFold(strings.TrimSpace(bindingActor), strings.TrimSpace(resp.Binding.AgentUsername)) {
+	if err := actorendpoint.Validate(bindingActor, resp.Binding.AgentUsername); err != nil {
 		return toolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused a bound actor response that disagrees with the registry local_id", http.StatusConflict, map[string]any{
 			"source":          "lesser_soul_binding",
 			"operator_action": "repair the registry projection or authoritative Lesser actor binding before retrying",
@@ -1671,7 +1671,7 @@ func hostActorMappingUnavailableResult(message string, source string) *mcpruntim
 
 func normalizeSoulBindingLocalActor(value string) string {
 	value = normalizeActorUsername(value)
-	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") {
+	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") || url.PathEscape(value) != value {
 		return ""
 	}
 	return value

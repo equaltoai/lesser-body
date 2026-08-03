@@ -412,6 +412,28 @@ func TestAgentBindSoulAcceptsMixedCaseAuthoritativeActorAgreement(t *testing.T) 
 	}
 }
 
+func TestAgentBindSoulRejectsUnicodeFoldOrbitLocalID(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "ſentinel")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertToolError(t, result, "host_actor_mapping_unavailable", http.StatusConflict)
+	if client.calls != 0 {
+		t.Fatalf("Lesser binding calls = %d, want 0", client.calls)
+	}
+}
+
 func TestAgentBindSoulRequiresSynchronousBoundResponse(t *testing.T) {
 	// Lesser's synchronous-only POST contract is pinned in its primary source:
 	// cmd/api/handlers/souls.go (toAPISoulBindingResponse always emits bound)

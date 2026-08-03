@@ -1202,6 +1202,8 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
 - Derived target: Body reads the authenticated account's Host-finalized Ptah registry row for `soul_agent_id` and uses
   Host-derived `local_id` as Lesser `actor_username`. If the account-scoped row exists but lacks the local mapping, Body
   may refetch Host public identity `GET /api/v1/soul/agents/{agentId}` and repair the registry from that source truth.
+  The local mapping must be an ASCII-compatible actor path segment; non-ASCII identifiers are refused before Ptah can
+  submit a Lesser binding or persist a Host identity refetch.
   A refetch never overwrites a non-empty stored `local_id` that disagrees with the Host projection; it returns typed
   `actor_endpoint_divergence` and leaves the registry row unchanged.
   If no verified local actor mapping is available, the tool fails closed and does not fall back to the account-holder
@@ -1220,8 +1222,11 @@ never forwards the caller's OAuth token to that server-to-server surface and nev
 `binding_state:"bound"`; Body refuses a hypothetical non-bound 2xx response rather than treating it as success. Body
 returns structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent
 summary. Before returning success, Body compares the registry-derived target actor with Lesser's
-authoritative `binding.agent_username` using the same case-insensitive identifier contract as Lesser's returned agent
-ID; genuinely different values return typed `actor_endpoint_divergence`.
+authoritative `binding.agent_username` using one shared Ptah/Ba contract: trim both values and compare their lowercase
+forms. Lesser usernames are lowercase-canonical in storage, so ASCII case variants of the same name agree; empty
+values, genuinely different names, and Unicode simple-fold lookalikes such as `ſentinel` versus `sentinel` refuse.
+Body deliberately does not use Unicode `EqualFold` for this actor-endpoint authority decision. Divergence returns typed
+`actor_endpoint_divergence`.
 
 Cross-account or arbitrary target actor binding fails before Body calls Lesser: the target local actor must come from the
 authenticated account's Host-derived Ptah registry row or from a Host public identity refetch for that same
@@ -1234,7 +1239,8 @@ rows. The instance MCP Lambda's Lesser-table read grant is correspondingly limit
 `SOUL_BODY_BINDING_USERNAME#*`; it does not receive Lesser memory-write access. For newly minted Host-genesis agents,
 the Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
 caller-supplied binding input. A finalize replay first compares the new Host-derived `local_id` with the existing row;
-if they differ, typed `actor_endpoint_divergence` is returned and the existing row is not rewritten. The ensuing write
+if they differ under the same trimmed lowercase comparison, typed `actor_endpoint_divergence` is returned and the
+existing row is not rewritten. The ensuing write
 is conditional on that observed `local_id`, so a concurrent operator correction also wins and surfaces the same typed
 divergence instead of being overwritten by a stale replay.
 

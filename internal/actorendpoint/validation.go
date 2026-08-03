@@ -31,13 +31,14 @@ func (e *DivergenceError) Error() string {
 
 func (e *DivergenceError) Unwrap() error { return ErrDivergence }
 
-// Validate compares the exact trimmed identifiers used to derive the endpoint
-// while preserving the source values in a typed error. Body does not silently
-// canonicalize a divergent registry projection.
+// Validate compares trimmed identifiers using the lowercase-canonical contract
+// Lesser applies to usernames while preserving the source values in a typed
+// error. Deliberately do not use strings.EqualFold: Unicode simple-fold orbits
+// can equate a non-ASCII identifier with a genuinely different ASCII actor.
 func Validate(projectedLocalID string, authoritativeActorUsername string) error {
 	projected := strings.TrimSpace(projectedLocalID)
 	authoritative := strings.TrimSpace(authoritativeActorUsername)
-	if projected == "" || authoritative == "" || projected != authoritative {
+	if projected == "" || authoritative == "" || strings.ToLower(projected) != strings.ToLower(authoritative) {
 		return &DivergenceError{
 			ProjectedLocalID:           projected,
 			AuthoritativeActorUsername: authoritative,

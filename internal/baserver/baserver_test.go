@@ -190,6 +190,11 @@ func TestAgentLocalInstallPlanValidatesRegistryActorAgainstAuthoritativeLesserBi
 			authoritativeUsername: "sentinelsentinel",
 		},
 		{
+			name:                  "ASCII case variant renders",
+			registryLocalID:       "Prototype-11",
+			authoritativeUsername: "prototype-11",
+		},
+		{
 			name:                  "disagreement fails closed",
 			registryLocalID:       "sentinel",
 			authoritativeUsername: "sentinelsentinel",
@@ -270,7 +275,6 @@ func TestAgentLocalInstallPlanAuthoritativeActorFaultsFailClosedBeforeRenderOrGr
 		{name: "agent id mismatch", binding: &fakeActorBindingReader{response: bindingResponse("bound", "agent-other", "prototype-11")}, wantCode: "actor_endpoint_authority_unavailable", wantStatus: http.StatusConflict},
 		{name: "empty authoritative username", binding: &fakeActorBindingReader{actorUsername: ""}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
 		{name: "whitespace authoritative username", binding: &fakeActorBindingReader{actorUsername: " \t "}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
-		{name: "case variant username", registryLocalID: "Prototype-11", binding: &fakeActorBindingReader{actorUsername: "prototype-11"}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
 		{name: "substring username", registryLocalID: "sentinel", binding: &fakeActorBindingReader{actorUsername: "sentinelsentinel"}, wantCode: "actor_endpoint_divergence", wantStatus: http.StatusConflict},
 		{name: "bearer unresolvable", binding: &fakeActorBindingReader{actorUsername: "prototype-11"}, bearerUnresolvable: true, wantCode: "not_configured", wantStatus: http.StatusInternalServerError},
 		{name: "reader unconfigured", readerUnconfigured: true, wantCode: "not_configured", wantStatus: http.StatusInternalServerError},
@@ -334,6 +338,40 @@ func TestAgentLocalInstallPlanAuthoritativeActorFaultsFailClosedBeforeRenderOrGr
 				t.Fatalf("refusal side effects = render:%d grant:%d, want none", renderer.calls, issuer.calls)
 			}
 		})
+	}
+}
+
+func TestAgentLocalInstallPlanRejectsUnicodeFoldOrbitLocalID(t *testing.T) {
+	binding := &fakeActorBindingReader{actorUsername: "sentinel"}
+	renderer := &countingRenderer{delegate: installpack.NewRenderer()}
+	issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry,
+		WithAgentContentStore(newFakeContentStore("owner", "agent-one")),
+		WithAgentRegistryStore(newFakeAgentRegistryStore("owner", "agent-one", "ſentinel")),
+		WithActorBindingReader(binding),
+		WithSoulBindingIntegrationBearer("binding-secret"),
+		WithDownloadGrantIssuer(issuer),
+		WithRenderer(renderer),
+		WithInstanceEndpoint(testInstanceEndpoint),
+	); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		operatorToolContext("owner", []string{"write"}),
+		ToolAgentLocalInstallPlan,
+		json.RawMessage(`{"agent_id":"agent-one","client":"codex"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := toolError(t, result)
+	if payload["code"] != "agent_local_id_unavailable" || statusValue(payload["status"]) != http.StatusConflict {
+		t.Fatalf("fold-orbit refusal payload = %+v", payload)
+	}
+	if binding.calls != 0 || renderer.calls != 0 || issuer.calls != 0 {
+		t.Fatalf("fold-orbit side effects = binding:%d render:%d grant:%d, want none", binding.calls, renderer.calls, issuer.calls)
 	}
 }
 
