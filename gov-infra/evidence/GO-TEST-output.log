@@ -1,6 +1,7 @@
 $ go test ./cmd/... ./internal/...
 ?   	github.com/equaltoai/lesser-body/cmd/lesser-body	[no test files]
 ?   	github.com/equaltoai/lesser-body/cmd/lesser-body-instance	[no test files]
+ok  	github.com/equaltoai/lesser-body/internal/actorendpoint	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/agentcontent	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/agentregistry	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/auth	(cached)
