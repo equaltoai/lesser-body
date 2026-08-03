@@ -50,6 +50,8 @@ Managed consumers must still choose these deploy-time values:
 - artifact staging bucket in the target account (also used to upload CloudFormation templates for large-template deploys)
 - optional artifact key prefix
 - optional `baseDomain` override
+- the exact Secrets Manager ARN for the dedicated Body/Ptah/Ba → Lesser soul-binding bearer before any rollout that
+  exposes `agent_local_install_plan` or `agent_bind_soul`
 
 Everything else needed for the deploy path is release-produced.
 
@@ -63,7 +65,8 @@ bash ./deploy-lesser-body-from-release.sh \
   --asset-bucket my-artifact-bucket \
   --app lesser \
   --stage dev \
-  --base-domain example.com
+  --base-domain example.com \
+  --soul-binding-integration-bearer-secret-arn "$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN"
 ```
 
 What the helper does:
@@ -101,9 +104,12 @@ Template behavior:
 - `AppName` defaults to `lesser`.
 - `BaseDomain` is optional.
 - `LesserHostInstanceKeyARN` is optional and defaults to the empty string.
-- `LesserSoulBindingIntegrationBearerSecretARN` is optional and defaults to the empty string. When provided, it must be
-  an exact Secrets Manager ARN for the dedicated Body/Ptah → Lesser soul-binding bearer; the instance MCP Lambda receives
-  `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` and exact secret-read IAM. Managed consumers must not pass the raw bearer.
+- `LesserSoulBindingIntegrationBearerSecretARN` retains an empty-string template default for release-template
+  compatibility, but managed consumers must provide it before rolling out `agent_local_install_plan` or
+  `agent_bind_soul`; both tools fail closed with `not_configured` without the bearer. Create and populate the dedicated
+  secret before deploying Body. The value must be an exact Secrets Manager ARN for the dedicated Body/Ptah/Ba → Lesser
+  soul-binding bearer; the instance MCP Lambda receives `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` and exact
+  secret-read IAM. Managed consumers must not pass the raw bearer.
 - Every parameter `Default` emitted in the managed templates is a plain string. Intrinsics and object-valued defaults are not
   CloudFormation-legal for this deploy path.
 - `JWTSecretArnParamPath` defaults to `/<app>/shared/secrets/jwt-secret-arn`.
@@ -120,8 +126,9 @@ Template behavior:
   `LesserHostInstanceKeyARN`, so managed runners can keep IAM access aligned with the exact secret ARN they already hold.
 - The release helper also forwards `--soul-binding-integration-bearer-secret-arn` (or
   `$LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` when set) into
-  `LesserSoulBindingIntegrationBearerSecretARN`, so live Ptah binding can use the same dedicated secret value configured
-  on Lesser's `SOUL_BINDING_INTEGRATION_KEY_ARN` receiving side.
+  `LesserSoulBindingIntegrationBearerSecretARN`, so Ba's authoritative actor check and live Ptah binding can use the
+  same dedicated secret value configured on Lesser's `SOUL_BINDING_INTEGRATION_KEY_ARN` receiving side. The secret must
+  exist and contain the coordinated bearer before the Body rollout begins.
 
 ### Deploy manifest schema 2: auxiliary assets
 
