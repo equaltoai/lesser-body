@@ -1218,7 +1218,8 @@ never forwards the caller's OAuth token to that server-to-server surface and nev
 `LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
 `hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
 status link, and agent summary. Before returning success, Body compares the registry-derived target actor with Lesser's
-authoritative `binding.agent_username`; disagreement returns typed `actor_endpoint_divergence`.
+authoritative `binding.agent_username` using the same case-insensitive identifier contract as Lesser's returned agent
+ID; genuinely different values return typed `actor_endpoint_divergence`.
 
 Cross-account or arbitrary target actor binding fails before Body calls Lesser: the target local actor must come from the
 authenticated account's Host-derived Ptah registry row or from a Host public identity refetch for that same

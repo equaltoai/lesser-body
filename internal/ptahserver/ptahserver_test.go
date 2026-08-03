@@ -383,6 +383,35 @@ func TestAgentBindSoulRejectsAuthoritativeActorDivergence(t *testing.T) {
 	}
 }
 
+func TestAgentBindSoulAcceptsMixedCaseAuthoritativeActorAgreement(t *testing.T) {
+	response := successfulBindingResponse(false)
+	response.Binding.AgentUsername = "SentinelSentinel"
+	client := &fakeSoulBindingClient{
+		resp:                  response,
+		preserveResponseActor: true,
+	}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "SentinelSentinel")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("mixed-case agreement result = %+v", result)
+	}
+	if client.calls != 1 || client.req.ActorUsername != "sentinelsentinel" {
+		t.Fatalf("Lesser binding request = calls:%d actor:%q", client.calls, client.req.ActorUsername)
+	}
+}
+
 func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
 	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
