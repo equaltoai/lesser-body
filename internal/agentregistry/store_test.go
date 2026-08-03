@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/theory-cloud/tabletheory/v3"
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
 	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
@@ -116,6 +118,7 @@ func TestUpsertFinalizedConditionsExistingRowOnExpectedLocalID(t *testing.T) {
 
 	corrected := base
 	corrected.LocalID = "sentinelsentinel"
+	corrected.ExpectedLocalID = &expected
 	if _, _, err := store.UpsertFinalized(ctx, corrected); err != nil {
 		t.Fatalf("operator correction: %v", err)
 	}
@@ -144,6 +147,73 @@ func TestUpsertFinalizedConditionsMissingLocalIDAttribute(t *testing.T) {
 	if err != nil || created || updated == nil || updated.LocalID != "sentinel" {
 		t.Fatalf("empty local-id conditional update = agent:%+v created:%t err:%v", updated, created, err)
 	}
+}
+
+func TestUpsertFinalizedCreateConflictPreservesConcurrentCorrection(t *testing.T) {
+	t.Setenv(EnvInstanceRegistryTable, "body-instance-registry-create-race-test")
+	ctx := context.Background()
+	underlying := fakedb.New()
+	tracing := &createConflictFake{Fake: underlying}
+	db, err := tabletheory.NewWithClient(session.Config{Region: "us-east-1"}, tracing)
+	if err != nil {
+		t.Fatalf("NewWithClient(tracing) error = %v", err)
+	}
+	store, err := NewStore(db, os.Getenv(EnvInstanceRegistryTable))
+	if err != nil {
+		t.Fatalf("NewStore(tracing) error = %v", err)
+	}
+	if err := db.CreateTable(store.emptyRecord()); err != nil {
+		t.Fatalf("CreateTable() error = %v", err)
+	}
+
+	concurrentDB, err := tabletheory.NewWithClient(session.Config{Region: "us-east-1"}, underlying)
+	if err != nil {
+		t.Fatalf("NewWithClient(concurrent) error = %v", err)
+	}
+	concurrentStore, err := NewStore(concurrentDB, os.Getenv(EnvInstanceRegistryTable))
+	if err != nil {
+		t.Fatalf("NewStore(concurrent) error = %v", err)
+	}
+	tracing.beforeFirstPut = func() error {
+		_, _, err := concurrentStore.UpsertFinalized(ctx, FinalizedInput{
+			Account: "owner",
+			AgentID: "agent-0xabc",
+			LocalID: "sentinelsentinel",
+		})
+		return err
+	}
+
+	_, _, err = store.UpsertFinalized(ctx, FinalizedInput{
+		Account: "owner",
+		AgentID: "agent-0xabc",
+		LocalID: "sentinel",
+	})
+	if !errors.Is(err, ErrFinalizedLocalIDChanged) {
+		t.Fatalf("create-conflict upsert error = %v, want ErrFinalizedLocalIDChanged", err)
+	}
+	got, getErr := concurrentStore.Get(ctx, "owner", "agent-0xabc")
+	if getErr != nil || got.LocalID != "sentinelsentinel" {
+		t.Fatalf("concurrent correction after create conflict = %+v/%v", got, getErr)
+	}
+}
+
+type createConflictFake struct {
+	*fakedb.Fake
+	once           sync.Once
+	beforeFirstPut func() error
+	hookErr        error
+}
+
+func (f *createConflictFake) PutItem(ctx context.Context, in *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	f.once.Do(func() {
+		if f.beforeFirstPut != nil {
+			f.hookErr = f.beforeFirstPut()
+		}
+	})
+	if f.hookErr != nil {
+		return nil, f.hookErr
+	}
+	return f.Fake.PutItem(ctx, in, optFns...)
 }
 
 func TestCrossAccountGetReturnsNotFound(t *testing.T) {

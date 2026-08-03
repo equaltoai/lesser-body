@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/actorendpoint"
 	"github.com/theory-cloud/tabletheory/v3"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
@@ -232,6 +233,22 @@ func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent,
 		case !tableerrors.IsConditionFailed(err):
 			return nil, false, fmt.Errorf("create finalized agent registry record: %w", err)
 		}
+
+		// A condition failure means another writer created this key after the
+		// caller's read. Re-read the winner and turn the fall-through update into
+		// the same observed-LocalID conditional write used by replay callers.
+		// This preserves a concurrent correction instead of overwriting it.
+		observed, getErr := s.Get(ctx, validated.Account, validated.AgentID)
+		if getErr != nil {
+			return nil, false, fmt.Errorf("read finalized agent registry create conflict: %w", getErr)
+		}
+		if strings.TrimSpace(validated.LocalID) != "" && strings.TrimSpace(observed.LocalID) != "" {
+			if err := actorendpoint.Validate(validated.LocalID, observed.LocalID); err != nil {
+				return nil, false, fmt.Errorf("%w: concurrent finalized registry create", ErrFinalizedLocalIDChanged)
+			}
+		}
+		expectedLocalID := strings.TrimSpace(observed.LocalID)
+		validated.ExpectedLocalID = &expectedLocalID
 	}
 
 	updated := s.emptyRecord()
@@ -309,6 +326,7 @@ func (s *Store) Get(ctx context.Context, account string, agentID string) (*Agent
 		WithContext(ctx).
 		Where("PK", "=", accountPartitionKey(account)).
 		Where("SK", "=", agentSortKey(agentID)).
+		ConsistentRead().
 		First(record)
 	switch {
 	case err == nil:
