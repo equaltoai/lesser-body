@@ -1593,6 +1593,15 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 	if errResult != nil {
 		return nil, "", errResult, nil
 	}
+	if strings.TrimSpace(existing.LocalID) != "" {
+		if err := actorendpoint.Validate(existing.LocalID, identity.LocalID); err != nil {
+			return nil, "", mustToolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused to overwrite a registry local_id that disagrees with the Host identity projection", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_host_refetch",
+				"tool":            toolAgentBindSoul,
+				"operator_action": "verify the authoritative Lesser actor and repair the divergent source before retrying; Body will not rewrite either value silently",
+			}), nil
+		}
+	}
 
 	updated, _, updateErr := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
 		Account:                accountActor,

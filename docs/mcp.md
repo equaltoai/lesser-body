@@ -1202,6 +1202,8 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
 - Derived target: Body reads the authenticated account's Host-finalized Ptah registry row for `soul_agent_id` and uses
   Host-derived `local_id` as Lesser `actor_username`. If the account-scoped row exists but lacks the local mapping, Body
   may refetch Host public identity `GET /api/v1/soul/agents/{agentId}` and repair the registry from that source truth.
+  A refetch never overwrites a non-empty stored `local_id` that disagrees with the Host projection; it returns typed
+  `actor_endpoint_divergence` and leaves the registry row unchanged.
   If no verified local actor mapping is available, the tool fails closed and does not fall back to the account-holder
   username.
 - Optional correlation/evidence: `body_actor_id` accepts `body://ptah/{local_id}` or `{local_id}` only when it matches

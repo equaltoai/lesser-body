@@ -431,6 +431,50 @@ func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T
 	}
 }
 
+func TestAgentBindSoulHostRefetchDoesNotRewriteCorrectedRegistryLocalID(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
+		Account:         "owner",
+		AgentID:         "agent-0xabc",
+		Source:          agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority: agentregistry.SourceAuthorityLesserHost,
+		SourceOperation: agentregistry.SourceOperationAgentGenesisFinalize,
+		LocalID:         "sentinelsentinel@example.com",
+	}}
+	identity := &fakeHostIdentityClient{identity: &hostapi.AgentIdentity{
+		AgentID:            "agent-0xabc",
+		LocalID:            "sentinel",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithHostIdentityClient(identity), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+	details, _ := payload["details"].(map[string]any)
+	if details["source"] != "agent_registry_host_refetch" {
+		t.Fatalf("divergence details = %+v", details)
+	}
+	if identity.calls != 1 || store.upsertFinalizedCalls != 0 || client.calls != 0 {
+		t.Fatalf("refetch side effects = identity:%d registry_writes:%d Lesser_calls:%d", identity.calls, store.upsertFinalizedCalls, client.calls)
+	}
+	if store.getAgent.LocalID != "sentinelsentinel@example.com" {
+		t.Fatalf("corrected registry local_id rewritten to %q", store.getAgent.LocalID)
+	}
+}
+
 func TestAgentBindSoulFailsClosedForUnverifiedTargetActor(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
