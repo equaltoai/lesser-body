@@ -1,0 +1,18 @@
+{
+  "$schema": "https://theory.cloud/tabletheory/schemas/visible-npm-audit-findings.schema.json",
+  "purpose": "Findings listed here are intentionally visible in release evidence and are not supply-chain allowlist suppressions. Pattern adopted from TableTheory's gov-infra/planning/theorydb-visible-npm-audit-findings.json (operator decision 2026-08-03).",
+  "findings": [
+    {
+      "project": "cdk",
+      "package": "brace-expansion",
+      "advisory": "GHSA-rgw5-rvv9-x895",
+      "node": "node_modules/aws-cdk-lib/node_modules/brace-expansion",
+      "visibility": "visible",
+      "status": "upstream-bundled-pending-fix",
+      "reviewed_on": "2026-08-03",
+      "expires_on": "2026-08-17",
+      "remove_when": "Remove this entry and close the exception as soon as a released aws-cdk-lib bundles brace-expansion 5.0.9 or newer; upgrade aws-cdk-lib in the same change. Dependabot keeps the alert open on the default branch until then.",
+      "justification": "Advisory published 2026-08-03 (DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation); brace-expansion >=4.0.0 <5.0.9 vulnerable, patched only in 5.0.9. aws-cdk-lib 2.263.0 is the latest release (AppTheory pinned peer) and bundles brace-expansion 5.0.8 inside its published tarball — verified by direct tarball inspection. npm overrides cannot replace bundled dependencies — verified empirically 2026-08-03 (override of brace-expansion@5.0.9 leaves the bundled 5.0.8 in place and audit red). No released aws-cdk-lib carries the fix, so no workaround exists. The affected minimatch path runs only while synthesizing fixed-input infrastructure (cdk synth/test at build time) and is not shipped in Lambda assets. Keep the advisory visible in RELEASE-ASSETS evidence and re-review or remove this exception by the expiry date."
+    }
+  ]
+}
