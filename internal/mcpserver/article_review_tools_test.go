@@ -131,6 +131,7 @@ func TestArticleDraftReviewHandlersDelegateToLesser(t *testing.T) {
 }
 
 func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
+	budget := reviewOutputBudget(0)
 	for _, tc := range []struct {
 		name  string
 		count int
@@ -151,7 +152,7 @@ func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 				})
 			}
 
-			result, err := articleDraftReviewQueueResult(queue, tc.count, articleDraftReviewBudgetBytes)
+			result, err := articleDraftReviewQueueResult(queue, tc.count, budget)
 			if err != nil {
 				t.Fatalf("articleDraftReviewQueueResult: %v", err)
 			}
@@ -162,8 +163,8 @@ func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 			if err != nil {
 				t.Fatalf("measureToolResultPayload: %v", err)
 			}
-			if measurement.JSONRPCEnvelopeBytes > articleDraftReviewBudgetBytes {
-				t.Fatalf("realistic queue envelope at n=%d measured %d bytes, budget %d", tc.count, measurement.JSONRPCEnvelopeBytes, articleDraftReviewBudgetBytes)
+			if measurement.JSONRPCEnvelopeBytes > budget {
+				t.Fatalf("realistic queue envelope at n=%d measured %d bytes, budget %d", tc.count, measurement.JSONRPCEnvelopeBytes, budget)
 			}
 			t.Logf("realistic queue envelope at n=%d: %d bytes", tc.count, measurement.JSONRPCEnvelopeBytes)
 		})
@@ -175,6 +176,7 @@ func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 const realisticDraftReviewPinnedVerdictCount = 2
 
 func TestArticleDraftReviewBudgetGuardRejectsPinnedVerdictHistoryDrift(t *testing.T) {
+	budget := reviewOutputBudget(0)
 	queue := &cmsapi.DraftReviewConnection{
 		Edges:      make([]cmsapi.DraftReviewEdge, 0, articleDraftReviewDefaultLimit),
 		TotalCount: articleDraftReviewDefaultLimit,
@@ -186,12 +188,12 @@ func TestArticleDraftReviewBudgetGuardRejectsPinnedVerdictHistoryDrift(t *testin
 		})
 	}
 
-	result, err := articleDraftReviewQueueResult(queue, articleDraftReviewDefaultLimit, articleDraftReviewBudgetBytes)
+	result, err := articleDraftReviewQueueResult(queue, articleDraftReviewDefaultLimit, budget)
 	if err != nil {
 		t.Fatalf("articleDraftReviewQueueResult: %v", err)
 	}
 	if !result.IsError {
-		t.Fatalf("expected pinned %d-verdict history to trip the %d-byte default budget guard", realisticDraftReviewPinnedVerdictCount, articleDraftReviewBudgetBytes)
+		t.Fatalf("expected pinned %d-verdict history to trip the %d-byte default budget guard", realisticDraftReviewPinnedVerdictCount, budget)
 	}
 
 	errorPayload, ok := result.StructuredContent["error"].(map[string]any)
@@ -205,12 +207,12 @@ func TestArticleDraftReviewBudgetGuardRejectsPinnedVerdictHistoryDrift(t *testin
 	measuredBytes, ok := details["measuredBytes"].(int)
 	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != 413 ||
 		!strings.Contains(fmt.Sprint(errorPayload["message"]), "exceeds max_output_bytes") ||
-		!ok || measuredBytes <= articleDraftReviewBudgetBytes ||
-		details["maxOutputBytes"] != articleDraftReviewBudgetBytes ||
+		!ok || measuredBytes <= budget ||
+		details["maxOutputBytes"] != budget ||
 		details["guidance"] != "reduce queue limit or increase max_output_bytes" {
 		t.Fatalf("budget guard must fail loudly with measured recovery details: %+v", errorPayload)
 	}
-	t.Logf("realistic queue envelope at n=%d with %d verdicts/review: %d bytes (budget %d)", articleDraftReviewDefaultLimit, realisticDraftReviewPinnedVerdictCount, measuredBytes, articleDraftReviewBudgetBytes)
+	t.Logf("realistic queue envelope at n=%d with %d verdicts/review: %d bytes (budget %d)", articleDraftReviewDefaultLimit, realisticDraftReviewPinnedVerdictCount, measuredBytes, budget)
 }
 
 func realisticDraftReviewFixture(index, verdictCount int) *cmsapi.DraftReview {
