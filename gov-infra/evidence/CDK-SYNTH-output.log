@@ -225,7 +225,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: d3167f8d180558a46d006e4cd2c63a78e7f0a7e361b297c5081361d972478248.zip
+        S3Key: d4fa05fe4a2f0a91f2af0c78461d0a6fe0d0d6aed5acf4a37db9e02ac1d5d688.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -266,7 +266,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.d3167f8d180558a46d006e4cd2c63a78e7f0a7e361b297c5081361d972478248.zip
+      aws:asset:path: asset.d4fa05fe4a2f0a91f2af0c78461d0a6fe0d0d6aed5acf4a37db9e02ac1d5d688.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1344,7 +1344,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 96e5ad5dbf3210b10093be794f8d524ba82a0a499b6a61a66862b76e04f2cc8e.zip
+        S3Key: f98418b45b8f789e0a2a649233562d7f0a18888ed3bb1bec25ad89f6b269b9c4.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1379,7 +1379,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.96e5ad5dbf3210b10093be794f8d524ba82a0a499b6a61a66862b76e04f2cc8e.zip
+      aws:asset:path: asset.f98418b45b8f789e0a2a649233562d7f0a18888ed3bb1bec25ad89f6b269b9c4.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:
@@ -1440,7 +1440,7 @@ Resources:
   CDKMetadata:
     Type: AWS::CDK::Metadata
     Properties:
-      Analytics: v2:deflate64:H4sIAAAAAAAA/5WRwU4jMQyGn4WeUwMtcOBWQLuXXVG13FYIeTJmSDtJRmOHUkV591USEFNpL3vy59j+88tewOLmEi7O8MBz3e7nvWkgbgX1XuGBX2KPtmkR4o/gtBjv1P2rm/KaRmuYjXdJGbQQN76nXChx7Xujj6WvUFK8fEFmEoZVDoqXEO+C3pPcIZOqmAcq/Ykzaz6Mm93Opg6zNV5CKTHU1lUQ/0A9CT02O9LCs/T8qfdtY5r/h3Yd2AoKWXJFOqnedwzxl+9+jj4MWf2Lk8LBdCh0wCPEDbGsBlOW8o0rrX1woh5o6P0xq+bXSbYV7MomK2yIfRg1lTV9JZ+alX+TvPk2P1VKqj06tL5tID5hU89SIClmC/kqOKIloTGpco78lXGdmpZOPnsMMgRR94HF23+6OC2tR/9uWhqz66Scbwl2fP6+uILLa7g427Ex8zE4MZZgU+NfE/kkoJICAAA=
+      Analytics: v2:deflate64:H4sIAAAAAAAA/5WRwU4jMQyGn4WeUy+0sAduBQSXXVG1e1sh5MmYIe0kGY0dulWUd18lATGVuHDy59j+88tewOLnEs7P8MBz3e7nvWkgbgX1XuGBn2OPtmkR4n1wWox36vbFTXlNozXMxrukDFqIG99TLpS49r3Rx9JXKClePiMzCcMqB8VLiDdB70lukElVzAOV/saZNf+Mm13Ppg6zNV5CKTHU1lUQf0c9CT02O9LCs/T0rvdpY5p/Q7sObAWFLLkinVTvO4b4y3cPow9DVv/gpHAwHQod8AhxQyyrwZSlfOJKax+cqDsaen/Mqvl1km0Fu7LJChtiH0ZNZU0fybtm5d8kr77NT5WSao8OrW8biH+wqWcpkBSzhXwVHNGS0JhUOUf+yrhOTUsnnz0GGYKo28Di7ZcuTkvr0b+ZlsbsOinnW4Id/3hbXMLFFZyf7diY+RicGEuwqfE/HQsQYJICAAA=
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/CDKMetadata/Default
 Parameters:
@@ -1470,4 +1470,4 @@ Outputs:
           - Ref: McpServerApiDeploymentStagedev2141D90C
           - /
 
-80 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.
+81 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.
