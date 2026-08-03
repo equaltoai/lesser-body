@@ -2,8 +2,8 @@
   "schema": 1,
   "frameworks": {
     "apptheory": {
-      "module": "github.com/theory-cloud/apptheory",
-      "version": "v1.17.0",
+      "module": "github.com/theory-cloud/apptheory/v2",
+      "version": "v2.0.1",
       "docs": [
         "docs/getting-started.md",
         "docs/integrations/agentcore-mcp.md",
