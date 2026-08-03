@@ -3,7 +3,7 @@ package mcpapp
 import (
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func TestWithActorBinding_AllowsMatchingActor(t *testing.T) {

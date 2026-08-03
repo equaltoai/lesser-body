@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 const identityLookupPromptQueryForms = "ENS name, full agentId, current-instance local ID, explicit remote ActivityPub handle such as @steward@remote.example, or canonical actor URL such as https://remote.example/users/steward; private email/phone reachability lookup currently fails closed until lesser-host exposes a body-facing resolver"

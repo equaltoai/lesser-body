@@ -15,9 +15,9 @@ import (
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/memory"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 )
 
 func TestX402Grant_AllowsScopedToolCallWithoutOAuthSession(t *testing.T) {

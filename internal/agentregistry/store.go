@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/tabletheory/v2"
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
-	"github.com/theory-cloud/tabletheory/v2/pkg/session"
+	"github.com/theory-cloud/tabletheory/v3"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
+	"github.com/theory-cloud/tabletheory/v3/pkg/session"
 )
 
 const (

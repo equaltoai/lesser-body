@@ -406,7 +406,7 @@ AppTheory’s MCP server implements:
 
 ### Transport-version behavior
 
-The Ka actor surface accepts both AppTheory v2.0.1 transport shapes on the same `/mcp/{actor}` route:
+The Ka actor surface accepts both AppTheory v3.0.1 transport shapes on the same `/mcp/{actor}` route:
 
 - **MCP `2026-07-28`** is stateless. Discovery uses `server/discover`, not `initialize`. Every request carries
   `MCP-Protocol-Version: 2026-07-28`, a matching `Mcp-Method`, and matching

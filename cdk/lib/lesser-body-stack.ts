@@ -106,6 +106,10 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
       type: "String",
       description: "Required SSM parameter path containing the shared JWT secret ARN for the target app, for example /<app>/shared/secrets/jwt-secret-arn.",
     });
+    cdk.Validations.of(jwtSecretArnParamPathParam).acknowledge({
+      id: "CloudFormation-Validate::W2509",
+      reason: "This parameter contains an SSM path, not secret material; the resolved secret ARN is never a template parameter.",
+    });
     const jwtSecretKeyParamPathParam = new cdk.CfnParameter(this, "JWTSecretKeyArnParamPath", {
       type: "String",
       description: "Required SSM parameter path containing the shared KMS key ARN for the target app, for example /<app>/shared/kms/encryption-key-arn.",

@@ -8,7 +8,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 )
 
 func TestBodyMCP_ModernTransportContract(t *testing.T) {
