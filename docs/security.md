@@ -108,6 +108,13 @@ tool. `agent_local_install_plan` consumes `capabilityVersion="instance-capabilit
 effect until Host accepts the grant. Explicit operator OAuth authority is exempt; ordinary OAuth connector sessions are
 not.
 
+Ba also treats actor-endpoint derivation as a fail-closed authority boundary. After the x402 and content-readiness gates
+but before renderer or download-grant side effects, `agent_local_install_plan` reads Lesser's existing soul-binding
+surface by registry `agent_id` with the dedicated integration bearer and compares the registry `local_id` with
+Lesser's authoritative bound actor username. Missing authority, response/agent mismatch, or identifier divergence
+returns a typed tool error and no pack. Ptah applies the same identifier comparison to successful binding responses and
+refuses a finalize replay that would overwrite a divergent existing `local_id`.
+
 `internal/mcpapp/audit.go` uses AppTheory's MCP JSON-RPC parser for scope authorization before dispatch. Parser
 failures intentionally fall through to the AppTheory runtime and remain safe only because the runtime uses the same
 parser and fails before tool dispatch. The M0.3 regression locks in `internal/mcpapp/parser_equivalence_test.go` assert

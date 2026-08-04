@@ -104,18 +104,30 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
     });
     const jwtSecretArnParamPathParam = new cdk.CfnParameter(this, "JWTSecretArnParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the shared JWT secret ARN for the target app, for example /<app>/shared/secrets/jwt-secret-arn.",
+    });
+    cdk.Validations.of(jwtSecretArnParamPathParam).acknowledge({
+      id: "CloudFormation-Validate::W2509",
+      reason: "This parameter contains an SSM path, not secret material; the resolved secret ARN is never a template parameter.",
     });
     const jwtSecretKeyParamPathParam = new cdk.CfnParameter(this, "JWTSecretKeyArnParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the shared KMS key ARN for the target app, for example /<app>/shared/kms/encryption-key-arn.",
     });
     const lesserStageDomainParamPathParam = new cdk.CfnParameter(this, "LesserStageDomainParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the Lesser stage domain for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/domain.",
     });
     const lesserTableParamPathParam = new cdk.CfnParameter(this, "LesserTableNameParamPath", {
       type: "String",
+      allowedPattern: String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`,
+      constraintDescription: "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.",
       description: "Required SSM parameter path containing the Lesser table name for the target app and stage, for example /<app>/<stage>/lesser/exports/v1/table_name.",
     });
     const lesserHostInstanceKeyArnParam = new cdk.CfnParameter(this, "LesserHostInstanceKeyARN", {
@@ -130,7 +142,7 @@ export class LesserBodyDeployTemplateStack extends cdk.Stack {
       default: "",
       allowedPattern: String.raw`^$|^arn:[^:*]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$`,
       constraintDescription: "Must be empty or an exact AWS Secrets Manager secret ARN without wildcards.",
-      description: "Optional exact Secrets Manager ARN for the dedicated Body/Ptah to Lesser soul-binding integration bearer. When provided, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret.",
+      description: "Managed-deploy prerequisite: exact Secrets Manager ARN for the dedicated Body/Ptah/Ba to Lesser soul-binding integration bearer. Without it, agent_local_install_plan and agent_bind_soul both fail closed with not_configured. The empty default remains for release-template compatibility; when provided, lesser-body injects LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN on the instance MCP Lambda and grants direct read access to that secret.",
     });
 
     const stageDomain = resolvedStageDomainFromDeployInputs(

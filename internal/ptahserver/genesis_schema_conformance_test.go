@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 // Strict MCP clients validate tools/call structuredContent against the tool's

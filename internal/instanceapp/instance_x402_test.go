@@ -11,8 +11,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 )
 
 const testSoulAgentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -38,6 +38,8 @@ func TestInstancePlaneX402_BaInstallPlanRequiresGrantBeforeDownloadGrant(t *test
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{agentID: "agent-one", actorUsername: "agent-one"}),
+			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),
 	)
@@ -97,6 +99,8 @@ func TestInstancePlaneX402_BaInstallPlanConsumesInstanceGrantThenMintsDownloadGr
 		instanceapp.WithBaNamespace("equaltoai"),
 		instanceapp.WithBaToolOptions(
 			baserver.WithAgentRegistryStore(newBaPlanAgentRegistry("agent1", "agent-one", "agent-one")),
+			baserver.WithActorBindingReader(&baPlanActorBindingReader{agentID: "agent-one", actorUsername: "agent-one"}),
+			baserver.WithSoulBindingIntegrationBearer("binding-secret"),
 			baserver.WithRateLimiter(baserver.NewInMemoryGrantMintLimiter(10, time.Minute)),
 		),
 	)

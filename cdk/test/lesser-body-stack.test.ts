@@ -41,7 +41,7 @@ test("managed template supports an exact lesser-host instance key ARN", () => {
   assert.equal(hasConditionalExactGrant, true);
 });
 
-test("managed template supports Ptah soul-binding bearer secret ARN", () => {
+test("managed template declares the Ptah and Ba soul-binding bearer prerequisite", () => {
   const template = synthManagedTemplate();
   const params = mustRecord(template.Parameters, "template missing Parameters");
   const param = mustRecord(
@@ -53,6 +53,10 @@ test("managed template supports Ptah soul-binding bearer secret ARN", () => {
   assert.equal(typeof param.AllowedPattern, "string");
   assert.match(param.AllowedPattern as string, /\^\$\|\^arn:/);
   assert.match(param.AllowedPattern as string, /secretsmanager/);
+  assert.match(param.Description as string, /Body\/Ptah\/Ba/);
+  assert.match(param.Description as string, /agent_local_install_plan/);
+  assert.match(param.Description as string, /agent_bind_soul/);
+  assert.match(param.Description as string, /not_configured/);
 
   const resources = mustResources(template);
   const instanceHandler = instanceMcpHandlerLambdaFunction(resources);
@@ -70,6 +74,8 @@ test("managed template supports Ptah soul-binding bearer secret ARN", () => {
 test("managed template requires app-scoped Lesser parameter paths", () => {
   const template = synthManagedTemplate();
   const params = mustRecord(template.Parameters, "template missing Parameters");
+  const expectedPattern = String.raw`^/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`;
+  const expectedConstraint = "Must be an absolute SSM parameter path with slash-delimited alphanumeric, period, underscore, or hyphen segments.";
 
   for (const name of [
     "JWTSecretArnParamPath",
@@ -79,7 +85,16 @@ test("managed template requires app-scoped Lesser parameter paths", () => {
   ]) {
     const param = mustRecord(params[name], `template missing ${name} parameter`);
     assert.equal(Object.hasOwn(param, "Default"), false, `${name} must not have a default`);
+    assert.equal(param.AllowedPattern, expectedPattern, `${name} must require an absolute SSM parameter path`);
+    assert.equal(param.ConstraintDescription, expectedConstraint, `${name} must describe its SSM path constraint`);
   }
+
+  const jwtSecretKeyParamPath = mustRecord(params.JWTSecretKeyArnParamPath, "template missing JWTSecretKeyArnParamPath parameter");
+  const siblingPattern = new RegExp(jwtSecretKeyParamPath.AllowedPattern as string);
+  assert.equal(siblingPattern.test("/theory/shared/kms/encryption-key-arn"), true);
+  assert.equal(siblingPattern.test("theory/shared/kms/encryption-key-arn"), false, "relative paths must be rejected");
+  assert.equal(siblingPattern.test("/theory//kms/encryption-key-arn"), false, "empty path segments must be rejected");
+  assert.equal(siblingPattern.test("arn:aws:secretsmanager:us-east-1:123456789012:secret:jwt"), false, "secret ARNs must be rejected");
 });
 
 test("lesser table policy uses least-privilege primary table access", () => {

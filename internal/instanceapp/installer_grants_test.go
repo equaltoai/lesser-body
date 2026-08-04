@@ -10,11 +10,11 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	"github.com/theory-cloud/apptheory/v2/testkit"
-	"github.com/theory-cloud/tabletheory/v2"
-	"github.com/theory-cloud/tabletheory/v2/pkg/session"
-	"github.com/theory-cloud/tabletheory/v2/pkg/testing/fakedb"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	"github.com/theory-cloud/apptheory/v3/testkit"
+	"github.com/theory-cloud/tabletheory/v3"
+	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
 )
 
 func TestInstallerGrantDownload_HeaderFreeConsumeReturnsZipAndReplayGone(t *testing.T) {

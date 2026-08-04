@@ -174,9 +174,11 @@ Notes:
   string overrides. The templates no longer rely on intrinsic expressions in parameter defaults.
 - `--lesser-host-instance-key-arn` is optional. If omitted, the helper also checks the shell environment for
   `LESSER_HOST_INSTANCE_KEY_ARN` and forwards it automatically when present.
-- `--soul-binding-integration-bearer-secret-arn` is optional for stages that do not use Ptah binding, but required before
-  live `agent_bind_soul` validation. If omitted, the helper also checks
-  `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN`. Pass only an exact Secrets Manager secret ARN, never the raw bearer.
+- `--soul-binding-integration-bearer-secret-arn` is required before rolling out either
+  `agent_local_install_plan` or `agent_bind_soul`; both tools fail closed with `not_configured` when Body cannot resolve
+  the bearer. Create and populate the dedicated secret before deploying Body, then pass its exact Secrets Manager ARN
+  (or set `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN`) so the Lambda environment and secret-read IAM land in the same
+  rollout. Never pass the raw bearer.
 - Add `--no-execute-changeset` to exercise the real `aws cloudformation deploy` path without executing the change set.
 - The corrected MCP stream-table baseline is a versioned physical table (`...-mcp-streams-v2`) while the exported SSM
   parameter name remains `mcp_stream_table_name`. Existing durable Lesser actor data is preserved; only transient MCP

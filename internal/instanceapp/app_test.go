@@ -21,13 +21,13 @@ import (
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v2/testkit"
-	"github.com/theory-cloud/tabletheory/v2"
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	"github.com/theory-cloud/tabletheory/v2/pkg/session"
-	"github.com/theory-cloud/tabletheory/v2/pkg/testing/fakedb"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v3/testkit"
+	"github.com/theory-cloud/tabletheory/v3"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
 )
 
 func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {

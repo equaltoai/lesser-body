@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
@@ -69,7 +69,7 @@ func TestDroneRuntimeCapabilityContractIsExplicit(t *testing.T) {
 		for _, tool := range out.Tools {
 			have[tool.Name] = true
 		}
-		if !have["post_create"] || !have["post_get"] || !have["conversation_get"] || !have["direct_messages_read"] || !have["message_requests_list"] || !have["message_request_accept"] || !have["message_request_decline"] || !have["notification_get"] || !have["memory_query"] || !have["soul_read"] || !have["skills_catalog"] || !have["skill_bundle_get"] {
+		if !have["post_create"] || !have["post_get"] || !have["conversation_get"] || !have["direct_messages_read"] || !have["message_requests_list"] || !have["message_request_accept"] || !have["message_request_decline"] || !have["notification_get"] || !have["article_draft_review_submit"] || !have["article_draft_review_read"] || !have["article_draft_review_verdict"] || !have["memory_query"] || !have["soul_read"] || !have["skills_catalog"] || !have["skill_bundle_get"] {
 			t.Fatalf("expected social, memory, public soul, and skills tools for drone runtime, got %+v", out.Tools)
 		}
 		for _, blocked := range []string{

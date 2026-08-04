@@ -21,7 +21,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/memory"
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/oklog/ulid/v2"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 const (

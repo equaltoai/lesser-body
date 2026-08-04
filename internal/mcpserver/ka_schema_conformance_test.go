@@ -16,13 +16,13 @@ import (
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 // Strict MCP clients validate tools/call structuredContent against the tool's
 // declared OutputSchema. Keep the test validator deliberately scoped to the
 // JSON Schema vocabulary used by Ka's output schemas: type, required,
-// properties, additionalProperties, items, and enum.
+// properties, additionalProperties, items, enum, and descriptive annotations.
 func assertKaResultMatchesDeclaredOutputSchema(t *testing.T, label string, schema json.RawMessage, result *mcpruntime.ToolResult) {
 	t.Helper()
 	if result == nil {
@@ -104,6 +104,10 @@ func validateKaOutputSchemaVocabulary(path string, schema any, unsupported *[]st
 		case "enum":
 			if _, ok := value.([]any); !ok {
 				*unsupported = append(*unsupported, fmt.Sprintf("%s.enum: %T is not supported", path, value))
+			}
+		case "description":
+			if _, ok := value.(string); !ok {
+				*unsupported = append(*unsupported, fmt.Sprintf("%s.description: %T is not supported", path, value))
 			}
 		default:
 			*unsupported = append(*unsupported, fmt.Sprintf("%s.%s: unsupported JSON Schema keyword", path, keyword))
@@ -432,6 +436,31 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 			View:         readViewStandard,
 			PreviewRunes: articleDraftPreviewRunes,
 		}))
+	})
+	reviewFixture := func() *cmsapi.DraftReview {
+		return &cmsapi.DraftReview{
+			DraftID:       "draft-1",
+			ContentFormat: cmsapi.ContentFormatMarkdown,
+			Status:        cmsapi.DraftStatusDraft,
+			UpdatedAt:     "2026-07-31T12:00:00Z",
+			CreatedAt:     "2026-07-31T11:00:00Z",
+			Verdicts:      []cmsapi.DraftReviewVerdictRecord{},
+		}
+	}
+	for tool, operation := range map[string]string{
+		"article_draft_review_submit":  "submitted",
+		"article_draft_review_verdict": "verdict_submitted",
+	} {
+		tool, operation := tool, operation
+		add(tool, "review", func(t *testing.T) *mcpruntime.ToolResult {
+			return mustKaToolResult(articleDraftReviewSingleResult(tool, operation, reviewFixture(), articleDraftReviewBudgetBytes))
+		})
+	}
+	add("article_draft_review_read", "state", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(articleDraftReviewStateResult(reviewFixture(), articleDraftReviewBudgetBytes))
+	})
+	add("article_draft_review_read", "queue", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(articleDraftReviewQueueResult(&cmsapi.DraftReviewConnection{Edges: []cmsapi.DraftReviewEdge{}}, 20, articleDraftReviewBudgetBytes))
 	})
 	for _, fixture := range articleDraftPreviewOutputSchemaFixtures() {
 		fixture := fixture

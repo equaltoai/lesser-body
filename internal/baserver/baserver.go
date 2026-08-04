@@ -17,13 +17,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/actorendpoint"
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/installpack"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 const (
@@ -44,6 +46,9 @@ const (
 	planSchema       = "lesserbody.agent_local_install_plan.v1"
 	packIDPrefix     = "agent-local-install/v1/"
 	defaultRateLimit = 5
+
+	envSoulBindingIntegrationBearer    = "LESSER_SOUL_BINDING_INTEGRATION_BEARER"
+	envSoulBindingIntegrationBearerARN = "LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN"
 )
 
 var defaultRateWindow = time.Minute
@@ -121,6 +126,12 @@ type AgentRegistryStore interface {
 	Get(ctx context.Context, account string, agentID string) (*agentregistry.Agent, error)
 }
 
+// ActorBindingReader reads Lesser's authoritative actor username for the soul
+// bound to a registry agent id.
+type ActorBindingReader interface {
+	GetSoulBinding(ctx context.Context, integrationBearer string, agentID string, actorUsername string) (*lesserapi.SoulBindingResponse, error)
+}
+
 // DownloadGrantIssuer is the one-time download grant minting dependency used by
 // agent_local_install_plan. Production uses internal/downloadgrant.Store.
 type DownloadGrantIssuer interface {
@@ -137,6 +148,9 @@ type config struct {
 	contentStoreFactory  func() (AgentContentStore, error)
 	registryStore        AgentRegistryStore
 	registryStoreFactory func() (AgentRegistryStore, error)
+	actorBindingReader   ActorBindingReader
+	actorBindingFactory  func() (ActorBindingReader, error)
+	integrationBearerFn  func(context.Context) (string, error)
 	grantIssuer          DownloadGrantIssuer
 	grantIssuerFactory   func() (DownloadGrantIssuer, error)
 	renderer             Renderer
@@ -154,6 +168,24 @@ type Option func(*config)
 func WithAgentRegistryStore(store AgentRegistryStore) Option {
 	return func(cfg *config) {
 		cfg.registryStore = store
+	}
+}
+
+// WithActorBindingReader injects Lesser's authoritative soul-binding reader.
+func WithActorBindingReader(reader ActorBindingReader) Option {
+	return func(cfg *config) {
+		cfg.actorBindingReader = reader
+	}
+}
+
+// WithSoulBindingIntegrationBearer injects the dedicated Body-to-Lesser
+// credential used to read the authoritative soul binding. It is intended for
+// tests; production resolves the secret from the configured environment/ARN.
+func WithSoulBindingIntegrationBearer(bearer string) Option {
+	return func(cfg *config) {
+		cfg.integrationBearerFn = func(context.Context) (string, error) {
+			return strings.TrimSpace(bearer), nil
+		}
 	}
 }
 
@@ -215,6 +247,12 @@ func defaultConfig() config {
 		registryStoreFactory: func() (AgentRegistryStore, error) {
 			return agentregistry.Default()
 		},
+		actorBindingFactory: func() (ActorBindingReader, error) {
+			return lesserapi.Default()
+		},
+		integrationBearerFn: func(ctx context.Context) (string, error) {
+			return auth.SecretValueFromEnvOrARN(ctx, envSoulBindingIntegrationBearer, envSoulBindingIntegrationBearerARN)
+		},
 		grantIssuerFactory: func() (DownloadGrantIssuer, error) {
 			return downloadgrant.Default()
 		},
@@ -244,7 +282,7 @@ func agentLocalInstallPlanDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        ToolAgentLocalInstallPlan,
 		Title:       "Plan local agent install pack",
-		Description: "Render a deterministic Ba local-install pack for an account-scoped agent only when its current agent_soul lifecycle_state is published, using the selected registry row's Host-derived local_id for the OAuth actor endpoint; mint a one-time header-free download grant and return a TheoryMCP-compatible install-plan envelope. Typed five-body structure is rendered when present; otherwise the canonical Markdown body is used. Requires an account-holder OAuth principal with write scope.",
+		Description: "Render a deterministic Ba local-install pack for an account-scoped agent only when its current agent_soul lifecycle_state is published and the selected registry row's local_id agrees with Lesser's authoritative bound actor username; mint a one-time header-free download grant and return a TheoryMCP-compatible install-plan envelope. Typed five-body structure is rendered when present; otherwise the canonical Markdown body is used. Requires an account-holder OAuth principal with write scope.",
 		Annotations: additiveMutationToolAnnotations(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
@@ -357,6 +395,9 @@ func (cfg config) handleAgentLocalInstallPlan(ctx context.Context, args json.Raw
 	if err != nil {
 		return packBuildToolResultFromError(err)
 	}
+	if result, err := cfg.validateAuthoritativeActor(ctx, in.AgentID, actor); result != nil || err != nil {
+		return result, err
+	}
 
 	// Content readiness precedes the grant-mint limiter and issuer lookup:
 	// unpublished or missing records are never grant attempts and always receive
@@ -451,6 +492,71 @@ func (cfg config) agentRegistry() (AgentRegistryStore, error) {
 		return nil, fmt.Errorf("agent registry store is not configured")
 	}
 	return cfg.registryStoreFactory()
+}
+
+func (cfg config) actorBinding() (ActorBindingReader, error) {
+	if cfg.actorBindingReader != nil {
+		return cfg.actorBindingReader, nil
+	}
+	if cfg.actorBindingFactory == nil {
+		return nil, fmt.Errorf("lesser soul-binding reader is not configured")
+	}
+	return cfg.actorBindingFactory()
+}
+
+func (cfg config) validateAuthoritativeActor(ctx context.Context, agentID string, projectedActor string) (*mcpruntime.ToolResult, error) {
+	if cfg.integrationBearerFn == nil {
+		return toolErrorResult("not_configured", "Lesser soul-binding integration bearer is not configured", http.StatusInternalServerError, map[string]any{
+			"source":      "lesser_soul_binding",
+			"requiredEnv": []string{envSoulBindingIntegrationBearer, envSoulBindingIntegrationBearerARN},
+		})
+	}
+	bearer, err := cfg.integrationBearerFn(ctx)
+	if err != nil || strings.TrimSpace(bearer) == "" {
+		return toolErrorResult("not_configured", "Lesser soul-binding integration bearer could not be resolved", http.StatusInternalServerError, map[string]any{
+			"source":      "lesser_soul_binding",
+			"requiredEnv": []string{envSoulBindingIntegrationBearer, envSoulBindingIntegrationBearerARN},
+		})
+	}
+	reader, err := cfg.actorBinding()
+	if err != nil || reader == nil {
+		return toolErrorResult("not_configured", "Lesser soul-binding reader is not configured", http.StatusInternalServerError, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	binding, err := reader.GetSoulBinding(ctx, strings.TrimSpace(bearer), strings.TrimSpace(agentID), "")
+	if err != nil {
+		status := http.StatusBadGateway
+		var apiErr *lesserapi.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			status = http.StatusConflict
+		}
+		return toolErrorResult("actor_endpoint_authority_unavailable", "Ba could not verify the registry local_id against Lesser's authoritative bound actor", status, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	if binding == nil ||
+		strings.ToLower(strings.TrimSpace(binding.BindingState)) != "bound" ||
+		!strings.EqualFold(strings.TrimSpace(binding.Agent.AgentID), strings.TrimSpace(agentID)) {
+		return toolErrorResult("actor_endpoint_authority_unavailable", "Ba could not verify an active Lesser actor binding for the registry agent", http.StatusConflict, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	if err := actorendpoint.Validate(projectedActor, binding.Binding.AgentUsername); err != nil {
+		var divergence *actorendpoint.DivergenceError
+		if errors.As(err, &divergence) {
+			return toolErrorResult("actor_endpoint_divergence", "Ba refused to render an actor-scoped endpoint because the registry local_id disagrees with Lesser's authoritative actor username", http.StatusConflict, map[string]any{
+				"source":                       "lesser_soul_binding",
+				"registry_local_id":            divergence.ProjectedLocalID,
+				"authoritative_actor_username": divergence.AuthoritativeActorUsername,
+				"operator_action":              "repair the Ptah registry projection to match the authoritative Lesser actor before retrying",
+			})
+		}
+		return toolErrorResult("actor_endpoint_authority_unavailable", "Ba could not validate the actor-scoped endpoint projection", http.StatusConflict, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	return nil, nil
 }
 
 func (cfg config) grantIssuerStore() (DownloadGrantIssuer, error) {

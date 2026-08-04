@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func registeredToolDefsForTest(t *testing.T) []mcpruntime.ToolDef {
@@ -146,6 +146,8 @@ func TestWriteScopedToolSurfaceIsPinned(t *testing.T) {
 	want := []string{
 		"article_draft_create",
 		"article_draft_publish",
+		"article_draft_review_submit",
+		"article_draft_review_verdict",
 		"article_draft_update",
 		"article_update",
 		"email_delete",

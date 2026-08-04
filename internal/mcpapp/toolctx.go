@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unsafe"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 )

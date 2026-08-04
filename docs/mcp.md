@@ -406,7 +406,7 @@ AppTheory’s MCP server implements:
 
 ### Transport-version behavior
 
-The Ka actor surface accepts both AppTheory v2.0.1 transport shapes on the same `/mcp/{actor}` route:
+The Ka actor surface accepts both AppTheory v3.0.1 transport shapes on the same `/mcp/{actor}` route:
 
 - **MCP `2026-07-28`** is stateless. Discovery uses `server/discover`, not `initialize`. Every request carries
   `MCP-Protocol-Version: 2026-07-28`, a matching `Mcp-Method`, and matching
@@ -656,6 +656,9 @@ Scope key:
 | `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
 | `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
 | `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
+| `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
@@ -852,8 +855,9 @@ The owner-operated sequence is:
    content or an existing owner-authored instructions draft.
 8. The owner verifies the returned Host `agent_id`, then calls `agent_get` for that id or `agent_list` for the
    account-scoped registry view. The returned `soul_seed.lifecycle_state` is `published`, and
-   `instructions_seed.lifecycle_state` is `draft`, so `agent_local_install_plan` is immediately eligible with no manual
-   content-authoring step. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
+   `instructions_seed.lifecycle_state` is `draft`, so no manual content-authoring step is required before
+   `agent_local_install_plan`; Ba still requires the authoritative Lesser soul binding and refuses a divergent actor
+   projection. `agent_list` still merges Lesser's public live-agent directory when Lesser exposes a matching
    live row, but Body does not fabricate a Lesser directory entry. If wallet-less Host-genesis agents need an
    authoritative Lesser listing surface beyond Body's registry visibility, that is a separate Lesser assignment.
 
@@ -1198,6 +1202,11 @@ unexpected content-store failures return `internal` with sanitized `source:"agen
 - Derived target: Body reads the authenticated account's Host-finalized Ptah registry row for `soul_agent_id` and uses
   Host-derived `local_id` as Lesser `actor_username`. If the account-scoped row exists but lacks the local mapping, Body
   may refetch Host public identity `GET /api/v1/soul/agents/{agentId}` and repair the registry from that source truth.
+  The raw trimmed local mapping must be an ASCII-compatible actor path segment. Ptah applies its `PathEscape` guard
+  before username normalization, so any non-ASCII code point remaining after trimming is refused before Ptah can
+  submit a Lesser binding or persist a Host identity refetch.
+  A refetch never overwrites a non-empty stored `local_id` that disagrees with the Host projection; it returns typed
+  `actor_endpoint_divergence` and leaves the registry row unchanged.
   If no verified local actor mapping is available, the tool fails closed and does not fall back to the account-holder
   username.
 - Optional correlation/evidence: `body_actor_id` accepts `body://ptah/{local_id}` or `{local_id}` only when it matches
@@ -1210,8 +1219,15 @@ The tool is orchestration-only. Body/Ptah calls Lesser's B18 hosted binding API 
 `LESSER_SOUL_BINDING_INTEGRATION_BEARER_ARN` in managed deployments, and the supplied non-empty idempotency key. It
 never forwards the caller's OAuth token to that server-to-server surface and never substitutes
 `LESSER_HOST_INSTANCE_KEY`. Body supplies Lesser's canonical hosted-binding hints (`instance_trust`, `hosted_offchain`,
-`hosted_bound_soul`) and returns structured MCP content containing Lesser's response, idempotency/replay metadata,
-status link, and agent summary.
+`hosted_bound_soul`). Lesser's POST contract is synchronous-only: a successful 2xx response has
+`binding_state:"bound"`; Body refuses a hypothetical non-bound 2xx response rather than treating it as success. Body
+returns structured MCP content containing Lesser's response, idempotency/replay metadata, status link, and agent
+summary. Before returning success, Body compares the registry-derived target actor with Lesser's
+authoritative `binding.agent_username` using one shared Ptah/Ba contract: trim both values and ASCII-lowercase them by
+mapping only `A-Z` to `a-z`. Lesser usernames are lowercase-canonical in storage, so ASCII case variants of the same
+name agree; empty values, genuinely different names, and Unicode lowercase/simple-fold lookalikes refuse. Non-ASCII
+never folds into ASCII in this comparison by construction; Body deliberately uses neither Unicode `strings.ToLower`
+nor `EqualFold` for this actor-endpoint authority decision. Divergence returns typed `actor_endpoint_divergence`.
 
 Cross-account or arbitrary target actor binding fails before Body calls Lesser: the target local actor must come from the
 authenticated account's Host-derived Ptah registry row or from a Host public identity refetch for that same
@@ -1223,7 +1239,11 @@ as `souled` through the existing `internal/soulbinding` read path over `SOUL_BOD
 rows. The instance MCP Lambda's Lesser-table read grant is correspondingly limited to `INSTANCE#CONFIG` and
 `SOUL_BODY_BINDING_USERNAME#*`; it does not receive Lesser memory-write access. For newly minted Host-genesis agents,
 the Body/Ptah registry row is written at `agent_genesis_finalize` from Host-derived finalization output, not from
-caller-supplied binding input.
+caller-supplied binding input. A finalize replay first compares the new Host-derived `local_id` with the existing row;
+if they differ under the same trimmed ASCII-lowercase comparison, typed `actor_endpoint_divergence` is returned and the
+existing row is not rewritten. The ensuing write
+is conditional on that observed `local_id`, so a concurrent operator correction also wins and surfaces the same typed
+divergence instead of being overwritten by a stale replay.
 
 ### Instance-plane Ba tools
 
@@ -1233,7 +1253,7 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
 
 | Tool | Scope | Description |
 |------|-------|-------------|
-| `agent_local_install_plan` | Write | Render a deterministic local install pack from a currently published account-scoped soul plus instructions, use that registry row's Host-derived `local_id` for the OAuth actor endpoint, and mint a one-time header-free download grant. |
+| `agent_local_install_plan` | Write | Render a deterministic local install pack from a currently published account-scoped soul plus instructions only after the registry `local_id` agrees with Lesser's authoritative bound actor username, and mint a one-time header-free download grant. |
 
 `agent_local_install_plan` input:
 
@@ -1243,8 +1263,10 @@ after `initialize`; the public actor-scoped `/.well-known/mcp.json` discovery do
   must match that principal after normalization. Callers cannot supply an account override.
 - Derived: the stage domain and download origin come from the CDK-provided `INSTANCE_MCP_ENDPOINT` template
   (`https://api.<stageDomain>/instance/{surface}/mcp`), not from caller input or unvalidated `Host` headers. Rendered
-  packs target `https://api.<stageDomain>/mcp/{local_id}` using the Host-derived `local_id` stored on the exact
-  account-scoped registry row selected by `agent_id`. The registry `agent_id` and OAuth resource actor remain distinct.
+  packs target `https://api.<stageDomain>/mcp/{local_id}` using the `local_id` stored on the exact account-scoped
+  registry row selected by `agent_id`, but only after Body reads Lesser's existing
+  `GET /api/v1/souls/bindings/{agent_id}` surface with the dedicated integration bearer and verifies that response's
+  `binding.agent_username`. The registry `agent_id` and OAuth resource actor remain distinct.
 
 `agent_local_install_plan` requires an account-holder OAuth principal with `write` scope because it mints a one-time
 installer grant. Agent-delegated principals, legacy managed-instance-key principals, read-only principals, missing actor
@@ -1261,7 +1283,9 @@ one-time grant through `internal/downloadgrant.Store.Issue`. The soul record mus
 `agent_soul_publish_required` (`details.publish_tool="agent_soul_publish"`). A missing soul returns `404 not_found`
 naming `content_type:"agent_soul"`, `fix_tool:"agent_soul_upsert"`, and `next_tool:"agent_soul_publish"`; missing
 instructions name `content_type:"agent_instructions"` and `fix_tool:"agent_instructions_upsert"`. Archived content is
-never rendered.
+never rendered. Once content is ready, an unavailable/malformed authoritative binding returns typed
+`actor_endpoint_authority_unavailable`; a registry/binding disagreement returns typed `actor_endpoint_divergence`.
+Both fail before renderer invocation or download-grant minting, so Ba never ships an unresolvable actor endpoint.
 When `document.structure.five_bodies` is present, Ba renders that typed structure through Body's single deterministic
 five-body Markdown template; otherwise it renders `document.body` byte-for-byte. The digest binds the selected rendered
 content. The grant binding is fixed to:
@@ -1427,8 +1451,8 @@ index/ref pages and expand only the items they need:
   `article_draft_get({"id":"<draft-id>","view":"standard"})` when an agent explicitly needs draft content.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
-  draft id as a final published Article id. Every `article_draft_*` surface is owner-scoped to the authenticated actor;
-  passing another actor's draft id does not create reviewer access and returns not found.
+  draft id as a final published Article id. Authoring, preview, and publish remain owner-scoped; reviewer access exists
+  only through Lesser's active grants exposed by the separate `article_draft_review_*` tools.
 - `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
   returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
   byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
@@ -1499,44 +1523,63 @@ recipient's inbox; declining hides it from the active request folder. These soci
 souled runtime profiles, with the list read-scoped and both decisions write-scoped. No lesser-host delivery path or
 direct Lesser table write is involved.
 
-### Owner-scoped Article draft review fallback
+### Lesser-backed Article draft review workflow
 
-The pinned Lesser contract does not expose a durable draft reviewer grant or share token. Its draft reads are
-`myDrafts`, `draft(id:)`, and `draftPreview(id:)`, with authorization bound to the authenticated owner; its operations
-create, update, preview, or publish the owner's draft. There is no named-reviewer persistence, bounded-expiry grant,
-revocation mutation, or read-only shared reference for Body to consume. Body therefore cannot implement a secure
-first-class grant locally without bypassing Lesser's owner gate or inventing authorization state that Lesser does not
-enforce.
+Body exposes Lesser v1.5.32's review contract without storing grants, calculating consensus, or bypassing Lesser's
+publish gate. The three tools forward the exact caller OAuth bearer to Lesser `POST /api/graphql`, are available in
+both drone and souled runtime profiles, and use structured-first responses with source `lesser_cms_graphql`.
 
-Until Lesser owns that model, use the explicit post-based review loop below. This shares a deliberate review **copy**;
-it does not share the draft id, change draft ownership, or publish the Article:
+| Tool | Required input | Optional input | Success `structuredContent.data` |
+|---|---|---|---|
+| `article_draft_review_submit` | `draft_id: string`, `reviewer: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"submitted"`, `source`, `review` |
+| `article_draft_review_read` | none | `draft_id: string` **or** queue `limit: 1..80` / `cursor: string`; `max_output_bytes` | common `tool`, `operation`, `source`, `mode`, `count`; state adds `review`; queue adds `reviews`, `limit`, `nextCursor`, `pageInfo`, `totalCount` |
+| `article_draft_review_verdict` | `draft_id: string`, `verdict: APPROVED \| CHANGES_REQUESTED` | `notes: string`, `max_output_bytes: integer >= 0` | `tool`, `operation:"verdict_submitted"`, `source`, `review` |
 
-1. The author creates or updates the owner-scoped draft and, if needed, calls `article_draft_preview` while authenticated
-   as the owner. The draft remains `DRAFT`.
-2. The author selects the exact text safe to disclose and sends it to the named reviewer as a direct review post:
+All three default to a 12,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted. An oversized
+result fails explicitly with `response_too_large`; queue mode defaults to 5 realistic review records so the documented
+default page fits that budget, while callers requesting larger pages should reduce `limit` or raise the explicit budget.
 
-   ```json
-   {"tool":"post_create","arguments":{"content":"@reviewer Pre-publication review copy for draft-1:\n<selected review text>","visibility":"direct"}}
-   ```
-
-   The direct post is a separate Lesser status containing the disclosed copy. Do not imply that its status id is a
-   revocable draft grant, and do not put content in it that the reviewer is not authorized to receive.
-3. If this is first contact and Lesser reports a pending request, the reviewer calls `message_requests_list` and
-   `message_request_accept` before continuing. The reviewer then reads the review copy with
-   `direct_messages_read({"counterpart":"author","view":"standard"})`.
-4. The reviewer sends feedback as a direct threaded reply to the review-post id:
+1. The author submits an owner-scoped draft to one Lesser username. This calls
+   `shareDraftForReview(draftId:, reviewer:)` and creates or refreshes Lesser's revocable grant:
 
    ```json
-   {"tool":"post_create","arguments":{"content":"@author Feedback for draft-1: <feedback>","visibility":"direct","in_reply_to":"<review-post-id>"}}
+   {"tool":"article_draft_review_submit","arguments":{"draft_id":"draft-1","reviewer":"reviewer"}}
    ```
 
-5. The author reads `direct_messages_read({"counterpart":"reviewer","view":"standard"})`, verifies the threaded
-   feedback, and deliberately applies accepted changes with `article_draft_update`. Publication remains a separate
-   `article_draft_publish` action.
+2. The reviewer lists their active queue through `sharedDraftReviews(first:, after:)`:
 
-A future first-class share requires Lesser-owned storage and authorization for owner issuance, a named reviewer,
-read-only scope, bounded expiry, revocation, audit, and enforcement on both `draft` and `draftPreview`. That is a
-Lesser-side capability ask, not a safe Body-only follow-up. The post-based loop delivered here requires no Lesser change.
+   ```json
+   {"tool":"article_draft_review_read","arguments":{}}
+   ```
+
+   Queue mode returns `mode:"queue"`, `reviews[]` entries containing the Lesser `review` plus its opaque `cursor`,
+   `count`, `limit`, `nextCursor`, `pageInfo`, and `totalCount`. Revoked grants disappear because Lesser owns queue
+   membership; Body does not cache or reconstruct it.
+3. Either the author or an actively granted reviewer can read Lesser's state for one draft:
+
+   ```json
+   {"tool":"article_draft_review_read","arguments":{"draft_id":"draft-1"}}
+   ```
+
+   State mode returns `mode:"state"` and Lesser's `review` projection: grant time, verdict history, `generatedBy`,
+   `reviewedBy`, `reviewStatus`, and `editorNotes`. Body does not synthesize a separate `publishEligible` flag.
+4. The reviewer submits Lesser's canonical verdict enum and optional notes:
+
+   ```json
+   {"tool":"article_draft_review_verdict","arguments":{"draft_id":"draft-1","verdict":"CHANGES_REQUESTED","notes":"Revise the introduction."}}
+   ```
+
+   This calls `submitDraftReview(draftId:, verdict:, notes:)`. Replays are not advertised as idempotent because Lesser
+   records immutable verdict history. `APPROVED` and `CHANGES_REQUESTED` are the only accepted values.
+
+Lesser alone enforces the approval rules. Human-authored drafts with active invited reviewers require every active
+reviewer's current approval. Agent-generated drafts additionally require an active approval by the configured instance
+principal. Grants are revocable, and a re-grant requires a fresh verdict. `article_draft_publish` delegates to the same
+Lesser publish mutation, so Body neither duplicates nor relaxes these gates.
+
+Grant creation is authorized by Lesser's `shareDraftForReview` contract. Body deliberately adds no local owner check:
+the CSR-010 `draftOwnedByAuthenticatedActor` post-response layer is intentionally not applied to
+`article_draft_review_submit`, unlike sibling draft tools, because Body must not re-derive Lesser's access decision.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with
@@ -1568,9 +1611,10 @@ Notes:
   (`article_draft_publish`), and published Article read/update tools (`article_get`, `article_list`,
   `article_update`). These tools use Lesser `POST /api/graphql` via the internal CMS client boundary, keep draft
   creation/update from auto-publishing, return compact refs/previews by default, and rely on Lesser as the renderer
-  authority for draft preview. The end-to-end canary (`scripts/canary_article_mcp.py`, #267) remains a separate
-  operator probe that creates/publishes an explicit canary Article and prints compact, redacted release-validation
-  output. Long-form Article authoring must not be routed through Mastodon-compatible status APIs such as `post_create`.
+  authority for draft preview. `scripts/canary_article_mcp.py` creates and previews an unpublished canary draft;
+  `scripts/canary_article_review_mcp.py` is the explicit two-actor submit → queue → verdict proof. Both print compact,
+  redacted validation output and refuse to publish. Long-form Article authoring must not be routed through
+  Mastodon-compatible status APIs such as `post_create`.
 - Social and Article tools require an **OAuth JWT** bearer token (not just an instance key) because they call the
   Lesser API on behalf of the authenticated agent.
 - M0 baseline read-tool policy: daily agent read paths should move toward compact, bounded defaults only after
@@ -1739,10 +1783,11 @@ Notes:
   search results. Neither tool silently flips defaults to compact.
 - Mailbox, memory, skills, Article, and message-request tools publish MCP annotations in `tools/list`: read-only hints for mailbox
   reads/search/content fetches, `memory_query`, `soul_read`, `skills_catalog`, `skill_bundle_get`,
-  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_get`, `article_list`, and
+  `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_draft_review_read`, `article_get`, `article_list`, and
   `message_requests_list`;
   destructive hints for send/reply/delete tools; non-destructive additive mutation hints for
-  `article_draft_create`, `article_draft_update`, `article_draft_publish`, `article_update`, and
+  `article_draft_create`, `article_draft_update`, `article_draft_review_submit`, `article_draft_review_verdict`,
+  `article_draft_publish`, `article_update`, and
   `message_request_accept`; destructive mutation hints for `message_request_decline`; and idempotent
   hints for mailbox read-state mutation tools. `memory_append` remains an additive write and is only idempotent when
   callers provide `event_id`, so it is not advertised as unconditionally idempotent.

@@ -1,6 +1,5 @@
 {
   "authoritative_sources": [
-    ".codex/theorymcp/body/install-marker.json",
     "mcp__theorymcp.server_instructions published body overlay v10",
     "AGENTS.md",
     ".agents/skills/apply-and-verify-governance/SKILL.md",
@@ -17,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-07-26T23:59:38.764125Z",
+  "generated_at": "2026-08-03T19:58:27.769497Z",
   "git": {
-    "head": "047dd8eb04631a22ac24e2e8e9821822830ec730",
-    "head_tree": "77d393b4862503471455d6a99702b3108f529051",
-    "merge_base_origin_staging": "c4edb1a335271077178cf6be2f3ae5e9daa4d561",
-    "ref": "theorymcp/equaltoai/body/kimi-mcp-session-rebind",
+    "head": "05b26310b8a60baed28104ceb9a0d9cc79adbf14",
+    "head_tree": "0f82b3ef0ac5e1ba53577c1e5dcb9e09dd678afb",
+    "merge_base_origin_staging": "c141c753f9aa4ec0ccd6df59d1e48642e31017b1",
+    "ref": "theorymcp/equaltoai/body/518-actor-endpoint-fail-closed",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {

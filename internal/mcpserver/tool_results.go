@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 type structuredFirstResultOptions struct {

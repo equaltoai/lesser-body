@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"

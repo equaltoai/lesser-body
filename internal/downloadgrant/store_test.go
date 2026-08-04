@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/theory-cloud/tabletheory/v2"
-	"github.com/theory-cloud/tabletheory/v2/pkg/session"
-	"github.com/theory-cloud/tabletheory/v2/pkg/testing/fakedb"
-	"github.com/theory-cloud/tabletheory/v2/pkg/validation"
+	"github.com/theory-cloud/tabletheory/v3"
+	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
+	"github.com/theory-cloud/tabletheory/v3/pkg/validation"
 )
 
 func TestIssuePersistsTokenHashOnlyAndTTL(t *testing.T) {

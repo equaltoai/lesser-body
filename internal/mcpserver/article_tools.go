@@ -10,7 +10,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 const (
@@ -42,7 +42,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 			return err
 		}
 	}
-	return nil
+	return registerArticleReviewTools(r)
 }
 
 func articleDraftCreateDef() mcpruntime.ToolDef {

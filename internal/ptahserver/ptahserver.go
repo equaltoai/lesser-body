@@ -16,12 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/equaltoai/lesser-body/internal/actorendpoint"
 	"github.com/equaltoai/lesser-body/internal/agentcontent"
 	"github.com/equaltoai/lesser-body/internal/agentregistry"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 const (
@@ -791,6 +792,19 @@ func (cfg config) handleAgentBindSoul(ctx context.Context, args json.RawMessage)
 	resp, err := client.InitiateSoulBinding(ctx, integrationBearer, in.IdempotencyKey, req)
 	if err != nil {
 		return soulBindingToolResultFromError(err)
+	}
+	if resp == nil ||
+		strings.ToLower(strings.TrimSpace(resp.BindingState)) != "bound" ||
+		!strings.EqualFold(strings.TrimSpace(resp.Agent.AgentID), strings.TrimSpace(in.SoulAgentID)) {
+		return toolErrorResult("actor_endpoint_authority_unavailable", "Lesser did not return an active authoritative actor binding", http.StatusConflict, map[string]any{
+			"source": "lesser_soul_binding",
+		})
+	}
+	if err := actorendpoint.Validate(bindingActor, resp.Binding.AgentUsername); err != nil {
+		return toolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused a bound actor response that disagrees with the registry local_id", http.StatusConflict, map[string]any{
+			"source":          "lesser_soul_binding",
+			"operator_action": "repair the registry projection or authoritative Lesser actor binding before retrying",
+		})
 	}
 	return soulBindingSuccessResult(bindingActor, in.IdempotencyKey, resp)
 }
@@ -1579,7 +1593,17 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 	if errResult != nil {
 		return nil, "", errResult, nil
 	}
+	if strings.TrimSpace(existing.LocalID) != "" {
+		if err := actorendpoint.Validate(existing.LocalID, identity.LocalID); err != nil {
+			return nil, "", mustToolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused to overwrite a registry local_id that disagrees with the Host identity projection", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_host_refetch",
+				"tool":            toolAgentBindSoul,
+				"operator_action": "verify the authoritative Lesser actor and repair the divergent source before retrying; Body will not rewrite either value silently",
+			}), nil
+		}
+	}
 
+	expectedLocalID := strings.TrimSpace(existing.LocalID)
 	updated, _, updateErr := registry.UpsertFinalized(ctx, agentregistry.FinalizedInput{
 		Account:                accountActor,
 		AgentID:                existing.AgentID,
@@ -1593,14 +1617,26 @@ func (cfg config) refetchSoulBindingActorFromHost(ctx context.Context, accountAc
 		LifecycleStatus:        firstNonEmpty(identity.LifecycleStatus, identity.Status),
 		PublishedVersion:       firstNonZeroInt64(identity.PublishedVersion, existing.PublishedVersion),
 		SelfDescriptionVersion: firstNonZeroInt64(identity.SelfDescriptionVersion, existing.SelfDescriptionVersion),
+		ExpectedLocalID:        &expectedLocalID,
 	})
 	if updateErr != nil {
+		if errors.Is(updateErr, agentregistry.ErrFinalizedLocalIDChanged) {
+			return nil, "", mustToolErrorResult("actor_endpoint_divergence", "agent_bind_soul refused because the registry local_id changed during Host identity refetch", http.StatusConflict, map[string]any{
+				"source":          "agent_registry_host_refetch",
+				"tool":            toolAgentBindSoul,
+				"operator_action": "retry from the corrected registry state; Body did not overwrite the concurrent change",
+			}), nil
+		}
 		slog.WarnContext(ctx, "ptah soul binding Host identity registry repair failed",
 			"tool", toolAgentBindSoul,
 			"source", "agent_registry",
 			"error", "registry update failed",
 		)
-		return existing, localActor, nil, nil
+		return nil, "", mustToolErrorResult("agent_registry_error", "agent_bind_soul verified a Host actor mapping but could not persist the registry repair", http.StatusInternalServerError, map[string]any{
+			"source":          "agent_registry_host_refetch",
+			"tool":            toolAgentBindSoul,
+			"operator_action": "restore the Body/Ptah registry write path and retry; Body did not submit the soul binding to Lesser",
+		}), nil
 	}
 	if updated == nil {
 		return existing, localActor, nil, nil
@@ -1638,11 +1674,11 @@ func hostActorMappingUnavailableResult(message string, source string) *mcpruntim
 }
 
 func normalizeSoulBindingLocalActor(value string) string {
-	value = normalizeActorUsername(value)
-	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 || strings.ContainsAny(value, "/:@") || strings.ContainsAny(value, " \t\r\n") || url.PathEscape(value) != value {
 		return ""
 	}
-	return value
+	return normalizeActorUsername(value)
 }
 
 func normalizeBodyActorIDLocalActor(raw string) (string, error) {

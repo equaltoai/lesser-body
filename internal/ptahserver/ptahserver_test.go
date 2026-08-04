@@ -17,7 +17,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/hostapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/golang-jwt/jwt/v5"
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func TestRegisterToolsRegistersPtahDefinitions(t *testing.T) {
@@ -356,6 +356,176 @@ func TestAgentBindSoulAcceptsVerifiedBodyActorIDForms(t *testing.T) {
 	}
 }
 
+func TestAgentBindSoulRejectsAuthoritativeActorDivergence(t *testing.T) {
+	response := successfulBindingResponse(false)
+	response.Binding.AgentUsername = "sentinelsentinel"
+	client := &fakeSoulBindingClient{
+		resp:                  response,
+		preserveResponseActor: true,
+	}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "sentinel")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+	if client.calls != 1 {
+		t.Fatalf("Lesser binding calls = %d, want 1", client.calls)
+	}
+}
+
+func TestAgentBindSoulAcceptsASCIICaseVariantAuthoritativeActorAgreement(t *testing.T) {
+	response := successfulBindingResponse(false)
+	response.Binding.AgentUsername = "sentinel"
+	client := &fakeSoulBindingClient{
+		resp:                  response,
+		preserveResponseActor: true,
+	}
+	store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "SENTINEL")}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("mixed-case agreement result = %+v", result)
+	}
+	if client.calls != 1 || client.req.ActorUsername != "sentinel" {
+		t.Fatalf("Lesser binding request = calls:%d actor:%q", client.calls, client.req.ActorUsername)
+	}
+}
+
+func TestAgentBindSoulRejectsUnicodeFoldOrbitLocalID(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		localID string
+	}{
+		{name: "long s", localID: "ſentinel"},
+		{name: "capital I with dot", localID: "İnstance"},
+		{name: "Kelvin sign", localID: "Kelvin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+			store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", tc.localID)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				toolContext("owner", []string{"write"}, "user-oauth-token"),
+				toolAgentBindSoul,
+				json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, "host_actor_mapping_unavailable", http.StatusConflict)
+			if client.calls != 0 {
+				t.Fatalf("Lesser binding calls = %d, want 0", client.calls)
+			}
+		})
+	}
+}
+
+func TestAgentBindSoulRejectsUnicodeLowercaseAuthoritativeActor(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		registryLocalID       string
+		authoritativeUsername string
+	}{
+		{name: "capital I with dot", registryLocalID: "instance", authoritativeUsername: "İnstance"},
+		{name: "Kelvin sign", registryLocalID: "kelvin", authoritativeUsername: "Kelvin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := successfulBindingResponse(false)
+			response.Binding.AgentUsername = tc.authoritativeUsername
+			client := &fakeSoulBindingClient{resp: response, preserveResponseActor: true}
+			store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", tc.registryLocalID)}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				toolContext("owner", []string{"write"}, "user-oauth-token"),
+				toolAgentBindSoul,
+				json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+			if client.calls != 1 {
+				t.Fatalf("Lesser binding calls = %d, want 1", client.calls)
+			}
+		})
+	}
+}
+
+func TestAgentBindSoulRequiresSynchronousBoundResponse(t *testing.T) {
+	// Lesser's synchronous-only POST contract is pinned in its primary source:
+	// cmd/api/handlers/souls.go (toAPISoulBindingResponse always emits bound)
+	// and docs/architecture/adr/0011-soul-binding-ceremony-api.md (the sole
+	// terminal success state is bound). A hypothetical non-bound 2xx response
+	// must therefore fail closed rather than become a successful Ptah result.
+	for _, tc := range []struct {
+		name         string
+		bindingState string
+		wantError    bool
+	}{
+		{name: "bound 2xx succeeds", bindingState: "bound"},
+		{name: "hypothetical non-bound 2xx refuses", bindingState: "pending", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := successfulBindingResponse(false)
+			response.BindingState = tc.bindingState
+			client := &fakeSoulBindingClient{resp: response}
+			store := &fakeAgentRegistry{getAgent: hostFinalizedRegistryAgent("owner", "agent-0xabc", "sentinel")}
+			registry := mcpruntime.NewToolRegistry()
+			if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithIntegrationBearer("integration-secret")); err != nil {
+				t.Fatalf("RegisterTools: %v", err)
+			}
+
+			result, err := registry.Call(
+				toolContext("owner", []string{"write"}, "user-oauth-token"),
+				toolAgentBindSoul,
+				json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+			)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if client.calls != 1 {
+				t.Fatalf("Lesser binding calls = %d, want 1", client.calls)
+			}
+			if tc.wantError {
+				assertToolError(t, result, "actor_endpoint_authority_unavailable", http.StatusConflict)
+				return
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("bound result = %+v", result)
+			}
+		})
+	}
+}
+
 func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T) {
 	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
 	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
@@ -401,6 +571,93 @@ func TestAgentBindSoulRefetchesHostIdentityWhenRegistryMappingEmpty(t *testing.T
 	}
 	if client.req.ActorUsername != "theo-marsh" || client.req.BodyActorID != "body://ptah/theo-marsh" {
 		t.Fatalf("Lesser request = %+v", client.req)
+	}
+}
+
+func TestAgentBindSoulRefusesWhenHostRefetchRegistryRepairFails(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{
+		getAgent: &agentregistry.Agent{
+			Account:         "theory",
+			AgentID:         "agent-0xabc",
+			Source:          agentregistry.SourceHostGenesisFinalize,
+			SourceAuthority: agentregistry.SourceAuthorityLesserHost,
+			SourceOperation: agentregistry.SourceOperationAgentGenesisFinalize,
+		},
+		upsertFinalizedErr: errors.New("registry write unavailable"),
+	}
+	identity := &fakeHostIdentityClient{identity: &hostapi.AgentIdentity{
+		AgentID:            "agent-0xabc",
+		LocalID:            "theo-marsh",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithHostIdentityClient(identity), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("theory", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "agent_registry_error", http.StatusInternalServerError)
+	details, _ := payload["details"].(map[string]any)
+	if details["source"] != "agent_registry_host_refetch" || strings.TrimSpace(stringValue(details, "operator_action")) == "" {
+		t.Fatalf("registry repair error details = %+v", details)
+	}
+	if identity.calls != 1 || store.upsertFinalizedCalls != 1 || client.calls != 0 {
+		t.Fatalf("repair failure side effects = identity:%d registry_writes:%d Lesser_calls:%d", identity.calls, store.upsertFinalizedCalls, client.calls)
+	}
+}
+
+func TestAgentBindSoulHostRefetchDoesNotRewriteCorrectedRegistryLocalID(t *testing.T) {
+	client := &fakeSoulBindingClient{resp: successfulBindingResponse(false)}
+	store := &fakeAgentRegistry{getAgent: &agentregistry.Agent{
+		Account:         "owner",
+		AgentID:         "agent-0xabc",
+		Source:          agentregistry.SourceHostGenesisFinalize,
+		SourceAuthority: agentregistry.SourceAuthorityLesserHost,
+		SourceOperation: agentregistry.SourceOperationAgentGenesisFinalize,
+		LocalID:         "sentinelsentinel@example.com",
+	}}
+	identity := &fakeHostIdentityClient{identity: &hostapi.AgentIdentity{
+		AgentID:            "agent-0xabc",
+		LocalID:            "sentinel",
+		AuthorityModel:     lesserapi.SoulAuthorityModelInstanceTrust,
+		AnchorState:        lesserapi.SoulAnchorStateHostedOffchain,
+		OperationalBinding: lesserapi.SoulOperationalBindingHostedBound,
+		LifecycleStatus:    "active",
+	}}
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry, WithSoulBindingClient(client), WithAgentRegistryStore(store), WithHostIdentityClient(identity), WithIntegrationBearer("integration-secret")); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+
+	result, err := registry.Call(
+		toolContext("owner", []string{"write"}, "user-oauth-token"),
+		toolAgentBindSoul,
+		json.RawMessage(`{"soul_agent_id":"agent-0xabc","idempotency_key":"bind-key-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	payload := assertToolError(t, result, "actor_endpoint_divergence", http.StatusConflict)
+	details, _ := payload["details"].(map[string]any)
+	if details["source"] != "agent_registry_host_refetch" {
+		t.Fatalf("divergence details = %+v", details)
+	}
+	if identity.calls != 1 || store.upsertFinalizedCalls != 0 || client.calls != 0 {
+		t.Fatalf("refetch side effects = identity:%d registry_writes:%d Lesser_calls:%d", identity.calls, store.upsertFinalizedCalls, client.calls)
+	}
+	if store.getAgent.LocalID != "sentinelsentinel@example.com" {
+		t.Fatalf("corrected registry local_id rewritten to %q", store.getAgent.LocalID)
 	}
 }
 
@@ -1609,12 +1866,13 @@ func TestAgentInstructionsAndSoulUseIndependentContentTypeCounters(t *testing.T)
 }
 
 type fakeSoulBindingClient struct {
-	calls             int
-	integrationBearer string
-	idempotencyKey    string
-	req               lesserapi.SoulBindingRequest
-	resp              *lesserapi.SoulBindingResponse
-	err               error
+	calls                 int
+	integrationBearer     string
+	idempotencyKey        string
+	req                   lesserapi.SoulBindingRequest
+	resp                  *lesserapi.SoulBindingResponse
+	err                   error
+	preserveResponseActor bool
 }
 
 func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrationBearer string, idempotencyKey string, req lesserapi.SoulBindingRequest) (*lesserapi.SoulBindingResponse, error) {
@@ -1625,7 +1883,13 @@ func (f *fakeSoulBindingClient) InitiateSoulBinding(_ context.Context, integrati
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.resp, nil
+	if f.resp == nil || f.preserveResponseActor {
+		return f.resp, nil
+	}
+	clone := *f.resp
+	clone.Binding = f.resp.Binding
+	clone.Binding.AgentUsername = req.ActorUsername
+	return &clone, nil
 }
 
 type fakeHostIdentityClient struct {
@@ -1917,7 +2181,8 @@ type agentContentTestKey struct {
 type memoryAgentRegistry struct {
 	records map[string]*agentregistry.Agent
 
-	upsertFinalizedCalls int
+	upsertFinalizedCalls  int
+	beforeUpsertFinalized func(in agentregistry.FinalizedInput)
 }
 
 func newMemoryAgentRegistry() *memoryAgentRegistry {
@@ -1948,6 +2213,15 @@ func (m *memoryAgentRegistry) UpsertFinalized(_ context.Context, in agentregistr
 	}
 	m.upsertFinalizedCalls++
 	key := memoryAgentRegistryKey(in.Account, in.AgentID)
+	if m.beforeUpsertFinalized != nil {
+		m.beforeUpsertFinalized(in)
+	}
+	if in.ExpectedLocalID != nil {
+		current := m.records[key]
+		if current == nil || strings.TrimSpace(current.LocalID) != strings.TrimSpace(*in.ExpectedLocalID) {
+			return nil, false, agentregistry.ErrFinalizedLocalIDChanged
+		}
+	}
 	created := false
 	agent := m.records[key]
 	if agent == nil {

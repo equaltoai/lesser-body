@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func TestStructuredFirstReadToolsExposeSubstantiveTextData(t *testing.T) {
