@@ -15,35 +15,63 @@ const (
 // Review grants, verdict history, attribution, and publish eligibility remain
 // Lesser-owned; Body only transports the fields needed by MCP clients.
 type DraftReview struct {
-	DraftID       string                     `json:"draftId"`
-	Title         *string                    `json:"title,omitempty"`
-	Subtitle      *string                    `json:"subtitle,omitempty"`
-	Excerpt       *string                    `json:"excerpt,omitempty"`
-	ContentFormat string                     `json:"contentFormat"`
-	Status        string                     `json:"status"`
-	ScheduledAt   *string                    `json:"scheduledAt,omitempty"`
-	UpdatedAt     string                     `json:"updatedAt"`
-	CreatedAt     string                     `json:"createdAt"`
-	GeneratedBy   *Actor                     `json:"generatedBy,omitempty"`
-	ReviewedBy    *Actor                     `json:"reviewedBy,omitempty"`
-	ReviewStatus  *string                    `json:"reviewStatus,omitempty"`
-	EditorNotes   *string                    `json:"editorNotes,omitempty"`
-	Grant         *DraftReviewGrant          `json:"grant,omitempty"`
-	Verdicts      []DraftReviewVerdictRecord `json:"verdicts"`
+	DraftID                   string                     `json:"draftId"`
+	Title                     *string                    `json:"title,omitempty"`
+	Subtitle                  *string                    `json:"subtitle,omitempty"`
+	Excerpt                   *string                    `json:"excerpt,omitempty"`
+	ContentFormat             string                     `json:"contentFormat"`
+	Status                    string                     `json:"status"`
+	ScheduledAt               *string                    `json:"scheduledAt,omitempty"`
+	UpdatedAt                 string                     `json:"updatedAt"`
+	CreatedAt                 string                     `json:"createdAt"`
+	GeneratedBy               *Actor                     `json:"generatedBy,omitempty"`
+	ReviewedBy                *Actor                     `json:"reviewedBy,omitempty"`
+	ReviewStatus              *string                    `json:"reviewStatus,omitempty"`
+	EditorNotes               *string                    `json:"editorNotes,omitempty"`
+	ContentHash               string                     `json:"contentHash"`
+	Revision                  int                        `json:"revision"`
+	ActiveReviewerIDs         []string                   `json:"activeReviewerIds"`
+	PublishEligible           bool                       `json:"publishEligible"`
+	PublishBlockingReasons    []string                   `json:"publishBlockingReasons"`
+	ReviewersApproved         bool                       `json:"reviewersApproved"`
+	PrincipalApprovalRequired bool                       `json:"principalApprovalRequired"`
+	PrincipalApproved         bool                       `json:"principalApproved"`
+	GrantCount                int                        `json:"grantCount"`
+	GrantsTruncated           bool                       `json:"grantsTruncated"`
+	Grants                    []DraftReviewGrant         `json:"grants"`
+	Grant                     *DraftReviewGrant          `json:"grant,omitempty"`
+	Verdicts                  []DraftReviewVerdictRecord `json:"verdicts"`
+	PublishEligibility        DraftPublishEligibility    `json:"publishEligibility"`
 }
 
-// DraftReviewGrant is the caller-visible active grant metadata returned by
-// Lesser. Reviewer identity is intentionally not reconstructed by Body.
+// DraftReviewGrant is Lesser's caller-visible grant and reviewer projection.
 type DraftReviewGrant struct {
-	GrantedAt string `json:"grantedAt"`
+	ReviewerID string  `json:"reviewerId"`
+	Reviewer   *Actor  `json:"reviewer,omitempty"`
+	GrantedAt  string  `json:"grantedAt"`
+	Status     string  `json:"status"`
+	RevokedAt  *string `json:"revokedAt,omitempty"`
 }
 
 // DraftReviewVerdictRecord is Lesser's immutable review decision projection.
-// The latest reviewer attribution is also available through DraftReview.ReviewedBy.
 type DraftReviewVerdictRecord struct {
-	Verdict    string  `json:"verdict"`
-	Notes      *string `json:"notes,omitempty"`
-	RecordedAt string  `json:"recordedAt"`
+	Verdict     string  `json:"verdict"`
+	Notes       *string `json:"notes,omitempty"`
+	ContentHash *string `json:"contentHash,omitempty"`
+	ReviewerID  string  `json:"reviewerId"`
+	Reviewer    *Actor  `json:"reviewer,omitempty"`
+	RecordedAt  string  `json:"recordedAt"`
+	Current     bool    `json:"current"`
+	Stale       bool    `json:"stale"`
+}
+
+// DraftPublishEligibility is Lesser's authoritative publish-gate decision.
+type DraftPublishEligibility struct {
+	Eligible                  bool     `json:"eligible"`
+	BlockingReasons           []string `json:"blockingReasons"`
+	ReviewersApproved         bool     `json:"reviewersApproved"`
+	PrincipalApprovalRequired bool     `json:"principalApprovalRequired"`
+	PrincipalApproved         bool     `json:"principalApproved"`
 }
 
 // DraftReviewConnection is Lesser's paginated sharedDraftReviews response.
@@ -198,14 +226,26 @@ func (c *Client) SubmitArticleDraftReviewVerdict(ctx context.Context, bearerToke
 func draftReviewFields() string {
 	// Keep the projection within Lesser's depth-3 agent/CLI profile. The
 	// connection edge/node wrappers are transparent to Lesser's depth counter.
-	return "draftId title subtitle excerpt contentFormat status scheduledAt updatedAt createdAt generatedBy { id username } reviewedBy { id username } reviewStatus editorNotes grant { grantedAt } verdicts { verdict notes recordedAt }"
+	return "draftId title subtitle excerpt contentFormat status scheduledAt updatedAt createdAt generatedBy { id username } reviewedBy { id username } reviewStatus editorNotes contentHash revision activeReviewerIds publishEligible publishBlockingReasons reviewersApproved principalApprovalRequired principalApproved grantCount grantsTruncated grants { reviewerId reviewer { id username } grantedAt status revokedAt } grant { reviewerId reviewer { id username } grantedAt status revokedAt } verdicts { verdict notes contentHash reviewerId reviewer { id username } recordedAt current stale } publishEligibility { eligible blockingReasons reviewersApproved principalApprovalRequired principalApproved }"
 }
 
 func normalizeDraftReview(review *DraftReview) {
 	if review == nil {
 		return
 	}
+	if review.ActiveReviewerIDs == nil {
+		review.ActiveReviewerIDs = []string{}
+	}
+	if review.PublishBlockingReasons == nil {
+		review.PublishBlockingReasons = []string{}
+	}
+	if review.Grants == nil {
+		review.Grants = []DraftReviewGrant{}
+	}
 	if review.Verdicts == nil {
 		review.Verdicts = []DraftReviewVerdictRecord{}
+	}
+	if review.PublishEligibility.BlockingReasons == nil {
+		review.PublishEligibility.BlockingReasons = []string{}
 	}
 }

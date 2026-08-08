@@ -30,16 +30,16 @@ func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
 				http.Error(w, "unexpected share variables", http.StatusInternalServerError)
 				return
 			}
-			_, _ = w.Write([]byte(`{"data":{"shareDraftForReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","grant":{"grantedAt":"2026-07-31T12:00:00Z"},"verdicts":[]}}}`))
+			_, _ = w.Write([]byte(`{"data":{"shareDraftForReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","contentHash":"sha256:submit","revision":4,"activeReviewerIds":["https://example.com/users/reviewer"],"publishEligible":false,"publishBlockingReasons":["reviewer_approval_required"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[{"reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"grantedAt":"2026-07-31T12:00:00Z","status":"ACTIVE"}],"grant":{"reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"grantedAt":"2026-07-31T12:00:00Z","status":"ACTIVE"},"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":["reviewer_approval_required"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`))
 		case "BodyArticleDraftReview":
 			if op.Variables["id"] != callerDraftID {
 				t.Errorf("state variables = %+v", op.Variables)
 				http.Error(w, "unexpected state variables", http.StatusInternalServerError)
 				return
 			}
-			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","reviewStatus":"APPROVED","verdicts":[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","recordedAt":"2026-07-31T11:59:00Z"}]}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","reviewStatus":"APPROVED","contentHash":"sha256:state","revision":5,"activeReviewerIds":["https://example.com/users/reviewer"],"publishEligible":false,"publishBlockingReasons":["principal_approval_required"],"reviewersApproved":true,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[{"reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"grantedAt":"2026-07-31T12:00:00Z","status":"ACTIVE"}],"verdicts":[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","contentHash":"sha256:old","reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"recordedAt":"2026-07-31T11:59:00Z","current":false,"stale":true}],"publishEligibility":{"eligible":false,"blockingReasons":["principal_approval_required"],"reviewersApproved":true,"principalApprovalRequired":true,"principalApproved":false}}}}`))
 		case "BodyArticleDraftReviewQueue":
-			_, _ = w.Write([]byte(`{"data":{"sharedDraftReviews":{"edges":[{"node":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","verdicts":[]},"cursor":"queue-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+			_, _ = w.Write([]byte(`{"data":{"sharedDraftReviews":{"edges":[{"node":{"draftId":"caller-draft-id-must-stay-in-variables","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-07-31T12:00:00Z","createdAt":"2026-07-31T11:00:00Z","contentHash":"sha256:queue","revision":6,"activeReviewerIds":["https://example.com/users/reviewer"],"publishEligible":true,"publishBlockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[{"reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"grantedAt":"2026-07-31T12:00:00Z","status":"ACTIVE"}],"verdicts":[{"verdict":"APPROVED","contentHash":"sha256:queue","reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"recordedAt":"2026-07-31T12:01:00Z","current":true,"stale":false}],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}},"cursor":"queue-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
 		case "BodySubmitArticleDraftReviewVerdict":
 			if op.Variables["draftId"] != callerDraftID || op.Variables["verdict"] != DraftReviewVerdictChangesRequested || op.Variables["notes"] != callerNotes {
 				t.Errorf("verdict variables = %+v", op.Variables)
@@ -64,7 +64,7 @@ func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
 		t.Fatalf("ReadArticleDraftReview = %+v, %v", state, err)
 	}
 	wantStatus := []byte(`"APPROVED"`)
-	wantVerdicts := []byte(`[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","recordedAt":"2026-07-31T11:59:00Z"}]`)
+	wantVerdicts := []byte(`[{"verdict":"CHANGES_REQUESTED","notes":"lesser state remains authoritative","contentHash":"sha256:old","reviewerId":"https://example.com/users/reviewer","reviewer":{"id":"https://example.com/users/reviewer","username":"reviewer"},"recordedAt":"2026-07-31T11:59:00Z","current":false,"stale":true}]`)
 	gotStatus, err := json.Marshal(state.ReviewStatus)
 	if err != nil {
 		t.Fatalf("marshal reviewStatus: %v", err)
@@ -76,9 +76,20 @@ func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
 	if !bytes.Equal(gotStatus, wantStatus) || !bytes.Equal(gotVerdicts, wantVerdicts) {
 		t.Fatalf("Lesser review state changed in transit: reviewStatus=%s verdicts=%s", gotStatus, gotVerdicts)
 	}
+	if state.ContentHash != "sha256:state" || state.Revision != 5 || len(state.ActiveReviewerIDs) != 1 ||
+		state.GrantCount != 1 || state.GrantsTruncated || len(state.Grants) != 1 || state.Grants[0].Reviewer == nil || state.Grants[0].Reviewer.Username != "reviewer" ||
+		state.PublishEligible || len(state.PublishBlockingReasons) != 1 || state.PublishEligibility.Eligible || state.PublishEligibility.PrincipalApproved {
+		t.Fatalf("Lesser authoritative review projection changed in transit: %+v", state)
+	}
 	queue, err := client.ListArticleDraftReviews(context.Background(), "token", 10, " queue-cursor ")
 	if err != nil || len(queue.Edges) != 1 || queue.Edges[0].Node == nil || queue.Edges[0].Node.DraftID != callerDraftID {
 		t.Fatalf("ListArticleDraftReviews = %+v, %v", queue, err)
+	}
+	queueReview := queue.Edges[0].Node
+	if queueReview.ContentHash != "sha256:queue" || queueReview.Revision != 6 || !queueReview.PublishEligible ||
+		len(queueReview.Grants) != 1 || queueReview.Grants[0].Reviewer == nil || queueReview.Grants[0].Reviewer.Username != "reviewer" ||
+		len(queueReview.Verdicts) != 1 || !queueReview.Verdicts[0].Current || queueReview.Verdicts[0].Stale || !queueReview.PublishEligibility.Eligible {
+		t.Fatalf("queue omitted Lesser authoritative review projection: %+v", queueReview)
 	}
 	notes := " " + callerNotes + " "
 	verdict, err := client.SubmitArticleDraftReviewVerdict(context.Background(), "token", callerDraftID, "changes_requested", &notes)
@@ -95,13 +106,17 @@ func TestArticleDraftReviewOperationsBuildM2aGraphQLContract(t *testing.T) {
 				t.Fatalf("%s interpolated caller-controlled value %q into query: %s", op.OperationName, callerValue, op.Query)
 			}
 		}
-		for _, want := range []string{"draftId", "generatedBy { id username }", "reviewedBy { id username }", "reviewStatus", "editorNotes", "grant { grantedAt }", "verdicts { verdict notes recordedAt }"} {
+		for _, want := range []string{
+			"draftId", "generatedBy { id username }", "reviewedBy { id username }", "reviewStatus", "editorNotes",
+			"contentHash", "revision", "activeReviewerIds", "publishEligible", "publishBlockingReasons", "reviewersApproved", "principalApprovalRequired", "principalApproved",
+			"grantCount", "grantsTruncated", "grants { reviewerId reviewer { id username } grantedAt status revokedAt }",
+			"grant { reviewerId reviewer { id username } grantedAt status revokedAt }",
+			"verdicts { verdict notes contentHash reviewerId reviewer { id username } recordedAt current stale }",
+			"publishEligibility { eligible blockingReasons reviewersApproved principalApprovalRequired principalApproved }",
+		} {
 			if !strings.Contains(op.Query, want) {
 				t.Fatalf("%s query missing %q: %s", op.OperationName, want, op.Query)
 			}
-		}
-		if strings.Contains(op.Query, "grant { reviewer") || strings.Contains(op.Query, "verdicts { reviewer") {
-			t.Fatalf("%s exceeds Lesser's agent depth-3 projection: %s", op.OperationName, op.Query)
 		}
 	}
 	if !strings.Contains(operations[2].Query, "sharedDraftReviews(first: $first, after: $after)") || !strings.Contains(operations[2].Query, "edges { node {") {

@@ -13,7 +13,7 @@ import (
 const (
 	articleDraftReviewDefaultLimit = 5
 	articleDraftReviewMaxLimit     = 80
-	articleDraftReviewBudgetBytes  = 12000
+	articleDraftReviewBudgetBytes  = 24000
 )
 
 const articleDraftReviewPublishGateNote = "Every Article draft created through MCP is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing."
@@ -45,7 +45,7 @@ func articleDraftReviewSubmitDef() mcpruntime.ToolDef {
 			"properties":{
 				"draft_id":{"type":"string","description":"Lesser CMS draft id owned by the authenticated actor."},
 				"reviewer":{"type":"string","description":"Lesser reviewer username accepted by shareDraftForReview."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 12000-byte default."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 24000-byte default."}
 			},
 			"required":["draft_id","reviewer"],
 			"additionalProperties":false
@@ -56,16 +56,16 @@ func articleDraftReviewSubmitDef() mcpruntime.ToolDef {
 func articleDraftReviewReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_read",
-		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active review queue. Body returns Lesser's grant, verdict-history, and attribution fields without calculating publish eligibility. " + articleDraftReviewPublishGateNote,
+		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active review queue. Body transports Lesser's grants and reviewer identities, exact content binding, verdict staleness, and authoritative publish eligibility without calculating or reconstructing them. " + articleDraftReviewPublishGateNote,
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftReviewReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"draft_id":{"type":"string","description":"Optional Lesser CMS draft id. When present, returns that caller-authorized review state; when omitted, lists the caller's active queue."},
-				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Queue mode only. Maximum review items to return; defaults to 5 so a realistic default page fits the 12000-byte response budget."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Queue mode only. Maximum review items to return; defaults to 5 so a realistic default page fits the 24000-byte response budget."},
 				"cursor":{"type":"string","description":"Queue mode only. Pagination cursor from a previous article_draft_review_read response."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 12000-byte default."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 24000-byte default."}
 			},
 			"additionalProperties":false
 		}`),
@@ -75,7 +75,7 @@ func articleDraftReviewReadDef() mcpruntime.ToolDef {
 func articleDraftReviewVerdictDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_verdict",
-		Description:  "Submit an APPROVED or CHANGES_REQUESTED verdict, with optional notes, through Lesser's caller-authorized review contract. Body does not calculate approval or publish eligibility. " + articleDraftReviewPublishGateNote,
+		Description:  "Submit an APPROVED or CHANGES_REQUESTED verdict, with optional notes, through Lesser's caller-authorized review contract. Body transports Lesser's resulting authoritative publish eligibility without calculating it. " + articleDraftReviewPublishGateNote,
 		Annotations:  additiveMutationToolAnnotations(),
 		OutputSchema: articleDraftReviewSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -84,7 +84,7 @@ func articleDraftReviewVerdictDef() mcpruntime.ToolDef {
 				"draft_id":{"type":"string","description":"Lesser CMS draft id in the authenticated caller's active review queue."},
 				"verdict":{"type":"string","enum":["APPROVED","CHANGES_REQUESTED"],"description":"Lesser's canonical review verdict."},
 				"notes":{"type":"string","description":"Optional reviewer notes recorded by Lesser with the verdict."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 12000-byte default."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 24000-byte default."}
 			},
 			"required":["draft_id","verdict"],
 			"additionalProperties":false
