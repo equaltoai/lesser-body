@@ -27,7 +27,7 @@ func registerArticleReviewTools(r *mcpruntime.ToolRegistry) error {
 		{Def: articleDraftReviewReadDef(), Handler: handleArticleDraftReviewRead},
 		{Def: articleDraftReviewVerdictDef(), Handler: handleArticleDraftReviewVerdict},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}

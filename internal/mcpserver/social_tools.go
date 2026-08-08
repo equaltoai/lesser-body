@@ -100,6 +100,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: profileReadDef(), Handler: handleProfileRead},
 		{Def: timelineReadDef(), Handler: handleTimelineRead},
 		{Def: postSearchDef(), Handler: handlePostSearch},
+		{Def: accountResolveDef(), Handler: handleAccountResolve},
 		{Def: postGetDef(), Handler: handlePostGet},
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
@@ -119,7 +120,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: unfollowDef(), Handler: handleUnfollow},
 		{Def: profileUpdateDef(), Handler: handleProfileUpdate},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}
@@ -1168,9 +1169,21 @@ func compactConversationParticipantRef(raw map[string]any) map[string]any {
 	}
 	id := firstNonEmptyStringMap(raw, "id")
 	acct := firstNonEmptyStringMap(raw, "acct")
+	actorURL := firstNonEmptyStringMap(raw, "url")
 	ref := map[string]any{}
 	putIfNotEmpty(ref, "id", id)
 	putIfNotEmpty(ref, "acct", acct)
+	selector := acct
+	if selector == "" {
+		selector = actorURL
+		putIfNotEmpty(ref, "url", actorURL)
+	}
+	if selector == "" {
+		selector = id
+	}
+	if selector != "" {
+		ref["accountSelector"] = selector
+	}
 	missing := missingSocialRefFields(map[string]string{
 		"id":   id,
 		"acct": acct,
@@ -1987,10 +2000,11 @@ func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpr
 	if _, err := client.DoJSON(ctx, "POST", path, nil, token, map[string]any{}); err != nil {
 		var apiErr *lesserapi.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 404 {
+			details := map[string]any{"source": "lesser_api", "tool": "notification_dismiss"}
 			if in.ID != "" {
-				return nil, fmt.Errorf("notification %q not found", in.ID)
+				return toolErrorResult("not_found", "Notification not found", http.StatusNotFound, details)
 			}
-			return nil, fmt.Errorf("notifications not found")
+			return toolErrorResult("not_found", "Notifications not found", http.StatusNotFound, details)
 		}
 		return authToolResultFromError(err)
 	}
@@ -2102,6 +2116,52 @@ func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return authToolResultFromError(err)
 	}
 	return toolJSONResult(out, nil)
+}
+
+func handleAccountResolve(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		Account string `json:"account"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	selector := strings.TrimSpace(in.Account)
+	if selector == "" {
+		return nil, invalidParams("missing account")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := client.DoJSON(ctx, http.MethodGet, "/api/v1/accounts/"+url.PathEscape(selector), nil, token, nil)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	account, _ := out.(map[string]any)
+	canonicalID := firstNonEmptyStringMap(account, "id")
+	if canonicalID == "" {
+		return nil, fmt.Errorf("account resolver returned no canonical id")
+	}
+	accountRef := map[string]any{"id": canonicalID}
+	putIfNotEmpty(accountRef, "username", firstNonEmptyStringMap(account, "username"))
+	putIfNotEmpty(accountRef, "acct", firstNonEmptyStringMap(account, "acct"))
+	putIfNotEmpty(accountRef, "displayName", firstNonEmptyStringMap(account, "display_name", "displayName"))
+	putIfNotEmpty(accountRef, "url", firstNonEmptyStringMap(account, "url"))
+	action := func(tool string) map[string]any {
+		return map[string]any{"tool": tool, "arguments": map[string]any{"account_id": canonicalID}}
+	}
+	return toolJSONResult(map[string]any{
+		"selector":   selector,
+		"source":     "lesser-api",
+		"accountRef": accountRef,
+		"follow":     action("follow"),
+		"unfollow":   action("unfollow"),
+	}, nil)
 }
 
 func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
@@ -2285,7 +2345,7 @@ func timelineReadDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":200},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			},
 			"required":["timeline"]
 		}`),
@@ -2303,9 +2363,24 @@ func postSearchDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":200},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			},
 			"required":["query"]
+		}`),
+	}
+}
+
+func accountResolveDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "account_resolve",
+		Description:  "Resolve a Lesser account selector (canonical ID, username/acct handle, or actor URL) into a canonical account reference and follow/unfollow arguments.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: accountResolveOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{"account":{"type":"string","description":"Canonical Lesser account ID, local username, acct handle, or actor URL."}},
+			"required":["account"],
+			"additionalProperties":false
 		}`),
 	}
 }
@@ -2371,7 +2446,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded notification refs with notification_get expansion metadata and conditional post_get expansion metadata only for directly resolvable target posts."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			}
 		}`),
 	}
@@ -2405,7 +2480,7 @@ func conversationsReadDef() mcpruntime.ToolDef {
 				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded conversation refs with conversation_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact last-post preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			}
 		}`),
 	}
@@ -2425,7 +2500,7 @@ func conversationGetDef() mcpruntime.ToolDef {
 				"cursor":{"type":"string","description":"Optional pagination cursor; forwarded to Lesser as max_id."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Compact responses default to 12000 bytes; every over-budget response returns response_too_large."}
 			},
 			"required":["conversationId"]
 		}`),
@@ -2447,7 +2522,7 @@ func directMessagesReadDef() mcpruntime.ToolDef {
 				"unreadOnly":{"type":"boolean","description":"When true, return previews only if the matched one-to-one conversation is currently unread; read conversations return zero message previews."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Compact responses default to 12000 bytes; every over-budget response returns response_too_large."}
 			},
 			"required":["counterpart"]
 		}`),
@@ -3619,11 +3694,11 @@ func postFavoriteDef() mcpruntime.ToolDef {
 func followDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "follow",
-		Description:  "Follow an account.",
+		Description:  "Follow an account using the canonical account ID returned by account_resolve.",
 		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
-			"properties":{"account_id":{"type":"string"}},
+			"properties":{"account_id":{"type":"string","description":"Canonical Lesser account ID returned by account_resolve. Lesser may also accept a username/acct handle or actor URL, but resolving first avoids ambiguous conversation participant IDs."}},
 			"required":["account_id"]
 		}`),
 	}
@@ -3632,11 +3707,11 @@ func followDef() mcpruntime.ToolDef {
 func unfollowDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "unfollow",
-		Description:  "Unfollow an account.",
+		Description:  "Unfollow an account using the canonical account ID returned by account_resolve.",
 		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
-			"properties":{"account_id":{"type":"string"}},
+			"properties":{"account_id":{"type":"string","description":"Canonical Lesser account ID returned by account_resolve. Lesser may also accept a username/acct handle or actor URL, but resolving first avoids ambiguous conversation participant IDs."}},
 			"required":["account_id"]
 		}`),
 	}

@@ -90,7 +90,7 @@ func registerSkillsTools(r *mcpruntime.ToolRegistry) error {
 		{Def: skillsCatalogDef(), Handler: handleSkillsCatalog},
 		{Def: skillBundleGetDef(), Handler: handleSkillBundleGet},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}

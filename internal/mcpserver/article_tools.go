@@ -38,7 +38,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 		{Def: articleGetDef(), Handler: handleArticleGet},
 		{Def: articleListDef(), Handler: handleArticleList},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}
@@ -738,8 +738,8 @@ func articleDraftPolicyMetadata() map[string]any {
 func articleDraftListPolicyMetadata() map[string]any {
 	out := articleDraftPolicyMetadata()
 	out["graphqlDepthSafe"] = true
-	out["listSelection"] = "edges.cursor"
-	out["expansion"] = "call article_draft_get per draft id for full metadata/content"
+	out["listSelection"] = "edges.cursor plus batched depth-safe draft(id:) triage metadata"
+	out["expansion"] = "title and timestamps are included for triage; call article_draft_get only for full metadata/content"
 	return out
 }
 
@@ -796,7 +796,8 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 		if len(gqlErr.Errors) > 0 {
 			details["graphqlErrors"] = gqlErr.Errors
 		}
-		return toolErrorResult("lesser_cms_graphql_error", "Lesser CMS GraphQL returned errors", http.StatusBadGateway, details)
+		code, status := articleDraftGraphQLErrorContract(gqlErr)
+		return toolErrorResult(code, "Lesser CMS GraphQL returned errors", status, details)
 	}
 	var apiErr *lesserapi.APIError
 	if errors.As(err, &apiErr) {
@@ -807,6 +808,26 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 		})
 	}
 	return nil, err
+}
+
+func articleDraftGraphQLErrorContract(gqlErr *cmsapi.GraphQLErrors) (string, int) {
+	code := "lesser_cms_graphql_error"
+	status := http.StatusBadGateway
+	if gqlErr == nil {
+		return code, status
+	}
+	for _, item := range gqlErr.Errors {
+		if candidate, ok := item.Extensions["code"].(string); ok && strings.TrimSpace(candidate) != "" {
+			code = strings.TrimSpace(candidate)
+		}
+		if candidate, err := nonNegativeIntFromAny(item.Extensions["http_status"], "http_status"); err == nil && candidate >= 400 && candidate <= 599 {
+			status = candidate
+		}
+		if code != "lesser_cms_graphql_error" && status != http.StatusBadGateway {
+			break
+		}
+	}
+	return code, status
 }
 
 // draftOwnedByAuthenticatedActor returns true when the draft's authorId

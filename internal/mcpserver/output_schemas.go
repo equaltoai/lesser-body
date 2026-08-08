@@ -15,6 +15,18 @@ func genericDataObjectOutputSchema() json.RawMessage {
 	}`)
 }
 
+func accountResolveOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{"data":{"type":"object","properties":{
+			"selector":{"type":"string"},"source":{"type":"string"},
+			"accountRef":{"type":"object","properties":{"id":{"type":"string"},"username":{"type":"string"},"acct":{"type":"string"},"displayName":{"type":"string"},"url":{"type":"string"}},"required":["id"],"additionalProperties":true},
+			"follow":{"type":"object","additionalProperties":true},"unfollow":{"type":"object","additionalProperties":true}
+		},"required":["selector","source","accountRef","follow","unfollow"],"additionalProperties":false}},
+		"required":["data"],"additionalProperties":false
+	}`)
+}
+
 func memoryEventOutputSchemaProperties() string {
 	return `"event_id":{"type":"string"},
 		"occurred_at":{"type":"string"},
@@ -469,8 +481,14 @@ func identityWhoamiOutputSchema() json.RawMessage {
 					"localId":{"type":"string"},
 					"status":{"type":"string"},
 					"channels":{"type":"object","additionalProperties":true},
-					"contactPreferences":{"type":"object","additionalProperties":true}
+					"contactPreferences":{"type":"object","additionalProperties":true},
+					"provisioning":{"type":"object","properties":{
+						"channels":{"type":"object","additionalProperties":true},
+						"contactPreferences":{"type":"object","additionalProperties":true},
+						"communications":{"type":"string","enum":["configured","unprovisioned"]}
+					},"required":["channels","contactPreferences","communications"],"additionalProperties":false}
 				},
+				"required":["agentId","channels","contactPreferences","provisioning"],
 				"additionalProperties":true
 			}
 		},

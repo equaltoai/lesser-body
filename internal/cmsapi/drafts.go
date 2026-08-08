@@ -218,10 +218,9 @@ func (c *Client) ListArticleDrafts(ctx context.Context, bearerToken string, firs
 		variables["after"] = after
 	}
 	// Lesser's agent/CLI GraphQL profile currently enforces max depth 3. A
-	// connection selection with edges.node reaches depth 4, so list stays on
-	// edge cursors plus pageInfo and callers expand individual drafts with
-	// article_draft_get when they need full draft metadata/content.
-	_ = includeContent
+	// connection selection with edges.node reaches depth 4, so the first query
+	// stays on edge cursors plus pageInfo. The cursor is the draft ID; a second
+	// depth-safe batched root query hydrates triage metadata without N+1 calls.
 	resp, err := c.Execute(ctx, bearerToken, Operation{
 		Query:         "query BodyArticleDrafts($first: Int, $after: Cursor) { myDrafts(contentType: ARTICLE, status: DRAFT, first: $first, after: $after) { edges { cursor } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } totalCount } }",
 		OperationName: "BodyArticleDrafts",
@@ -234,7 +233,55 @@ func (c *Client) ListArticleDrafts(ctx context.Context, bearerToken string, firs
 	if err := unmarshalData(resp, &data); err != nil {
 		return nil, err
 	}
+	if err := c.hydrateDraftListEdges(ctx, bearerToken, data.MyDrafts.Edges, includeContent); err != nil {
+		return nil, err
+	}
 	return &data.MyDrafts, nil
+}
+
+const draftListHydrationBatchSize = 20
+
+func (c *Client) hydrateDraftListEdges(ctx context.Context, bearerToken string, edges []DraftEdge, includeContent bool) error {
+	for start := 0; start < len(edges); start += draftListHydrationBatchSize {
+		end := start + draftListHydrationBatchSize
+		if end > len(edges) {
+			end = len(edges)
+		}
+		variables := map[string]any{}
+		definitions := make([]string, 0, end-start)
+		selections := make([]string, 0, end-start)
+		indexes := make([]int, 0, end-start)
+		for i := start; i < end; i++ {
+			id := strings.TrimSpace(edges[i].Cursor)
+			if id == "" {
+				continue
+			}
+			alias := fmt.Sprintf("draft%d", len(indexes))
+			variable := fmt.Sprintf("id%d", len(indexes))
+			definitions = append(definitions, "$"+variable+": ID!")
+			selections = append(selections, alias+": draft(id: $"+variable+") { "+draftFields(includeContent)+" }")
+			variables[variable] = id
+			indexes = append(indexes, i)
+		}
+		if len(indexes) == 0 {
+			continue
+		}
+		query := "query BodyArticleDraftListDetails(" + strings.Join(definitions, ", ") + ") { " + strings.Join(selections, " ") + " }"
+		resp, err := c.Execute(ctx, bearerToken, Operation{Query: query, OperationName: "BodyArticleDraftListDetails", Variables: variables})
+		if err != nil {
+			return err
+		}
+		var hydrated map[string]*Draft
+		if err := unmarshalData(resp, &hydrated); err != nil {
+			return err
+		}
+		for aliasIndex, edgeIndex := range indexes {
+			if draft := hydrated[fmt.Sprintf("draft%d", aliasIndex)]; draft != nil {
+				edges[edgeIndex].Node = draft
+			}
+		}
+	}
+	return nil
 }
 
 func createDraftVariables(input CreateDraftInput) map[string]any {

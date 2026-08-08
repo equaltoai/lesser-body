@@ -16,9 +16,9 @@ import (
 // side-effecting call can never fail its own contract at the envelope.
 
 // assertMatchesDeclaredOutputSchema checks produced structuredContent against
-// the declared schema for the two mismatch classes an MCP client rejects on:
-// a value outside a declared enum, and an undeclared key under a closed object.
-// It is deliberately not a general JSON Schema engine.
+// the schema vocabulary used by Ptah's output contracts, including required
+// properties, alternatives, enums, and closed objects. It is deliberately not
+// a general JSON Schema engine.
 func assertMatchesDeclaredOutputSchema(t *testing.T, label string, schema json.RawMessage, structured map[string]any) {
 	t.Helper()
 	var declared any
@@ -48,6 +48,23 @@ func walkDeclaredOutputSchema(path string, schema any, value any, violations *[]
 	if !ok {
 		return
 	}
+	if branches, ok := node["anyOf"].([]any); ok {
+		matches := 0
+		branchFailures := make([]string, 0, len(branches))
+		for i, branch := range branches {
+			var branchViolations []string
+			walkDeclaredOutputSchema(path, branch, value, &branchViolations)
+			if len(branchViolations) == 0 {
+				matches++
+				continue
+			}
+			branchFailures = append(branchFailures, fmt.Sprintf("branch %d: %s", i, joinLines(branchViolations)))
+		}
+		if matches == 0 {
+			*violations = append(*violations, fmt.Sprintf("%s: matched no anyOf branches (%s)", path, joinLines(branchFailures)))
+		}
+		return
+	}
 	if allowed, ok := node["enum"].([]any); ok {
 		match := false
 		for _, candidate := range allowed {
@@ -63,6 +80,18 @@ func walkDeclaredOutputSchema(path string, schema any, value any, violations *[]
 	switch typed := value.(type) {
 	case map[string]any:
 		properties, _ := node["properties"].(map[string]any)
+		if required, ok := node["required"].([]any); ok {
+			for _, raw := range required {
+				key, ok := raw.(string)
+				if !ok {
+					*violations = append(*violations, fmt.Sprintf("%s: declared required member %#v is not a string", path, raw))
+					continue
+				}
+				if _, present := typed[key]; !present {
+					*violations = append(*violations, fmt.Sprintf("%s.%s: missing required property", path, key))
+				}
+			}
+		}
 		if open, declared := node["additionalProperties"].(bool); declared && !open {
 			for key := range typed {
 				if _, ok := properties[key]; !ok {
@@ -83,6 +112,35 @@ func walkDeclaredOutputSchema(path string, schema any, value any, violations *[]
 		for i, child := range typed {
 			walkDeclaredOutputSchema(fmt.Sprintf("%s[%d]", path, i), items, child, violations)
 		}
+	}
+}
+
+// Every schema-bearing Ptah tool uses the same structured error envelope as
+// Ka. Pin the registered contract so strict clients preserve the underlying
+// error instead of replacing it with -32602.
+func TestEverySchemaBearingPtahToolErrorMatchesDeclaredOutputSchema(t *testing.T) {
+	registry := mcpruntime.NewToolRegistry()
+	if err := RegisterTools(registry); err != nil {
+		t.Fatalf("RegisterTools: %v", err)
+	}
+	result, err := toolErrorResult("fixture_error", "representative tool failure", 400, map[string]any{
+		"source": "conformance_fixture",
+	})
+	if err != nil {
+		t.Fatalf("toolErrorResult: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("toolErrorResult returned %#v, want an MCP error result", result)
+	}
+
+	for _, def := range registry.List() {
+		if len(def.OutputSchema) == 0 {
+			continue
+		}
+		def := def
+		t.Run(def.Name, func(t *testing.T) {
+			assertMatchesDeclaredOutputSchema(t, def.Name+"/error", def.OutputSchema, result.StructuredContent)
+		})
 	}
 }
 

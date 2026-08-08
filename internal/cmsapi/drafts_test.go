@@ -38,6 +38,14 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"body","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
 		case "BodyArticleDrafts":
 			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+		case "BodyArticleDraftListDetails":
+			if !strings.Contains(op.Query, "draft0: draft(id: $id0)") || strings.Contains(op.Query, " content ") {
+				t.Fatalf("compact hydration query = %s", op.Query)
+			}
+			if op.Variables["id0"] != "draft-1" {
+				t.Fatalf("hydration variables = %+v", op.Variables)
+			}
+			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT","lastSavedAt":"2026-05-20T00:01:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:01:00Z"}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -67,11 +75,11 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListArticleDrafts: %v", err)
 	}
-	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "draft-1" || listed.Edges[0].Node != nil {
-		t.Fatalf("compact list should decode depth-safe cursors without nodes, got %+v", listed.Edges)
+	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "draft-1" || listed.Edges[0].Node == nil || listed.Edges[0].Node.Title == nil || *listed.Edges[0].Node.Title != "Hello" || listed.Edges[0].Node.UpdatedAt == "" {
+		t.Fatalf("compact list should hydrate depth-safe triage metadata, got %+v", listed.Edges)
 	}
 
-	if len(operations) != 4 {
+	if len(operations) != 5 {
 		t.Fatalf("operations = %d", len(operations))
 	}
 	if !strings.Contains(operations[0].Query, "createDraft") || strings.Contains(operations[0].Query, " content ") {
@@ -88,6 +96,9 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	}
 	if strings.Contains(operations[3].Query, "node {") || strings.Contains(operations[3].Query, "authorId") || strings.Contains(operations[3].Query, " content ") {
 		t.Fatalf("list query must stay within Lesser agent depth-3 and avoid legacy authorId, got %s", operations[3].Query)
+	}
+	if !strings.Contains(operations[4].Query, "draft0: draft(id: $id0)") || strings.Contains(operations[4].Query, " content ") {
+		t.Fatalf("list hydration must stay depth-safe and omit compact content, got %s", operations[4].Query)
 	}
 }
 

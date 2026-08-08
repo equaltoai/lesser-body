@@ -364,8 +364,16 @@ func agentChannelsPayloadWithRegistration(ctx context.Context, client *soulapi.C
 	reg, _ := regAny.(map[string]any)
 	reg = normalizeSoulReadRegistrationEnvelope(reg)
 
-	channels, _ := reg["channels"].(map[string]any)
-	contactPreferences, _ := reg["contactPreferences"].(map[string]any)
+	channelsRaw, channelsPresent := reg["channels"]
+	channels, channelsObject := channelsRaw.(map[string]any)
+	contactPreferencesRaw, contactPreferencesPresent := reg["contactPreferences"]
+	contactPreferences, contactPreferencesObject := contactPreferencesRaw.(map[string]any)
+	channelProvisioning := objectProvisioningMetadata(channels, channelsPresent && channelsObject)
+	contactPreferenceProvisioning := objectProvisioningMetadata(contactPreferences, contactPreferencesPresent && contactPreferencesObject)
+	communications := "unprovisioned"
+	if channelProvisioning["state"] == "present" {
+		communications = "configured"
+	}
 
 	out := map[string]any{
 		"agentId": agentID,
@@ -384,8 +392,28 @@ func agentChannelsPayloadWithRegistration(ctx context.Context, client *soulapi.C
 			}
 			return contactPreferences
 		}(),
+		"provisioning": map[string]any{
+			"channels":           channelProvisioning,
+			"contactPreferences": contactPreferenceProvisioning,
+			"communications":     communications,
+		},
 	}
 	return out, reg, nil
+}
+
+func objectProvisioningMetadata(value map[string]any, present bool) map[string]any {
+	state := "absent"
+	if present {
+		state = "empty"
+		if len(value) > 0 {
+			state = "present"
+		}
+	}
+	return map[string]any{
+		"state":           state,
+		"present":         present,
+		"configuredCount": len(value),
+	}
 }
 
 func identityToolResultFromError(err error) (*mcpruntime.ToolResult, error) {

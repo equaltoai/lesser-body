@@ -36,12 +36,12 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: identityVerifyDef(), Handler: handleIdentityVerify},
 	} {
 		if tool.Streaming != nil {
-			if err := r.RegisterStreamingTool(tool.Def, tool.Streaming); err != nil {
+			if err := registerStreamingTool(r, tool.Def, tool.Streaming); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}
