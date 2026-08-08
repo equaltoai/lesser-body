@@ -607,6 +607,7 @@ func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, 
 		"id":            strings.TrimSpace(draft.ID),
 		"status":        strings.TrimSpace(draft.Status),
 		"contentFormat": strings.TrimSpace(draft.ContentFormat),
+		"revision":      draft.Revision,
 		"expand": map[string]any{
 			"tool":           "article_draft_get",
 			"arguments":      map[string]any{"id": strings.TrimSpace(draft.ID), "view": readViewStandard},
@@ -618,6 +619,7 @@ func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, 
 	putIfNotEmpty(out, "title", stringPtrValue(draft.Title))
 	putIfNotEmpty(out, "slug", stringPtrValue(draft.Slug))
 	putIfNotEmpty(out, "objectId", stringPtrValue(draft.ObjectID))
+	putIfNotEmpty(out, "contentHash", draft.ContentHash)
 	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
 	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)
@@ -640,12 +642,14 @@ func standardArticleDraft(draft *cmsapi.Draft) map[string]any {
 		"content":         draft.Content,
 		"contentFormat":   strings.TrimSpace(draft.ContentFormat),
 		"status":          strings.TrimSpace(draft.Status),
+		"revision":        draft.Revision,
 		"autosaveVersion": draft.AutosaveVersion,
 	}
 	putIfNotEmpty(out, "title", stringPtrValue(draft.Title))
 	putIfNotEmpty(out, "slug", stringPtrValue(draft.Slug))
 	putIfNotEmpty(out, "scheduledAt", stringPtrValue(draft.ScheduledAt))
 	putIfNotEmpty(out, "objectId", stringPtrValue(draft.ObjectID))
+	putIfNotEmpty(out, "contentHash", draft.ContentHash)
 	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
 	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)

@@ -7,22 +7,22 @@ $ cd cdk && npm test
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-✔ secret read policy includes legacy and managed instance-key patterns (691.68179ms)
-✔ managed template supports an exact lesser-host instance key ARN (130.895351ms)
-✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite (98.744648ms)
-✔ managed template requires app-scoped Lesser parameter paths (96.466168ms)
-✔ lesser table policy uses least-privilege primary table access (82.41469ms)
-✔ managed template pins MCP table logical IDs (96.377861ms)
-✔ every MCP-serving lambda uses the 24-hour session TTL (173.834574ms)
-✔ runtime stack uses AppTheory durable stream table schema (75.773066ms)
-✔ runtime stack provisions internal MCP task storage without SSM export (83.030402ms)
-✔ remote MCP server uses actor-path wiring (75.952584ms)
-✔ runtime stack preserves named MCP table fingerprints (73.655349ms)
-✔ stream table export name stays stable across baseline reset (70.850786ms)
-✔ runtime stack provisions instance-plane lambda with owned tables (71.527794ms)
-✔ instance-plane lambda receives managed Lesser/Host genesis configuration (87.22122ms)
-✔ instance-plane Lesser table read includes binding lookup without memory access (88.686685ms)
-✔ runtime stack publishes additive instance-plane SSM exports (73.370932ms)
+✔ secret read policy includes legacy and managed instance-key patterns (680.375314ms)
+✔ managed template supports an exact lesser-host instance key ARN (125.71353ms)
+✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite (98.322468ms)
+✔ managed template requires app-scoped Lesser parameter paths (92.43801ms)
+✔ lesser table policy uses least-privilege primary table access (80.090759ms)
+✔ managed template pins MCP table logical IDs (92.236943ms)
+✔ every MCP-serving lambda uses the 24-hour session TTL (167.096248ms)
+✔ runtime stack uses AppTheory durable stream table schema (72.677713ms)
+✔ runtime stack provisions internal MCP task storage without SSM export (75.540202ms)
+✔ remote MCP server uses actor-path wiring (74.23824ms)
+✔ runtime stack preserves named MCP table fingerprints (76.350242ms)
+✔ stream table export name stays stable across baseline reset (73.613207ms)
+✔ runtime stack provisions instance-plane lambda with owned tables (73.382104ms)
+✔ instance-plane lambda receives managed Lesser/Host genesis configuration (91.217982ms)
+✔ instance-plane Lesser table read includes binding lookup without memory access (90.476561ms)
+✔ runtime stack publishes additive instance-plane SSM exports (82.82119ms)
 ℹ tests 16
 ℹ suites 0
 ℹ pass 16
@@ -30,4 +30,4 @@ $ cd cdk && npm test
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 2136.282153
+ℹ duration_ms 2100.328158

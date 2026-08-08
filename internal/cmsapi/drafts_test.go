@@ -24,7 +24,7 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			if input["contentType"] != ObjectTypeArticle || input["contentFormat"] != ContentFormatMarkdown {
 				t.Fatalf("create input = %+v", input)
 			}
-			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:create","revision":1}}}`))
 		case "BodyUpdateArticleDraft":
 			if op.Variables["id"] != "draft-1" {
 				t.Fatalf("update variables = %+v", op.Variables)
@@ -33,9 +33,9 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			if input["contentFormat"] != ContentFormatHTML {
 				t.Fatalf("update input = %+v", input)
 			}
-			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"<p>Hello</p>","contentFormat":"HTML","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"<p>Hello</p>","contentFormat":"HTML","status":"DRAFT","contentHash":"sha256:update","revision":2}}}`))
 		case "BodyArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"body","contentFormat":"MARKDOWN","status":"DRAFT"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","content":"body","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:get","revision":3}}}`))
 		case "BodyArticleDrafts":
 			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
 		case "BodyArticleDraftListDetails":
@@ -45,7 +45,7 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 			if op.Variables["id0"] != "draft-1" {
 				t.Fatalf("hydration variables = %+v", op.Variables)
 			}
-			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT","lastSavedAt":"2026-05-20T00:01:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:01:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/alice","username":"alice"},"contentType":"ARTICLE","title":"Hello","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:list","revision":4,"lastSavedAt":"2026-05-20T00:01:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:01:00Z"}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -57,25 +57,25 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateArticleDraft: %v", err)
 	}
-	if created.ID != "draft-1" || created.Content != "" || created.Author == nil || created.Author.Username != "alice" {
+	if created.ID != "draft-1" || created.Content != "" || created.Author == nil || created.Author.Username != "alice" || created.ContentHash != "sha256:create" || created.Revision != 1 {
 		t.Fatalf("compact create should decode draft metadata without content, got %+v", created)
 	}
 	updated, err := client.UpdateArticleDraft(context.Background(), "token", " draft-1 ", UpdateDraftInput{ContentFormat: stringPtr(ContentFormatHTML)}, true)
 	if err != nil {
 		t.Fatalf("UpdateArticleDraft: %v", err)
 	}
-	if updated.Content != "<p>Hello</p>" || updated.ContentFormat != ContentFormatHTML {
+	if updated.Content != "<p>Hello</p>" || updated.ContentFormat != ContentFormatHTML || updated.ContentHash != "sha256:update" || updated.Revision != 2 {
 		t.Fatalf("standard update draft = %+v", updated)
 	}
 	got, err := client.GetArticleDraft(context.Background(), "token", "draft-1", true)
-	if err != nil || got.Content != "body" {
+	if err != nil || got.Content != "body" || got.ContentHash != "sha256:get" || got.Revision != 3 {
 		t.Fatalf("GetArticleDraft = %+v, %v", got, err)
 	}
 	listed, err := client.ListArticleDrafts(context.Background(), "token", 2, "cursor-1", false)
 	if err != nil {
 		t.Fatalf("ListArticleDrafts: %v", err)
 	}
-	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "draft-1" || listed.Edges[0].Node == nil || listed.Edges[0].Node.Title == nil || *listed.Edges[0].Node.Title != "Hello" || listed.Edges[0].Node.UpdatedAt == "" {
+	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "draft-1" || listed.Edges[0].Node == nil || listed.Edges[0].Node.Title == nil || *listed.Edges[0].Node.Title != "Hello" || listed.Edges[0].Node.UpdatedAt == "" || listed.Edges[0].Node.ContentHash != "sha256:list" || listed.Edges[0].Node.Revision != 4 {
 		t.Fatalf("compact list should hydrate depth-safe triage metadata, got %+v", listed.Edges)
 	}
 
@@ -99,6 +99,16 @@ func TestArticleDraftOperationsBuildM0GraphQLContract(t *testing.T) {
 	}
 	if !strings.Contains(operations[4].Query, "draft0: draft(id: $id0)") || strings.Contains(operations[4].Query, " content ") {
 		t.Fatalf("list hydration must stay depth-safe and omit compact content, got %s", operations[4].Query)
+	}
+	for _, op := range operations {
+		if op.OperationName == "BodyArticleDrafts" {
+			continue
+		}
+		for _, want := range []string{"contentHash", "revision"} {
+			if !strings.Contains(op.Query, want) {
+				t.Fatalf("%s query missing Lesser v1.6.4 field %q: %s", op.OperationName, want, op.Query)
+			}
+		}
 	}
 }
 

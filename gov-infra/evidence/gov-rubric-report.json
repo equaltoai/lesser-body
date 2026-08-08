@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-08T17:58:36.135226Z",
+  "generated_at": "2026-08-08T21:44:48.069700Z",
   "git": {
-    "head": "4c8da6dd084f7e059107f4f86f11dd7cf64a81b2",
-    "head_tree": "6c75cf6bb2d45f9ca63ba8276a3d6fab49be6fd4",
-    "merge_base_origin_staging": "bab8419e1816664fb58758ada473ebf76a2757c9",
-    "ref": "fix/mcp-output-schema-object-root",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "head": "29586f610a2f099551ade4d17be409efdc0fd31a",
+    "head_tree": "be8bc9a03976fa8c5aaff034771e120470ec7847",
+    "merge_base_origin_staging": "e2de879a259ba1ac2cbe9d6a6442dede9dbbf370",
+    "ref": "fix/issues-533-534-article-review-projection",
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
