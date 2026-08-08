@@ -373,6 +373,15 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 			return mustKaToolResult(toolJSONResult(map[string]any{"id": "fixture-id"}, nil))
 		})
 	}
+	add("account_resolve", "account", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(toolJSONResult(map[string]any{
+			"selector":   "alice@example.com",
+			"source":     "lesser-api",
+			"accountRef": map[string]any{"id": "account-1", "acct": "alice@example.com"},
+			"follow":     map[string]any{"tool": "follow", "arguments": map[string]any{"account_id": "account-1"}},
+			"unfollow":   map[string]any{"tool": "unfollow", "arguments": map[string]any{"account_id": "account-1"}},
+		}, nil))
+	})
 
 	add("post_get", "standard", func(t *testing.T) *mcpruntime.ToolResult {
 		return mustKaToolResult(toolJSONResult(map[string]any{

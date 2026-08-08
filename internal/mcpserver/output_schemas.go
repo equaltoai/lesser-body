@@ -15,6 +15,18 @@ func genericDataObjectOutputSchema() json.RawMessage {
 	}`)
 }
 
+func accountResolveOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{"data":{"type":"object","properties":{
+			"selector":{"type":"string"},"source":{"type":"string"},
+			"accountRef":{"type":"object","properties":{"id":{"type":"string"},"username":{"type":"string"},"acct":{"type":"string"},"displayName":{"type":"string"},"url":{"type":"string"}},"required":["id"],"additionalProperties":true},
+			"follow":{"type":"object","additionalProperties":true},"unfollow":{"type":"object","additionalProperties":true}
+		},"required":["selector","source","accountRef","follow","unfollow"],"additionalProperties":false}},
+		"required":["data"],"additionalProperties":false
+	}`)
+}
+
 func memoryEventOutputSchemaProperties() string {
 	return `"event_id":{"type":"string"},
 		"occurred_at":{"type":"string"},

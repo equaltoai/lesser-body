@@ -100,6 +100,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: profileReadDef(), Handler: handleProfileRead},
 		{Def: timelineReadDef(), Handler: handleTimelineRead},
 		{Def: postSearchDef(), Handler: handlePostSearch},
+		{Def: accountResolveDef(), Handler: handleAccountResolve},
 		{Def: postGetDef(), Handler: handlePostGet},
 		{Def: followersListDef(), Handler: handleFollowersList},
 		{Def: followingListDef(), Handler: handleFollowingList},
@@ -1168,9 +1169,21 @@ func compactConversationParticipantRef(raw map[string]any) map[string]any {
 	}
 	id := firstNonEmptyStringMap(raw, "id")
 	acct := firstNonEmptyStringMap(raw, "acct")
+	actorURL := firstNonEmptyStringMap(raw, "url")
 	ref := map[string]any{}
 	putIfNotEmpty(ref, "id", id)
 	putIfNotEmpty(ref, "acct", acct)
+	selector := acct
+	if selector == "" {
+		selector = actorURL
+		putIfNotEmpty(ref, "url", actorURL)
+	}
+	if selector == "" {
+		selector = id
+	}
+	if selector != "" {
+		ref["accountSelector"] = selector
+	}
 	missing := missingSocialRefFields(map[string]string{
 		"id":   id,
 		"acct": acct,
@@ -2105,6 +2118,52 @@ func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.
 	return toolJSONResult(out, nil)
 }
 
+func handleAccountResolve(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+	var in struct {
+		Account string `json:"account"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, invalidParams("invalid args: " + err.Error())
+	}
+	selector := strings.TrimSpace(in.Account)
+	if selector == "" {
+		return nil, invalidParams("missing account")
+	}
+
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	client, err := lesser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := client.DoJSON(ctx, http.MethodGet, "/api/v1/accounts/"+url.PathEscape(selector), nil, token, nil)
+	if err != nil {
+		return authToolResultFromError(err)
+	}
+	account, _ := out.(map[string]any)
+	canonicalID := firstNonEmptyStringMap(account, "id")
+	if canonicalID == "" {
+		return nil, fmt.Errorf("account resolver returned no canonical id")
+	}
+	accountRef := map[string]any{"id": canonicalID}
+	putIfNotEmpty(accountRef, "username", firstNonEmptyStringMap(account, "username"))
+	putIfNotEmpty(accountRef, "acct", firstNonEmptyStringMap(account, "acct"))
+	putIfNotEmpty(accountRef, "displayName", firstNonEmptyStringMap(account, "display_name", "displayName"))
+	putIfNotEmpty(accountRef, "url", firstNonEmptyStringMap(account, "url"))
+	action := func(tool string) map[string]any {
+		return map[string]any{"tool": tool, "arguments": map[string]any{"account_id": canonicalID}}
+	}
+	return toolJSONResult(map[string]any{
+		"selector":   selector,
+		"source":     "lesser-api",
+		"accountRef": accountRef,
+		"follow":     action("follow"),
+		"unfollow":   action("unfollow"),
+	}, nil)
+}
+
 func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		AccountID string `json:"account_id"`
@@ -2307,6 +2366,21 @@ func postSearchDef() mcpruntime.ToolDef {
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			},
 			"required":["query"]
+		}`),
+	}
+}
+
+func accountResolveDef() mcpruntime.ToolDef {
+	return mcpruntime.ToolDef{
+		Name:         "account_resolve",
+		Description:  "Resolve a Lesser account selector (canonical ID, username/acct handle, or actor URL) into a canonical account reference and follow/unfollow arguments.",
+		Annotations:  readOnlyToolAnnotations(),
+		OutputSchema: accountResolveOutputSchema(),
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{"account":{"type":"string","description":"Canonical Lesser account ID, local username, acct handle, or actor URL."}},
+			"required":["account"],
+			"additionalProperties":false
 		}`),
 	}
 }
@@ -3620,11 +3694,11 @@ func postFavoriteDef() mcpruntime.ToolDef {
 func followDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "follow",
-		Description:  "Follow an account.",
+		Description:  "Follow an account using the canonical account ID returned by account_resolve.",
 		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
-			"properties":{"account_id":{"type":"string"}},
+			"properties":{"account_id":{"type":"string","description":"Canonical Lesser account ID returned by account_resolve. Lesser may also accept a username/acct handle or actor URL, but resolving first avoids ambiguous conversation participant IDs."}},
 			"required":["account_id"]
 		}`),
 	}
@@ -3633,11 +3707,11 @@ func followDef() mcpruntime.ToolDef {
 func unfollowDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "unfollow",
-		Description:  "Unfollow an account.",
+		Description:  "Unfollow an account using the canonical account ID returned by account_resolve.",
 		OutputSchema: genericDataObjectOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
-			"properties":{"account_id":{"type":"string"}},
+			"properties":{"account_id":{"type":"string","description":"Canonical Lesser account ID returned by account_resolve. Lesser may also accept a username/acct handle or actor URL, but resolving first avoids ambiguous conversation participant IDs."}},
 			"required":["account_id"]
 		}`),
 	}

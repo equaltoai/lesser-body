@@ -37,14 +37,15 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 			{Name: "profile_update", Use: "Change the authenticated actor's display name, bio, or avatar."},
 			{Name: "timeline_read", Use: "Browse home, local, or federated timelines; prefer compact view for discovery."},
 			{Name: "post_search", Use: "Find posts by query; prefer compact view before expanding a match."},
+			{Name: "account_resolve", Use: "Resolve an account ID, username/acct handle, or actor URL into canonical follow/unfollow arguments."},
 			{Name: "post_get", Use: "Expand one status ID from a compact timeline, search, notification, or conversation ref."},
 			{Name: "followers_list", Use: "List accounts following the authenticated actor."},
 			{Name: "following_list", Use: "List accounts the authenticated actor follows."},
 			{Name: "post_create", Use: "Create a public, unlisted, private, or direct post, including replies."},
 			{Name: "post_boost", Use: "Boost or reblog an existing post."},
 			{Name: "post_favorite", Use: "Favorite an existing post."},
-			{Name: "follow", Use: "Follow an account."},
-			{Name: "unfollow", Use: "Stop following an account."},
+			{Name: "follow", Use: "Follow an account by canonical account ID from account_resolve."},
+			{Name: "unfollow", Use: "Stop following an account by canonical account ID from account_resolve."},
 		},
 	},
 	{
@@ -180,6 +181,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("\n## Recommended workflows\n")
 	out.WriteString("- Timeline discovery: `timeline_read({\"timeline\":\"home\",\"limit\":5,\"view\":\"compact\"})` → select a stable status ID → `post_get({\"id\":\"<status-id>\",\"view\":\"standard\"})`.\n")
 	out.WriteString("- Conversation discovery: `conversations_read({\"limit\":10,\"view\":\"compact\"})` → select a conversation ID → `conversation_get({\"conversationId\":\"<conversation-id>\",\"limit\":20,\"view\":\"compact\"})`.\n")
+	out.WriteString("- Account follow bridge: pass a participant ref's `accountSelector` to `account_resolve({\"account\":\"<selector>\"})` → pass the returned canonical `accountRef.id` to `follow` or `unfollow`.\n")
 	out.WriteString("- Notification discovery: `notifications_read({\"limit\":10,\"view\":\"compact\"})` → select a notification ID → `notification_get({\"id\":\"<notification-id>\",\"view\":\"standard\"})`.\n")
 	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → inspect the rendered result → `article_draft_publish`.\n")
 	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer calls `article_draft_review_read` → reviewer calls `article_draft_review_verdict`; every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing.\n")
