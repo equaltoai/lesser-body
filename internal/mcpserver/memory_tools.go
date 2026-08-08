@@ -169,8 +169,8 @@ func memoryAppendDef() mcpruntime.ToolDef {
 			"type":"object",
 			"properties":{
 				"content":{"type":"string"},
-				"event_id":{"type":"string","description":"Optional ULID to make the call idempotent."},
-				"occurred_at":{"type":"string","description":"RFC3339 timestamp for the memory event (optional)."},
+				"event_id":{"type":"string","description":"Optional ULID to make the call idempotent. Its embedded timestamp becomes occurred_at when occurred_at is omitted; when both are supplied, they must match exactly at millisecond precision."},
+				"occurred_at":{"type":"string","description":"Optional RFC3339 timestamp. A supplied event_id must embed this same timestamp at millisecond precision."},
 				"tags":{"type":"array","items":{"type":"string"}},
 				"expires_at":{"type":"string","description":"RFC3339 timestamp when this memory expires (optional)."}
 			},

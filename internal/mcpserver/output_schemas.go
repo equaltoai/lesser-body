@@ -481,8 +481,14 @@ func identityWhoamiOutputSchema() json.RawMessage {
 					"localId":{"type":"string"},
 					"status":{"type":"string"},
 					"channels":{"type":"object","additionalProperties":true},
-					"contactPreferences":{"type":"object","additionalProperties":true}
+					"contactPreferences":{"type":"object","additionalProperties":true},
+					"provisioning":{"type":"object","properties":{
+						"channels":{"type":"object","additionalProperties":true},
+						"contactPreferences":{"type":"object","additionalProperties":true},
+						"communications":{"type":"string","enum":["configured","unprovisioned"]}
+					},"required":["channels","contactPreferences","communications"],"additionalProperties":false}
 				},
+				"required":["agentId","channels","contactPreferences","provisioning"],
 				"additionalProperties":true
 			}
 		},

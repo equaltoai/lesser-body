@@ -709,6 +709,11 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 			"status":             "active",
 			"channels":           map[string]any{},
 			"contactPreferences": map[string]any{},
+			"provisioning": map[string]any{
+				"channels":           map[string]any{"state": "empty", "present": true, "configuredCount": 0},
+				"contactPreferences": map[string]any{"state": "empty", "present": true, "configuredCount": 0},
+				"communications":     "unprovisioned",
+			},
 		}, nil))
 	})
 	add("soul_read", "souls", func(t *testing.T) *mcpruntime.ToolResult {

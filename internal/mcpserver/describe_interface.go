@@ -121,6 +121,8 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 	},
 }
 
+var describeInterfaceChannelsPayload = whoamiChannelsPayload
+
 func describeInterfaceDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:        "describe_interface",
@@ -167,6 +169,8 @@ func renderDescribeInterface(ctx context.Context) string {
 	if identity.SoulAgentID != "" {
 		out.WriteString("- soul_agent_id: `" + describeInterfaceValue(identity.SoulAgentID) + "`\n")
 	}
+	out.WriteString("\n## Capability status\n")
+	out.WriteString("- communications: `" + describeInterfaceCommunicationStatus(ctx) + "`\n")
 
 	out.WriteString("\n## Tool inventory\n")
 	out.WriteString("Read-scoped tools have no side effects; write-scoped tools mutate actor state or delegate a side effect. ")
@@ -183,7 +187,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Conversation discovery: `conversations_read({\"limit\":10,\"view\":\"compact\"})` → select a conversation ID → `conversation_get({\"conversationId\":\"<conversation-id>\",\"limit\":20,\"view\":\"compact\"})`.\n")
 	out.WriteString("- Account follow bridge: pass a participant ref's `accountSelector` to `account_resolve({\"account\":\"<selector>\"})` → pass the returned canonical `accountRef.id` to `follow` or `unfollow`.\n")
 	out.WriteString("- Notification discovery: `notifications_read({\"limit\":10,\"view\":\"compact\"})` → select a notification ID → `notification_get({\"id\":\"<notification-id>\",\"view\":\"standard\"})`.\n")
-	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → inspect the rendered result → `article_draft_publish`.\n")
+	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → `article_draft_review_submit` → reviewer `article_draft_review_read` and `article_draft_review_verdict` → author re-reads review state and confirms every active reviewer verdict, principal approval, and Lesser publish eligibility → `article_draft_publish`.\n")
 	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer calls `article_draft_review_read` → reviewer calls `article_draft_review_verdict`; every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing.\n")
 
 	out.WriteString("\n## Read-result budgeting and expansion\n")
@@ -195,6 +199,30 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Expand only selected refs. In particular, `post_get` returns the status once and does not point back to itself.\n")
 
 	return out.String()
+}
+
+func describeInterfaceCommunicationStatus(ctx context.Context) string {
+	resolved, ok := runtimepolicy.FromContext(ctx)
+	if !ok || resolved.Profile != runtimepolicy.ProfileSouled {
+		return "unavailable_runtime_profile"
+	}
+	if !resolved.BoundSoul {
+		return "unavailable_unbound_soul"
+	}
+	if strings.TrimSpace(auth.BearerTokenFromToolContext(ctx)) == "" {
+		return "unknown"
+	}
+	payload, err := describeInterfaceChannelsPayload(ctx)
+	if err != nil {
+		return "unknown"
+	}
+	provisioning, _ := payload["provisioning"].(map[string]any)
+	if communications, _ := provisioning["communications"].(string); communications == "configured" {
+		return "configured"
+	} else if communications == "unprovisioned" {
+		return "degraded_unprovisioned"
+	}
+	return "unknown"
 }
 
 type describeInterfaceIdentityContext struct {
