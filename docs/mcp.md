@@ -370,7 +370,9 @@ initialization:
 For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
 the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's
 single install-plan tool declares both alternatives directly. This lets strict MCP clients preserve the underlying tool
-error instead of replacing it with a `-32602` output-schema validation error. The error object always includes string
+error instead of replacing it with a `-32602` output-schema validation error. Every advertised `outputSchema` retains
+`type: "object"` at its root, as required by MCP 2025-11-25, while Ka and Ptah place the success/error alternatives in
+the sibling `anyOf` constraint. The error object always includes string
 `code` and `message` fields and may include integer `status`, object `details`, and contract-specific extension fields.
 Ka's static registration boundary also normalizes every handler failure into that tool-error envelope: caller argument
 failures use `invalid_params`/`400`, Lesser REST failures preserve a declared upstream `error_code` or `code` and HTTP
