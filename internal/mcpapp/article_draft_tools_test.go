@@ -123,6 +123,13 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 		}
 		operations = append(operations, op)
 		query, _ := op["query"].(string)
+		if op["operationName"] != "BodyArticleDrafts" && op["operationName"] != "BodyArticleDraftPreview" {
+			for _, want := range []string{"contentHash", "revision"} {
+				if !strings.Contains(query, want) {
+					t.Fatalf("%s query missing Lesser v1.6.4 field %q: %s", op["operationName"], want, query)
+				}
+			}
+		}
 		if strings.Contains(query, "publishDraft") || strings.Contains(query, "preview") || strings.Contains(query, "api/v1/statuses") {
 			t.Fatalf("draft tools must not expose preview/publish/status authoring query: %s", query)
 		}
@@ -138,13 +145,13 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact create should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:create","revision":1,"autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		case "BodyArticleDraft":
 			// LB-01: article_draft_update now performs a compact draft lookup
 			// before the update mutation so contentType/status/ownership gate
 			// the side effect. article_draft_get still requests content so
 			// compact responses can produce a bounded preview.
-			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","content":"` + strings.Repeat("body ", 80) + `","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","content":"` + strings.Repeat("body ", 80) + `","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:get","revision":2,"autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		case "BodyUpdateArticleDraft":
 			vars := op["variables"].(map[string]any)
 			if vars["id"] != "draft-1" {
@@ -157,7 +164,7 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact update should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Updated","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":2,"lastSavedAt":"2026-05-19T21:01:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:01:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateDraft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Updated","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:update","revision":3,"autosaveVersion":2,"lastSavedAt":"2026-05-19T21:01:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:01:00Z"}}}`))
 		case "BodyArticleDrafts":
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact list should not request GraphQL content field: %s", query)
@@ -167,7 +174,7 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 			if queryContainsDraftContentSelection(query) {
 				t.Fatalf("compact list hydration should not request GraphQL content field: %s", query)
 			}
-			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/agent1","username":"agent1"},"contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/agent1","username":"agent1"},"contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","contentHash":"sha256:list","revision":4,"autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op["operationName"])
 		}
@@ -200,6 +207,9 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	if _, hasContent := createDraft["content"]; hasContent {
 		t.Fatalf("compact create should omit content: %+v", createDraft)
 	}
+	if createDraft["contentHash"] != "sha256:create" || createDraft["revision"] != float64(1) {
+		t.Fatalf("compact create missing exact content binding: %+v", createDraft)
+	}
 	if preview, _ := createDraft["contentPreview"].(string); preview == "" || len([]rune(preview)) > 24 {
 		t.Fatalf("expected bounded compact create preview, got %q", preview)
 	}
@@ -210,7 +220,7 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 
 	update := callArticleTool(t, env, app, writeAuth, sessionID, 3, "article_draft_update", map[string]any{"id": "draft-1", "title": "Updated"})
 	updateDraft := toolData(t, update)["draft"].(map[string]any)
-	if updateDraft["title"] != "Updated" {
+	if updateDraft["title"] != "Updated" || updateDraft["contentHash"] != "sha256:update" || updateDraft["revision"] != float64(3) {
 		t.Fatalf("unexpected update draft: %+v", updateDraft)
 	}
 
@@ -219,6 +229,9 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	getDraft := toolData(t, get)["draft"].(map[string]any)
 	if _, hasContent := getDraft["content"]; hasContent {
 		t.Fatalf("compact get should omit content: %+v", getDraft)
+	}
+	if getDraft["contentHash"] != "sha256:get" || getDraft["revision"] != float64(2) {
+		t.Fatalf("compact get missing exact content binding: %+v", getDraft)
 	}
 	if preview, _ := getDraft["contentPreview"].(string); preview == "" || len([]rune(preview)) > 32 {
 		t.Fatalf("expected bounded compact get preview, got %q", preview)
@@ -238,7 +251,7 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	if _, hasContent := first["content"]; hasContent {
 		t.Fatalf("compact list should omit content: %+v", first)
 	}
-	if first["title"] != "Hello" || first["lastSavedAt"] != "2026-05-19T21:00:00Z" || first["createdAt"] == nil || first["updatedAt"] == nil {
+	if first["title"] != "Hello" || first["lastSavedAt"] != "2026-05-19T21:00:00Z" || first["createdAt"] == nil || first["updatedAt"] == nil || first["contentHash"] != "sha256:list" || first["revision"] != float64(4) {
 		t.Fatalf("compact list should include triage metadata: %+v", first)
 	}
 	var draftPreflightIdx, updateIdx, draftGetContentCount, draftPreflightCount int = -1, -1, 0, 0
