@@ -668,11 +668,11 @@ Scope key:
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
 | `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
 | `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
-| `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
-| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; compact results include title and save/create/update timestamps for triage, while full content still requires `article_draft_get`. |
+| `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and both compact and standard projections include Lesser's exact `contentHash` and monotonic `revision` bindings. Compact refs expand with `article_draft_get(view=standard)`. |
+| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; compact results include title, save/create/update timestamps, `contentHash`, and `revision` for triage and concurrency checks, while full content still requires `article_draft_get`. |
 | `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
 | `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
-| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. Both modes transport Lesser's grants and reviewer identities, exact content binding, verdict staleness, and authoritative publish eligibility. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
@@ -1553,7 +1553,7 @@ direct Lesser table write is involved.
 
 ### Lesser-backed Article draft review workflow
 
-Body exposes Lesser v1.5.32's review contract without storing grants, calculating consensus, or bypassing Lesser's
+Body exposes Lesser v1.6.4's review contract without storing grants, calculating consensus, or bypassing Lesser's
 publish gate. The three tools forward the exact caller OAuth bearer to Lesser `POST /api/graphql`, are available in
 both drone and souled runtime profiles, and use structured-first responses with source `lesser_cms_graphql`.
 
@@ -1563,7 +1563,7 @@ both drone and souled runtime profiles, and use structured-first responses with 
 | `article_draft_review_read` | none | `draft_id: string` **or** queue `limit: 1..80` / `cursor: string`; `max_output_bytes` | common `tool`, `operation`, `source`, `mode`, `count`; state adds `review`; queue adds `reviews`, `limit`, `nextCursor`, `pageInfo`, `totalCount` |
 | `article_draft_review_verdict` | `draft_id: string`, `verdict: APPROVED \| CHANGES_REQUESTED` | `notes: string`, `max_output_bytes: integer >= 0` | `tool`, `operation:"verdict_submitted"`, `source`, `review` |
 
-All three default to a 12,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted. An oversized
+All three default to a 24,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted. An oversized
 result fails explicitly with `response_too_large`; queue mode defaults to 5 realistic review records so the documented
 default page fits that budget, while callers requesting larger pages should reduce `limit` or raise the explicit budget.
 
@@ -1581,16 +1581,21 @@ default page fits that budget, while callers requesting larger pages should redu
    ```
 
    Queue mode returns `mode:"queue"`, `reviews[]` entries containing the Lesser `review` plus its opaque `cursor`,
-   `count`, `limit`, `nextCursor`, `pageInfo`, and `totalCount`. Revoked grants disappear because Lesser owns queue
-   membership; Body does not cache or reconstruct it.
+   `count`, `limit`, `nextCursor`, `pageInfo`, and `totalCount`. Each review transports Lesser's `contentHash` and
+   `revision`, `activeReviewerIds`, `grants` (including reviewer identity and status), verdict content bindings and
+   `current` / `stale` decisions, and `publishEligibility` with its blocking reasons. Revoked grants disappear because
+   Lesser owns queue membership; Body does not cache or reconstruct it.
 3. Either the author or an actively granted reviewer can read Lesser's state for one draft:
 
    ```json
    {"tool":"article_draft_review_read","arguments":{"draft_id":"draft-1"}}
    ```
 
-   State mode returns `mode:"state"` and Lesser's `review` projection: grant time, verdict history, `generatedBy`,
-   `reviewedBy`, `reviewStatus`, and `editorNotes`. Body does not synthesize a separate `publishEligible` flag.
+   State mode returns `mode:"state"` and the same Lesser-authoritative review projection: `contentHash`, `revision`,
+   active reviewer IDs, the complete caller-visible `grants` projection with reviewer identity, verdict history with
+   content binding and `current` / `stale` decisions, `generatedBy`, `reviewedBy`, `reviewStatus`, `editorNotes`, and
+   `publishEligibility`. Body transports Lesser's top-level eligibility booleans and blocking reasons as well; it does
+   not synthesize, override, or reconstruct any publish decision.
 4. The reviewer submits Lesser's canonical verdict enum and optional notes:
 
    ```json

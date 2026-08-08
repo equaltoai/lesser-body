@@ -35,6 +35,8 @@ type Draft struct {
 	Status          string  `json:"status,omitempty"`
 	ScheduledAt     *string `json:"scheduledAt,omitempty"`
 	ObjectID        *string `json:"objectId,omitempty"`
+	ContentHash     string  `json:"contentHash,omitempty"`
+	Revision        int     `json:"revision,omitempty"`
 	AutosaveVersion int     `json:"autosaveVersion,omitempty"`
 	LastSavedAt     string  `json:"lastSavedAt,omitempty"`
 	CreatedAt       string  `json:"createdAt,omitempty"`
@@ -335,7 +337,7 @@ func normalizeContentFormat(value string) string {
 }
 
 func draftFields(includeContent bool) string {
-	fields := "id author { id username } contentType title slug contentFormat status scheduledAt objectId autosaveVersion lastSavedAt createdAt updatedAt"
+	fields := "id author { id username } contentType title slug contentFormat status scheduledAt objectId contentHash revision autosaveVersion lastSavedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}
