@@ -38,7 +38,7 @@ func registerArticleTools(r *mcpruntime.ToolRegistry) error {
 		{Def: articleGetDef(), Handler: handleArticleGet},
 		{Def: articleListDef(), Handler: handleArticleList},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}

@@ -367,6 +367,12 @@ initialization:
 - tools return MCP error results with `isError=true` and `structuredContent.error`
 - Lesser-backed resources return JSON content with a top-level `error` object
 
+For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
+the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's
+single install-plan tool declares both alternatives directly. This lets strict MCP clients preserve the underlying tool
+error instead of replacing it with a `-32602` output-schema validation error. The error object always includes string
+`code` and `message` fields and may include integer `status`, object `details`, and contract-specific extension fields.
+
 Clients should refresh or re-authorize, then retry the MCP operation.
 
 Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth

@@ -119,7 +119,7 @@ func registerSocialTools(r *mcpruntime.ToolRegistry) error {
 		{Def: unfollowDef(), Handler: handleUnfollow},
 		{Def: profileUpdateDef(), Handler: handleProfileUpdate},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}

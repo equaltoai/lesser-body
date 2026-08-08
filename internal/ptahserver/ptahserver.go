@@ -222,58 +222,58 @@ func RegisterTools(r *mcpruntime.ToolRegistry, opts ...Option) error {
 		}
 	}
 
-	if err := r.RegisterTool(agentBindSoulDef(), cfg.handleAgentBindSoul); err != nil {
+	if err := registerTool(r, agentBindSoulDef(), cfg.handleAgentBindSoul); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGetDef(), cfg.handleAgentGet); err != nil {
+	if err := registerTool(r, agentGetDef(), cfg.handleAgentGet); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentListDef(), cfg.handleAgentList); err != nil {
+	if err := registerTool(r, agentListDef(), cfg.handleAgentList); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentSoulGetDef(), cfg.handleAgentSoulGet); err != nil {
+	if err := registerTool(r, agentSoulGetDef(), cfg.handleAgentSoulGet); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentSoulUpsertDef(), cfg.handleAgentSoulUpsert); err != nil {
+	if err := registerTool(r, agentSoulUpsertDef(), cfg.handleAgentSoulUpsert); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentSoulPublishDef(), cfg.handleAgentSoulPublish); err != nil {
+	if err := registerTool(r, agentSoulPublishDef(), cfg.handleAgentSoulPublish); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentSoulArchiveDef(), cfg.handleAgentSoulArchive); err != nil {
+	if err := registerTool(r, agentSoulArchiveDef(), cfg.handleAgentSoulArchive); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentInstructionsGetDef(), cfg.handleAgentInstructionsGet); err != nil {
+	if err := registerTool(r, agentInstructionsGetDef(), cfg.handleAgentInstructionsGet); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentInstructionsUpsertDef(), cfg.handleAgentInstructionsUpsert); err != nil {
+	if err := registerTool(r, agentInstructionsUpsertDef(), cfg.handleAgentInstructionsUpsert); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
+	if err := registerTool(r, agentInstructionsArchiveDef(), cfg.handleAgentInstructionsArchive); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisSkillGetDef(), cfg.handleAgentGenesisSkillGet); err != nil {
+	if err := registerTool(r, agentGenesisSkillGetDef(), cfg.handleAgentGenesisSkillGet); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
+	if err := registerTool(r, agentGenesisBeginDef(), cfg.handleAgentGenesisBegin); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisListDef(), cfg.handleAgentGenesisList); err != nil {
+	if err := registerTool(r, agentGenesisListDef(), cfg.handleAgentGenesisList); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisReadDef(), cfg.handleAgentGenesisRead); err != nil {
+	if err := registerTool(r, agentGenesisReadDef(), cfg.handleAgentGenesisRead); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisAdvanceDef(), cfg.handleAgentGenesisAdvance); err != nil {
+	if err := registerTool(r, agentGenesisAdvanceDef(), cfg.handleAgentGenesisAdvance); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisRecoverDef(), cfg.handleAgentGenesisRecover); err != nil {
+	if err := registerTool(r, agentGenesisRecoverDef(), cfg.handleAgentGenesisRecover); err != nil {
 		return err
 	}
-	if err := r.RegisterTool(agentGenesisFinalizePreflightDef(), cfg.handleAgentGenesisFinalizePreflight); err != nil {
+	if err := registerTool(r, agentGenesisFinalizePreflightDef(), cfg.handleAgentGenesisFinalizePreflight); err != nil {
 		return err
 	}
-	return r.RegisterTool(agentGenesisFinalizeDef(), cfg.handleAgentGenesisFinalize)
+	return registerTool(r, agentGenesisFinalizeDef(), cfg.handleAgentGenesisFinalize)
 }
 
 func defaultConfig() config {

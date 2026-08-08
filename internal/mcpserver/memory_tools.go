@@ -24,7 +24,7 @@ func registerMemoryTools(r *mcpruntime.ToolRegistry) error {
 		{Def: memoryAppendDef(), Handler: handleMemoryAppend},
 		{Def: memoryQueryDef(), Handler: handleMemoryQuery},
 	} {
-		if err := r.RegisterTool(tool.Def, tool.Handler); err != nil {
+		if err := registerTool(r, tool.Def, tool.Handler); err != nil {
 			return err
 		}
 	}

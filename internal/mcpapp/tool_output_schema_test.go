@@ -27,6 +27,7 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	env := testkit.New()
 	toolsByName := toolsListByNameForOutputSchemaTest(t, env, app)
 
+	assertOutputSchemaAdvertisesToolError(t, "tools/list memory_query", toolsByName["memory_query"].OutputSchema)
 	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["memory_query"]), "events", "array")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["skills_catalog"], "data"), "authority", "object")
 	assertSchemaPropertyType(t, nestedOutputSchemaObject(t, toolsByName["skill_bundle_get"], "data"), "verification", "object")
@@ -69,6 +70,7 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	}
 	for _, tool := range out.Tools {
 		if tool.Name == "memory_query" {
+			assertOutputSchemaAdvertisesToolError(t, "well-known memory_query", tool.OutputSchema)
 			assertSchemaPropertyType(t, parseOutputSchemaRaw(t, "well-known memory_query", tool.OutputSchema), "events", "array")
 			return
 		}
@@ -190,7 +192,40 @@ func parseOutputSchemaRaw(t testing.TB, name string, raw json.RawMessage) map[st
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		t.Fatalf("unmarshal %s outputSchema: %v", name, err)
 	}
+	if alternatives, ok := schema["anyOf"].([]any); ok {
+		if len(alternatives) == 0 {
+			t.Fatalf("%s outputSchema has an empty anyOf: %+v", name, schema)
+		}
+		success, ok := alternatives[0].(map[string]any)
+		if !ok {
+			t.Fatalf("%s outputSchema success alternative is %T, want object", name, alternatives[0])
+		}
+		return success
+	}
 	return schema
+}
+
+func assertOutputSchemaAdvertisesToolError(t testing.TB, name string, raw json.RawMessage) {
+	t.Helper()
+	if len(raw) == 0 {
+		t.Fatalf("%s missing outputSchema", name)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("unmarshal %s outputSchema: %v", name, err)
+	}
+	alternatives, ok := schema["anyOf"].([]any)
+	if !ok || len(alternatives) < 2 {
+		t.Fatalf("%s outputSchema missing success/error alternatives: %+v", name, schema)
+	}
+	for _, alternative := range alternatives {
+		candidate, _ := alternative.(map[string]any)
+		properties, _ := candidate["properties"].(map[string]any)
+		if _, ok := properties["error"]; ok {
+			return
+		}
+	}
+	t.Fatalf("%s outputSchema missing structured error alternative: %+v", name, schema)
 }
 
 func nestedOutputSchemaObject(t testing.TB, def mcpruntime.ToolDef, prop string) map[string]any {

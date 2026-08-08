@@ -21,15 +21,12 @@ import (
 
 // Strict MCP clients validate tools/call structuredContent against the tool's
 // declared OutputSchema. Keep the test validator deliberately scoped to the
-// JSON Schema vocabulary used by Ka's output schemas: type, required,
+// JSON Schema vocabulary used by Ka's output schemas: anyOf, type, required,
 // properties, additionalProperties, items, enum, and descriptive annotations.
 func assertKaResultMatchesDeclaredOutputSchema(t *testing.T, label string, schema json.RawMessage, result *mcpruntime.ToolResult) {
 	t.Helper()
 	if result == nil {
 		t.Fatalf("%s: handler returned a nil result", label)
-	}
-	if result.IsError {
-		t.Fatalf("%s: representative success fixture returned a tool error: %#v", label, result.StructuredContent)
 	}
 	if len(schema) == 0 {
 		t.Fatalf("%s: registered tool has no declared output schema", label)
@@ -74,6 +71,15 @@ func validateKaOutputSchemaVocabulary(path string, schema any, unsupported *[]st
 
 	for keyword, value := range node {
 		switch keyword {
+		case "anyOf":
+			branches, ok := value.([]any)
+			if !ok {
+				*unsupported = append(*unsupported, fmt.Sprintf("%s.anyOf: %T is not supported", path, value))
+				continue
+			}
+			for i, child := range branches {
+				validateKaOutputSchemaVocabulary(fmt.Sprintf("%s.anyOf[%d]", path, i), child, unsupported)
+			}
 		case "type":
 			if _, ok := value.(string); !ok {
 				*unsupported = append(*unsupported, fmt.Sprintf("%s.type: %T is not supported", path, value))
@@ -118,6 +124,24 @@ func validateKaOutputSchemaVocabulary(path string, schema any, unsupported *[]st
 func validateKaOutputSchema(path string, schema any, value any, violations *[]string) {
 	node, ok := schema.(map[string]any)
 	if !ok {
+		return
+	}
+
+	if branches, ok := node["anyOf"].([]any); ok {
+		matches := 0
+		branchFailures := make([]string, 0, len(branches))
+		for i, branch := range branches {
+			var branchViolations []string
+			validateKaOutputSchema(path, branch, value, &branchViolations)
+			if len(branchViolations) == 0 {
+				matches++
+				continue
+			}
+			branchFailures = append(branchFailures, fmt.Sprintf("branch %d: %s", i, strings.Join(branchViolations, "; ")))
+		}
+		if matches == 0 {
+			*violations = append(*violations, fmt.Sprintf("%s: matched no anyOf branches (%s)", path, strings.Join(branchFailures, " | ")))
+		}
 		return
 	}
 
@@ -280,7 +304,14 @@ func TestEveryRegisteredKaToolResultMatchesDeclaredOutputSchema(t *testing.T) {
 				if fixture.build == nil {
 					t.Fatal("fixture has no result builder")
 				}
-				assertKaResultMatchesDeclaredOutputSchema(t, def.Name+"/"+fixture.name, def.OutputSchema, fixture.build(t))
+				result := fixture.build(t)
+				if result == nil {
+					t.Fatal("fixture returned a nil result")
+				}
+				if result.IsError {
+					t.Fatalf("representative success fixture returned a tool error: %#v", result.StructuredContent)
+				}
+				assertKaResultMatchesDeclaredOutputSchema(t, def.Name+"/"+fixture.name, def.OutputSchema, result)
 			})
 		}
 	}
@@ -294,6 +325,32 @@ func TestEveryRegisteredKaToolResultMatchesDeclaredOutputSchema(t *testing.T) {
 		if _, ok := registered[name]; !ok {
 			t.Errorf("%s: withoutOutputSchema entry is stale; tool is not registered", name)
 		}
+	}
+}
+
+// Error results are part of a schema-bearing tool's structured-content
+// contract too. Validate the shared Body error envelope against every declared
+// output schema so a strict MCP client cannot replace the underlying tool error
+// with its own -32602 schema-validation failure.
+func TestEverySchemaBearingKaToolErrorMatchesDeclaredOutputSchema(t *testing.T) {
+	result, err := toolErrorResult("fixture_error", "representative tool failure", http.StatusBadRequest, map[string]any{
+		"source": "conformance_fixture",
+	})
+	if err != nil {
+		t.Fatalf("toolErrorResult: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("toolErrorResult returned %#v, want an MCP error result", result)
+	}
+
+	for _, def := range registeredToolDefsForTest(t) {
+		if len(def.OutputSchema) == 0 {
+			continue
+		}
+		def := def
+		t.Run(def.Name, func(t *testing.T) {
+			assertKaResultMatchesDeclaredOutputSchema(t, def.Name+"/error", def.OutputSchema, result)
+		})
 	}
 }
 
