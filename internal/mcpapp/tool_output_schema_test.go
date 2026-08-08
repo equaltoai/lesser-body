@@ -26,6 +26,7 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	}
 	env := testkit.New()
 	toolsByName := toolsListByNameForOutputSchemaTest(t, env, app)
+	assertEveryAdvertisedOutputSchemaHasObjectRoot(t, "tools/list", toolsByName)
 
 	assertOutputSchemaAdvertisesToolError(t, "tools/list memory_query", toolsByName["memory_query"].OutputSchema)
 	assertSchemaPropertyType(t, outputSchemaObject(t, toolsByName["memory_query"]), "events", "array")
@@ -68,6 +69,11 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("unmarshal well-known mcp.json: %v", err)
 	}
+	discoveryTools := make(map[string]mcpruntime.ToolDef, len(out.Tools))
+	for _, tool := range out.Tools {
+		discoveryTools[tool.Name] = mcpruntime.ToolDef{Name: tool.Name, OutputSchema: tool.OutputSchema}
+	}
+	assertEveryAdvertisedOutputSchemaHasObjectRoot(t, "well-known discovery", discoveryTools)
 	for _, tool := range out.Tools {
 		if tool.Name == "memory_query" {
 			assertOutputSchemaAdvertisesToolError(t, "well-known memory_query", tool.OutputSchema)
@@ -76,6 +82,23 @@ func TestReadToolOutputSchemasAdvertisedInToolsListAndDiscovery(t *testing.T) {
 		}
 	}
 	t.Fatalf("memory_query missing from well-known discovery tools: %+v", out.Tools)
+}
+
+func assertEveryAdvertisedOutputSchemaHasObjectRoot(t testing.TB, surface string, tools map[string]mcpruntime.ToolDef) {
+	t.Helper()
+	for name, tool := range tools {
+		if len(tool.OutputSchema) == 0 {
+			continue
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(tool.OutputSchema, &schema); err != nil {
+			t.Errorf("%s tool %s outputSchema is invalid JSON: %v", surface, name, err)
+			continue
+		}
+		if got := schema["type"]; got != "object" {
+			t.Errorf("%s tool %s outputSchema.type = %#v, want object for MCP 2025-11-25 compatibility", surface, name, got)
+		}
+	}
 }
 
 func TestCommunicationAndWriteToolOutputSchemasAdvertised(t *testing.T) {

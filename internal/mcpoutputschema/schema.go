@@ -43,6 +43,7 @@ func WithToolError(successSchema json.RawMessage) (json.RawMessage, error) {
 	}
 
 	combined, err := json.Marshal(map[string]any{
+		"type":  "object",
 		"anyOf": []any{success, failure},
 	})
 	if err != nil {
