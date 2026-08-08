@@ -738,8 +738,8 @@ func articleDraftPolicyMetadata() map[string]any {
 func articleDraftListPolicyMetadata() map[string]any {
 	out := articleDraftPolicyMetadata()
 	out["graphqlDepthSafe"] = true
-	out["listSelection"] = "edges.cursor"
-	out["expansion"] = "call article_draft_get per draft id for full metadata/content"
+	out["listSelection"] = "edges.cursor plus batched depth-safe draft(id:) triage metadata"
+	out["expansion"] = "title and timestamps are included for triage; call article_draft_get only for full metadata/content"
 	return out
 }
 

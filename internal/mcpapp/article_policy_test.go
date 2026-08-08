@@ -143,6 +143,8 @@ func TestArticleToolScopesAtMCPBoundary(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"draft":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft","content":"draft body","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyArticleDrafts":
 			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+		case "BodyArticleDraftListDetails":
+			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/agent1","username":"agent1"},"contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyArticleDraftPreview":
 			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<p>draft body</p>","sourceFormat":"MARKDOWN","sourceBytes":10,"renderedBytes":17,"errors":[]}}}`))
 		case "BodyPublishArticleDraft":

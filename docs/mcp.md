@@ -667,7 +667,7 @@ Scope key:
 | `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
 | `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
 | `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and compact refs expand with `article_draft_get(view=standard)`. |
-| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; defaults compact and filters to `DRAFT` status. |
+| `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; compact results include title and save/create/update timestamps for triage, while full content still requires `article_draft_get`. |
 | `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
 | `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated review queue. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
@@ -1471,8 +1471,10 @@ index/ref pages and expand only the items they need:
 - `email_read({"folder":"inbox","limit":10,"view":"compact"})` returns mailbox refs with canonical `messageRef`. Use
   `email_get({"messageId":"<messageRef>"})` for mailbox metadata and
   `email_get_content({"messageId":"<messageRef>"})` for the full body when `content.available=true`.
-- `article_draft_list({"limit":10})` defaults to compact `DRAFT` refs with `expand` metadata; call
-  `article_draft_get({"id":"<draft-id>","view":"standard"})` when an agent explicitly needs draft content.
+- `article_draft_list({"limit":10})` defaults to compact `DRAFT` refs with title and save/create/update timestamps for
+  editorial triage. Body keeps Lesser's depth-3 connection query at `edges.cursor`, then hydrates those cursor IDs in
+  bounded depth-safe `draft(id:)` batches; call `article_draft_get({"id":"<draft-id>","view":"standard"})` only when
+  an agent explicitly needs draft content or full metadata.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
   draft id as a final published Article id. Authoring, preview, and publish remain owner-scoped; reviewer access exists

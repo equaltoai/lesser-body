@@ -163,6 +163,11 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 				t.Fatalf("compact list should not request GraphQL content field: %s", query)
 			}
 			_, _ = w.Write([]byte(`{"data":{"myDrafts":{"edges":[{"node":{"id":"draft-1","authorId":"agent1","contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"},"cursor":"draft-1"}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"draft-1","endCursor":"draft-1"},"totalCount":1}}}`))
+		case "BodyArticleDraftListDetails":
+			if queryContainsDraftContentSelection(query) {
+				t.Fatalf("compact list hydration should not request GraphQL content field: %s", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/agent1","username":"agent1"},"contentType":"ARTICLE","title":"Hello","slug":"hello","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-19T21:00:00Z","createdAt":"2026-05-19T21:00:00Z","updatedAt":"2026-05-19T21:00:00Z"}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op["operationName"])
 		}
@@ -233,6 +238,9 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	if _, hasContent := first["content"]; hasContent {
 		t.Fatalf("compact list should omit content: %+v", first)
 	}
+	if first["title"] != "Hello" || first["lastSavedAt"] != "2026-05-19T21:00:00Z" || first["createdAt"] == nil || first["updatedAt"] == nil {
+		t.Fatalf("compact list should include triage metadata: %+v", first)
+	}
 	var draftPreflightIdx, updateIdx, draftGetContentCount, draftPreflightCount int = -1, -1, 0, 0
 	for i, op := range operations {
 		name, _ := op["operationName"].(string)
@@ -260,8 +268,8 @@ func TestArticleDraftToolsUseLesserGraphQLAndCompactDefaults(t *testing.T) {
 	if draftPreflightIdx < 0 || updateIdx < 0 || draftPreflightIdx >= updateIdx {
 		t.Fatalf("draft preflight must occur before update mutation, got preflightIdx=%d updateIdx=%d", draftPreflightIdx, updateIdx)
 	}
-	if len(operations) != 5 {
-		t.Fatalf("expected 5 GraphQL operations, got %d", len(operations))
+	if len(operations) != 6 {
+		t.Fatalf("expected 6 GraphQL operations, got %d", len(operations))
 	}
 }
 
