@@ -2286,7 +2286,7 @@ func timelineReadDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":200},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			},
 			"required":["timeline"]
 		}`),
@@ -2304,7 +2304,7 @@ func postSearchDef() mcpruntime.ToolDef {
 				"limit":{"type":"integer","minimum":1,"maximum":200},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard/full preserve the current upstream-shaped response; compact returns bounded StatusRef entries with post_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			},
 			"required":["query"]
 		}`),
@@ -2372,7 +2372,7 @@ func notificationsReadDef() mcpruntime.ToolDef {
 				"include_diagnostics":{"type":"boolean","description":"Include timing and response-size diagnostics for Ops probes. Defaults to false."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded notification refs with notification_get expansion metadata and conditional post_get expansion metadata only for directly resolvable target posts."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			}
 		}`),
 	}
@@ -2406,7 +2406,7 @@ func conversationsReadDef() mcpruntime.ToolDef {
 				"include_raw":{"type":"boolean","description":"Include verbose upstream conversation payloads under _raw. Defaults to false."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Omitted/standard preserve the current normalized response; full includes upstream _raw payloads; compact returns bounded conversation refs with conversation_get expansion metadata."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact last-post preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional compact MCP response budget. Compact responses that exceed the budget return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Over-budget responses return response_too_large."}
 			}
 		}`),
 	}
@@ -2426,7 +2426,7 @@ func conversationGetDef() mcpruntime.ToolDef {
 				"cursor":{"type":"string","description":"Optional pagination cursor; forwarded to Lesser as max_id."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Compact responses default to 12000 bytes; every over-budget response returns response_too_large."}
 			},
 			"required":["conversationId"]
 		}`),
@@ -2448,7 +2448,7 @@ func directMessagesReadDef() mcpruntime.ToolDef {
 				"unreadOnly":{"type":"boolean","description":"When true, return previews only if the matched one-to-one conversation is currently unread; read conversations return zero message previews."},
 				"view":{"type":"string","enum":["compact","standard","full"],"description":"Optional projection. Defaults to compact previews. standard includes normalized recent message content; full also includes the upstream Lesser payload under _raw."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact message preview character budget. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to 12000 bytes and return response_too_large instead of silently dropping fields."}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional final MCP response budget for every successful view. Compact responses default to 12000 bytes; every over-budget response returns response_too_large."}
 			},
 			"required":["counterpart"]
 		}`),

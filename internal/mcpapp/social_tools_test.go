@@ -978,6 +978,24 @@ func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 		defaultResult.Result.Content[0].Text != standard.Result.Content[0].Text {
 		t.Fatalf("timeline_read omitted view must remain equivalent to view=standard")
 	}
+
+	standardTooLarge := callSocialTool(t, env, app, authHeader, sessionID, 5, "timeline_read", map[string]any{
+		"timeline":         "home",
+		"limit":            5,
+		"view":             "standard",
+		"max_output_bytes": 200,
+	})
+	if !standardTooLarge.Result.IsError {
+		t.Fatalf("standard timeline must enforce max_output_bytes: %+v", standardTooLarge.Result)
+	}
+	errorPayload, _ := standardTooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("standard timeline budget error = %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["view"] != "standard" || details["maxOutputBytes"] != float64(200) {
+		t.Fatalf("standard timeline budget details = %+v", details)
+	}
 }
 
 func TestM5_PostSearchCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {

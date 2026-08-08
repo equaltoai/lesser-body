@@ -24,10 +24,10 @@ func registerTool(r *mcpruntime.ToolRegistry, def mcpruntime.ToolDef, handler mc
 	}
 	return r.RegisterTool(registeredDef, func(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 		result, callErr := handler(ctx, args)
-		if callErr == nil {
-			return result, nil
+		if callErr != nil {
+			return normalizedToolResultFromError(def.Name, callErr)
 		}
-		return normalizedToolResultFromError(def.Name, callErr)
+		return enforceCallerMaxOutputBytes(def.Name, args, result)
 	})
 }
 
@@ -42,10 +42,47 @@ func registerStreamingTool(r *mcpruntime.ToolRegistry, def mcpruntime.ToolDef, h
 	}
 	return r.RegisterStreamingTool(registeredDef, func(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
 		result, callErr := handler(ctx, args, emit)
-		if callErr == nil {
-			return result, nil
+		if callErr != nil {
+			return normalizedToolResultFromError(def.Name, callErr)
 		}
-		return normalizedToolResultFromError(def.Name, callErr)
+		return enforceCallerMaxOutputBytes(def.Name, args, result)
+	})
+}
+
+func enforceCallerMaxOutputBytes(toolName string, args json.RawMessage, result *mcpruntime.ToolResult) (*mcpruntime.ToolResult, error) {
+	if result == nil || result.IsError {
+		return result, nil
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(args, &raw); err != nil || raw == nil {
+		return result, nil
+	}
+	maxOutputBytes, err := nonNegativeIntFromAny(raw["max_output_bytes"], "max_output_bytes")
+	if err != nil || maxOutputBytes <= 0 {
+		return result, nil
+	}
+
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		return normalizedToolResultFromError(toolName, err)
+	}
+	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
+		return result, nil
+	}
+
+	view := "default"
+	if candidate, ok := raw["view"].(string); ok && candidate != "" {
+		view = candidate
+	}
+	return toolErrorResult("response_too_large", toolName+" response exceeds max_output_bytes", 413, map[string]any{
+		"tool":                   toolName,
+		"view":                   view,
+		"measuredBytes":          measurement.JSONRPCEnvelopeBytes,
+		"maxOutputBytes":         maxOutputBytes,
+		"contentTextBytes":       measurement.ContentTextBytes,
+		"structuredContentBytes": measurement.StructuredContentBytes,
+		"guidance":               "use a more compact view, reduce limit or preview_chars, or increase max_output_bytes",
 	})
 }
 

@@ -140,7 +140,7 @@ func sharedReadParamSchemaProperties(opts sharedReadParamSchemaOptions) map[stri
 		props["max_output_bytes"] = map[string]any{
 			"type":        "integer",
 			"minimum":     0,
-			"description": "Optional caller budget for the MCP tool result. Tools that honor it report omitted/truncated metadata instead of silently dropping fields.",
+			"description": "Optional caller budget for the final MCP tool result envelope on every successful view. Over-budget results return response_too_large instead of silently ignoring the budget.",
 		}
 	}
 	if opts.IncludeDiagnostics {

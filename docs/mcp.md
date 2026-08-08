@@ -1393,8 +1393,10 @@ parameter during the migration. The shared names are:
 - `fields` — optional list of top-level or dotted fields to return when a tool supports field projection.
 - `include` — optional list of related blocks to expand when the selected view omits them.
 - `preview_chars` — optional character budget for previews, with `0` meaning the tool default.
-- `max_output_bytes` — optional caller budget for the MCP tool result. Tools that honor it report omitted/truncated
-  metadata rather than silently dropping fields.
+- `max_output_bytes` — optional caller budget for the final MCP JSON-RPC tool-result envelope. When a tool advertises
+  the parameter, every successful view is measured at the static registration boundary; an over-budget result becomes
+  a structured `response_too_large`/`413` tool error with measured byte counts and remediation guidance. Compact views
+  may additionally apply a bounded default when the caller omits the parameter.
 - `include_diagnostics` — optional timing/size diagnostics for Ops probes. It defaults to `false` for user-facing
   reads; diagnostics are never emitted by default for large read tools.
 
@@ -1407,7 +1409,8 @@ previews; other structured-first tools return the bounded JSON projection there.
 legacy text `data.location` locator remains, while the sibling `access` field says
 `payload or structuredContent.data`. Schema-capable clients retain the structured shape, and text-only clients no
 longer need to follow the locator. A tool's existing `preview_chars` projection is applied before the result surfaces
-are rendered, and `max_output_bytes` continues to measure the final MCP JSON-RPC envelope. Requested diagnostics appear
+are rendered, and positive caller-supplied `max_output_bytes` values are enforced on standard/full as well as compact
+results. Requested diagnostics appear
 under text JSON `diagnosticPayload` and `structuredContent.diagnostics`, with dual-surface guidance in
 `diagnosticsAccess`.
 
