@@ -372,6 +372,12 @@ the shared `structuredContent.error` shape. Ka and Ptah apply the shared error a
 single install-plan tool declares both alternatives directly. This lets strict MCP clients preserve the underlying tool
 error instead of replacing it with a `-32602` output-schema validation error. The error object always includes string
 `code` and `message` fields and may include integer `status`, object `details`, and contract-specific extension fields.
+Ka's static registration boundary also normalizes every handler failure into that tool-error envelope: caller argument
+failures use `invalid_params`/`400`, Lesser REST failures preserve a declared upstream `error_code` or `code` and HTTP
+status without reflecting a raw response body, and unclassified failures use a sanitized `internal_error`/`500`.
+Article GraphQL failures promote Lesser's canonical `extensions.code` and `extensions.http_status`; only responses that
+omit valid extensions fall back to `lesser_cms_graphql_error`/`502`. Raw handler errors never escape as JSON-RPC
+`-32000` failures.
 
 Clients should refresh or re-authorize, then retry the MCP operation.
 

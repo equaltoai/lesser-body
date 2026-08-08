@@ -1987,10 +1987,11 @@ func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpr
 	if _, err := client.DoJSON(ctx, "POST", path, nil, token, map[string]any{}); err != nil {
 		var apiErr *lesserapi.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 404 {
+			details := map[string]any{"source": "lesser_api", "tool": "notification_dismiss"}
 			if in.ID != "" {
-				return nil, fmt.Errorf("notification %q not found", in.ID)
+				return toolErrorResult("not_found", "Notification not found", http.StatusNotFound, details)
 			}
-			return nil, fmt.Errorf("notifications not found")
+			return toolErrorResult("not_found", "Notifications not found", http.StatusNotFound, details)
 		}
 		return authToolResultFromError(err)
 	}

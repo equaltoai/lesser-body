@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/equaltoai/lesser-body/internal/mcpoutputschema"
@@ -20,7 +22,13 @@ func registerTool(r *mcpruntime.ToolRegistry, def mcpruntime.ToolDef, handler mc
 	if err != nil {
 		return err
 	}
-	return r.RegisterTool(registeredDef, handler)
+	return r.RegisterTool(registeredDef, func(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
+		result, callErr := handler(ctx, args)
+		if callErr == nil {
+			return result, nil
+		}
+		return normalizedToolResultFromError(def.Name, callErr)
+	})
 }
 
 func registerStreamingTool(r *mcpruntime.ToolRegistry, def mcpruntime.ToolDef, handler mcpruntime.StreamingToolHandler) error {
@@ -32,7 +40,13 @@ func registerStreamingTool(r *mcpruntime.ToolRegistry, def mcpruntime.ToolDef, h
 	if err != nil {
 		return err
 	}
-	return r.RegisterStreamingTool(registeredDef, handler)
+	return r.RegisterStreamingTool(registeredDef, func(ctx context.Context, args json.RawMessage, emit func(mcpruntime.SSEEvent)) (*mcpruntime.ToolResult, error) {
+		result, callErr := handler(ctx, args, emit)
+		if callErr == nil {
+			return result, nil
+		}
+		return normalizedToolResultFromError(def.Name, callErr)
+	})
 }
 
 func toolDefWithErrorOutputSchema(def mcpruntime.ToolDef) (mcpruntime.ToolDef, error) {

@@ -328,7 +328,8 @@ func TestM6_MemoryAppend_InvalidEventID(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &rpc); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if rpc.Error == nil || rpc.Error.Code != mcpruntime.CodeServerError {
-		t.Fatalf("expected server error, got: %+v", rpc.Error)
+	_, payload := requireToolErrorResult(t, &rpc)
+	if payload["code"] != "invalid_params" {
+		t.Fatalf("expected invalid_params tool error, got: %+v", payload)
 	}
 }
