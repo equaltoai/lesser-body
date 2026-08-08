@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-08T14:04:14.391303Z",
+  "generated_at": "2026-08-08T15:10:52.582733Z",
   "git": {
-    "head": "a838b40c2e05517d832adf08740570bfe7731df6",
-    "head_tree": "27f23965cc0a31c96c84ba0faffb6da81c85bd6b",
+    "head": "b1d02e8477044025364afdd0432a70c214cad0c6",
+    "head_tree": "23924c11029b956921ecbcdca0985e8d55da6e6f",
     "merge_base_origin_staging": "10af9c5c7e85a936bc6d7b6dff638c5f8a16f242",
     "ref": "fix/issue-527-output-schema-errors",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
