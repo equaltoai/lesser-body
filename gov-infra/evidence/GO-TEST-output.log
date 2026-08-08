@@ -14,9 +14,10 @@ ok  	github.com/equaltoai/lesser-body/internal/instanceapp	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/instancex402	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/lesserapi	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/mcpapp	(cached)
+?   	github.com/equaltoai/lesser-body/internal/mcpoutputschema	[no test files]
 ok  	github.com/equaltoai/lesser-body/internal/mcpserver	(cached)
 ?   	github.com/equaltoai/lesser-body/internal/memory	[no test files]
-ok  	github.com/equaltoai/lesser-body/internal/ptahserver	0.040s
+ok  	github.com/equaltoai/lesser-body/internal/ptahserver	(cached)
 ?   	github.com/equaltoai/lesser-body/internal/runtimepolicy	[no test files]
 ok  	github.com/equaltoai/lesser-body/internal/soulapi	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/soulbinding	(cached)

@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-07T04:19:16.876774Z",
+  "generated_at": "2026-08-08T14:04:14.391303Z",
   "git": {
-    "head": "b30bddbdc8bcce13a185f3a6c8c68da5140cdafe",
-    "head_tree": "2c49648f8c5b98f8eb860f99385177fd388e4b2c",
-    "merge_base_origin_staging": "aac13150cb370bab8796b98d5b98b0cea1dcd604",
-    "ref": "chore/update-theory-pins-20260807",
+    "head": "a838b40c2e05517d832adf08740570bfe7731df6",
+    "head_tree": "27f23965cc0a31c96c84ba0faffb6da81c85bd6b",
+    "merge_base_origin_staging": "10af9c5c7e85a936bc6d7b6dff638c5f8a16f242",
+    "ref": "fix/issue-527-output-schema-errors",
     "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
