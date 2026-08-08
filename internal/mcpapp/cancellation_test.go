@@ -98,8 +98,9 @@ func TestCancellationNotificationCancelsLesserReadTool(t *testing.T) {
 		if err := json.Unmarshal(resp.Body, &rpc); err != nil {
 			t.Fatalf("unmarshal timeline_read response: %v body=%s", err, string(resp.Body))
 		}
-		if rpc.Error == nil {
-			t.Fatalf("expected canceled timeline_read to return JSON-RPC error, got %+v", rpc)
+		_, payload := requireToolErrorResult(t, &rpc)
+		if payload["code"] != "request_cancelled" {
+			t.Fatalf("canceled timeline_read error = %+v, want request_cancelled", payload)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeline_read did not return promptly after cancellation")

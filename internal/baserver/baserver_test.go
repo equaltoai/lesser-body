@@ -67,6 +67,38 @@ func TestRegisterToolsRegistersAgentLocalInstallPlan(t *testing.T) {
 	}
 }
 
+// Ba already declares its structured error alternative directly rather than
+// using the Ka/Ptah success-schema wrapper. Keep its sole tool pinned too so
+// every Body MCP plane preserves errors for strict clients.
+func TestAgentLocalInstallPlanErrorMatchesDeclaredOutputSchema(t *testing.T) {
+	def := agentLocalInstallPlanDef()
+	result, err := toolErrorResult("fixture_error", "representative tool failure", http.StatusBadRequest, map[string]any{
+		"source": "conformance_fixture",
+	})
+	if err != nil {
+		t.Fatalf("toolErrorResult: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("toolErrorResult returned %#v, want an MCP error result", result)
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(def.OutputSchema, &schema); err != nil {
+		t.Fatalf("output schema invalid json: %v", err)
+	}
+	if schema["type"] != "object" {
+		t.Fatalf("output schema type = %#v, want object", schema["type"])
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	errorSchema, _ := properties["error"].(map[string]any)
+	if errorSchema["type"] != "object" {
+		t.Fatalf("output schema error property = %#v, want object", errorSchema)
+	}
+	if _, ok := result.StructuredContent["error"].(map[string]any); !ok {
+		t.Fatalf("structuredContent.error = %#v, want object", result.StructuredContent["error"])
+	}
+}
+
 func TestAgentLocalInstallPlanMintsGrantEnvelopeWithoutTextTokenLeak(t *testing.T) {
 	content := newFakeContentStore("owner", "agent-one")
 	issuer := &fakeGrantIssuer{expiresAt: time.Date(2026, 7, 15, 21, 0, 0, 0, time.UTC)}

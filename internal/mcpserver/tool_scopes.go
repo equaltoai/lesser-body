@@ -37,6 +37,7 @@ var toolScopes = map[string][]string{
 	"profile_read":          {ScopeRead},
 	"timeline_read":         {ScopeRead},
 	"post_search":           {ScopeRead},
+	"account_resolve":       {ScopeRead},
 	"post_get":              {ScopeRead},
 	"followers_list":        {ScopeRead},
 	"following_list":        {ScopeRead},

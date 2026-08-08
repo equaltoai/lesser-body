@@ -663,7 +663,7 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 				}
 			}
 
-			// Failure path: tools return a JSON-RPC server error for handler failures (no upstream
+			// Failure path: tools return a structured MCP tool error for handler failures (no upstream
 			// calls for validation failures), and tools without input requirements use an upstream
 			// failure instead.
 			{
@@ -691,8 +691,13 @@ func TestM5_ToolsProxyToLesserAPI(t *testing.T) {
 				if err := json.Unmarshal(callResp.Body, &rpcCall); err != nil {
 					t.Fatalf("unmarshal tools/call failure: %v", err)
 				}
-				if rpcCall.Error == nil || rpcCall.Error.Code != tc.failureCode {
-					t.Fatalf("expected JSON-RPC error code %d, got: %+v", tc.failureCode, rpcCall.Error)
+				_, payload := requireToolErrorResult(t, &rpcCall)
+				wantCode := "invalid_params"
+				if tc.failureCalls {
+					wantCode = "upstream_error"
+				}
+				if payload["code"] != wantCode {
+					t.Fatalf("expected tool error code %q, got: %+v", wantCode, payload)
 				}
 				if tc.failureCalls {
 					if len(got) == 0 {
@@ -972,6 +977,24 @@ func TestM5_TimelineReadCompactUsesStatusRefsAndPayloadBudget(t *testing.T) {
 	if !reflect.DeepEqual(defaultResult.Result.StructuredContent, standard.Result.StructuredContent) ||
 		defaultResult.Result.Content[0].Text != standard.Result.Content[0].Text {
 		t.Fatalf("timeline_read omitted view must remain equivalent to view=standard")
+	}
+
+	standardTooLarge := callSocialTool(t, env, app, authHeader, sessionID, 5, "timeline_read", map[string]any{
+		"timeline":         "home",
+		"limit":            5,
+		"view":             "standard",
+		"max_output_bytes": 200,
+	})
+	if !standardTooLarge.Result.IsError {
+		t.Fatalf("standard timeline must enforce max_output_bytes: %+v", standardTooLarge.Result)
+	}
+	errorPayload, _ := standardTooLarge.Result.StructuredContent["error"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != float64(413) {
+		t.Fatalf("standard timeline budget error = %+v", errorPayload)
+	}
+	details, _ := errorPayload["details"].(map[string]any)
+	if details["view"] != "standard" || details["maxOutputBytes"] != float64(200) {
+		t.Fatalf("standard timeline budget details = %+v", details)
 	}
 }
 
@@ -2899,8 +2922,9 @@ func TestM5_ProfileReadRejectsNonObjectArguments(t *testing.T) {
 	if err := json.Unmarshal(callResp.Body, &rpc); err != nil {
 		t.Fatalf("unmarshal tools/call: %v", err)
 	}
-	if rpc.Error == nil || rpc.Error.Code != mcpruntime.CodeServerError {
-		t.Fatalf("expected server error, got: %+v", rpc.Error)
+	_, payload := requireToolErrorResult(t, &rpc)
+	if payload["code"] != "invalid_params" {
+		t.Fatalf("expected invalid_params tool error, got: %+v", payload)
 	}
 	if requests != 0 {
 		t.Fatalf("expected no upstream requests, got %d", requests)
@@ -3110,11 +3134,10 @@ func TestM5_NotificationsReadBoundsLimitAndRejectsUnknownTypes(t *testing.T) {
 	}
 
 	rpc := call(3, map[string]any{"limit": 5, "types": []string{"mention", "not-a-real-type"}})
-	if rpc.Error == nil {
-		t.Fatalf("expected unknown notification type to fail before upstream fanout")
-	}
-	if !strings.Contains(rpc.Error.Message, "supported values") || !strings.Contains(rpc.Error.Message, "communication:inbound") {
-		t.Fatalf("unsupported type error should enumerate supported values, got %+v", rpc.Error)
+	_, payload := requireToolErrorResult(t, rpc)
+	message, _ := payload["message"].(string)
+	if !strings.Contains(message, "supported values") || !strings.Contains(message, "communication:inbound") {
+		t.Fatalf("unsupported type error should enumerate supported values, got %+v", payload)
 	}
 	if len(gotQueries) != 1 {
 		t.Fatalf("invalid type should not fan out upstream, got %v", gotQueries)
@@ -3122,11 +3145,10 @@ func TestM5_NotificationsReadBoundsLimitAndRejectsUnknownTypes(t *testing.T) {
 
 	tooManyTypes := []string{"mention", "mention", "mention", "mention", "mention", "mention", "mention", "mention", "mention"}
 	rpc = call(4, map[string]any{"limit": 5, "types": tooManyTypes})
-	if rpc.Error == nil {
-		t.Fatalf("expected excess notification type entries to fail before upstream fanout")
-	}
-	if !strings.Contains(rpc.Error.Message, "maximum 8") {
-		t.Fatalf("excess type error should include maximum budget, got %+v", rpc.Error)
+	_, payload = requireToolErrorResult(t, rpc)
+	message, _ = payload["message"].(string)
+	if !strings.Contains(message, "maximum 8") {
+		t.Fatalf("excess type error should include maximum budget, got %+v", payload)
 	}
 	if len(gotQueries) != 1 {
 		t.Fatalf("excess type entries should not fan out upstream, got %v", gotQueries)
@@ -3525,11 +3547,9 @@ func TestM5_NotificationDismissSingleKeepsCursorAndHandlesNotFound(t *testing.T)
 	}
 
 	rpc, _ = callTool(6, "notification_dismiss", map[string]any{"id": "missing"})
-	if rpc.Error == nil {
-		t.Fatalf("expected not-found error")
-	}
-	if !strings.Contains(strings.ToLower(rpc.Error.Message), "not found") {
-		t.Fatalf("expected not-found error message, got %+v", rpc.Error)
+	_, errorPayload := requireToolErrorResult(t, rpc)
+	if errorPayload["code"] != "not_found" {
+		t.Fatalf("expected not_found tool error, got %+v", errorPayload)
 	}
 }
 
