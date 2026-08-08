@@ -349,6 +349,13 @@ func TestEverySchemaBearingKaToolErrorMatchesDeclaredOutputSchema(t *testing.T) 
 		}
 		def := def
 		t.Run(def.Name, func(t *testing.T) {
+			var schema map[string]any
+			if err := json.Unmarshal(def.OutputSchema, &schema); err != nil {
+				t.Fatalf("outputSchema is invalid JSON: %v", err)
+			}
+			if got := schema["type"]; got != "object" {
+				t.Fatalf("outputSchema.type = %#v, want object for MCP 2025-11-25 compatibility", got)
+			}
 			assertKaResultMatchesDeclaredOutputSchema(t, def.Name+"/error", def.OutputSchema, result)
 		})
 	}
