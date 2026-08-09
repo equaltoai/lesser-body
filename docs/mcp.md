@@ -175,7 +175,8 @@ resources:
 Ptah/Ba discovery and auth metadata are AppTheory/RFC 9728-backed. Body uses AppTheory's OAuth protected-resource
 metadata model for the published `resource`, `authorization_servers`, `scopes_supported`, and
 `bearer_methods_supported` fields; operators must not replace it with a local OAuth metadata shim or an MCP-client
-specific shortcut.
+specific shortcut. Ptah/Ba retain their exact API-host resource identifiers while `authorization_servers` publishes
+the authorization server metadata's exact `issuer`, even when that issuer uses a different origin.
 
 - Ka public discovery is `GET /.well-known/mcp.json`. It includes an `instance_surfaces` map for `ptah` and `ba` derived
   from the configured `MCP_ENDPOINT`, with each instance endpoint and protected-resource metadata URL. This is a locator

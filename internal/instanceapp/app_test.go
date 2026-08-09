@@ -17,6 +17,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
@@ -29,6 +30,14 @@ import (
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
 	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
 )
+
+func stubInstanceAuthorizationServerMetadata(t testing.TB) {
+	t.Helper()
+	resetProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(context.Context, string) (string, error) {
+		return "https://issuer.example", nil
+	})
+	t.Cleanup(resetProbe)
+}
 
 func TestInstancePlaneMCP_InitializeAndToolsList(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
@@ -921,6 +930,12 @@ func TestInstancePlaneMCP_UnknownPlaneIsNotMounted(t *testing.T) {
 func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
 	t.Setenv("MCP_ALLOWED_ORIGINS", "https://claude.ai")
+	probedURL := ""
+	resetProbe := mcpapp.SetProbeAuthorizationServerMetadataForTests(func(_ context.Context, metadataURL string) (string, error) {
+		probedURL = metadataURL
+		return "https://issuer.example", nil
+	})
+	t.Cleanup(resetProbe)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
@@ -982,7 +997,7 @@ func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
 			if out.Resource != tc.resource {
 				t.Fatalf("resource = %q, want %q", out.Resource, tc.resource)
 			}
-			if want := []string{"https://api.example.com"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
+			if want := []string{"https://issuer.example"}; !reflect.DeepEqual(out.AuthorizationServers, want) {
 				t.Fatalf("authorization_servers = %#v, want %#v", out.AuthorizationServers, want)
 			}
 			if want := []string{"read", "write", "follow", "push"}; !reflect.DeepEqual(out.ScopesSupported, want) {
@@ -995,6 +1010,9 @@ func TestInstancePlaneWellKnownProtectedResourceMetadata(t *testing.T) {
 				t.Fatalf("bearer_methods_supported = %#v, want %#v", out.BearerMethodsSupported, want)
 			}
 		})
+	}
+	if want := "https://api.example.com/.well-known/oauth-authorization-server"; probedURL != want {
+		t.Fatalf("authorization server metadata probe URL = %q, want %q", probedURL, want)
 	}
 }
 
@@ -1029,6 +1047,7 @@ func TestInstancePlaneWellKnownProtectedResource_RejectsMissingConfiguredEndpoin
 
 func TestInstancePlaneWellKnownProtectedResource_RejectsConfiguredEndpointMismatch(t *testing.T) {
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
+	stubInstanceAuthorizationServerMetadata(t)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {

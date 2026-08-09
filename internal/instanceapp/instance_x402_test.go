@@ -28,6 +28,7 @@ func TestInstancePlaneX402_BaInstallPlanRequiresGrantBeforeDownloadGrant(t *test
 	t.Setenv("JWT_SECRET", "test-secret")
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, endpoint)
 	auth.ResetForTests()
+	stubInstanceAuthorizationServerMetadata(t)
 
 	grantStore := newDownloadGrantStore(t)
 	content := newBaPlanContentStore("agent1", "agent-one")
@@ -89,6 +90,7 @@ func TestInstancePlaneX402_BaInstallPlanConsumesInstanceGrantThenMintsDownloadGr
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, endpoint)
 	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key-secret")
 	auth.ResetForTests()
+	stubInstanceAuthorizationServerMetadata(t)
 
 	grantStore := newDownloadGrantStore(t)
 	content := newBaPlanContentStore("agent1", "agent-one")

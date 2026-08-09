@@ -138,6 +138,9 @@ that runtime only for the current read-only `skill_bundle_get` pilot; task state
   - `{surface}` is replaced with `ptah` or `ba` for RFC 9728 protected-resource metadata and Ba install-plan URLs.
   - Used by Ptah/Ba protected-resource metadata to publish exact `resource` URLs and by Ba to derive the stage domain,
     actor MCP endpoint, and one-time install-pack download origin.
+  - At startup, Body probes `/.well-known/oauth-authorization-server` on the API origin derived from this template and
+    publishes the metadata document's exact `issuer` in `authorization_servers`. The OAuth issuer may intentionally use
+    a different origin from the Ptah/Ba resource URLs; clients compare it exactly.
   - The configured value is canonical. Instance discovery may compare request-derived host/protocol values against it,
     but raw `Host` / `X-Forwarded-Host` headers are never a substitute when configuration is missing or mismatched.
 - `MCP_ALLOWED_ORIGINS` (string, optional but recommended for browser clients)
