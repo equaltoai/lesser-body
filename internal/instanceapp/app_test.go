@@ -871,7 +871,9 @@ func TestInstancePlaneMCP_RejectsActorScopedX402GrantForInstanceTools(t *testing
 
 func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
 	auth.ResetForTests()
+	stubInstanceAuthorizationServerMetadata(t)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
@@ -879,28 +881,36 @@ func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 	}
 	env := testkit.New()
 
-	for _, tc := range []struct {
-		name    string
-		headers map[string][]string
-	}{
-		{name: "missing bearer", headers: nil},
-		{name: "x402 headers are not auth", headers: map[string][]string{
-			"lesser-x402-grant-id":   {"grant-123"},
-			"lesser-x402-grant":      {"grant-token"},
-			"lesser-x402-capability": {"ptah.instance"},
-			"payment-signature":      {"payment"},
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := invokeMCP(t, env, app, "/instance/ptah/mcp", tc.headers, &mcpruntime.Request{
-				JSONRPC: "2.0",
-				ID:      1,
-				Method:  "initialize",
+	for _, surface := range []string{instanceapp.SurfacePtah, instanceapp.SurfaceBa} {
+		path := "/instance/" + surface + "/mcp"
+		for _, tc := range []struct {
+			name    string
+			headers map[string][]string
+		}{
+			{name: "missing bearer", headers: nil},
+			{name: "x402 headers are not auth", headers: map[string][]string{
+				"lesser-x402-grant-id":   {"grant-123"},
+				"lesser-x402-grant":      {"grant-token"},
+				"lesser-x402-capability": {"ptah.instance"},
+				"payment-signature":      {"payment"},
+			}},
+		} {
+			t.Run(surface+"/"+tc.name, func(t *testing.T) {
+				resp := invokeMCP(t, env, app, path, tc.headers, &mcpruntime.Request{
+					JSONRPC: "2.0",
+					ID:      1,
+					Method:  "initialize",
+				})
+				if resp.Status != 401 {
+					t.Fatalf("status = %d, want 401; body = %s", resp.Status, string(resp.Body))
+				}
+				metadataURL := "https://api.example.com/.well-known/oauth-protected-resource/instance/" + surface + "/mcp"
+				wantChallenge := `Bearer resource_metadata="` + metadataURL + `", scope="read write"`
+				if got := firstHeader(resp.Headers, "www-authenticate"); got != wantChallenge {
+					t.Fatalf("WWW-Authenticate = %q, want %q", got, wantChallenge)
+				}
 			})
-			if resp.Status != 401 {
-				t.Fatalf("status = %d, want 401; body = %s", resp.Status, string(resp.Body))
-			}
-		})
+		}
 	}
 }
 

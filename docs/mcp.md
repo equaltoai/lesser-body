@@ -89,7 +89,9 @@ authentication, but they are not actor-delegated Ka surfaces. They fail closed u
 account-holder OAuth token, not an agent-delegated token and not the legacy managed instance key. The token audience
 must match the exact instance MCP resource URL, for example `https://api.<stageDomain>/instance/ptah/mcp` or
 `https://api.<stageDomain>/instance/ba/mcp`. Ptah and Ba write tools still enforce their own write-scope
-requirements before side effects such as Lesser integration calls or one-time grant minting.
+requirements before side effects such as Lesser integration calls or one-time grant minting. Missing or invalid bearer
+credentials return HTTP `401` with a `WWW-Authenticate` challenge that names the corresponding Ptah or Ba
+`resource_metadata` URL and the `read write` transport scopes.
 
 Ptah's Host-backed genesis tools add a stricter authority gate: `agent_genesis_begin`,
 `agent_genesis_advance`, `agent_genesis_recover`,

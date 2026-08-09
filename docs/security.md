@@ -43,6 +43,8 @@ inference, or an MCP-client-specific shortcut.
 
 Instance-plane MCP requests require a Lesser OAuth JWT bearer token for an account-holder principal:
 
+- missing or invalid bearer credentials return an RFC 9728 `WWW-Authenticate` discovery challenge for the exact
+  Ptah/Ba protected-resource metadata URL;
 - agent-delegated principals are rejected before tool dispatch;
 - legacy managed-instance-key principals are rejected before tool dispatch;
 - `actor_username` arguments, when present, must match the authenticated account-holder username;
