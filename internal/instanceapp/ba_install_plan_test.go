@@ -30,6 +30,7 @@ func TestInstancePlaneMCP_BaAgentLocalInstallPlanDownloadVerifyReplay(t *testing
 	t.Setenv("JWT_SECRET", "test-secret")
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, endpoint)
 	auth.ResetForTests()
+	stubInstanceAuthorizationServerMetadata(t)
 
 	grantStore := newDownloadGrantStore(t)
 	content := newBaPlanContentStore("agent1", baPlanRegistryAgentID)

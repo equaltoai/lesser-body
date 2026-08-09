@@ -18,6 +18,7 @@ func TestInstanceMCPOAuthDeadSessionTransparentlyRebinds(t *testing.T) {
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
 	auth.ResetForTests()
 	t.Cleanup(auth.ResetForTests)
+	stubInstanceAuthorizationServerMetadata(t)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
@@ -73,6 +74,7 @@ func TestInstanceMCP20260728StatelessRequestsAreNotRebound(t *testing.T) {
 	t.Setenv(baserver.EnvInstanceMCPEndpoint, "https://api.example.com/instance/{surface}/mcp")
 	auth.ResetForTests()
 	t.Cleanup(auth.ResetForTests)
+	stubInstanceAuthorizationServerMetadata(t)
 
 	app, err := instanceapp.New("lesser-body-instance", "dev")
 	if err != nil {
