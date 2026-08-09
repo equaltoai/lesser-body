@@ -118,6 +118,9 @@ Notes:
   - verifies bound-body capability plus caller access/payment policy from the Host effective policy contract before
     invoking private communication operations, loading the policy from Soul Comm contactability when it is not embedded
     in the registration payload
+  - hydrates the authenticated agent's `identity_whoami` and `agent://channels` self projections with an allowlisted
+    subset of active, verified email/phone channels from Soul Comm contactability; public registration remains the
+    source for contact preferences, and Host policy/mailbox internals are never projected
   - reads mailbox metadata/content/state through `/api/v1/soul/comm/mailbox/*`
   - sends and replies through lesser-host so body never becomes mailbox authority or delivery provider
 
