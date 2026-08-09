@@ -700,7 +700,7 @@ Scope key:
 | `sms_send` | Write | Send an SMS through lesser-host; supports `messageId`/`inReplyTo` for threaded replies. |
 | `sms_read` | Read | List inbound SMS metadata/previews from lesser-host's canonical mailbox. |
 | `voicemail_read` | Read | List inbound voice/voicemail metadata/previews from lesser-host's canonical mailbox. |
-| `identity_whoami` | Read | Return the current soul agent identity, channels, contact preferences, and explicit provisioning state that distinguishes absent registration data from a present-but-empty configuration. |
+| `identity_whoami` | Read | Return the current soul agent identity, channels, contact preferences, and explicit provisioning state. Active verified email/phone channels are hydrated from Host contactability for the authenticated agent when public registration is sparse. |
 | `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary plus the current managed `lessersoul.ai` email address when Host publishes one. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
@@ -725,11 +725,16 @@ The inventory is intentionally guarded against registration drift: tests fail wh
 `registerTools()` is absent from the bootstrap text or when the bootstrap catalog retains a tool that is no longer
 registered.
 
-`identity_whoami` preserves the existing `channels` and `contactPreferences` objects and adds `provisioning` metadata.
-Each object reports `state=absent|empty|present`, whether the registration key was present, and its configured entry
-count. `provisioning.communications=unprovisioned` therefore distinguishes a missing or present-but-empty channel
-configuration from a configured one; `describe_interface` reports this as `degraded_unprovisioned` without exposing
-channel addresses or other PII.
+`identity_whoami` preserves the existing public-registration `channels` and `contactPreferences` objects and adds
+`provisioning` metadata. After OAuth bound-soul verification and Host policy authorization, Body also calls Host's
+instance-key-authenticated contactability endpoint for that same agent and merges only active, verified email/phone
+channel fields into the self projection. Host policy, mailbox, instance, and other internal contactability fields are
+not exposed. A Host-backed channel therefore reports `provisioning.channels.state=present` and
+`provisioning.communications=configured` even when the optional public-registration `channels` key is sparse or absent.
+When neither source has an active channel, the original `absent` versus `empty` distinction remains intact. Each
+provisioning object reports `state=absent|empty|present`, whether its data is present, and its configured entry count;
+`describe_interface` reports `unprovisioned` communications as `degraded_unprovisioned` without exposing channel
+addresses or other PII.
 
 ### Instance-plane Ptah tools
 

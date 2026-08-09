@@ -57,6 +57,129 @@ func TestAgentChannelsPayloadDistinguishesAbsentFromEmptyProvisioning(t *testing
 	}
 }
 
+func TestWithAgentContactabilityChannelsFiltersAndMergesSelfProjection(t *testing.T) {
+	payload := map[string]any{
+		"channels": map[string]any{
+			"ens":   map[string]any{"name": "della.eth"},
+			"email": map[string]any{"legacy": "preserved"},
+		},
+		"provisioning": map[string]any{
+			"channels":           objectProvisioningMetadata(nil, false),
+			"contactPreferences": objectProvisioningMetadata(nil, false),
+			"communications":     "unprovisioned",
+		},
+	}
+	contactability := map[string]any{
+		"instanceSlug": "theory",
+		"policy":       map[string]any{"private": true},
+		"mailbox":      map[string]any{"contentAllowed": true},
+		"channels": []any{
+			map[string]any{
+				"channelType":    "email",
+				"address":        "della-marlowe.theory@lessersoul.ai",
+				"provider":       "migadu",
+				"capabilities":   []any{"receive", "send"},
+				"protocols":      []any{"smtp", "imap"},
+				"verified":       true,
+				"status":         "active",
+				"receiveAllowed": true,
+				"sendAllowed":    true,
+				"secret":         "must-not-project",
+			},
+			map[string]any{
+				"channelType": "phone",
+				"number":      "+15555550100",
+				"verified":    false,
+				"status":      "active",
+			},
+			map[string]any{
+				"channelType": "push",
+				"address":     "device-token",
+				"verified":    true,
+				"status":      "active",
+			},
+		},
+	}
+
+	got := withAgentContactabilityChannels(payload, contactability)
+	channels, _ := got["channels"].(map[string]any)
+	if _, ok := channels["ens"]; !ok {
+		t.Fatalf("existing ENS channel was not preserved: %+v", channels)
+	}
+	email, _ := channels["email"].(map[string]any)
+	if email["address"] != "della-marlowe.theory@lessersoul.ai" || email["legacy"] != "preserved" {
+		t.Fatalf("filtered Host email was not merged: %+v", email)
+	}
+	if _, ok := email["secret"]; ok {
+		t.Fatalf("non-contract Host field was projected: %+v", email)
+	}
+	if _, ok := channels["phone"]; ok {
+		t.Fatalf("unverified Host phone was projected: %+v", channels)
+	}
+	if _, ok := channels["push"]; ok {
+		t.Fatalf("unsupported Host channel was projected: %+v", channels)
+	}
+	if _, ok := got["policy"]; ok {
+		t.Fatalf("Host policy was projected: %+v", got)
+	}
+	if _, ok := got["mailbox"]; ok {
+		t.Fatalf("Host mailbox policy was projected: %+v", got)
+	}
+
+	provisioning, _ := got["provisioning"].(map[string]any)
+	channelProvisioning, _ := provisioning["channels"].(map[string]any)
+	if channelProvisioning["state"] != "present" || channelProvisioning["configuredCount"] != 2 || provisioning["communications"] != "configured" {
+		t.Fatalf("merged provisioning = %+v", provisioning)
+	}
+}
+
+func TestWithAgentContactabilityChannelsPreservesAbsentAndEmptyWhenHostHasNoActiveChannels(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			name: "absent",
+			payload: map[string]any{
+				"channels": map[string]any{},
+				"provisioning": map[string]any{
+					"channels":       objectProvisioningMetadata(nil, false),
+					"communications": "unprovisioned",
+				},
+			},
+			want: "absent",
+		},
+		{
+			name: "empty",
+			payload: map[string]any{
+				"channels": map[string]any{},
+				"provisioning": map[string]any{
+					"channels":       objectProvisioningMetadata(map[string]any{}, true),
+					"communications": "unprovisioned",
+				},
+			},
+			want: "empty",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := withAgentContactabilityChannels(tc.payload, map[string]any{
+				"channels": []any{map[string]any{
+					"channelType": "email",
+					"address":     "stale@example.com",
+					"verified":    true,
+					"status":      "inactive",
+				}},
+			})
+			provisioning, _ := got["provisioning"].(map[string]any)
+			channels, _ := provisioning["channels"].(map[string]any)
+			if channels["state"] != tc.want || provisioning["communications"] != "unprovisioned" {
+				t.Fatalf("provisioning = %+v", provisioning)
+			}
+		})
+	}
+}
+
 func TestDescribeInterfaceDeclaresUnprovisionedCommsAndFullPublishGate(t *testing.T) {
 	original := describeInterfaceChannelsPayload
 	describeInterfaceChannelsPayload = func(context.Context) (map[string]any, error) {
