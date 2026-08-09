@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-08T21:44:48.069700Z",
+  "generated_at": "2026-08-09T01:32:21.163563Z",
   "git": {
-    "head": "29586f610a2f099551ade4d17be409efdc0fd31a",
-    "head_tree": "be8bc9a03976fa8c5aaff034771e120470ec7847",
-    "merge_base_origin_staging": "e2de879a259ba1ac2cbe9d6a6442dede9dbbf370",
-    "ref": "fix/issues-533-534-article-review-projection",
+    "head": "c81b456feab0a2d43196293cc70a20e33748e340",
+    "head_tree": "6175b7004a94af9847fc7bb4bca760de97da73ba",
+    "merge_base_origin_staging": "5e443fe2f42fdc62587a224b4f5e51c8991bec38",
+    "ref": "fix/identity-whoami-host-contactability",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {

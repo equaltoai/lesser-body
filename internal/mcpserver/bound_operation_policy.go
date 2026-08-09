@@ -60,37 +60,104 @@ func authorizedAgentChannelsPayload(ctx context.Context, operation boundOperatio
 	if err != nil {
 		return nil, err
 	}
-	registration = withAgentContactabilityPolicy(ctx, client, agentID, registration)
+	contactability := loadAgentContactability(ctx, client, agentID)
+	registration = withAgentContactabilityPolicy(registration, contactability)
 	if decision := decideBoundOperation(ctx, registration, operation); !decision.Allowed {
 		return nil, boundOperationDeniedError(decision)
 	}
-	return payload, nil
+	return withAgentContactabilityChannels(payload, contactability), nil
 }
 
-func withAgentContactabilityPolicy(ctx context.Context, client *soulapi.Client, agentID string, registration map[string]any) map[string]any {
-	registration = mapFromAny(registration)
-	if client == nil || normalizeSoulAgentID(agentID) == "" || len(hostedBoundSoulPolicy(registration)) > 0 {
-		return registration
+func loadAgentContactability(ctx context.Context, client *soulapi.Client, agentID string) map[string]any {
+	agentID = normalizeSoulAgentID(agentID)
+	if client == nil || agentID == "" {
+		return map[string]any{}
 	}
 	commBearer, err := requireCommAPIBearer(ctx)
 	if err != nil {
-		return registration
+		return map[string]any{}
 	}
-	contactabilityAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/comm/contactability/"+url.PathEscape(normalizeSoulAgentID(agentID)), nil, commBearer, nil)
+	contactabilityAny, err := client.DoJSON(ctx, "GET", "/api/v1/soul/comm/contactability/"+url.PathEscape(agentID), nil, commBearer, nil)
 	if err != nil {
-		return registration
+		return map[string]any{}
 	}
-	contactability := mapFromAny(contactabilityAny)
+	return mapFromAny(contactabilityAny)
+}
+
+func withAgentContactabilityPolicy(registration map[string]any, contactability map[string]any) map[string]any {
+	registration = mapFromAny(registration)
 	if len(contactability) == 0 {
 		return registration
 	}
-	if policy := firstPolicyMap(contactability, "policy", "effectivePolicy", "effective_policy"); len(policy) > 0 {
+	if policy := firstPolicyMap(contactability, "policy", "effectivePolicy", "effective_policy"); len(policy) > 0 && len(hostedBoundSoulPolicy(registration)) == 0 {
 		registration["policy"] = policy
 	}
 	if channels := firstArrayFromAny(contactability, "channels"); len(channels) > 0 {
 		registration["contactabilityChannels"] = channels
 	}
 	return registration
+}
+
+func withAgentContactabilityChannels(payload map[string]any, contactability map[string]any) map[string]any {
+	projected := hostContactabilityChannels(contactability)
+	if len(projected) == 0 {
+		return payload
+	}
+
+	payload = mapFromAny(payload)
+	channels := mapFromAny(payload["channels"])
+	for channelType, channel := range projected {
+		existing := mapFromAny(channels[channelType])
+		for key, value := range channel {
+			existing[key] = value
+		}
+		channels[channelType] = existing
+	}
+	payload["channels"] = channels
+
+	provisioning := mapFromAny(payload["provisioning"])
+	provisioning["channels"] = objectProvisioningMetadata(channels, true)
+	provisioning["communications"] = "configured"
+	payload["provisioning"] = provisioning
+	return payload
+}
+
+func hostContactabilityChannels(contactability map[string]any) map[string]map[string]any {
+	projected := map[string]map[string]any{}
+	for _, item := range firstArrayFromAny(contactability, "channels") {
+		channel, _ := item.(map[string]any)
+		channelType := strings.ToLower(strings.TrimSpace(stringFromMap(channel, "channelType")))
+		identifierKey := ""
+		switch channelType {
+		case "email":
+			identifierKey = "address"
+		case "phone":
+			identifierKey = "number"
+		default:
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromMap(channel, "status")), "active") || !boolFromMap(channel, "verified") || strings.TrimSpace(stringFromMap(channel, identifierKey)) == "" {
+			continue
+		}
+
+		filtered := map[string]any{}
+		for _, key := range []string{
+			identifierKey,
+			"provider",
+			"capabilities",
+			"protocols",
+			"verified",
+			"status",
+			"receiveAllowed",
+			"sendAllowed",
+		} {
+			if value, ok := channel[key]; ok {
+				filtered[key] = value
+			}
+		}
+		projected[channelType] = filtered
+	}
+	return projected
 }
 
 func decideBoundOperation(ctx context.Context, registration map[string]any, operation boundOperation) boundPolicyDecision {

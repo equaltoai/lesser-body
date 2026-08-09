@@ -144,6 +144,13 @@ Fix:
   - `LESSER_SOUL_API_BASE_URL=https://<stage>.lesser.host`
   - optionally `LESSER_HOST_INSTANCE_KEY` or `LESSER_HOST_INSTANCE_KEY_ARN` for host-backed comm tools
 
+If `identity_whoami` reports `channels: {}` and `provisioning.channels.state: "absent"` after Host channel backfill,
+verify the Body deployment can resolve its managed instance key and call
+`GET /api/v1/soul/comm/contactability/{agentId}` on the configured Host base URL. For the authenticated agent's own
+identity, Body merges active, verified email/phone channels from this instance-authenticated response even when public
+registration omits `channels`; it does not expose the response's policy, mailbox, or instance internals. If Host returns
+no active verified channels, Body deliberately preserves public registration's `absent` versus `empty` state.
+
 ## Identity lookup or verify returns `private_reachability_unavailable`
 
 Symptoms:
@@ -163,9 +170,10 @@ Fix:
 
 - For public actor lookup, use an ENS name, full agent ID, current-instance local ID, explicit ActivityPub handle
   (`@user@domain`), or canonical actor URL.
-- For private email/phone reachability lookup, wait for the body-facing, instance-authenticated lesser-host resolver
-  contract. That resolver must use the managed instance key, be scoped to the managed instance/domain, and return only
-  bounded contactability fields.
+- Host's instance-authenticated contactability endpoint is used only to hydrate the authenticated agent's own
+  `identity_whoami` / `agent://channels` projection. It is not a reverse resolver for arbitrary email addresses or
+  phone numbers. Private identifier lookup therefore remains unavailable until Host exposes a separate bounded,
+  instance-scoped resolver contract.
 
 ## Host mailbox tools return empty results or 4xx errors
 

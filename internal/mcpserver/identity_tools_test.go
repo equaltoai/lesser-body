@@ -329,6 +329,100 @@ func TestVerifyAuthenticatedAgentWithLesserDoesNotFallbackToSoulsMine(t *testing
 	}
 }
 
+func TestIdentityWhoamiHydratesHostContactabilityWhenRegistrationOmitsChannels(t *testing.T) {
+	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	installSoulBindingLookup(t, "Agent1", agentID)
+	auth.ResetForTests()
+	t.Cleanup(auth.ResetForTests)
+	lesserapi.ResetForTests()
+	t.Cleanup(lesserapi.ResetForTests)
+	soulapi.ResetForTests()
+	t.Cleanup(soulapi.ResetForTests)
+	t.Setenv("LESSER_HOST_INSTANCE_KEY", "host-instance-key")
+
+	contactabilityCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/souls/bound/me":
+			if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
+				t.Fatalf("bound-self Authorization = %q", got)
+			}
+			_, _ = w.Write([]byte(boundSelfResponse(agentID, "agent1", "test.example.com", "della-marlowe")))
+		case "/api/v1/soul/agents/" + agentID:
+			_, _ = w.Write([]byte(`{"version":"1","agent":{"agent_id":"` + agentID + `","domain":"test.example.com","local_id":"della-marlowe","status":"active"}}`))
+		case "/api/v1/soul/agents/" + agentID + "/registration":
+			// The public registration is the production regression shape: policy
+			// remains present, but the optional channels key was omitted.
+			_, _ = w.Write([]byte(`{"version":"3","contactPreferences":{},` + boundBodyPolicyJSONForTest("identity.self.read") + `}`))
+		case "/api/v1/soul/comm/contactability/" + agentID:
+			contactabilityCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer host-instance-key" {
+				t.Fatalf("contactability Authorization = %q", got)
+			}
+			_, _ = w.Write([]byte(`{
+				"instanceSlug":"theory",
+				"agentId":"` + agentID + `",
+				"contactable":true,
+				"channels":[{
+					"channelType":"email",
+					"address":"della-marlowe.theory@lessersoul.ai",
+					"provider":"migadu",
+					"capabilities":["receive","send"],
+					"protocols":["smtp","imap"],
+					"verified":true,
+					"status":"active",
+					"receiveAllowed":true,
+					"sendAllowed":true
+				}],
+				"mailbox":{"listAllowed":true,"getAllowed":true,"contentAllowed":true,"stateAllowed":true},
+				"availability":{"schedule":"always"},
+				"firstContact":{"requireSoul":false,"requireReputation":null,"introductionExpected":false},
+				"updatedAt":"2026-08-08T23:00:00Z"
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	t.Setenv("LESSER_SOUL_API_BASE_URL", server.URL)
+
+	ctx := auth.InjectToolContext(context.Background(), &auth.Principal{
+		Type:     auth.PrincipalTypeOAuthToken,
+		Identity: "Agent1",
+		Claims:   &auth.Claims{Username: "Agent1", Scopes: []string{"read"}},
+	}, "oauth-token")
+
+	result, err := handleIdentityWhoami(ctx, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("handleIdentityWhoami: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("identity_whoami result = %+v", result)
+	}
+	if contactabilityCalls != 1 {
+		t.Fatalf("contactability calls = %d, want 1", contactabilityCalls)
+	}
+
+	data, _ := result.StructuredContent["data"].(map[string]any)
+	channels, _ := data["channels"].(map[string]any)
+	email, _ := channels["email"].(map[string]any)
+	if email["address"] != "della-marlowe.theory@lessersoul.ai" || email["verified"] != true || email["receiveAllowed"] != true || email["sendAllowed"] != true {
+		t.Fatalf("Host contactability email not projected: %+v", email)
+	}
+	if _, exposed := data["policy"]; exposed {
+		t.Fatalf("identity_whoami must not expose Host policy internals: %+v", data)
+	}
+	provisioning, _ := data["provisioning"].(map[string]any)
+	channelProvisioning, _ := provisioning["channels"].(map[string]any)
+	if channelProvisioning["state"] != "present" || channelProvisioning["present"] != true || channelProvisioning["configuredCount"] != 1 || provisioning["communications"] != "configured" {
+		t.Fatalf("Host-backed provisioning metadata = %+v", provisioning)
+	}
+}
+
 func TestNormalizeCurrentInstanceLocalLookupQuery(t *testing.T) {
 	t.Parallel()
 
