@@ -94,7 +94,7 @@ func articleDraftUpdateDef() mcpruntime.ToolDef {
 func articleDraftGetDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_get",
-		Description:  "Read one owner-scoped Article draft belonging to the authenticated actor by draft id. Cross-actor draft ids return not found; defaults to a compact ref with bounded preview and expansion metadata.",
+		Description:  "Read one Article draft by draft id when Lesser authorizes the caller as its owner or through an active reviewer grant. Revoked or unauthorized cross-actor ids return not found; defaults to a compact ref with bounded preview and expansion metadata.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftSingleOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -113,7 +113,7 @@ func articleDraftGetDef() mcpruntime.ToolDef {
 func articleDraftPreviewDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_preview",
-		Description:  "Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical publication renderer/sanitizer. Cross-actor draft ids return not found; defaults compact and never returns raw draft content.",
+		Description:  "Render one Article draft through Lesser's canonical publication renderer/sanitizer when Lesser authorizes the caller as its owner or through an active reviewer grant. Revoked or unauthorized cross-actor ids return not found; defaults compact and never returns raw draft content.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftPreviewOutputSchema(),
 		InputSchema: json.RawMessage(`{
@@ -281,10 +281,33 @@ func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcprunti
 		return nil, err
 	}
 	draft, err := client.GetArticleDraft(ctx, token, id, true)
+	reviewerProjection := false
 	if err != nil {
-		return articleDraftToolResultFromError("article_draft_get", err)
+		if !articleDraftOwnerLookupNotFound(err) {
+			return articleDraftToolResultFromError("article_draft_get", err)
+		}
+		// Lesser's draft(id:) projection is deliberately owner-only. Its
+		// draftReview(id:) projection is the authoritative owner-or-active-
+		// reviewer read path and returns the exact same source/hash/revision
+		// snapshot used by the review workflow. Reuse the caller's bearer and
+		// never infer or cache grant state in Body.
+		review, reviewErr := client.ReadArticleDraftReviewSource(ctx, token, id)
+		if reviewErr != nil {
+			return articleDraftToolResultFromError("article_draft_get", reviewErr)
+		}
+		draft = articleDraftFromCallerAuthorizedReview(review)
+		reviewerProjection = true
 	}
-	if !draftOwnedByAuthenticatedActor(ctx, draft) || !draftIsArticleDraft(draft) {
+	if !draftIsArticleDraft(draft) {
+		return articleDraftNotFoundDenied("article_draft_get", id)
+	}
+	if !reviewerProjection && !draftOwnedByAuthenticatedActor(ctx, draft) {
+		return articleDraftNotFoundDenied("article_draft_get", draft.ID)
+	}
+	if reviewerProjection && draft.AuthorID == "" {
+		// Reviewer projections must carry Lesser's authoritative owner id.
+		// Missing ownership metadata is an incomplete snapshot, not license to
+		// widen access or return partially bound source.
 		return articleDraftNotFoundDenied("article_draft_get", draft.ID)
 	}
 
@@ -351,16 +374,17 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 	if err != nil {
 		return nil, err
 	}
-	// CSR-010/LB-01: Fetch the draft before preview so ownership and
-	// Article-draft boundary checks gate the renderer call. The preview
-	// response does not carry contentType/status, so it cannot be validated
-	// safely after rendering.
-	draft, err := client.GetArticleDraft(ctx, token, id, false)
+	// Use Lesser's caller-authorized review projection for the DRAFT-state
+	// preflight. Unlike draft(id:), draftReview(id:) authorizes both the owner
+	// and active reviewers. Lesser then repeats that authorization inside
+	// draftPreview(id:) and enforces the Article boundary in its renderer.
+	// Body never infers or caches grant state.
+	review, err := client.ReadArticleDraftReview(ctx, token, id)
 	if err != nil {
 		return articleDraftToolResultFromError("article_draft_preview", err)
 	}
-	if !draftOwnedByAuthenticatedActor(ctx, draft) || !draftIsArticleDraft(draft) {
-		return articleDraftNotFoundDenied("article_draft_preview", draft.ID)
+	if review == nil || strings.TrimSpace(review.Status) != cmsapi.DraftStatusDraft {
+		return articleDraftNotFoundDenied("article_draft_preview", id)
 	}
 	preview, err := client.PreviewArticleDraft(ctx, token, id)
 	if err != nil {
@@ -368,6 +392,44 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 	}
 
 	return articleDraftPreviewResult(preview, params)
+}
+
+func articleDraftOwnerLookupNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var gqlErr *cmsapi.GraphQLErrors
+	if errors.As(err, &gqlErr) {
+		code, status := articleDraftGraphQLErrorContract(gqlErr)
+		return status == http.StatusNotFound || strings.EqualFold(strings.TrimSpace(code), "not_found")
+	}
+	var apiErr *lesserapi.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
+func articleDraftFromCallerAuthorizedReview(review *cmsapi.DraftReview) *cmsapi.Draft {
+	if review == nil || review.Content == nil {
+		return nil
+	}
+	ownerID := ""
+	if review.OwnerID != nil {
+		ownerID = strings.TrimSpace(*review.OwnerID)
+	}
+	return &cmsapi.Draft{
+		ID:            strings.TrimSpace(review.DraftID),
+		AuthorID:      ownerID,
+		ContentType:   cmsapi.ObjectTypeArticle,
+		Title:         review.Title,
+		Slug:          review.Slug,
+		Content:       *review.Content,
+		ContentFormat: strings.TrimSpace(review.ContentFormat),
+		Status:        strings.TrimSpace(review.Status),
+		ScheduledAt:   review.ScheduledAt,
+		ContentHash:   strings.TrimSpace(review.ContentHash),
+		Revision:      review.Revision,
+		CreatedAt:     strings.TrimSpace(review.CreatedAt),
+		UpdatedAt:     strings.TrimSpace(review.UpdatedAt),
+	}
 }
 
 func articleCMS(ctx context.Context) (*cmsapi.Client, error) {
@@ -428,6 +490,11 @@ func articleDraftSingleResult(toolName string, operation string, draft *cmsapi.D
 		return nil, fmt.Errorf("%s returned no draft", toolName)
 	}
 	shaped := shapeArticleDraft(draft, params, fallbackContent)
+	policy := articleDraftPolicyMetadata()
+	if toolName == "article_draft_get" {
+		policy["readAuthorization"] = "lesser_owner_or_active_reviewer"
+		policy["reviewerProjection"] = "caller_authorized_draftReview_snapshot"
+	}
 	payload := map[string]any{
 		"tool":      toolName,
 		"operation": operation,
@@ -437,7 +504,7 @@ func articleDraftSingleResult(toolName string, operation string, draft *cmsapi.D
 		"draftRef":  compactArticleDraftRef(draft, params, fallbackContent),
 		"omitted":   articleDraftOmissions(params.View, false),
 		"budget":    articleDraftBudget(params),
-		"policy":    articleDraftPolicyMetadata(),
+		"policy":    policy,
 	}
 	text := map[string]any{
 		"tool":      toolName,
@@ -754,6 +821,8 @@ func articleDraftPreviewPolicyMetadata() map[string]any {
 		"rawDraftContentReturned": false,
 		"rawDraftContentUsed":     false,
 		"graphqlOperation":        "draftPreview",
+		"readAuthorization":       "lesser_owner_or_active_reviewer",
+		"statePreflight":          "caller_authorized_draftReview",
 	}
 }
 

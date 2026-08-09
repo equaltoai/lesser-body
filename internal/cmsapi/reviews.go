@@ -145,6 +145,14 @@ func (c *Client) ReadArticleDraftReview(ctx context.Context, bearerToken, draftI
 	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewFields())
 }
 
+// ReadArticleDraftReviewSource selects the caller-authorized draft projection
+// needed by article_draft_get without also transporting canonical rendering.
+// The source, owner, hash, revision, grant, and eligibility state still come
+// from one Lesser DraftReview snapshot.
+func (c *Client) ReadArticleDraftReviewSource(ctx context.Context, bearerToken, draftID string) (*DraftReview, error) {
+	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewSourceFields())
+}
+
 // ReadArticleDraftReviewStandard selects Lesser's complete caller-authorized
 // review evidence. Content, rendering, binding, grant, verdict, and
 // eligibility fields all come from one authoritative DraftReview snapshot.
@@ -247,7 +255,11 @@ func draftReviewFields() string {
 }
 
 func draftReviewStandardFields() string {
-	return draftReviewFields() + " ownerId slug content renderedHtml renderErrors"
+	return draftReviewSourceFields() + " renderedHtml renderErrors"
+}
+
+func draftReviewSourceFields() string {
+	return draftReviewFields() + " ownerId slug content"
 }
 
 func normalizeDraftReview(review *DraftReview) {
