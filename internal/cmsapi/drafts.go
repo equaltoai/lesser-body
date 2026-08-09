@@ -185,8 +185,8 @@ func (c *Client) GetArticleDraft(ctx context.Context, bearerToken string, id str
 }
 
 // PreviewArticleDraft reads Lesser's canonical rendered/sanitized preview for a
-// single ARTICLE draft. Authorization and ownership are enforced by Lesser on
-// the same path as draft(id:).
+// single ARTICLE draft. Lesser resolves draftPreview through its
+// owner-or-active-reviewer authorization path before invoking the renderer.
 func (c *Client) PreviewArticleDraft(ctx context.Context, bearerToken string, id string) (*DraftPreview, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
