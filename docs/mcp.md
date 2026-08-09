@@ -668,9 +668,9 @@ Scope key:
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
 | `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
 | `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
-| `article_draft_get` | Read | Read one owner-scoped Article draft belonging to the authenticated actor; cross-actor draft ids return not found, and both compact and standard projections include Lesser's exact `contentHash` and monotonic `revision` bindings. Compact refs expand with `article_draft_get(view=standard)`. |
+| `article_draft_get` | Read | Read one Article draft when Lesser authorizes the caller as its owner or through an active reviewer grant. Owner reads retain the existing `draft(id:)` projection; authorized reviewer reads fall back to the exact `DraftReview` source/hash/revision snapshot. Revoked or unauthorized cross-actor ids return not found. Compact refs expand with `article_draft_get(view=standard)`. |
 | `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; compact results include title, save/create/update timestamps, `contentHash`, and `revision` for triage and concurrency checks, while full content still requires `article_draft_get`. |
-| `article_draft_preview` | Read | Render one owner-scoped Article draft belonging to the authenticated actor through Lesser's canonical renderer/sanitizer; cross-actor ids return not found and raw draft content is not returned by preview. |
+| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer when Lesser authorizes the caller as its owner or through an active reviewer grant. Body uses caller-authorized review state for the `DRAFT` preflight; revoked or unauthorized cross-actor ids return not found, and raw draft content is not returned by preview. |
 | `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated compact review queue. State mode defaults to compact metadata, while `view=standard` returns Lesser's complete, untruncated source and canonical rendering from the same authoritative snapshot as the hash/revision binding, grants, verdict staleness, and publish eligibility. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
@@ -1484,13 +1484,16 @@ index/ref pages and expand only the items they need:
   an agent explicitly needs draft content or full metadata.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
-  draft id as a final published Article id. Authoring, preview, and publish remain owner-scoped; reviewer access exists
-  only through Lesser's active grants exposed by the separate `article_draft_review_*` tools.
+  draft id as a final published Article id. Authoring mutations and publish remain owner-scoped. In addition to
+  `article_draft_review_read`, an actively granted reviewer can use `article_draft_get` and
+  `article_draft_preview`; Lesser remains the authorization authority and revoked/absent grants fail as not found.
 - `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
   returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
   byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
   `preview.success=false` with deterministic `preview.errors`; body does not render Markdown/HTML locally and does
-  not return raw draft source as preview output.
+  not return raw draft source as preview output. Before rendering, Body reads Lesser's caller-authorized
+  `draftReview(id:)` metadata to preserve the `DRAFT`-state boundary without the former owner-only `draft(id:)`
+  preflight that rejected active reviewers.
 - `article_draft_publish({"id":"<draft-id>"})` is the explicit write-scoped transition from draft to published
   Article. Its response includes `canonicalArticleId` and `canonicalArticleUrl`; for new Lesser M1 Articles these are
   the canonical `https://<domain>/articles/<slug>` identity/URL. Compact responses omit Article content by default.
@@ -1559,7 +1562,8 @@ direct Lesser table write is involved.
 ### Lesser-backed Article draft review workflow
 
 Body exposes Lesser v1.6.4's review contract without storing grants, calculating consensus, or bypassing Lesser's
-publish gate. The three tools forward the exact caller OAuth bearer to Lesser `POST /api/graphql`, are available in
+publish gate. The three dedicated review tools plus the reviewer-capable `article_draft_get` and
+`article_draft_preview` reads forward the exact caller OAuth bearer to Lesser `POST /api/graphql`, are available in
 both drone and souled runtime profiles, and use structured-first responses with source `lesser_cms_graphql`.
 
 | Tool | Required input | Optional input | Success `structuredContent.data` |
@@ -1614,9 +1618,19 @@ source plus rendering does not fit.
    Standard state adds Lesser's `ownerId`, `slug`, exact untruncated `content`, `contentFormat`, canonical sanitized
    `renderedHtml`, and `renderErrors` to the same response as `contentHash`, `revision`, grant, verdict-staleness, and
    eligibility state. Lesser constructs all of those fields from one authorized `DraftReview` snapshot. Body does not
-   manufacture a `contentBoundToVerdict` claim, separately call the owner-only draft/preview paths, or truncate review
-   evidence. `article_draft_get`, `article_draft_update`, `article_draft_preview`, and `article_draft_publish` retain
-   their existing owner-only behavior; a reviewer expands evidence only through `article_draft_review_read`.
+   manufacture a `contentBoundToVerdict` claim or truncate review evidence.
+
+   The same active grant also authorizes the other two requested reviewer reads:
+
+   - `article_draft_get({"id":"draft-1","view":"standard"})` first preserves the existing owner `draft(id:)` path;
+     when that owner-only lookup returns not found, Body calls caller-authorized `draftReview(id:)` and maps its exact
+     source, format, status, owner, hash, revision, slug, title, and timestamps into the existing draft result shape.
+   - `article_draft_preview({"id":"draft-1","view":"standard"})` checks `DRAFT` state through caller-authorized
+     `draftReview(id:)`, then calls Lesser's grant-aware `draftPreview(id:)` for canonical sanitized HTML.
+
+   Neither read caches or reconstructs grant state. A revoked, absent, or otherwise unauthorized grant fails closed
+   through Lesser before source or rendered HTML is returned. `article_draft_update` and `article_draft_publish`
+   remain owner-only.
 4. The reviewer submits Lesser's canonical verdict enum and optional notes:
 
    ```json

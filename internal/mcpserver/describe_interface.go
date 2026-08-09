@@ -53,9 +53,9 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 		Tools: []describeInterfaceTool{
 			{Name: "article_draft_create", Use: "Create an owner-scoped unpublished Article draft without publishing it."},
 			{Name: "article_draft_update", Use: "Revise an owner-scoped unpublished Article draft."},
-			{Name: "article_draft_get", Use: "Expand one owner-scoped draft when compact metadata is insufficient."},
+			{Name: "article_draft_get", Use: "Expand one draft when Lesser authorizes the caller as owner or active reviewer."},
 			{Name: "article_draft_list", Use: "List the authenticated actor's unpublished Article drafts."},
-			{Name: "article_draft_preview", Use: "Render a draft through Lesser's canonical sanitizer before publishing."},
+			{Name: "article_draft_preview", Use: "Render an owner- or active-reviewer-authorized draft through Lesser's canonical sanitizer."},
 			{Name: "article_draft_review_submit", Use: "Submit a draft to one Lesser reviewer and create or refresh the revocable review grant."},
 			{Name: "article_draft_review_read", Use: "List the caller's active review queue or read one caller-authorized draft review state."},
 			{Name: "article_draft_review_verdict", Use: "Submit an approval or changes-requested verdict through Lesser with optional notes."},
@@ -188,7 +188,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Account follow bridge: pass a participant ref's `accountSelector` to `account_resolve({\"account\":\"<selector>\"})` → pass the returned canonical `accountRef.id` to `follow` or `unfollow`.\n")
 	out.WriteString("- Notification discovery: `notifications_read({\"limit\":10,\"view\":\"compact\"})` → select a notification ID → `notification_get({\"id\":\"<notification-id>\",\"view\":\"standard\"})`.\n")
 	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → `article_draft_review_submit` → reviewer `article_draft_review_read` and `article_draft_review_verdict` → author re-reads review state and confirms every active reviewer verdict, principal approval, and Lesser publish eligibility → `article_draft_publish`.\n")
-	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer calls `article_draft_review_read` → reviewer calls `article_draft_review_verdict`; every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing.\n")
+	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer uses `article_draft_review_read`, `article_draft_get`, and `article_draft_preview` as needed → reviewer calls `article_draft_review_verdict`; Lesser authorizes every reviewer read from the active grant, and every MCP-created Article draft requires unanimous current reviewer approval plus active approval from the configured instance principal before publishing.\n")
 
 	out.WriteString("\n## Read-result budgeting and expansion\n")
 	out.WriteString("- When advertised by a tool, `view` selects the projection: `standard` preserves the compatibility shape, `compact`/`summary` bounds discovery context, and `full` is explicit audit/debug expansion.\n")

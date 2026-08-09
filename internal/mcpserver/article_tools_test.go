@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,34 +17,229 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
-func TestArticleDraftToolDescriptionsDeclareOwnerScoping(t *testing.T) {
+func TestArticleDraftToolDescriptionsDeclareAuthorizationBoundary(t *testing.T) {
 	registry := mcpruntime.NewToolRegistry()
 	if err := registerArticleTools(registry); err != nil {
 		t.Fatalf("registerArticleTools: %v", err)
 	}
 
-	want := map[string]bool{
-		"article_draft_create":  false,
-		"article_draft_update":  false,
-		"article_draft_get":     false,
-		"article_draft_list":    false,
-		"article_draft_preview": false,
-		"article_draft_publish": false,
+	want := map[string]string{
+		"article_draft_create":  "owner-scoped",
+		"article_draft_update":  "owner-scoped",
+		"article_draft_get":     "active reviewer grant",
+		"article_draft_list":    "owner-scoped",
+		"article_draft_preview": "active reviewer grant",
+		"article_draft_publish": "owner-scoped",
 	}
 	for _, def := range registry.List() {
-		if _, ok := want[def.Name]; !ok {
+		boundary, ok := want[def.Name]
+		if !ok {
 			continue
 		}
-		want[def.Name] = true
+		delete(want, def.Name)
 		description := strings.ToLower(def.Description)
-		if !strings.Contains(description, "owner-scoped") {
-			t.Errorf("%s description does not declare owner scoping: %q", def.Name, def.Description)
+		if !strings.Contains(description, boundary) {
+			t.Errorf("%s description does not declare %q boundary: %q", def.Name, boundary, def.Description)
 		}
 	}
-	for name, found := range want {
-		if !found {
-			t.Errorf("draft tool %s was not registered", name)
+	for name := range want {
+		t.Errorf("draft tool %s was not registered", name)
+	}
+}
+
+func TestArticleDraftGetUsesCallerAuthorizedReviewAfterOwnerLookupNotFound(t *testing.T) {
+	const source = "# Exact reviewer source\n\nDo not truncate this evidence."
+	var operations []cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
 		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		switch op.OperationName {
+		case "BodyArticleDraft":
+			_, _ = w.Write([]byte(`{"data":{"draft":null},"errors":[{"message":"draft not found","path":["draft"],"extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+		case "BodyArticleDraftReview":
+			_, _ = fmt.Fprintf(w, `{"data":{"draftReview":{"draftId":"draft-1","ownerId":"author","title":"Review me","slug":"review-me","content":%q,"renderedHtml":"<h1>Review me</h1>","renderErrors":[],"contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-08-09T12:00:00Z","createdAt":"2026-08-09T11:00:00Z","contentHash":"sha256:review","revision":4,"activeReviewerIds":["reviewer"],"publishEligible":false,"publishBlockingReasons":["REVIEW_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"}],"grant":{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"},"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":["REVIEW_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`, source)
+		default:
+			t.Errorf("unexpected operation %q", op.OperationName)
+			http.Error(w, "unexpected operation", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftGet(articleDraftTestContext(), json.RawMessage(`{"id":"draft-1","view":"standard","max_output_bytes":50000}`))
+	if err != nil {
+		t.Fatalf("article_draft_get: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("article_draft_get result = %+v", result)
+	}
+	data, _ := result.StructuredContent["data"].(map[string]any)
+	draft, _ := data["draft"].(map[string]any)
+	if draft["id"] != "draft-1" || draft["content"] != source || draft["contentType"] != cmsapi.ObjectTypeArticle || draft["contentHash"] != "sha256:review" || draft["revision"] != 4 {
+		t.Fatalf("reviewer draft projection = %+v", draft)
+	}
+	if len(operations) != 2 || operations[0].OperationName != "BodyArticleDraft" || operations[1].OperationName != "BodyArticleDraftReview" {
+		t.Fatalf("operations = %+v", operations)
+	}
+	for _, field := range []string{"ownerId", "slug", "content", "contentHash", "revision"} {
+		if !strings.Contains(operations[1].Query, field) {
+			t.Fatalf("review fallback query missing %q: %s", field, operations[1].Query)
+		}
+	}
+	if strings.Contains(operations[1].Query, "renderedHtml") || strings.Contains(operations[1].Query, "renderErrors") {
+		t.Fatalf("draft get must not transport unused rendering: %s", operations[1].Query)
+	}
+	policy, _ := data["policy"].(map[string]any)
+	if policy["readAuthorization"] != "lesser_owner_or_active_reviewer" || policy["reviewerProjection"] != "caller_authorized_draftReview_snapshot" {
+		t.Fatalf("reviewer draft policy = %+v", policy)
+	}
+}
+
+func TestArticleDraftGetFailsClosedWhenCallerHasNoActiveReviewGrant(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"not found","extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftGet(articleDraftTestContext(), json.RawMessage(`{"id":"draft-revoked","view":"standard"}`))
+	if err != nil {
+		t.Fatalf("article_draft_get: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("revoked reviewer result = %+v", result)
+	}
+	if len(operations) != 2 || operations[0] != "BodyArticleDraft" || operations[1] != "BodyArticleDraftReview" {
+		t.Fatalf("operations = %+v", operations)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	if bytes.Contains(encoded, []byte("content")) {
+		t.Fatalf("authorization failure leaked draft content: %s", encoded)
+	}
+}
+
+func TestArticleDraftGetDoesNotFallbackOnNonNotFoundOwnerFailure(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"CMS unavailable","extensions":{"code":"INTERNAL","http_status":500}}]}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftGet(articleDraftTestContext(), json.RawMessage(`{"id":"draft-1","view":"standard"}`))
+	if err != nil {
+		t.Fatalf("article_draft_get: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("internal owner lookup failure result = %+v", result)
+	}
+	if len(operations) != 1 || operations[0] != "BodyArticleDraft" {
+		t.Fatalf("non-not-found failure must not trigger reviewer fallback, operations = %+v", operations)
+	}
+}
+
+func TestArticleDraftPreviewDelegatesOwnerOrActiveReviewerAuthorizationToLesser(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
+		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		switch op.OperationName {
+		case "BodyArticleDraftReview":
+			if op.Variables["id"] == "draft-revoked" {
+				_, _ = w.Write([]byte(`{"data":{"draftReview":null},"errors":[{"message":"draft review not found","path":["draftReview"],"extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-08-09T12:00:00Z","createdAt":"2026-08-09T11:00:00Z","contentHash":"sha256:review","revision":4,"activeReviewerIds":["reviewer"],"publishEligible":false,"publishBlockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[],"grant":{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"},"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`))
+		case "BodyArticleDraftPreview":
+			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<h1>Authorized review</h1>","sourceFormat":"MARKDOWN","sourceBytes":24,"renderedBytes":26,"errors":[]}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"owner-only draft preflight is forbidden in reviewer mode","extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftPreview(articleDraftTestContext(), json.RawMessage(`{"id":"draft-1","view":"standard"}`))
+	if err != nil {
+		t.Fatalf("article_draft_preview: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("authorized reviewer preview = %+v", result)
+	}
+	data, _ := result.StructuredContent["data"].(map[string]any)
+	preview, _ := data["preview"].(map[string]any)
+	if preview["renderedHtml"] != "<h1>Authorized review</h1>" {
+		t.Fatalf("reviewer preview = %+v", preview)
+	}
+	policy, _ := data["policy"].(map[string]any)
+	if policy["readAuthorization"] != "lesser_owner_or_active_reviewer" || policy["statePreflight"] != "caller_authorized_draftReview" {
+		t.Fatalf("reviewer preview policy = %+v", policy)
+	}
+
+	revoked, err := handleArticleDraftPreview(articleDraftTestContext(), json.RawMessage(`{"id":"draft-revoked","view":"standard"}`))
+	if err != nil {
+		t.Fatalf("revoked article_draft_preview: %v", err)
+	}
+	if revoked == nil || !revoked.IsError {
+		t.Fatalf("revoked reviewer preview = %+v", revoked)
+	}
+	if len(operations) != 3 || operations[0] != "BodyArticleDraftReview" || operations[1] != "BodyArticleDraftPreview" || operations[2] != "BodyArticleDraftReview" {
+		t.Fatalf("preview must use Lesser's caller-authorized review preflight and grant-aware draftPreview, operations = %+v", operations)
 	}
 }
 
@@ -72,7 +268,7 @@ func TestArticleDraftByIDToolsRejectOwnedNonDraftStatus(t *testing.T) {
 func testArticleDraftByIDToolsRejectDraft(t *testing.T, draft cmsapi.Draft) {
 	t.Helper()
 
-	for _, tc := range []struct {
+	testCases := []struct {
 		name       string
 		args       string
 		handler    func(context.Context, json.RawMessage) (*mcpruntime.ToolResult, error)
@@ -82,11 +278,6 @@ func testArticleDraftByIDToolsRejectDraft(t *testing.T, draft cmsapi.Draft) {
 			name:    "get",
 			args:    fmt.Sprintf(`{"id":%q}`, draft.ID),
 			handler: handleArticleDraftGet,
-		},
-		{
-			name:    "preview",
-			args:    fmt.Sprintf(`{"id":%q}`, draft.ID),
-			handler: handleArticleDraftPreview,
 		},
 		{
 			name:    "update",
@@ -102,7 +293,23 @@ func testArticleDraftByIDToolsRejectDraft(t *testing.T, draft cmsapi.Draft) {
 				}
 			},
 		},
-	} {
+	}
+	// Lesser's canonical renderer owns the ARTICLE content-type check for
+	// preview. Body still performs a caller-authorized DRAFT-state preflight.
+	if draft.ContentType == cmsapi.ObjectTypeArticle {
+		testCases = append(testCases, struct {
+			name       string
+			args       string
+			handler    func(context.Context, json.RawMessage) (*mcpruntime.ToolResult, error)
+			assertions func(*testing.T, *articleDraftGraphQLTestServer)
+		}{
+			name:    "preview",
+			args:    fmt.Sprintf(`{"id":%q}`, draft.ID),
+			handler: handleArticleDraftPreview,
+		})
+	}
+
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			server := newArticleDraftGraphQLTestServer(t, draft)
 
@@ -178,6 +385,11 @@ func (h *articleDraftGraphQLTestServer) serveGraphQL(w http.ResponseWriter, r *h
 	switch req.OperationName {
 	case "BodyArticleDraft":
 		writeArticleDraftGraphQLData(h.t, w, map[string]any{"draft": h.draft})
+	case "BodyArticleDraftReview":
+		writeArticleDraftGraphQLData(h.t, w, map[string]any{"draftReview": map[string]any{
+			"draftId": h.draft.ID,
+			"status":  h.draft.Status,
+		}})
 	case "BodyArticleDraftPreview":
 		h.previewCount++
 		writeArticleDraftGraphQLData(h.t, w, map[string]any{"draftPreview": cmsapi.DraftPreview{

@@ -147,6 +147,8 @@ func TestArticleToolScopesAtMCPBoundary(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"draft0":{"id":"draft-1","author":{"id":"https://example.com/users/agent1","username":"agent1"},"contentType":"ARTICLE","title":"Draft","contentFormat":"MARKDOWN","status":"DRAFT","autosaveVersion":1,"lastSavedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","updatedAt":"2026-05-20T00:00:00Z"}}}`))
 		case "BodyArticleDraftPreview":
 			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<p>draft body</p>","sourceFormat":"MARKDOWN","sourceBytes":10,"renderedBytes":17,"errors":[]}}}`))
+		case "BodyArticleDraftReview":
+			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-05-20T00:00:00Z","createdAt":"2026-05-20T00:00:00Z","contentHash":"sha256:draft","revision":1,"activeReviewerIds":[],"publishEligible":false,"publishBlockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":false,"principalApproved":false,"grantCount":0,"grantsTruncated":false,"grants":[],"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":false,"principalApproved":false}}}}`))
 		case "BodyPublishArticleDraft":
 			_, _ = w.Write([]byte(`{"data":{"publishDraft":{"id":"https://example.com/articles/draft","slug":"draft","title":"Draft","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":2,"publishedAt":"2026-05-20T00:02:00Z","createdAt":"2026-05-20T00:02:00Z","updatedAt":"2026-05-20T00:02:00Z"}}}`))
 		case "BodyUpdateArticle":

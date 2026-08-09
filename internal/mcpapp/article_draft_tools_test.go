@@ -305,20 +305,16 @@ func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing
 			t.Fatalf("decode operation: %v", err)
 		}
 		operations = append(operations, op)
-		if op["operationName"] == "BodyArticleDraft" {
-			// CSR-010: preview now verifies draft ownership by fetching the
-			// draft first. Return a compact draft (no content).
+		if op["operationName"] == "BodyArticleDraftReview" {
+			// Preview verifies DRAFT state through Lesser's caller-authorized
+			// owner-or-active-reviewer projection before rendering.
 			vars := op["variables"].(map[string]any)
 			id := vars["id"].(string)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draft": map[string]any{
-				"id":              id,
-				"authorId":        "agent1",
-				"contentType":     "ARTICLE",
-				"title":           "Test",
-				"contentFormat":   "MARKDOWN",
-				"status":          "DRAFT",
-				"autosaveVersion": 1,
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draftReview": map[string]any{
+				"draftId":       id,
+				"contentFormat": "MARKDOWN",
+				"status":        "DRAFT",
 			}}})
 			return
 		}
@@ -425,10 +421,10 @@ func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing
 		t.Fatalf("expected response_too_large tool error, got %+v", toolErr)
 	}
 
-	// CSR-010: each preview call now also fetches the draft for ownership
-	// verification, doubling the operation count (4 previews + 4 draft gets).
+	// Each preview call first uses Lesser's caller-authorized review projection
+	// for the DRAFT-state preflight (4 previews + 4 review-state checks).
 	if len(operations) != 8 {
-		t.Fatalf("expected 8 draftPreview+draft operations (4 previews + 4 ownership checks), got %d", len(operations))
+		t.Fatalf("expected 8 draftPreview+draftReview operations (4 previews + 4 authorization/state checks), got %d", len(operations))
 	}
 }
 
