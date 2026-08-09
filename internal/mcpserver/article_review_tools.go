@@ -14,6 +14,8 @@ const (
 	articleDraftReviewDefaultLimit = 5
 	articleDraftReviewMaxLimit     = 80
 	articleDraftReviewBudgetBytes  = 24000
+	articleDraftReviewViewCompact  = "compact"
+	articleDraftReviewViewStandard = "standard"
 )
 
 const articleDraftReviewPublishGateNote = "Every Article draft created through MCP is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing."
@@ -56,13 +58,14 @@ func articleDraftReviewSubmitDef() mcpruntime.ToolDef {
 func articleDraftReviewReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "article_draft_review_read",
-		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active review queue. Body transports Lesser's grants and reviewer identities, exact content binding, verdict staleness, and authoritative publish eligibility without calculating or reconstructing them. " + articleDraftReviewPublishGateNote,
+		Description:  "Read Lesser's review state for draft_id, or omit draft_id to list the authenticated caller's active compact review queue. State mode defaults to compact metadata; view=standard returns Lesser's complete, untruncated caller-authorized source and canonical rendering with the same content binding, grants, verdict staleness, and publish eligibility. " + articleDraftReviewPublishGateNote,
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: articleDraftReviewReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"draft_id":{"type":"string","description":"Optional Lesser CMS draft id. When present, returns that caller-authorized review state; when omitted, lists the caller's active queue."},
+				"view":{"type":"string","enum":["compact","standard"],"default":"compact","description":"State mode only. compact returns bounded review metadata; standard returns complete untruncated Lesser-authoritative source, canonical rendered HTML/render errors, content binding, grants, verdict staleness, and publish eligibility."},
 				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Queue mode only. Maximum review items to return; defaults to 5 so a realistic default page fits the 24000-byte response budget."},
 				"cursor":{"type":"string","description":"Queue mode only. Pagination cursor from a previous article_draft_review_read response."},
 				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Zero uses the 24000-byte default."}
@@ -134,6 +137,7 @@ func handleArticleDraftReviewSubmit(ctx context.Context, args json.RawMessage) (
 func handleArticleDraftReviewRead(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolResult, error) {
 	var in struct {
 		DraftID        string `json:"draft_id,omitempty"`
+		View           string `json:"view,omitempty"`
 		Limit          int    `json:"limit,omitempty"`
 		Cursor         string `json:"cursor,omitempty"`
 		MaxOutputBytes int    `json:"max_output_bytes,omitempty"`
@@ -144,12 +148,22 @@ func handleArticleDraftReviewRead(ctx context.Context, args json.RawMessage) (*m
 		}
 	}
 	in.DraftID = strings.TrimSpace(in.DraftID)
+	in.View = strings.ToLower(strings.TrimSpace(in.View))
+	if in.View == "" {
+		in.View = articleDraftReviewViewCompact
+	}
 	in.Cursor = strings.TrimSpace(in.Cursor)
 	if in.MaxOutputBytes < 0 {
 		return nil, invalidParams("max_output_bytes must not be negative")
 	}
 	if in.DraftID != "" && (in.Limit != 0 || in.Cursor != "") {
 		return nil, invalidParams("limit and cursor are only valid when draft_id is omitted")
+	}
+	if in.View != articleDraftReviewViewCompact && in.View != articleDraftReviewViewStandard {
+		return nil, invalidParams("view must be compact or standard")
+	}
+	if in.DraftID == "" && in.View != articleDraftReviewViewCompact {
+		return nil, invalidParams("view=standard requires draft_id; review queues are compact metadata only")
 	}
 
 	token, err := requireOAuthBearer(ctx)
@@ -162,11 +176,16 @@ func handleArticleDraftReviewRead(ctx context.Context, args json.RawMessage) (*m
 	}
 	budget := reviewOutputBudget(in.MaxOutputBytes)
 	if in.DraftID != "" {
-		review, err := client.ReadArticleDraftReview(ctx, token, in.DraftID)
+		var review *cmsapi.DraftReview
+		if in.View == articleDraftReviewViewStandard {
+			review, err = client.ReadArticleDraftReviewStandard(ctx, token, in.DraftID)
+		} else {
+			review, err = client.ReadArticleDraftReview(ctx, token, in.DraftID)
+		}
 		if err != nil {
 			return articleDraftToolResultFromError("article_draft_review_read", err)
 		}
-		return articleDraftReviewStateResult(review, budget)
+		return articleDraftReviewStateViewResult(review, in.View, budget)
 	}
 	limit := in.Limit
 	if limit == 0 {
@@ -237,6 +256,10 @@ func articleDraftReviewSingleResult(toolName, operation string, review *cmsapi.D
 }
 
 func articleDraftReviewStateResult(review *cmsapi.DraftReview, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
+	return articleDraftReviewStateViewResult(review, articleDraftReviewViewCompact, maxOutputBytes)
+}
+
+func articleDraftReviewStateViewResult(review *cmsapi.DraftReview, view string, maxOutputBytes int) (*mcpruntime.ToolResult, error) {
 	if review == nil {
 		return nil, fmt.Errorf("article_draft_review_read returned no review")
 	}
@@ -245,6 +268,7 @@ func articleDraftReviewStateResult(review *cmsapi.DraftReview, maxOutputBytes in
 		"operation": "state",
 		"source":    "lesser_cms_graphql",
 		"mode":      "state",
+		"view":      view,
 		"review":    review,
 		"count":     1,
 	}
@@ -271,6 +295,7 @@ func articleDraftReviewQueueResult(queue *cmsapi.DraftReviewConnection, limit, m
 		"operation":  "queue",
 		"source":     "lesser_cms_graphql",
 		"mode":       "queue",
+		"view":       articleDraftReviewViewCompact,
 		"reviews":    reviews,
 		"count":      len(reviews),
 		"limit":      limit,
@@ -300,6 +325,12 @@ func articleDraftReviewResult(toolName, operation, summary string, payload map[s
 	if measurement.JSONRPCEnvelopeBytes <= maxOutputBytes {
 		return result, nil
 	}
+	guidance := "increase max_output_bytes"
+	if operation == "queue" {
+		guidance = "reduce queue limit or increase max_output_bytes"
+	} else if operation == "state" && payload["view"] == articleDraftReviewViewStandard {
+		guidance = "increase max_output_bytes; standard review evidence is never truncated"
+	}
 	return toolErrorResult("response_too_large", toolName+" response exceeds max_output_bytes", 413, map[string]any{
 		"tool":                   toolName,
 		"operation":              operation,
@@ -307,7 +338,7 @@ func articleDraftReviewResult(toolName, operation, summary string, payload map[s
 		"maxOutputBytes":         maxOutputBytes,
 		"contentTextBytes":       measurement.ContentTextBytes,
 		"structuredContentBytes": measurement.StructuredContentBytes,
-		"guidance":               "reduce queue limit or increase max_output_bytes",
+		"guidance":               guidance,
 	})
 }
 
