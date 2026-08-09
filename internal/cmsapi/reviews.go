@@ -11,12 +11,18 @@ const (
 	DraftReviewVerdictChangesRequested = "CHANGES_REQUESTED"
 )
 
-// DraftReview is the bounded projection of Lesser's review workflow contract.
-// Review grants, verdict history, attribution, and publish eligibility remain
-// Lesser-owned; Body only transports the fields needed by MCP clients.
+// DraftReview is the caller-authorized projection of Lesser's review workflow
+// contract. Compact queries leave the evidence pointers nil; standard state
+// queries populate exact source and canonical rendering from the same snapshot
+// as the binding, grant, verdict, and eligibility state.
 type DraftReview struct {
 	DraftID                   string                     `json:"draftId"`
+	OwnerID                   *string                    `json:"ownerId,omitempty"`
 	Title                     *string                    `json:"title,omitempty"`
+	Slug                      *string                    `json:"slug,omitempty"`
+	Content                   *string                    `json:"content,omitempty"`
+	RenderedHTML              *string                    `json:"renderedHtml,omitempty"`
+	RenderErrors              *[]string                  `json:"renderErrors,omitempty"`
 	Subtitle                  *string                    `json:"subtitle,omitempty"`
 	Excerpt                   *string                    `json:"excerpt,omitempty"`
 	ContentFormat             string                     `json:"contentFormat"`
@@ -136,12 +142,23 @@ func (c *Client) SubmitArticleDraftForReview(ctx context.Context, bearerToken, d
 // ReadArticleDraftReview delegates caller authorization and review-state
 // resolution to Lesser's draftReview query.
 func (c *Client) ReadArticleDraftReview(ctx context.Context, bearerToken, draftID string) (*DraftReview, error) {
+	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewFields())
+}
+
+// ReadArticleDraftReviewStandard selects Lesser's complete caller-authorized
+// review evidence. Content, rendering, binding, grant, verdict, and
+// eligibility fields all come from one authoritative DraftReview snapshot.
+func (c *Client) ReadArticleDraftReviewStandard(ctx context.Context, bearerToken, draftID string) (*DraftReview, error) {
+	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewStandardFields())
+}
+
+func (c *Client) readArticleDraftReview(ctx context.Context, bearerToken, draftID, fields string) (*DraftReview, error) {
 	draftID = strings.TrimSpace(draftID)
 	if draftID == "" {
 		return nil, fmt.Errorf("draft id is required")
 	}
 	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyArticleDraftReview($id: ID!) { draftReview(id: $id) { " + draftReviewFields() + " } }",
+		Query:         "query BodyArticleDraftReview($id: ID!) { draftReview(id: $id) { " + fields + " } }",
 		OperationName: "BodyArticleDraftReview",
 		Variables:     map[string]any{"id": draftID},
 	})
@@ -227,6 +244,10 @@ func draftReviewFields() string {
 	// Keep the projection within Lesser's depth-3 agent/CLI profile. The
 	// connection edge/node wrappers are transparent to Lesser's depth counter.
 	return "draftId title subtitle excerpt contentFormat status scheduledAt updatedAt createdAt generatedBy { id username } reviewedBy { id username } reviewStatus editorNotes contentHash revision activeReviewerIds publishEligible publishBlockingReasons reviewersApproved principalApprovalRequired principalApproved grantCount grantsTruncated grants { reviewerId reviewer { id username } grantedAt status revokedAt } grant { reviewerId reviewer { id username } grantedAt status revokedAt } verdicts { verdict notes contentHash reviewerId reviewer { id username } recordedAt current stale } publishEligibility { eligible blockingReasons reviewersApproved principalApprovalRequired principalApproved }"
+}
+
+func draftReviewStandardFields() string {
+	return draftReviewFields() + " ownerId slug content renderedHtml renderErrors"
 }
 
 func normalizeDraftReview(review *DraftReview) {

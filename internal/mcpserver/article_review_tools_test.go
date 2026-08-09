@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -32,6 +33,16 @@ func TestArticleDraftReviewToolContract(t *testing.T) {
 		delete(want, def.Name)
 		if len(def.InputSchema) == 0 || len(def.OutputSchema) == 0 {
 			t.Errorf("%s must publish input and output schemas", def.Name)
+		}
+		if def.Name == "article_draft_review_read" {
+			for _, contractText := range []string{`"view"`, `"compact"`, `"standard"`, "complete untruncated Lesser-authoritative source"} {
+				if !strings.Contains(string(def.InputSchema), contractText) {
+					t.Errorf("%s input schema missing detailed state contract %q", def.Name, contractText)
+				}
+			}
+			if !strings.Contains(string(def.OutputSchema), `"view"`) || !strings.Contains(string(def.OutputSchema), "Standard review evidence is never truncated") {
+				t.Errorf("%s output schema missing view/budget contract: %s", def.Name, def.OutputSchema)
+			}
 		}
 		for _, contractText := range []string{"unanimous current approval from every active reviewer", "active approval from the configured instance principal"} {
 			if !strings.Contains(def.Description, contractText) {
@@ -131,6 +142,111 @@ func TestArticleDraftReviewHandlersDelegateToLesser(t *testing.T) {
 	if operations[0].Variables["reviewer"] != "reviewer" || operations[3].Variables["verdict"] != cmsapi.DraftReviewVerdictChangesRequested {
 		t.Fatalf("delegated variables = first:%+v verdict:%+v", operations[0].Variables, operations[3].Variables)
 	}
+	for _, index := range []int{0, 1, 2, 3} {
+		for _, detailField := range []string{"ownerId", " slug ", " content ", "renderedHtml", "renderErrors"} {
+			if strings.Contains(operations[index].Query, detailField) {
+				t.Fatalf("compact operation %s selected detailed field %q: %s", operations[index].OperationName, detailField, operations[index].Query)
+			}
+		}
+	}
+}
+
+func TestArticleDraftReviewStandardStateTransportsExactLesserSnapshot(t *testing.T) {
+	const source = "# Exact source\n\n<script>alert('source only')</script>"
+	const rendered = "<h1>Exact source</h1>"
+	var operation cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected Authorization header", http.StatusInternalServerError)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&operation); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"draftReview":{
+			"draftId":"draft-1",
+			"ownerId":"author",
+			"title":"Review me",
+			"slug":"review-me",
+			"content":` + fmt.Sprintf("%q", source) + `,
+			"renderedHtml":` + fmt.Sprintf("%q", rendered) + `,
+			"renderErrors":[],
+			"contentFormat":"MARKDOWN",
+			"status":"DRAFT",
+			"updatedAt":"2026-08-09T04:57:23Z",
+			"createdAt":"2026-08-09T04:57:23Z",
+			"contentHash":"e9eb371029c39bdb8a4df935031076e77f983852c21ed79094600e129ae1077b",
+			"revision":0,
+			"activeReviewerIds":["reviewer"],
+			"publishEligible":false,
+			"publishBlockingReasons":["REVIEW_APPROVAL_REQUIRED","PRINCIPAL_APPROVAL_REQUIRED"],
+			"reviewersApproved":false,
+			"principalApprovalRequired":true,
+			"principalApproved":false,
+			"grantCount":1,
+			"grantsTruncated":false,
+			"grants":[{"reviewerId":"reviewer","reviewer":{"id":"reviewer","username":"reviewer"},"grantedAt":"2026-08-09T04:57:37Z","status":"ACTIVE"}],
+			"grant":{"reviewerId":"reviewer","reviewer":{"id":"reviewer","username":"reviewer"},"grantedAt":"2026-08-09T04:57:37Z","status":"ACTIVE"},
+			"verdicts":[],
+			"publishEligibility":{"eligible":false,"blockingReasons":["REVIEW_APPROVAL_REQUIRED","PRINCIPAL_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}
+		}}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftReviewRead(articleDraftTestContext(), json.RawMessage(`{"draft_id":"draft-1","view":"standard","max_output_bytes":50000}`))
+	if err != nil {
+		t.Fatalf("standard state handler: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("standard state result = %+v", result)
+	}
+	if operation.OperationName != "BodyArticleDraftReview" || strings.Contains(operation.Query, " draft(") || strings.Contains(operation.Query, "draftPreview(") {
+		t.Fatalf("standard review must use Lesser's caller-authorized draftReview snapshot only: %+v", operation)
+	}
+	for _, field := range []string{"ownerId", "slug", "content", "renderedHtml", "renderErrors"} {
+		if !strings.Contains(operation.Query, field) {
+			t.Fatalf("standard state query missing %q: %s", field, operation.Query)
+		}
+	}
+	data, _ := result.StructuredContent["data"].(map[string]any)
+	if data["view"] != "standard" {
+		t.Fatalf("standard state view = %v, data = %+v", data["view"], data)
+	}
+	encoded, err := json.Marshal(data["review"])
+	if err != nil {
+		t.Fatalf("marshal standard review: %v", err)
+	}
+	for _, exact := range []string{source, rendered, "author", "review-me", "e9eb371029c39bdb8a4df935031076e77f983852c21ed79094600e129ae1077b"} {
+		encodedExact, _ := json.Marshal(exact)
+		if !bytes.Contains(encoded, encodedExact) {
+			t.Fatalf("standard review omitted exact Lesser value %q: %s", exact, encoded)
+		}
+	}
+	for _, fragment := range []string{
+		`"ownerId":"author"`,
+		`"slug":"review-me"`,
+		`"content":`,
+		`"renderedHtml":`,
+		`"renderErrors":[]`,
+		`"contentFormat":"MARKDOWN"`,
+		`"revision":0`,
+	} {
+		if !bytes.Contains(encoded, []byte(fragment)) {
+			t.Fatalf("standard review missing %s: %s", fragment, encoded)
+		}
+	}
+	if bytes.Contains(encoded, []byte("contentBoundToVerdict")) {
+		t.Fatalf("Body must not manufacture contentBoundToVerdict: %s", encoded)
+	}
 }
 
 func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
@@ -218,6 +334,41 @@ func TestArticleDraftReviewBudgetGuardRejectsPinnedVerdictHistoryDrift(t *testin
 	t.Logf("realistic queue envelope at n=%d with %d verdicts/review: %d bytes (budget %d)", articleDraftReviewDefaultLimit, realisticDraftReviewPinnedVerdictCount, measuredBytes, budget)
 }
 
+func TestArticleDraftReviewStandardStateFailsRatherThanTruncatingEvidence(t *testing.T) {
+	ownerID := "author"
+	slug := "review-me"
+	content := strings.Repeat("exact-source-", 4000)
+	rendered := "<p>" + content + "</p>"
+	renderErrors := []string{}
+	review := realisticDraftReviewFixture(0, 1)
+	review.OwnerID = &ownerID
+	review.Slug = &slug
+	review.Content = &content
+	review.RenderedHTML = &rendered
+	review.RenderErrors = &renderErrors
+
+	result, err := articleDraftReviewStateViewResult(review, articleDraftReviewViewStandard, articleDraftReviewBudgetBytes)
+	if err != nil {
+		t.Fatalf("articleDraftReviewStateViewResult: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("oversized standard state must fail explicitly: %+v", result)
+	}
+	errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+	details, _ := errorPayload["details"].(map[string]any)
+	if errorPayload["code"] != "response_too_large" || errorPayload["status"] != 413 ||
+		details["guidance"] != "increase max_output_bytes; standard review evidence is never truncated" {
+		t.Fatalf("standard budget failure = %+v", errorPayload)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal budget failure: %v", err)
+	}
+	if bytes.Contains(encoded, []byte(content[:256])) {
+		t.Fatalf("response_too_large error leaked or truncated review evidence: %s", encoded)
+	}
+}
+
 func realisticDraftReviewFixture(index, verdictCount int) *cmsapi.DraftReview {
 	title := fmt.Sprintf("Review-ready architecture note %02d: preserve Lesser authority", index)
 	subtitle := "An agent-generated draft with reviewer attribution and editorial context"
@@ -297,6 +448,14 @@ func TestArticleDraftReviewHandlersRejectInvalidModesAndVerdicts(t *testing.T) {
 			_, err := handleArticleDraftReviewRead(ctx, json.RawMessage(`{"draft_id":"draft-1","cursor":"next"}`))
 			return err
 		},
+		"standard queue view": func() error {
+			_, err := handleArticleDraftReviewRead(ctx, json.RawMessage(`{"view":"standard"}`))
+			return err
+		},
+		"unknown state view": func() error {
+			_, err := handleArticleDraftReviewRead(ctx, json.RawMessage(`{"draft_id":"draft-1","view":"full"}`))
+			return err
+		},
 		"queue limit": func() error {
 			_, err := handleArticleDraftReviewRead(ctx, json.RawMessage(`{"limit":81}`))
 			return err
@@ -325,6 +484,9 @@ func assertReviewResult(t *testing.T, result *mcpruntime.ToolResult, operation, 
 	}
 	if mode != "" && data["mode"] != mode {
 		t.Fatalf("mode data = %+v, want %q", data, mode)
+	}
+	if mode != "" && data["view"] != articleDraftReviewViewCompact {
+		t.Fatalf("default %s view = %v, want compact", mode, data["view"])
 	}
 	if !strings.Contains(result.Content[0].Text, `"payload"`) {
 		t.Fatalf("text result must carry accessible payload: %s", result.Content[0].Text)
