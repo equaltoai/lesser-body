@@ -106,8 +106,9 @@ Notes:
 - `internal/cmsapi/`
   - wraps the Lesser API client for `POST /api/graphql`
   - forwards the caller's OAuth bearer token to Lesser and preserves Lesser HTTP errors through `lesserapi.APIError`
-  - preserves GraphQL `data`, `errors`, and `extensions` and layers typed Article draft/publish/read/update operations for MCP tools
-  - powers `article_draft_create`, `article_draft_update`, `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_draft_publish`, `article_update`, `article_get`, and `article_list` without direct DynamoDB access
+  - preserves GraphQL `data`, `errors`, and `extensions` and layers typed Article draft/publish/read/update/review operations for MCP tools
+  - powers `article_draft_create`, `article_draft_update`, `article_draft_get`, `article_draft_list`, `article_draft_preview`, `article_draft_review_submit`, `article_draft_review_read`, `article_draft_review_verdict`, `article_draft_publish`, `article_update`, `article_get`, and `article_list` without direct DynamoDB access
+  - keeps review queues and the default review-state view metadata-only, while explicit `article_draft_review_read(view=standard)` state reads select Lesser's exact source, canonical rendered HTML/render errors, revision/hash binding, grants, verdict staleness, and publish eligibility from one caller-authorized `DraftReview` snapshot; Body never truncates or reconstructs that evidence
   - delegates draft preview rendering to Lesser's canonical Article renderer/sanitizer through `draftPreview(id:)`, keeps the canary workflow in `scripts/canary_article_mcp.py`, and avoids Mastodon status APIs for long-form authoring
 
 ### Communication tools (delegate to lesser-host)
