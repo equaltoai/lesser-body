@@ -2,6 +2,7 @@ package instanceapp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"reflect"
@@ -26,6 +27,10 @@ const (
 // registry without affecting Ka's actor-scoped /mcp/{actor} runtime.
 func New(name, version string, custom ...Option) (*apptheory.App, error) {
 	opts := applyOptions(custom)
+	authorizationServerIssuer, err := resolveInstanceAuthorizationServerIssuer(context.Background(), opts.baInstanceEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("validate instance OAuth discovery: %w", err)
+	}
 
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -51,11 +56,11 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 		apptheory.WithAuthHook(auth.Hook(slog.Default())),
 	)
 
-	app.Post("/instance/ptah/mcp", instanceMCPHandler(ptah, opts.baInstanceEndpoint, SurfacePtah), apptheory.RequireAuth())
-	app.Post("/instance/ba/mcp", instanceMCPHandler(ba, opts.baInstanceEndpoint, SurfaceBa), apptheory.RequireAuth())
+	app.Post("/instance/ptah/mcp", instanceMCPHandler(ptah, opts.baInstanceEndpoint, SurfacePtah))
+	app.Post("/instance/ba/mcp", instanceMCPHandler(ba, opts.baInstanceEndpoint, SurfaceBa))
 	app.Get(installerGrantPathPattern, installerGrantHandler(opts))
-	app.Get(instanceProtectedResourceMetadataPath(SurfacePtah), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, SurfacePtah)))
-	app.Get(instanceProtectedResourceMetadataPath(SurfaceBa), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, SurfaceBa)))
+	app.Get(instanceProtectedResourceMetadataPath(SurfacePtah), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, authorizationServerIssuer, SurfacePtah)))
+	app.Get(instanceProtectedResourceMetadataPath(SurfaceBa), mcpapp.WithBrowserCORS(wellKnownProtectedResourceHandler(opts.baInstanceEndpoint, authorizationServerIssuer, SurfaceBa)))
 
 	return app, nil
 }
@@ -68,7 +73,27 @@ func instanceMCPHandler(server *mcpruntime.Server, endpointTemplate string, surf
 		},
 		mcpapp.MCPAuthorizationScopes,
 	)
-	return requireInstancePrincipal(withToolContext(runtimeHandler))
+	return withInstanceMCPAuthorization(requireInstancePrincipal(withToolContext(runtimeHandler)), endpointTemplate, surface)
+}
+
+func withInstanceMCPAuthorization(next apptheory.Handler, endpointTemplate string, surface string) apptheory.Handler {
+	if next == nil {
+		return nil
+	}
+	authHook := auth.Hook(nil)
+
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		identity, err := authHook(ctx)
+		if err != nil || strings.TrimSpace(identity) == "" {
+			return mcpapp.OAuthUnauthorizedMCPResponse(
+				ctx,
+				instanceProtectedResourceMetadataURLForRequest(ctx, endpointTemplate, surface),
+				mcpapp.MCPAuthorizationScopes,
+			), nil
+		}
+		ctx.AuthIdentity = identity
+		return next(ctx)
+	}
 }
 
 func newPlaneServer(appName, version, surface string) *mcpruntime.Server {

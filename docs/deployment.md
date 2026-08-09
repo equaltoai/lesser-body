@@ -246,7 +246,9 @@ curl -sS "https://api.<stageDomain>/.well-known/oauth-protected-resource/instanc
 Expected instance protected-resource fields are the same `resource`, `authorization_servers`, `scopes_supported`, and
 `bearer_methods_supported` fields. `resource` must match the exact instance endpoint
 (`https://api.<stageDomain>/instance/ptah/mcp` or `https://api.<stageDomain>/instance/ba/mcp`), and scopes should remain
-the public Lesser OAuth catalog (`read`, `write`, `follow`, `push`).
+the public Lesser OAuth catalog (`read`, `write`, `follow`, `push`). `authorization_servers` must contain the exact
+`issuer` returned by `https://api.<stageDomain>/.well-known/oauth-authorization-server`; do not substitute the MCP
+resource origin when the issuer uses a different host.
 
 After metadata verification, use an account-holder OAuth token with an audience for the exact instance resource URL,
 send MCP `initialize`, and then call authenticated `tools/list` on the Ptah or Ba endpoint. Do not synthesize local

@@ -65,9 +65,16 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 }
 
 func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
+	return OAuthUnauthorizedMCPResponse(ctx, protectedResourceMetadataURLForRequest(ctx), MCPAuthorizationScopes)
+}
+
+// OAuthUnauthorizedMCPResponse returns the shared RFC 9728 discovery challenge
+// for an MCP resource. Instance-plane handlers use it to preserve the same
+// authorization bootstrap contract as actor-scoped MCP handlers.
+func OAuthUnauthorizedMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
 	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
-		ResourceMetadata: protectedResourceMetadataURLForRequest(ctx),
-		Scope:            MCPAuthorizationScopes,
+		ResourceMetadata: resourceMetadataURL,
+		Scope:            scopes,
 	}, map[string]any{
 		"source":          "lesser_body",
 		"reauthorize":     true,

@@ -185,6 +185,27 @@ func oauthAuthorizationServerMetadataURL(baseURL string) string {
 	return baseURL + oauthAuthorizationServerMetadataPath
 }
 
+// ProbeAuthorizationServerIssuer resolves the authoritative issuer published by
+// an OAuth authorization server. Protected resources may be hosted on a
+// different origin, so callers must publish this returned issuer rather than
+// assuming the resource origin is also the authorization server identifier.
+func ProbeAuthorizationServerIssuer(ctx context.Context, authorizationServerURL string) (string, error) {
+	if _, err := validatedPublicBaseURL(authorizationServerURL); err != nil {
+		return "", fmt.Errorf("validate authorization server URL: %w", err)
+	}
+
+	metadataURL := oauthAuthorizationServerMetadataURL(authorizationServerURL)
+	issuer, err := probeAuthorizationServerMetadata(ctx, metadataURL)
+	if err != nil {
+		return "", fmt.Errorf("probe %s: %w", metadataURL, err)
+	}
+	issuer = strings.TrimSpace(issuer)
+	if _, err := validatedPublicBaseURL(issuer); err != nil {
+		return "", fmt.Errorf("validate authorization server issuer %q: %w", issuer, err)
+	}
+	return issuer, nil
+}
+
 func authorizationServerURLForMcpEndpoint(mcpEndpoint string) (string, error) {
 	validatedEndpoint, err := validatedMcpEndpoint(mcpEndpoint)
 	if err != nil {

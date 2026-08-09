@@ -1,6 +1,7 @@
 package instanceapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/baserver"
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 	oauthruntime "github.com/theory-cloud/apptheory/v3/runtime/oauth"
 )
@@ -33,8 +35,9 @@ func (e *instanceEndpointMismatchError) Error() string {
 	return fmt.Sprintf("configured INSTANCE_MCP_ENDPOINT %q does not match request URL %q", e.Configured, e.Requested)
 }
 
-func wellKnownProtectedResourceHandler(instanceEndpointTemplate string, surface string) apptheory.Handler {
+func wellKnownProtectedResourceHandler(instanceEndpointTemplate string, authorizationServerIssuer string, surface string) apptheory.Handler {
 	instanceEndpointTemplate = strings.TrimSpace(instanceEndpointTemplate)
+	authorizationServerIssuer = strings.TrimSpace(authorizationServerIssuer)
 	surface = strings.TrimSpace(surface)
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
@@ -43,12 +46,11 @@ func wellKnownProtectedResourceHandler(instanceEndpointTemplate string, surface 
 			return invalidInstanceDiscoveryConfigResponse(err), nil
 		}
 
-		authorizationServerURL, err := authorizationServerURLForInstanceEndpoint(resource, surface)
-		if err != nil {
-			return invalidInstanceDiscoveryConfigResponse(fmt.Errorf("derive authorization server URL from instance MCP endpoint: %w", err)), nil
+		if authorizationServerIssuer == "" {
+			return invalidInstanceDiscoveryConfigResponse(fmt.Errorf("authorization server issuer is unavailable for instance protected-resource metadata")), nil
 		}
 
-		md, err := oauthruntime.NewProtectedResourceMetadata(resource, []string{authorizationServerURL})
+		md, err := oauthruntime.NewProtectedResourceMetadata(resource, []string{authorizationServerIssuer})
 		if err != nil {
 			return nil, fmt.Errorf("build instance protected resource metadata: %w", err)
 		}
@@ -69,6 +71,26 @@ func wellKnownProtectedResourceHandler(instanceEndpointTemplate string, surface 
 			Body: body,
 		}, nil
 	}
+}
+
+func resolveInstanceAuthorizationServerIssuer(ctx context.Context, instanceEndpointTemplate string) (string, error) {
+	if strings.TrimSpace(instanceEndpointTemplate) == "" {
+		return "", nil
+	}
+
+	resource, err := instanceEndpointForSurface(instanceEndpointTemplate, SurfacePtah)
+	if err != nil {
+		return "", err
+	}
+	authorizationServerURL, err := authorizationServerURLForInstanceEndpoint(resource, SurfacePtah)
+	if err != nil {
+		return "", fmt.Errorf("derive authorization server URL from instance MCP endpoint: %w", err)
+	}
+	issuer, err := mcpapp.ProbeAuthorizationServerIssuer(ctx, authorizationServerURL)
+	if err != nil {
+		return "", fmt.Errorf("discover authorization server issuer from %s: %w", authorizationServerURL, err)
+	}
+	return issuer, nil
 }
 
 func instanceEndpointForRequest(ctx *apptheory.Context, endpointTemplate string, surface string) (string, error) {
