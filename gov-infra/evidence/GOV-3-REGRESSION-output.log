@@ -2,5 +2,7 @@ $ bash gov-infra/verifiers/gov-verify-rubric-branch-profile-test.sh
 feature-current: PASS
 feature-stale: PASS
 promotion-valid: PASS
+promotion-stale-unmerged: PASS
+promotion-merged-during-check: PASS
 promotion-invalid-source: PASS
 GOV-3 branch-profile regression: PASS
