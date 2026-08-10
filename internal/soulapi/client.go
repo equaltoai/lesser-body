@@ -104,6 +104,25 @@ func (e *APIError) RetryAfterSeconds() int {
 }
 
 func (c *Client) DoJSON(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) (any, error) {
+	respBody, err := c.DoJSONRaw(ctx, method, path, query, bearerToken, body)
+	if err != nil {
+		return nil, err
+	}
+	if len(respBody) == 0 {
+		return map[string]any{}, nil
+	}
+
+	var out any
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return out, nil
+}
+
+// DoJSONRaw performs the same bounded authenticated request as DoJSON while
+// preserving successful response bytes. Integrity-sensitive consumers use it
+// when a digest binds a nested JSON value's exact wire representation.
+func (c *Client) DoJSONRaw(ctx context.Context, method string, path string, query url.Values, bearerToken string, body any) ([]byte, error) {
 	if c == nil || c.baseURL == nil || c.http == nil {
 		return nil, fmt.Errorf("lesser soul api client not initialized")
 	}
@@ -156,15 +175,7 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, query u
 		return nil, &APIError{Status: resp.StatusCode, Body: respBody, Headers: resp.Header.Clone()}
 	}
 
-	if len(respBody) == 0 {
-		return map[string]any{}, nil
-	}
-
-	var out any
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-	return out, nil
+	return respBody, nil
 }
 
 func resolveBaseURL(ctx context.Context) (*url.URL, error) {

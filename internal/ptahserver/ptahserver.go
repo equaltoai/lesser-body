@@ -1048,8 +1048,8 @@ func mergeAgentListEntries(account string, registryAgents []*agentregistry.Agent
 		orderedRegistry = append(orderedRegistry, agent)
 	}
 	sort.SliceStable(orderedRegistry, func(left, right int) bool {
-		leftKey := normalizeAgentIdentity(orderedRegistry[left].AgentID)
-		rightKey := normalizeAgentIdentity(orderedRegistry[right].AgentID)
+		leftKey := registryLiveIdentity(orderedRegistry[left])
+		rightKey := registryLiveIdentity(orderedRegistry[right])
 		if leftKey != rightKey {
 			return leftKey < rightKey
 		}
@@ -1060,7 +1060,7 @@ func mergeAgentListEntries(account string, registryAgents []*agentregistry.Agent
 	seenKeys := make(map[string]struct{}, len(orderedRegistry)+len(liveByIdentity))
 	matchedLive := make(map[string]struct{}, len(liveByIdentity))
 	for _, agent := range orderedRegistry {
-		identity := normalizeAgentIdentity(agent.AgentID)
+		identity := registryLiveIdentity(agent)
 		live := liveByIdentity[identity]
 		key := "registry:" + strings.ToLower(strings.TrimSpace(agent.AgentID))
 		if live != nil {
@@ -1090,6 +1090,16 @@ func mergeAgentListEntries(account string, registryAgents []*agentregistry.Agent
 		return entries[left].Key < entries[right].Key
 	})
 	return entries
+}
+
+func registryLiveIdentity(agent *agentregistry.Agent) string {
+	if agent == nil {
+		return ""
+	}
+	if localID := normalizeAgentIdentity(agent.LocalID); localID != "" {
+		return localID
+	}
+	return normalizeAgentIdentity(agent.AgentID)
 }
 
 func normalizeAgentIdentity(value string) string {
@@ -2501,10 +2511,19 @@ func registryProvenanceSummary(agent *agentregistry.Agent) map[string]any {
 	if conversationID := strings.TrimSpace(agent.HostConversationID); conversationID != "" {
 		out["conversation_id"] = conversationID
 	}
-	if source == agentregistry.SourceHostGenesisFinalize {
+	if source == agentregistry.SourceHostGenesisFinalize || source == agentregistry.SourceHostRecovery {
 		out["system_derived"] = true
 		out["caller_claimed"] = false
 		out["state_authority"] = "Host HostedGenesisSession"
+	}
+	if source == agentregistry.SourceHostRecovery {
+		out["classification"] = agent.RecoveryClassification
+		out["migration_read_sha256"] = agent.MigrationReadSHA256
+		out["historical_publication_sha"] = false
+		if !agent.RecoveryProducedAt.IsZero() {
+			out["produced_at"] = formatTime(agent.RecoveryProducedAt)
+		}
+		out["version_count"] = agent.RecoveryVersionCount
 	}
 	return out
 }

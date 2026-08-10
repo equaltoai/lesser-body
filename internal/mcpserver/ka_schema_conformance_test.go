@@ -748,6 +748,12 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 			"agent":             map[string]any{"agentId": "agent-1"},
 		}, nil))
 	})
+	add("soul_self_recover", "recovered", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(toolStructuredFirstResult(structuredFirstResultOptions{
+			Summary: "Bound soul recovered into Ptah",
+			Data:    map[string]any{"status": "recovered", "classification": "published_artifact_verified"},
+		}))
+	})
 
 	return fixtures
 }

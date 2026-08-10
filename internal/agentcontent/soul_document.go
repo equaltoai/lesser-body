@@ -88,11 +88,15 @@ type Refusal struct {
 
 type Provenance struct {
 	DeclarationSchemaVersion string `json:"declaration_schema_version"`
-	DeclarationCandidateHash string `json:"declaration_candidate_hash"`
+	DeclarationCandidateHash string `json:"declaration_candidate_hash,omitempty"`
 	RegistrationID           string `json:"registration_id"`
 	ConversationID           string `json:"conversation_id"`
-	Model                    string `json:"model"`
+	Model                    string `json:"model,omitempty"`
 	Source                   string `json:"source"`
+	RecoveryClassification   string `json:"recovery_classification,omitempty"`
+	MigrationReadSHA256      string `json:"migration_read_sha256,omitempty"`
+	ProducedAt               string `json:"produced_at,omitempty"`
+	HistoricalPublicationSHA *bool  `json:"historical_publication_sha,omitempty"`
 }
 
 // UnmarshalJSON keeps persisted and externally supplied v2 documents closed
@@ -497,7 +501,6 @@ func validateProvenance(provenance *Provenance) error {
 		{"declaration_schema_version", provenance.DeclarationSchemaVersion},
 		{"registration_id", provenance.RegistrationID},
 		{"conversation_id", provenance.ConversationID},
-		{"model", provenance.Model},
 	}
 	for _, item := range required {
 		if strings.TrimSpace(item.value) == "" {
@@ -507,13 +510,35 @@ func validateProvenance(provenance *Provenance) error {
 			return validationError("provenance."+item.field, "must be valid UTF-8")
 		}
 	}
-	if !soulDocumentHashPattern.MatchString(provenance.DeclarationCandidateHash) {
-		return validationError("provenance.declaration_candidate_hash", "must be a lowercase sha256 identifier")
-	}
 	switch provenance.Source {
+	case "host_recovery":
+		if provenance.RecoveryClassification != "published_artifact_verified" && provenance.RecoveryClassification != "legacy_declarations_only" {
+			return validationError("provenance.recovery_classification", "must be a supported Host recovery classification")
+		}
+		if !soulDocumentHashPattern.MatchString(provenance.MigrationReadSHA256) {
+			return validationError("provenance.migration_read_sha256", "must be a lowercase sha256 identifier")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, provenance.ProducedAt); err != nil {
+			return validationError("provenance.produced_at", "must be an RFC3339 date-time")
+		}
+		if provenance.HistoricalPublicationSHA == nil || *provenance.HistoricalPublicationSHA {
+			return validationError("provenance.historical_publication_sha", "must be explicitly false")
+		}
+		if provenance.DeclarationCandidateHash != "" || provenance.Model != "" {
+			return validationError("provenance", "host recovery must not claim candidate hash or model")
+		}
 	case "host_genesis_finalize", "ptah_seed", "owner":
+		if strings.TrimSpace(provenance.Model) == "" {
+			return validationError("provenance.model", "must not be empty")
+		}
+		if !soulDocumentHashPattern.MatchString(provenance.DeclarationCandidateHash) {
+			return validationError("provenance.declaration_candidate_hash", "must be a lowercase sha256 identifier")
+		}
+		if provenance.RecoveryClassification != "" || provenance.MigrationReadSHA256 != "" || provenance.ProducedAt != "" || provenance.HistoricalPublicationSHA != nil {
+			return validationError("provenance", "non-recovery sources must not carry recovery fields")
+		}
 	default:
-		return validationError("provenance.source", "must be host_genesis_finalize, ptah_seed, or owner")
+		return validationError("provenance.source", "must be host_genesis_finalize, host_recovery, ptah_seed, or owner")
 	}
 	return nil
 }

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/theory-cloud/tabletheory/v3"
@@ -97,6 +99,54 @@ func TestUpsertFinalizedCreatesAndReplaysHostDerivedRow(t *testing.T) {
 	items := fake.Items(os.Getenv(EnvInstanceRegistryTable))
 	if len(items) != 1 {
 		t.Fatalf("registry table items = %d, want exactly one idempotent row", len(items))
+	}
+}
+
+func TestUpsertRecoveredCreatesAndReplaysProvenance(t *testing.T) {
+	store, fake := newTestStore(t)
+	in := RecoveredInput{
+		Account: "theory", AgentID: "0xabc", HostRegistrationID: "reg", HostConversationID: "conv",
+		Domain: "theory.greater.website", LocalID: "della-marlowe", LifecycleStatus: "active",
+		PublishedVersion: 2, SelfDescriptionVersion: 2,
+		RecoveryClassification: "published_artifact_verified",
+		MigrationReadSHA256:    "sha256:" + strings.Repeat("a", 64),
+		RecoveryProducedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), RecoveryVersionCount: 2,
+	}
+	created, didCreate, err := store.UpsertRecovered(context.Background(), in)
+	if err != nil || !didCreate {
+		t.Fatalf("UpsertRecovered(create) = %+v %t %v", created, didCreate, err)
+	}
+	if created.Source != SourceHostRecovery || created.SourceOperation != SourceOperationSoulSelfRecover ||
+		created.RecoveryClassification != in.RecoveryClassification || created.MigrationReadSHA256 != in.MigrationReadSHA256 || created.RecoveryVersionCount != 2 {
+		t.Fatalf("created recovery provenance = %+v", created)
+	}
+	replayed, didCreate, err := store.UpsertRecovered(context.Background(), in)
+	if err != nil || didCreate || replayed == nil {
+		t.Fatalf("UpsertRecovered(replay) = %+v %t %v", replayed, didCreate, err)
+	}
+	if got := len(fake.Items(os.Getenv(EnvInstanceRegistryTable))); got != 1 {
+		t.Fatalf("registry rows = %d, want 1", got)
+	}
+}
+
+func TestUpsertRecoveredRejectsMalformedMigrationDigest(t *testing.T) {
+	store, _ := newTestStore(t)
+	base := RecoveredInput{
+		Account: "theory", AgentID: "0xabc", HostRegistrationID: "reg", HostConversationID: "conv",
+		Domain: "theory.greater.website", LocalID: "della-marlowe", LifecycleStatus: "active",
+		SelfDescriptionVersion: 1, RecoveryClassification: "legacy_declarations_only",
+		RecoveryProducedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	for _, digest := range []string{
+		"sha256:" + strings.Repeat("A", 64),
+		"sha256:" + strings.Repeat("z", 64),
+		"sha256:" + strings.Repeat("a", 63),
+	} {
+		in := base
+		in.MigrationReadSHA256 = digest
+		if _, _, err := store.UpsertRecovered(context.Background(), in); err == nil {
+			t.Fatalf("UpsertRecovered(%q) succeeded, want invalid digest error", digest)
+		}
 	}
 }
 

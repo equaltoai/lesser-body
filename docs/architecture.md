@@ -15,7 +15,9 @@ MCP client (AgentCore / other)
                     ├── AppTheory MCP server (tools/resources/prompts)
                     ├── Calls Lesser REST API for social tools
                     ├── Calls lesser-host Soul Comm APIs for email/SMS/voice mailbox and send/reply
-                    └── Reads/writes Lesser DynamoDB table for memory events
+                    ├── Reads/writes Lesser DynamoDB table for memory events
+                    └── For bound-actor self-recovery only: reads Host recovery detail and writes Body-owned
+                        INSTANCE_CONTENT_TABLE / INSTANCE_REGISTRY_TABLE
 
 Operator client
   ├── HTTPS POST /instance/ptah/mcp (api.<stageDomain>)

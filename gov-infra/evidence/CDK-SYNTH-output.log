@@ -212,6 +212,20 @@ Resources:
                   - Ref: AWS::Partition
                   - :dynamodb:us-east-1:000000000000:table/
                   - Ref: LesserTableNameParamLookupParameter
+          - Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:Query
+              - dynamodb:TransactWriteItems
+              - dynamodb:UpdateItem
+            Effect: Allow
+            Resource:
+              - Fn::GetAtt:
+                  - InstanceContentTable
+                  - Arn
+              - Fn::GetAtt:
+                  - InstanceRegistryTable
+                  - Arn
         Version: "2012-10-17"
       PolicyName: McpHandlerServiceRoleDefaultPolicy7A894181
       Roles:
@@ -225,7 +239,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: f836f5a75d07e952e7f1e2170aabdc012e97c17cdaf3b273226928058ba2a983.zip
+        S3Key: c76646a8358646fccb5644d77e26df786ef75af853016457368c4d134013b091.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -250,6 +264,11 @@ Resources:
           MCP_ALLOWED_ORIGINS: https://claude.ai,https://claude.com,https://dev.example.com,https://app.dev.example.com,https://api.dev.example.com
           LESSER_TABLE_NAME:
             Ref: LesserTableNameParamLookupParameter
+          INSTANCE_ACCOUNT_ID: lesser
+          INSTANCE_CONTENT_TABLE:
+            Ref: InstanceContentTable
+          INSTANCE_REGISTRY_TABLE:
+            Ref: InstanceRegistryTable
       FunctionName: lesser-dev-lesser-body-mcp
       Handler: bootstrap
       MemorySize: 1024
@@ -266,7 +285,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.f836f5a75d07e952e7f1e2170aabdc012e97c17cdaf3b273226928058ba2a983.zip
+      aws:asset:path: asset.c76646a8358646fccb5644d77e26df786ef75af853016457368c4d134013b091.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1316,6 +1335,7 @@ Resources:
               - dynamodb:GetItem
               - dynamodb:PutItem
               - dynamodb:Query
+              - dynamodb:TransactWriteItems
               - dynamodb:UpdateItem
             Effect: Allow
             Resource:
@@ -1344,13 +1364,14 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 318cbd9b41a9f77a6ad7abc67ae420250ef54cf9913166c17a8f0fc381eac1bd.zip
+        S3Key: a90edd68dad1582a2ebbe1aa7e000a9d855af9c065a637921ae539d7e3a88de5.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
           JWT_SECRET_ARN:
             Ref: JWTSecretArnParamLookupParameter
           INSTANCE_MCP_ENDPOINT: https://api.dev.example.com/instance/{surface}/mcp
+          INSTANCE_ACCOUNT_ID: lesser
           INSTANCE_CONTENT_TABLE:
             Ref: InstanceContentTable
           INSTANCE_REGISTRY_TABLE:
@@ -1379,7 +1400,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.318cbd9b41a9f77a6ad7abc67ae420250ef54cf9913166c17a8f0fc381eac1bd.zip
+      aws:asset:path: asset.a90edd68dad1582a2ebbe1aa7e000a9d855af9c065a637921ae539d7e3a88de5.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:

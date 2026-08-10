@@ -307,7 +307,7 @@ export function configureLesserBodyStack(stack: cdk.Stack, props: LesserBodyRunt
     mcpStreamTableParam.overrideLogicalId("McpStreamTableParam604E9EFA");
   }
 
-  configureInstancePlaneStack(stack, props, jwtSecretArnValue, jwtSecretKeyArnValue, jwtSecret, tableName, exactInstanceKeyArn);
+  configureInstancePlaneStack(stack, props, handler, jwtSecretArnValue, jwtSecretKeyArnValue, jwtSecret, tableName, exactInstanceKeyArn);
 }
 
 function overrideRemoteMcpTableLogicalId(table: dynamodb.ITable | undefined, logicalId: string): void {
@@ -334,6 +334,7 @@ interface InstancePlaneTables {
 function configureInstancePlaneStack(
   stack: cdk.Stack,
   props: LesserBodyRuntimeProps,
+  kaHandler: lambda.Function,
   jwtSecretArnValue: string,
   jwtSecretKeyArnValue: string,
   jwtSecret: secretsmanager.ISecret,
@@ -341,6 +342,19 @@ function configureInstancePlaneStack(
   exactInstanceKeyArn: string | undefined,
 ): void {
   const tables = createInstancePlaneTables(stack, props.appName, props.stage);
+  kaHandler.addEnvironment("INSTANCE_ACCOUNT_ID", props.appName);
+  kaHandler.addEnvironment("INSTANCE_CONTENT_TABLE", tables.content.tableName);
+  kaHandler.addEnvironment("INSTANCE_REGISTRY_TABLE", tables.registry.tableName);
+  kaHandler.addToRolePolicy(new iam.PolicyStatement({
+    actions: [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:TransactWriteItems",
+      "dynamodb:UpdateItem",
+    ],
+    resources: [tables.content.tableArn, tables.registry.tableArn],
+  }));
   const handler = new lambda.Function(stack, "InstanceMcpHandler", {
     runtime: lambda.Runtime.PROVIDED_AL2023,
     architecture: lambda.Architecture.ARM_64,
@@ -356,6 +370,7 @@ function configureInstancePlaneStack(
       SERVICE_VERSION: props.serviceVersion?.trim() || "dev",
       JWT_SECRET_ARN: jwtSecretArnValue,
       INSTANCE_MCP_ENDPOINT: props.instancePublicEndpoint,
+      INSTANCE_ACCOUNT_ID: props.appName,
       INSTANCE_CONTENT_TABLE: tables.content.tableName,
       INSTANCE_REGISTRY_TABLE: tables.registry.tableName,
       INSTANCE_GRANT_TABLE: tables.grant.tableName,
@@ -386,6 +401,7 @@ function configureInstancePlaneStack(
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:Query",
+      "dynamodb:TransactWriteItems",
       "dynamodb:UpdateItem",
     ],
     resources: [

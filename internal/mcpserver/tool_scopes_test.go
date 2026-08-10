@@ -165,6 +165,7 @@ func TestWriteScopedToolSurfaceIsPinned(t *testing.T) {
 		"post_favorite",
 		"profile_update",
 		"sms_send",
+		"soul_self_recover",
 		"unfollow",
 	}
 

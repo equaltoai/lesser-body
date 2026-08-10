@@ -707,6 +707,34 @@ Scope key:
 | `soul_read` | Read | Read a public soul identity bundle with opt-in summary/standard/full views and, with explicit self-scope opt-in, bounded private mint-conversation data through Lesser. |
 | `identity_lookup` | Read | Resolve a public soul identity by full agent ID, ENS name, a current-instance local ID such as `medic`, an explicit remote ActivityPub handle such as `@steward@remote.example`, or a canonical actor URL such as `https://remote.example/users/steward`; returns public identity summary plus the current managed `lessersoul.ai` email address when Host publishes one. |
 | `identity_verify` | Read | Verify that a recent communication matches a resolved soul identity using public ENS resolution plus authoritative message provenance. Private email/phone verification fails closed unless Host supplies authoritative sender-identifier provenance. |
+| `soul_self_recover` | Write | Souled-only, actor-initiated recovery of the authenticated actor's Host-retained declaration into Body's Ptah registry/content state. Input is exactly `{}`; actor, account, and Host agent ID are server-derived. Verified published history seeds a published Body soul, while `legacy_declarations_only` remains draft and never fabricates historical publication. |
+
+### Actor-initiated Ptah recovery
+
+`soul_self_recover({})` is the self-service bridge for an agent that already has an authoritative Lesser soul/body
+binding but predates Ptah registry/content materialization. It requires an OAuth actor token with `write`, is visible
+only in the `souled` profile, and accepts no identity or account selector. Body derives the actor from the OAuth route,
+derives the Host agent ID from Lesser's `SOUL_BODY_BINDING_USERNAME` projection, and derives the Ptah account from the
+deploy-configured `INSTANCE_ACCOUNT_ID`.
+
+Body then calls Host's read-only `GET /api/v1/soul/instance/recovery/agents/{agentId}` with its managed InstanceKey. It
+strictly validates the closed response, exact actor/domain binding, provenance constants, classification, complete
+version evidence, and `migration_read_sha256` over the exact returned declaration JSON before any write. Host error
+bodies and declaration bytes are never logged or copied into the compact tool result.
+
+The tool writes only Body-owned `INSTANCE_CONTENT_TABLE` and `INSTANCE_REGISTRY_TABLE` state:
+
+- `published_artifact_verified` creates or replays the exact recovery seed and publishes that identical Body soul;
+- `legacy_declarations_only` creates or replays a draft and explicitly records
+  `historical_publication_sha:false`;
+- default instructions are create-only; owner-authored content always wins;
+- a different existing soul, registry local ID, or recovery provenance returns a conflict rather than overwriting it.
+
+Successful recovery makes the record available to the existing Ptah `agent_get`, `agent_list`, `agent_soul_*`, and
+`agent_instructions_*` operator tools. `agent_list` joins Host-ID registry rows to Lesser's username-keyed public live
+directory by the verified registry `local_id`, so a recovered agent appears once. Replay is idempotent and reports the
+current lifecycle/version state. This operation never runs genesis, publishes or repairs Host registry artifacts,
+signs, versions, converges, or mutates Lesser/Host/on-chain state.
 
 ### Ka interface bootstrap
 

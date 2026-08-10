@@ -70,20 +70,26 @@ Variables:
     `SOUL_BINDING_INTEGRATION_KEY_ARN` configuration. If neither the direct env nor ARN-backed path resolves,
     `agent_bind_soul` and `agent_local_install_plan` fail closed with `not_configured`.
 
-### Instance-plane storage
+### Instance-plane storage and Ka self-recovery
 
 Ptah/Ba instance-plane state uses body-owned DynamoDB tables provisioned by this repo's CDK stack. These tables
 are separate from Lesser's actor data table (`LESSER_TABLE_NAME`).
 
-- `INSTANCE_CONTENT_TABLE` (string, required for the instance-plane Lambda)
+- `INSTANCE_ACCOUNT_ID` (string, required for the instance-plane Lambda and Ka `soul_self_recover`)
+  - Stable Body/Ptah account partition derived by CDK from the deployment `app` slug. It is never accepted from an MCP caller.
+- `INSTANCE_CONTENT_TABLE` (string, required for the instance-plane Lambda and Ka `soul_self_recover`)
   - Body-owned table for instance-plane content state.
-- `INSTANCE_REGISTRY_TABLE` (string, required for the instance-plane Lambda)
+- `INSTANCE_REGISTRY_TABLE` (string, required for the instance-plane Lambda and Ka `soul_self_recover`)
   - Body-owned table for Ptah-created account-scoped agent registry records keyed by `(account, agentID)`.
     Internal stores must use this table rather than `LESSER_TABLE_NAME`.
 - `INSTANCE_GRANT_TABLE` (string, required for the instance-plane Lambda)
   - Body-owned table for instance-plane grant state.
 - `INSTANCE_SESSION_TABLE` (string, required for the instance-plane Lambda)
   - Body-owned table for instance-plane session state; CDK configures `expiresAt` as its TTL attribute.
+
+CDK injects only `INSTANCE_ACCOUNT_ID`, `INSTANCE_CONTENT_TABLE`, and `INSTANCE_REGISTRY_TABLE` into Ka. Ka receives no
+instance grant/session table configuration or access. Recovery also requires the existing managed
+`LESSER_HOST_INSTANCE_KEY_ARN`, `LESSER_TABLE_NAME` binding-read configuration, and canonical `MCP_ENDPOINT` domain.
 
 ### MCP session and stream persistence
 

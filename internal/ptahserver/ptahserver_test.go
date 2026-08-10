@@ -1104,6 +1104,15 @@ func TestAgentListMergesAndDeduplicatesRegistryAndLiveAgentsStably(t *testing.T)
 	}
 }
 
+func TestAgentListMergesHostAgentIDRegistryByVerifiedLocalID(t *testing.T) {
+	entries := mergeAgentListEntries("theory", []*agentregistry.Agent{{
+		Account: "theory", AgentID: "0x57d10000000000000000000000000000000000000000000000000000000065c3", LocalID: "della-marlowe",
+	}}, []lesserapi.AgentDirectoryEntry{{Username: "della-marlowe", DisplayName: "Della Marlowe"}})
+	if len(entries) != 1 || entries[0].Registry == nil || entries[0].Live == nil || entries[0].Key != "agent:della-marlowe" {
+		t.Fatalf("entries = %+v, want one merged local-id identity", entries)
+	}
+}
+
 func TestAgentListReturnsSanitizedLiveSourceError(t *testing.T) {
 	store := &fakeAgentRegistry{listResult: &agentregistry.ListResult{}}
 	live := &fakeAgentLiveClient{err: errors.New("upstream body contains private detail")}
