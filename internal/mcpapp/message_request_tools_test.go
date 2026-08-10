@@ -111,6 +111,24 @@ func TestMessageRequestLifecycleAcrossActorScopedMCP(t *testing.T) {
 				t.Fatalf("unexpected GraphQL operation %q", op.OperationName)
 			}
 
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/conversations/lookup":
+			if got := r.Header.Get("Authorization"); got != recipientAuth {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"wrong recipient"}`))
+				return
+			}
+			if got := r.URL.Query().Get("counterpart"); got != "sender" {
+				t.Fatalf("counterpart lookup = %q", got)
+			}
+			state.Lock()
+			defer state.Unlock()
+			if !state.accepted {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(socialConversationDetailFixtureJSON("conv-1", "", "", "")))
+
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/conversations":
 			if got := r.Header.Get("Authorization"); got != senderAuth && got != recipientAuth {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -165,7 +183,24 @@ func TestMessageRequestLifecycleAcrossActorScopedMCP(t *testing.T) {
 		t.Fatalf("pending-request rejection lost upstream reason: %+v", blocked.StructuredContent)
 	}
 
-	listed := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 12, "message_requests_list", map[string]any{"limit": 10})
+	focusedPending := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 12, "direct_messages_read", map[string]any{
+		"counterpart": "sender",
+	})
+	if !focusedPending.IsError {
+		t.Fatalf("focused pending read must require the recipient's explicit decision: %+v", focusedPending.StructuredContent)
+	}
+	focusedError, _ := focusedPending.StructuredContent["error"].(map[string]any)
+	focusedDetails, _ := focusedError["details"].(map[string]any)
+	if focusedError["code"] != "message_request_pending" || focusedDetails["conversationId"] != "conv-1" {
+		t.Fatalf("focused pending request = %+v", focusedPending.StructuredContent)
+	}
+	focusedAction, _ := focusedDetails["nextAction"].(map[string]any)
+	focusedActionArgs, _ := focusedAction["arguments"].(map[string]any)
+	if focusedAction["tool"] != "message_request_accept" || focusedActionArgs["conversationId"] != "conv-1" {
+		t.Fatalf("focused pending action = %+v", focusedAction)
+	}
+
+	listed := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 13, "message_requests_list", map[string]any{"limit": 10})
 	listedData := requireToolData(t, listed)
 	if listedData["folder"] != "REQUESTS" || listedData["count"] != float64(2) {
 		t.Fatalf("message request list = %+v", listedData)
@@ -180,7 +215,7 @@ func TestMessageRequestLifecycleAcrossActorScopedMCP(t *testing.T) {
 		t.Fatalf("message request preview was not bounded: %+v", lastMessage)
 	}
 
-	accepted := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 13, "message_request_accept", map[string]any{"conversationId": "conv-1"})
+	accepted := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 14, "message_request_accept", map[string]any{"conversationId": "conv-1"})
 	acceptedData := requireToolData(t, accepted)
 	if acceptedData["requestState"] != "ACCEPTED" || acceptedData["decision"] != "accepted" {
 		t.Fatalf("accept result = %+v", acceptedData)
@@ -192,14 +227,23 @@ func TestMessageRequestLifecycleAcrossActorScopedMCP(t *testing.T) {
 		{path: "/mcp/sender", authHeader: senderAuth, sessionID: senderSession},
 		{path: "/mcp/recipient", authHeader: recipientAuth, sessionID: recipientSession},
 	} {
-		visible := callActorTool(t, env, app, actor.path, actor.authHeader, actor.sessionID, 14, "conversations_read", map[string]any{"limit": 10})
+		visible := callActorTool(t, env, app, actor.path, actor.authHeader, actor.sessionID, 15, "conversations_read", map[string]any{"limit": 10})
 		data := requireToolData(t, visible)
 		if data["count"] != float64(1) {
 			t.Fatalf("accepted conversation not visible to %s: %+v", actor.path, data)
 		}
 	}
+	focusedAccepted := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 16, "direct_messages_read", map[string]any{
+		"counterpart": "sender",
+	})
+	if focusedAccepted.IsError {
+		t.Fatalf("focused direct read failed after explicit acceptance: %+v", focusedAccepted.StructuredContent)
+	}
+	if data := requireToolData(t, focusedAccepted); data["id"] != "conv-1" {
+		t.Fatalf("focused accepted conversation = %+v", data)
+	}
 
-	flowing := callActorTool(t, env, app, "/mcp/sender", senderAuth, senderSession, 15, "post_create", map[string]any{
+	flowing := callActorTool(t, env, app, "/mcp/sender", senderAuth, senderSession, 17, "post_create", map[string]any{
 		"content":    "@recipient second after accept",
 		"visibility": "direct",
 	})
@@ -207,13 +251,13 @@ func TestMessageRequestLifecycleAcrossActorScopedMCP(t *testing.T) {
 		t.Fatalf("second direct message remained pending after accept: %+v", flowing.StructuredContent)
 	}
 
-	declined := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 16, "message_request_decline", map[string]any{"conversationId": "conv-2"})
+	declined := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 18, "message_request_decline", map[string]any{"conversationId": "conv-2"})
 	declinedData := requireToolData(t, declined)
 	if declinedData["requestState"] != "DECLINED" || declinedData["success"] != true {
 		t.Fatalf("decline result = %+v", declinedData)
 	}
 
-	empty := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 17, "message_requests_list", map[string]any{})
+	empty := callActorTool(t, env, app, "/mcp/recipient", recipientAuth, recipientSession, 19, "message_requests_list", map[string]any{})
 	if data := requireToolData(t, empty); data["count"] != float64(0) {
 		t.Fatalf("resolved requests remained in request folder: %+v", data)
 	}

@@ -11,7 +11,8 @@ import (
 )
 
 func New(name, version string) (*apptheory.App, error) {
-	if err := validateDiscoveryStartupConfig(context.Background()); err != nil {
+	probeAuthorizationServerIssuer, err := validateDiscoveryStartupConfig(context.Background())
+	if err != nil {
 		return nil, err
 	}
 
@@ -26,7 +27,7 @@ func New(name, version string) (*apptheory.App, error) {
 	)
 
 	app.Get("/.well-known/mcp.json", WithBrowserCORS(WellKnownMcpHandler(srv, name, version)))
-	app.Get("/.well-known/oauth-protected-resource/mcp/{actor}", WithBrowserCORS(WellKnownOAuthProtectedResourceHandler(cachedAuthorizationServerIssuer())))
+	app.Get("/.well-known/oauth-protected-resource/mcp/{actor}", WithBrowserCORS(WellKnownOAuthProtectedResourceHandler(probeAuthorizationServerIssuer)))
 
 	rootHandler := WithBrowserCORS(SharedMcpRetiredHandler())
 	runtimeHandler := withActorOAuthSessionRecovery(srv.Handler())

@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-10T14:37:28.430904Z",
+  "generated_at": "2026-08-10T17:30:53.584278Z",
   "git": {
-    "head": "026321309bb2494a1c0f18f23a2bc532c3ae02f9",
-    "head_tree": "979f83ef70cf1c93aeef4f2bc24fbd7ee78f0ac9",
-    "merge_base_origin_staging": "40123d4cdb6db4bf1e1c6b902ba66cf3fb42ebba",
-    "ref": "theorymcp/equaltoai/body/fix-describe-interface-comms-status-v2",
+    "head": "470c797aa33eaeed599ef59e26679f60f1fc1372",
+    "head_tree": "c86cadf15a893cea3465ae6540b40a477b305717",
+    "merge_base_origin_staging": "21795268846c17d4299baa7d28fec7f6c0609991",
+    "ref": "fix/direct-message-pending-recovery",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {

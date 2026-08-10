@@ -32,7 +32,7 @@ func TestValidatedMcpEndpoint_AcceptsActorTemplate(t *testing.T) {
 	}
 }
 
-func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *testing.T) {
+func TestNew_DoesNotDependOnAuthorizationServerMetadataReachability(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
@@ -48,21 +48,20 @@ func TestNew_ValidatesAuthorizationServerMetadataReachabilityFromMCPEndpoint(t *
 	})
 
 	previousProbe := probeAuthorizationServerMetadata
-	probedURL := ""
+	probeCalled := false
 	probeAuthorizationServerMetadata = func(_ context.Context, metadataURL string) (string, error) {
-		probedURL = metadataURL
+		probeCalled = true
 		return "", errors.New("dial tcp: i/o timeout")
 	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})
 
-	_, err := New("test", "dev")
-	if err == nil || !strings.Contains(err.Error(), "MCP_ENDPOINT") {
-		t.Fatalf("expected MCP_ENDPOINT validation error, got %v", err)
+	if _, err := New("test", "dev"); err != nil {
+		t.Fatalf("new app must not fail on authorization-server reachability: %v", err)
 	}
-	if want := "https://api.example.com/.well-known/oauth-authorization-server"; probedURL != want {
-		t.Fatalf("unexpected metadata probe url: got %q want %q", probedURL, want)
+	if probeCalled {
+		t.Fatal("New must not probe the authorization server during process startup")
 	}
 }
 
@@ -87,7 +86,54 @@ func TestValidatedMcpEndpointForRequest_ResolvesActorTemplate(t *testing.T) {
 	}
 }
 
-func TestNew_CachesAuthorizationServerIssuerFromMetadataProbe(t *testing.T) {
+func TestWellKnownOAuthProtectedResource_CachesAuthorizationServerIssuer(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
+
+	previousLoader := loadEffectiveTrustConfig
+	loadEffectiveTrustConfig = func(context.Context) (*trustconfig.Effective, error) {
+		return &trustconfig.Effective{
+			TrustBaseURL: "https://lesser.example",
+			Present:      true,
+		}, nil
+	}
+	t.Cleanup(func() {
+		loadEffectiveTrustConfig = previousLoader
+	})
+
+	previousProbe := probeAuthorizationServerMetadata
+	probeCalls := 0
+	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
+		probeCalls++
+		return "https://issuer.example", nil
+	}
+	t.Cleanup(func() {
+		probeAuthorizationServerMetadata = previousProbe
+	})
+
+	app, err := New("test", "dev")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	env := testkit.New()
+	for range 2 {
+		resp := env.Invoke(context.Background(), app, apptheory.Request{
+			Method: "GET",
+			Path:   "/.well-known/oauth-protected-resource/mcp/agent1",
+		})
+		if resp.Status != 200 {
+			t.Fatalf("metadata status = %d, want 200; body = %s", resp.Status, string(resp.Body))
+		}
+	}
+	if got := cachedAuthorizationServerIssuer(); got != "https://issuer.example" {
+		t.Fatalf("unexpected cached issuer: got %q want %q", got, "https://issuer.example")
+	}
+	if probeCalls != 1 {
+		t.Fatalf("metadata probe calls = %d, want 1", probeCalls)
+	}
+}
+
+func TestWellKnownOAuthProtectedResource_ProbeFailureIsUnavailable(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_ENDPOINT", "https://api.example.com/mcp/{actor}")
 
@@ -104,17 +150,28 @@ func TestNew_CachesAuthorizationServerIssuerFromMetadataProbe(t *testing.T) {
 
 	previousProbe := probeAuthorizationServerMetadata
 	probeAuthorizationServerMetadata = func(context.Context, string) (string, error) {
-		return "https://issuer.example", nil
+		return "", errors.New("temporary upstream failure")
 	}
 	t.Cleanup(func() {
 		probeAuthorizationServerMetadata = previousProbe
 	})
 
-	if _, err := New("test", "dev"); err != nil {
+	app, err := New("test", "dev")
+	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
-	if got := cachedAuthorizationServerIssuer(); got != "https://issuer.example" {
-		t.Fatalf("unexpected cached issuer: got %q want %q", got, "https://issuer.example")
+	resp := testkit.New().Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/.well-known/oauth-protected-resource/mcp/agent1",
+	})
+	if resp.Status != 503 {
+		t.Fatalf("metadata status = %d, want 503; body = %s", resp.Status, string(resp.Body))
+	}
+	if got := firstHeaderValue(resp.Headers, "cache-control"); got != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", got)
+	}
+	if strings.Contains(string(resp.Body), "temporary upstream failure") {
+		t.Fatalf("metadata response leaked upstream error: %s", string(resp.Body))
 	}
 }
 

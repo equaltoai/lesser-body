@@ -34,5 +34,5 @@ lesser-body-managed-live.template.json: OK
 deploy-lesser-body-from-release.sh: OK
 lesser-body-release.json: OK
 apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
-cdk-file-asset-2c4c5e57de1b53ce.zip: OK
+cdk-file-asset-1b4962e025ace455.zip: OK
 Verified release assets in dist/release-test
