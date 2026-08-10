@@ -98,24 +98,7 @@ func handleIdentityLookup(ctx context.Context, args json.RawMessage) (*mcpruntim
 }
 
 func whoamiChannelsPayload(ctx context.Context) (map[string]any, error) {
-	client, err := soulapi.Default()
-	if err != nil {
-		return nil, &toolUserError{Code: "not_configured", Message: err.Error(), Status: 500}
-	}
-
-	agentID, err := authenticatedAgentID(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if agentID == "" {
-		return nil, &toolUserError{Code: "not_found", Message: "no bound soul found for this agent", Status: 404}
-	}
-
-	payload, _, err := agentChannelsPayloadWithRegistration(ctx, client, agentID)
-	if err != nil {
-		return nil, err
-	}
-	return payload, nil
+	return authorizedAgentChannelsPayload(ctx, boundOperationIdentitySelfRead)
 }
 
 func authenticatedAgentID(ctx context.Context) (string, error) {

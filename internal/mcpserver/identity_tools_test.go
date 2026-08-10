@@ -12,6 +12,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
@@ -329,7 +330,7 @@ func TestVerifyAuthenticatedAgentWithLesserDoesNotFallbackToSoulsMine(t *testing
 	}
 }
 
-func TestIdentityWhoamiHydratesHostContactabilityWhenRegistrationOmitsChannels(t *testing.T) {
+func TestIdentityWhoamiAndDescribeInterfaceHydrateHostContactabilityWhenRegistrationOmitsChannels(t *testing.T) {
 	const agentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	installSoulBindingLookup(t, "Agent1", agentID)
@@ -420,6 +421,19 @@ func TestIdentityWhoamiHydratesHostContactabilityWhenRegistrationOmitsChannels(t
 	channelProvisioning, _ := provisioning["channels"].(map[string]any)
 	if channelProvisioning["state"] != "present" || channelProvisioning["present"] != true || channelProvisioning["configuredCount"] != 1 || provisioning["communications"] != "configured" {
 		t.Fatalf("Host-backed provisioning metadata = %+v", provisioning)
+	}
+
+	ctx = runtimepolicy.WithContext(ctx, runtimepolicy.Resolved{
+		Profile:     runtimepolicy.ProfileSouled,
+		Determined:  true,
+		BoundSoul:   true,
+		SoulAgentID: agentID,
+	})
+	if got := describeInterfaceCommunicationStatus(ctx); got != "configured" {
+		t.Fatalf("describeInterfaceCommunicationStatus = %q, want configured", got)
+	}
+	if contactabilityCalls != 2 {
+		t.Fatalf("contactability calls = %d, want 2", contactabilityCalls)
 	}
 }
 
