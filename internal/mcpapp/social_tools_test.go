@@ -1605,23 +1605,42 @@ func TestM5_DirectMessagesReadLooksUpNamedCounterpartWithCompactBudgetedRefs(t *
 	const debugPayload = "DIRECT_MESSAGES_READ_DEBUG_PAYLOAD_SHOULD_NOT_APPEAR"
 
 	var gotQueries []string
+	var lastLookupCounterpart string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("unexpected method: %s", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/api/graphql" {
+			var op struct {
+				OperationName string `json:"operationName"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+				t.Fatalf("decode pending-request query: %v", err)
+			}
+			if op.OperationName != "BodyMessageRequests" {
+				t.Fatalf("unexpected GraphQL operation: %s", op.OperationName)
+			}
+			if lastLookupCounterpart == "inconclusive" {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"temporarily unavailable"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"conversations":[` +
+				messageRequestFixture("conv-pending", "pending", "PENDING", "hello from pending") + `,` +
+				messageRequestFixture("conv-unrelated", "unrelated", "PENDING", "unrelated request") + `]}}`))
+			return
 		}
-		if r.URL.Path != "/api/v1/conversations/lookup" {
-			t.Fatalf("direct_messages_read should not scan unrelated surfaces; got path %s", r.URL.Path)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/conversations/lookup" {
+			t.Fatalf("direct_messages_read should only use the named lookup and recipient request folder; got %s %s", r.Method, r.URL.Path)
 		}
 		gotQueries = append(gotQueries, r.URL.RawQuery)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("counterpart") {
+		lastLookupCounterpart = r.URL.Query().Get("counterpart")
+		switch lastLookupCounterpart {
 		case "ops":
 			w.Header().Set("Link", `<https://example.com/api/v1/conversations/lookup?counterpart=ops&max_id=cursor-next>; rel="next"`)
 			_, _ = w.Write([]byte(socialConversationDetailFixtureJSON("conv-ops", contentTail, accountNote, debugPayload)))
 		case "medic":
 			body := strings.Replace(socialConversationDetailFixtureJSON("conv-medic", contentTail, accountNote, debugPayload), `"unread":true`, `"unread":false`, 1)
 			_, _ = w.Write([]byte(body))
-		case "missing":
+		case "pending", "missing", "inconclusive":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 		case "expired":
@@ -1758,8 +1777,45 @@ func TestM5_DirectMessagesReadLooksUpNamedCounterpartWithCompactBudgetedRefs(t *
 	if fallbacks, _ := details["suggestedFallbacks"].([]any); len(fallbacks) == 0 {
 		t.Fatalf("not-found details should include suggested fallbacks, got %+v", details)
 	}
+	checkPending, _ := details["checkPendingRequests"].(map[string]any)
+	if checkPending["tool"] != "message_requests_list" {
+		t.Fatalf("not-found details should identify the recipient request folder, got %+v", details)
+	}
 
-	expired := callSocialTool(t, env, app, authHeader, sessionID, 7, "direct_messages_read", map[string]any{
+	pending := callSocialTool(t, env, app, authHeader, sessionID, 7, "direct_messages_read", map[string]any{
+		"counterpart": "pending",
+	})
+	if !pending.Result.IsError {
+		t.Fatalf("pending direct message request must require an explicit write-scoped decision: %+v", pending.Result)
+	}
+	pendingError, _ := pending.Result.StructuredContent["error"].(map[string]any)
+	if pendingError["code"] != "message_request_pending" || pendingError["status"] != float64(http.StatusConflict) {
+		t.Fatalf("unexpected pending-request payload: %+v", pendingError)
+	}
+	pendingDetails, _ := pendingError["details"].(map[string]any)
+	if pendingDetails["counterpart"] != "pending" || pendingDetails["conversationId"] != "conv-pending" || pendingDetails["requestState"] != "PENDING" {
+		t.Fatalf("pending-request details = %+v", pendingDetails)
+	}
+	pendingRef, _ := pendingDetails["pendingRequest"].(map[string]any)
+	actions, _ := pendingRef["actions"].(map[string]any)
+	accept, _ := actions["accept"].(map[string]any)
+	acceptArgs, _ := accept["arguments"].(map[string]any)
+	if accept["tool"] != "message_request_accept" || acceptArgs["conversationId"] != "conv-pending" {
+		t.Fatalf("pending-request accept action = %+v", accept)
+	}
+
+	inconclusive := callSocialTool(t, env, app, authHeader, sessionID, 8, "direct_messages_read", map[string]any{
+		"counterpart": "inconclusive",
+	})
+	if !inconclusive.Result.IsError {
+		t.Fatalf("failed pending-request check must not be reported as a definitive 404: %+v", inconclusive.Result)
+	}
+	inconclusiveError, _ := inconclusive.Result.StructuredContent["error"].(map[string]any)
+	if inconclusiveError["code"] != "pending_request_check_failed" || inconclusiveError["status"] != float64(http.StatusBadGateway) {
+		t.Fatalf("unexpected inconclusive pending-request payload: %+v", inconclusiveError)
+	}
+
+	expired := callSocialTool(t, env, app, authHeader, sessionID, 9, "direct_messages_read", map[string]any{
 		"counterpart": "expired",
 	})
 	if !expired.Result.IsError {

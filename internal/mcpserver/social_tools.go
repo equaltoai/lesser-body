@@ -862,6 +862,15 @@ func handleDirectMessagesRead(ctx context.Context, args json.RawMessage) (*mcpru
 
 	out, headers, err := client.DoJSONWithHeaders(ctx, "GET", "/api/v1/conversations/lookup", query, token, nil)
 	if err != nil {
+		if directMessagesLookupNotFound(err) {
+			pending, pendingErr := client.ListMessageRequests(ctx, token, messageRequestMaxLimit, "")
+			if pendingErr != nil {
+				return directMessagesPendingCheckToolResultFromError(counterpart, pendingErr)
+			}
+			if request := pendingMessageRequestForCounterpart(pending, counterpart); request != nil {
+				return directMessagesPendingRequestToolResult(counterpart, *request)
+			}
+		}
 		return directMessagesReadToolResultFromError(counterpart, err)
 	}
 	raw, err := conversationDetailFromAPI(out)
@@ -1038,14 +1047,90 @@ func directMessagesReadToolResultFromError(counterpart string, err error) (*mcpr
 			"counterpart":  strings.TrimSpace(counterpart),
 			"source":       "lesser-api",
 			"upstreamCode": apiErr.Status,
+			"checkPendingRequests": map[string]any{
+				"tool":      "message_requests_list",
+				"arguments": map[string]any{"limit": messageRequestMaxLimit},
+			},
 			"suggestedFallbacks": []any{
+				"check message_requests_list and explicitly accept or decline any matching first-contact request",
 				"confirm the teammate local id, acct, or actor URL with identity_lookup",
-				"ask the teammate to start a direct-message thread",
-				"use email_search only as a fallback coordination path",
+				"ask the teammate to start a direct-message thread only when no matching request exists",
 			},
 		})
 	}
 	return authToolResultFromError(err)
+}
+
+func directMessagesLookupNotFound(err error) bool {
+	var apiErr *lesserapi.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
+func pendingMessageRequestForCounterpart(requests []lesserapi.MessageRequestConversation, counterpart string) *lesserapi.MessageRequestConversation {
+	selector := normalizeMessageRequestCounterpart(counterpart)
+	if selector == "" {
+		return nil
+	}
+	for i := range requests {
+		request := &requests[i]
+		if strings.TrimSpace(request.ID) == "" || !strings.EqualFold(strings.TrimSpace(request.ViewerMetadata.RequestState), "PENDING") {
+			continue
+		}
+		for _, account := range request.Accounts {
+			candidates := []string{account.ID, account.Username}
+			if username, domain := strings.TrimSpace(account.Username), strings.TrimSpace(account.Domain); username != "" && domain != "" {
+				candidates = append(candidates, username+"@"+domain)
+			}
+			for _, candidate := range candidates {
+				if normalizeMessageRequestCounterpart(candidate) == selector {
+					return request
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeMessageRequestCounterpart(value string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "@"))
+}
+
+func directMessagesPendingCheckToolResultFromError(counterpart string, err error) (*mcpruntime.ToolResult, error) {
+	if failure := mcpAuthFailureFromError(err); failure != nil {
+		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
+	}
+	details := map[string]any{
+		"counterpart": strings.TrimSpace(counterpart),
+		"source":      "lesser-graphql",
+		"retryable":   true,
+	}
+	var gqlErr *lesserapi.MessageRequestGraphQLErrors
+	if errors.As(err, &gqlErr) {
+		details["errorCount"] = gqlErr.Count
+		if len(gqlErr.Codes) > 0 {
+			details["errorCodes"] = gqlErr.Codes
+		}
+	}
+	var apiErr *lesserapi.APIError
+	if errors.As(err, &apiErr) {
+		details["upstreamCode"] = apiErr.Status
+	}
+	return toolErrorResult("pending_request_check_failed", "could not determine whether the direct message is pending recipient review", http.StatusBadGateway, details)
+}
+
+func directMessagesPendingRequestToolResult(counterpart string, request lesserapi.MessageRequestConversation) (*mcpruntime.ToolResult, error) {
+	conversationID := strings.TrimSpace(request.ID)
+	return toolErrorResult("message_request_pending", "direct message is pending recipient review", http.StatusConflict, map[string]any{
+		"counterpart":    strings.TrimSpace(counterpart),
+		"source":         "lesser-graphql",
+		"conversationId": conversationID,
+		"requestState":   "PENDING",
+		"pendingRequest": messageRequestRef(request, true),
+		"nextAction": map[string]any{
+			"tool":      "message_request_accept",
+			"arguments": map[string]any{"conversationId": conversationID},
+		},
+	})
 }
 
 func compactSocialConversationRef(raw map[string]any, previewRunes int) map[string]any {
@@ -2510,7 +2595,7 @@ func conversationGetDef() mcpruntime.ToolDef {
 func directMessagesReadDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "direct_messages_read",
-		Description:  "Read recent direct-message previews from a named counterpart using Lesser's one-to-one conversation lookup. Examples: recent DMs from Ops with {\"counterpart\":\"ops\",\"limit\":10,\"view\":\"compact\"}; unread DMs from Medic with {\"counterpart\":\"medic\",\"unreadOnly\":true,\"view\":\"compact\"}. Defaults to compact and returns explicit not_found rather than scanning unrelated surfaces.",
+		Description:  "Read recent direct-message previews from a named counterpart using Lesser's one-to-one conversation lookup. Examples: recent DMs from Ops with {\"counterpart\":\"ops\",\"limit\":10,\"view\":\"compact\"}; unread DMs from Medic with {\"counterpart\":\"medic\",\"unreadOnly\":true,\"view\":\"compact\"}. Defaults to compact. When the inbox lookup misses, checks the bounded recipient request folder and returns message_request_pending with an explicit accept action for a matching first-contact request; it never accepts at read scope.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: directMessagesReadOutputSchema(),
 		InputSchema: json.RawMessage(`{
