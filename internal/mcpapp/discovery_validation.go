@@ -43,10 +43,11 @@ var probeAuthorizationServerMetadata = defaultProbeAuthorizationServerMetadata
 
 var authorizationServerIssuerCache struct {
 	mu     sync.RWMutex
+	probe  sync.Mutex
 	issuer string
 }
 
-func validateDiscoveryStartupConfig(ctx context.Context) error {
+func validateDiscoveryStartupConfig(ctx context.Context) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -57,44 +58,61 @@ func validateDiscoveryStartupConfig(ctx context.Context) error {
 		var err error
 		validatedEndpoint, err = validatedMcpEndpoint(raw)
 		if err != nil {
-			return fmt.Errorf("validate MCP_ENDPOINT: %w", err)
+			return false, fmt.Errorf("validate MCP_ENDPOINT: %w", err)
 		}
 	}
 
 	cfg, err := loadEffectiveTrustConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("load trust config: %w", err)
+		return false, fmt.Errorf("load trust config: %w", err)
 	}
 	if cfg == nil || !cfg.Present {
-		return nil
+		return false, nil
 	}
 
 	trustBaseURL := strings.TrimSpace(cfg.TrustBaseURL)
 	if trustBaseURL == "" {
-		return fmt.Errorf("TRUST_CONFIG.TrustBaseURL is required for OAuth discovery")
+		return false, fmt.Errorf("TRUST_CONFIG.TrustBaseURL is required for OAuth discovery")
 	}
 	if _, err := validatedPublicBaseURL(trustBaseURL); err != nil {
-		return fmt.Errorf("validate TRUST_CONFIG.TrustBaseURL: %w", err)
+		return false, fmt.Errorf("validate TRUST_CONFIG.TrustBaseURL: %w", err)
 	}
 
 	if validatedEndpoint == "" {
-		return nil
+		return false, nil
 	}
 
-	metadataURL, err := oauthAuthorizationServerMetadataURLForMcpEndpoint(validatedEndpoint)
+	// Reachability is deliberately not part of process startup. The Lesser OAuth
+	// metadata endpoint shares the stage's Lambda concurrency pool; making a cold
+	// start depend on that endpoint creates a circular outage during saturation.
+	// The protected-resource route resolves and caches the issuer on demand.
+	return true, nil
+}
+
+func authorizationServerIssuerForMcpEndpoint(ctx context.Context, mcpEndpoint string) (string, error) {
+	if issuer := cachedAuthorizationServerIssuer(); issuer != "" {
+		return issuer, nil
+	}
+
+	authorizationServerIssuerCache.probe.Lock()
+	defer authorizationServerIssuerCache.probe.Unlock()
+	if issuer := cachedAuthorizationServerIssuer(); issuer != "" {
+		return issuer, nil
+	}
+
+	metadataURL, err := oauthAuthorizationServerMetadataURLForMcpEndpoint(mcpEndpoint)
 	if err != nil {
-		return fmt.Errorf("validate MCP_ENDPOINT: %w", err)
+		return "", fmt.Errorf("derive authorization server metadata URL: %w", err)
 	}
 	issuer, err := probeAuthorizationServerMetadata(ctx, metadataURL)
 	if err != nil {
-		return fmt.Errorf("validate MCP_ENDPOINT reachability via %s: %w", metadataURL, err)
+		return "", fmt.Errorf("probe authorization server metadata: %w", err)
 	}
 	if _, err := validatedPublicBaseURL(issuer); err != nil {
-		return fmt.Errorf("validate authorization server issuer %q: %w", issuer, err)
+		return "", fmt.Errorf("validate authorization server issuer: %w", err)
 	}
 	setAuthorizationServerIssuer(issuer)
-
-	return nil
+	return strings.TrimSpace(issuer), nil
 }
 
 func validatedMcpEndpointForRequest(ctx *apptheory.Context) (string, error) {

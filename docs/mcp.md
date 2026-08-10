@@ -10,6 +10,8 @@
 - OAuth protected-resource metadata: `GET /.well-known/oauth-protected-resource/mcp/{actor}`
 - MCP (authenticated): `POST /mcp/{actor}`
   - `GET /mcp/{actor}` and `DELETE /mcp/{actor}` are also supported for MCP Streamable HTTP compatibility.
+  - An initial session `GET` without `Last-Event-ID` emits one SSE keepalive and closes immediately so idle listeners do
+    not retain Lambda concurrency. A resumable `GET` carrying `Last-Event-ID` still uses AppTheory's durable replay path.
 - Shared compatibility endpoint: `GET|POST|DELETE /mcp`
   - Returns HTTP `410 Gone` with migration guidance. It no longer serves MCP traffic.
 - Instance-plane Ptah OAuth protected-resource metadata:
@@ -39,6 +41,10 @@ For example:
 Protected-resource discovery depends on Lesser OAuth metadata being reachable at:
 
 - `https://api.<stageDomain>/.well-known/oauth-authorization-server`
+
+Body resolves and caches the authoritative issuer when its protected-resource metadata route is requested, not during
+Lambda process startup. A temporary Lesser OAuth metadata failure returns HTTP `503` with `Cache-Control: no-store` on
+that discovery request; it does not prevent already-authorized MCP tool calls from reaching the Ka runtime.
 
 ## Authentication
 

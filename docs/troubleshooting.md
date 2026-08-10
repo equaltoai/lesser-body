@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## Several connected actors see MCP internal errors at once
+
+**Symptoms**
+
+- Multiple actor clients report JSON-RPC `-32603`, HTTP `500`, or HTTP `502` in the same short window.
+- Body tool-call audit events are absent for the failed calls.
+- API Gateway reports Lambda integration `429`, or Body concurrency reaches the account quota.
+
+**Checks**
+
+1. Compare API Gateway failures with Body Lambda `Throttles` and `ConcurrentExecutions`.
+2. Confirm initial `GET /mcp/{actor}` listeners complete quickly instead of holding executions near the Lambda timeout.
+3. Search Body cold-start logs for OAuth metadata reachability panics. Releases containing the 2026-08-10 availability
+   fix must not probe the public authorization-server endpoint during process startup.
+4. Correlate by request id before attributing the failure to `conversations_read`, `notifications_read`, or Lesser data;
+   a request that never reaches Body's tool-call audit boundary did not execute the social handler.
+
+**Resolution**
+
+- Upgrade Body to a release that resolves the OAuth issuer on the protected-resource request and uses AppTheory's
+  short-lived initial session listener behavior.
+- Independently ensure the AWS account Lambda concurrency quota is appropriate for the complete Lesser stage. A larger
+  quota is operational headroom, not a substitute for removing idle Body concurrency retention.
+
 <!-- AI Training: Common failures and fixes for lesser-body -->
 
 ## 401 `app.unauthorized`

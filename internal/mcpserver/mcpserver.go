@@ -20,9 +20,7 @@ const (
 	envMcpStreamTable    = "MCP_STREAM_TABLE"
 	envMcpTaskTable      = "MCP_TASK_TABLE"
 
-	initialSessionListenerSafetyBuffer = 5 * time.Second
-	initialSessionListenerMaxDuration  = 25 * time.Second
-	taskRuntimeMaxTTL                  = time.Hour
+	taskRuntimeMaxTTL = time.Hour
 )
 
 var newMCPDB = func() (tablecore.DB, error) {
@@ -58,10 +56,6 @@ func New(name, version string) (*Server, error) {
 func buildServerOptionsFromEnv() ([]ServerOption, error) {
 	opts := []ServerOption{
 		mcpruntime.WithCapabilityConfig(bodyCapabilityConfig()),
-		mcpruntime.WithInitialSessionListenerBudget(mcpruntime.InitialSessionListenerBudgetOptions{
-			SafetyBuffer: initialSessionListenerSafetyBuffer,
-			MaxDuration:  initialSessionListenerMaxDuration,
-		}),
 		mcpruntime.WithCompletionHooks(promptCompletion, resourceCompletion),
 	}
 
