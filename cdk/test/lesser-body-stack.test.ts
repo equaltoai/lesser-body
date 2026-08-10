@@ -314,6 +314,7 @@ test("runtime stack provisions instance-plane lambda with owned tables", () => {
 
   assert.equal(instanceHandlerProps.Handler, "instance");
   assert.equal(vars.INSTANCE_MCP_ENDPOINT, "https://api.dev.example.com/instance/{surface}/mcp");
+  assert.equal(vars.INSTANCE_ACCOUNT_ID, "theory");
   assert.equal(mustJSON(vars.INSTANCE_CONTENT_TABLE), '{"Ref":"InstanceContentTable"}');
   assert.equal(mustJSON(vars.INSTANCE_REGISTRY_TABLE), '{"Ref":"InstanceRegistryTable"}');
   assert.equal(mustJSON(vars.INSTANCE_GRANT_TABLE), '{"Ref":"InstanceGrantTable"}');
@@ -369,11 +370,33 @@ test("runtime stack provisions instance-plane lambda with owned tables", () => {
     '"dynamodb:GetItem"',
     '"dynamodb:PutItem"',
     '"dynamodb:Query"',
+    '"dynamodb:TransactWriteItems"',
     '"dynamodb:UpdateItem"',
   ]) {
     assert.equal(instanceTablePolicyJSON.includes(wantAction), true, `expected ${wantAction} in ${instanceTablePolicyJSON}`);
   }
   assert.equal(instanceTablePolicyJSON.includes('"dynamodb:Scan"'), false, `expected instance table policy to omit Scan: ${instanceTablePolicyJSON}`);
+});
+
+test("Ka self-recovery receives only the Body content and registry tables", () => {
+  const resources = mustResources(synthRuntimeTemplate());
+  const handler = mcpHandlerLambdaFunction(resources);
+  const vars = lambdaEnvironmentVariables(handler);
+  assert.equal(vars.INSTANCE_ACCOUNT_ID, "theory");
+  assert.equal(mustJSON(vars.INSTANCE_CONTENT_TABLE), '{"Ref":"InstanceContentTable"}');
+  assert.equal(mustJSON(vars.INSTANCE_REGISTRY_TABLE), '{"Ref":"InstanceRegistryTable"}');
+  assert.equal(vars.INSTANCE_GRANT_TABLE, undefined);
+  assert.equal(vars.INSTANCE_SESSION_TABLE, undefined);
+
+  const statements = allPolicyStatements(resources);
+  const recoveryStatement = statements.find((statement) => {
+    const resourcesJSON = mustJSON(statement.Resource);
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    return resourcesJSON.includes("InstanceContentTable") && resourcesJSON.includes("InstanceRegistryTable") && actions.includes("dynamodb:TransactWriteItems");
+  });
+  assert.notEqual(recoveryStatement, undefined, "Ka recovery table policy is missing transactional content writes");
+  const resourcesJSON = mustJSON(recoveryStatement!.Resource);
+  assert.doesNotMatch(resourcesJSON, /InstanceGrantTable|InstanceSessionTable/);
 });
 
 test("instance-plane lambda receives managed Lesser/Host genesis configuration", () => {
