@@ -2,6 +2,7 @@ package agentregistry
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -44,6 +45,9 @@ const (
 	// SourceOperationAgentGenesisFinalize is the Ptah MCP operation that
 	// observed the Host-finalized identity and wrote the registry row.
 	SourceOperationAgentGenesisFinalize = "agent_genesis_finalize"
+
+	SourceHostRecovery             = "host_recovery"
+	SourceOperationSoulSelfRecover = "soul_self_recover"
 )
 
 var (
@@ -88,6 +92,10 @@ type Agent struct {
 	LifecycleStatus        string    `json:"lifecycle_status,omitempty"`
 	PublishedVersion       int64     `json:"published_version,omitempty"`
 	SelfDescriptionVersion int64     `json:"self_description_version,omitempty"`
+	RecoveryClassification string    `json:"recovery_classification,omitempty"`
+	MigrationReadSHA256    string    `json:"migration_read_sha256,omitempty"`
+	RecoveryProducedAt     time.Time `json:"recovery_produced_at,omitempty"`
+	RecoveryVersionCount   int64     `json:"recovery_version_count,omitempty"`
 }
 
 // CreateInput describes a new Ptah-created agent registry entry.
@@ -116,6 +124,25 @@ type FinalizedInput struct {
 	// on the LocalID observed by the caller. Nil preserves create-or-update
 	// behavior for callers without a prior read.
 	ExpectedLocalID *string
+}
+
+// RecoveredInput is the system-derived projection written after a bound actor
+// verifies Host's read-only recovery detail. No MCP input maps directly here.
+type RecoveredInput struct {
+	Account                string
+	AgentID                string
+	HostRegistrationID     string
+	HostConversationID     string
+	Domain                 string
+	LocalID                string
+	LifecycleStatus        string
+	PublishedVersion       int64
+	SelfDescriptionVersion int64
+	RecoveryClassification string
+	MigrationReadSHA256    string
+	RecoveryProducedAt     time.Time
+	RecoveryVersionCount   int64
+	ExpectedLocalID        *string
 }
 
 // ListInput describes an account-scoped registry list request.
@@ -303,6 +330,101 @@ func (s *Store) UpsertFinalized(ctx context.Context, in FinalizedInput) (*Agent,
 	return updated.toAgent(), false, nil
 }
 
+// UpsertRecovered idempotently records Host recovery provenance while keeping
+// local-id changes conditional so concurrent corrections cannot be overwritten.
+func (s *Store) UpsertRecovered(ctx context.Context, in RecoveredInput) (*Agent, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent registry store is nil")
+	}
+	in.Account = normalizeAccount(in.Account)
+	in.AgentID = normalizeAgentID(in.AgentID)
+	in.HostRegistrationID = strings.TrimSpace(in.HostRegistrationID)
+	in.HostConversationID = strings.TrimSpace(in.HostConversationID)
+	in.Domain = strings.TrimSpace(in.Domain)
+	in.LocalID = strings.TrimSpace(in.LocalID)
+	in.LifecycleStatus = strings.TrimSpace(in.LifecycleStatus)
+	in.RecoveryClassification = strings.TrimSpace(in.RecoveryClassification)
+	in.MigrationReadSHA256 = strings.TrimSpace(in.MigrationReadSHA256)
+	if in.Account == "" || in.AgentID == "" || in.HostRegistrationID == "" || in.HostConversationID == "" ||
+		in.Domain == "" || in.LocalID == "" || in.LifecycleStatus == "" || in.SelfDescriptionVersion < 1 ||
+		(in.RecoveryClassification != "published_artifact_verified" && in.RecoveryClassification != "legacy_declarations_only") ||
+		!validRecoveryDigest(in.MigrationReadSHA256) || in.RecoveryProducedAt.IsZero() || in.RecoveryVersionCount < 0 {
+		return nil, false, fmt.Errorf("recovered agent registry input is invalid")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now().UTC()
+	record := s.recordFor(in.Account, in.AgentID)
+	record.RegistryCreatedAt = now
+	record.RegistryUpdatedAt = now
+	applyRecoveredFields(record, in)
+	if in.ExpectedLocalID == nil {
+		err := s.db.Model(record).WithContext(ctx).IfNotExists().Create()
+		switch {
+		case err == nil:
+			return record.toAgent(), true, nil
+		case !tableerrors.IsConditionFailed(err):
+			return nil, false, fmt.Errorf("create recovered agent registry record: %w", err)
+		}
+		observed, err := s.Get(ctx, in.Account, in.AgentID)
+		if err != nil {
+			return nil, false, fmt.Errorf("read recovered agent registry create conflict: %w", err)
+		}
+		if strings.TrimSpace(observed.LocalID) != "" {
+			if err := actorendpoint.Validate(in.LocalID, observed.LocalID); err != nil {
+				return nil, false, fmt.Errorf("%w: concurrent recovered registry create", ErrFinalizedLocalIDChanged)
+			}
+		}
+		expected := strings.TrimSpace(observed.LocalID)
+		in.ExpectedLocalID = &expected
+	}
+	updated := s.emptyRecord()
+	builder := s.db.Model(s.emptyRecord()).WithContext(ctx).
+		Where("PK", "=", accountPartitionKey(in.Account)).Where("SK", "=", agentSortKey(in.AgentID)).
+		UpdateBuilder().
+		Set("RegistryUpdatedAt", now).
+		Set("Source", SourceHostRecovery).
+		Set("SourceAuthority", SourceAuthorityLesserHost).
+		Set("SourceOperation", SourceOperationSoulSelfRecover).
+		Set("HostRegistrationID", in.HostRegistrationID).
+		Set("HostConversationID", in.HostConversationID).
+		Set("Domain", in.Domain).
+		Set("LocalID", in.LocalID).
+		Set("LifecycleStatus", in.LifecycleStatus).
+		Set("SelfDescriptionVersion", in.SelfDescriptionVersion).
+		Set("RecoveryClassification", in.RecoveryClassification).
+		Set("MigrationReadSHA256", in.MigrationReadSHA256).
+		Set("RecoveryProducedAt", in.RecoveryProducedAt.UTC()).
+		Set("RecoveryVersionCount", in.RecoveryVersionCount)
+	if in.PublishedVersion > 0 {
+		builder = builder.Set("PublishedVersion", in.PublishedVersion)
+	}
+	if in.ExpectedLocalID != nil {
+		builder = builder.Condition("LocalID", "=", strings.TrimSpace(*in.ExpectedLocalID))
+	}
+	if err := builder.ReturnValues("ALL_NEW").ExecuteWithResult(updated); err != nil {
+		if in.ExpectedLocalID != nil && tableerrors.IsConditionFailed(err) {
+			return nil, false, fmt.Errorf("%w: conditional recovered registry update", ErrFinalizedLocalIDChanged)
+		}
+		return nil, false, fmt.Errorf("update recovered agent registry record: %w", err)
+	}
+	return updated.toAgent(), false, nil
+}
+
+func validRecoveryDigest(value string) bool {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
+		return false
+	}
+	hexValue := strings.TrimPrefix(value, prefix)
+	if hexValue != strings.ToLower(hexValue) {
+		return false
+	}
+	decoded, err := hex.DecodeString(hexValue)
+	return err == nil && len(decoded) == 32
+}
+
 // Get returns the registry record for account and agentID. Looking up an agent
 // id under the wrong account returns ErrAgentNotFound.
 func (s *Store) Get(ctx context.Context, account string, agentID string) (*Agent, error) {
@@ -422,19 +544,23 @@ type agentRecord struct {
 	RegistryCreatedAt time.Time `theorydb:"attr:createdAt" json:"created_at"`
 	RegistryUpdatedAt time.Time `theorydb:"attr:updatedAt" json:"updated_at"`
 
-	Source                 string `theorydb:"attr:source" json:"source,omitempty"`
-	SourceAuthority        string `theorydb:"attr:sourceAuthority" json:"source_authority,omitempty"`
-	SourceOperation        string `theorydb:"attr:sourceOperation" json:"source_operation,omitempty"`
-	HostRegistrationID     string `theorydb:"attr:hostRegistrationId" json:"host_registration_id,omitempty"`
-	HostConversationID     string `theorydb:"attr:hostConversationId" json:"host_conversation_id,omitempty"`
-	Domain                 string `theorydb:"attr:domain" json:"domain,omitempty"`
-	LocalID                string `theorydb:"attr:localId" json:"local_id,omitempty"`
-	AuthorityModel         string `theorydb:"attr:authorityModel" json:"authority_model,omitempty"`
-	AnchorState            string `theorydb:"attr:anchorState" json:"anchor_state,omitempty"`
-	OperationalBinding     string `theorydb:"attr:operationalBinding" json:"operational_binding,omitempty"`
-	LifecycleStatus        string `theorydb:"attr:lifecycleStatus" json:"lifecycle_status,omitempty"`
-	PublishedVersion       int64  `theorydb:"attr:publishedVersion" json:"published_version,omitempty"`
-	SelfDescriptionVersion int64  `theorydb:"attr:selfDescriptionVersion" json:"self_description_version,omitempty"`
+	Source                 string    `theorydb:"attr:source" json:"source,omitempty"`
+	SourceAuthority        string    `theorydb:"attr:sourceAuthority" json:"source_authority,omitempty"`
+	SourceOperation        string    `theorydb:"attr:sourceOperation" json:"source_operation,omitempty"`
+	HostRegistrationID     string    `theorydb:"attr:hostRegistrationId" json:"host_registration_id,omitempty"`
+	HostConversationID     string    `theorydb:"attr:hostConversationId" json:"host_conversation_id,omitempty"`
+	Domain                 string    `theorydb:"attr:domain" json:"domain,omitempty"`
+	LocalID                string    `theorydb:"attr:localId" json:"local_id,omitempty"`
+	AuthorityModel         string    `theorydb:"attr:authorityModel" json:"authority_model,omitempty"`
+	AnchorState            string    `theorydb:"attr:anchorState" json:"anchor_state,omitempty"`
+	OperationalBinding     string    `theorydb:"attr:operationalBinding" json:"operational_binding,omitempty"`
+	LifecycleStatus        string    `theorydb:"attr:lifecycleStatus" json:"lifecycle_status,omitempty"`
+	PublishedVersion       int64     `theorydb:"attr:publishedVersion" json:"published_version,omitempty"`
+	SelfDescriptionVersion int64     `theorydb:"attr:selfDescriptionVersion" json:"self_description_version,omitempty"`
+	RecoveryClassification string    `theorydb:"attr:recoveryClassification" json:"recovery_classification,omitempty"`
+	MigrationReadSHA256    string    `theorydb:"attr:migrationReadSha256" json:"migration_read_sha256,omitempty"`
+	RecoveryProducedAt     time.Time `theorydb:"attr:recoveryProducedAt" json:"recovery_produced_at,omitempty"`
+	RecoveryVersionCount   int64     `theorydb:"attr:recoveryVersionCount" json:"recovery_version_count,omitempty"`
 }
 
 func (r agentRecord) TableName() string {
@@ -466,7 +592,28 @@ func (r *agentRecord) toAgent() *Agent {
 		LifecycleStatus:        strings.TrimSpace(r.LifecycleStatus),
 		PublishedVersion:       r.PublishedVersion,
 		SelfDescriptionVersion: r.SelfDescriptionVersion,
+		RecoveryClassification: strings.TrimSpace(r.RecoveryClassification),
+		MigrationReadSHA256:    strings.TrimSpace(r.MigrationReadSHA256),
+		RecoveryProducedAt:     r.RecoveryProducedAt.UTC(),
+		RecoveryVersionCount:   r.RecoveryVersionCount,
 	}
+}
+
+func applyRecoveredFields(record *agentRecord, in RecoveredInput) {
+	record.Source = SourceHostRecovery
+	record.SourceAuthority = SourceAuthorityLesserHost
+	record.SourceOperation = SourceOperationSoulSelfRecover
+	record.HostRegistrationID = in.HostRegistrationID
+	record.HostConversationID = in.HostConversationID
+	record.Domain = in.Domain
+	record.LocalID = in.LocalID
+	record.LifecycleStatus = in.LifecycleStatus
+	record.PublishedVersion = in.PublishedVersion
+	record.SelfDescriptionVersion = in.SelfDescriptionVersion
+	record.RecoveryClassification = in.RecoveryClassification
+	record.MigrationReadSHA256 = in.MigrationReadSHA256
+	record.RecoveryProducedAt = in.RecoveryProducedAt.UTC()
+	record.RecoveryVersionCount = in.RecoveryVersionCount
 }
 
 func validateFinalizedInput(in FinalizedInput) (FinalizedInput, error) {
