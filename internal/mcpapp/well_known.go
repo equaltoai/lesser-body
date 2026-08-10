@@ -106,9 +106,7 @@ func WellKnownMcpHandler(srv *mcpserver.Server, name string, version string) app
 	}
 }
 
-func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer string) apptheory.Handler {
-	probedAuthorizationServerIssuer = strings.TrimSpace(probedAuthorizationServerIssuer)
-
+func WellKnownOAuthProtectedResourceHandler(probeAuthorizationServerIssuer bool) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := publicDiscoveryMcpEndpointForRequest(ctx)
 		if err != nil {
@@ -118,8 +116,13 @@ func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer stri
 			return apptheory.MustJSON(404, map[string]string{"error": "not_found"}), nil
 		}
 
-		authorizationServerURL := probedAuthorizationServerIssuer
-		if authorizationServerURL == "" {
+		authorizationServerURL := ""
+		if probeAuthorizationServerIssuer {
+			authorizationServerURL, err = authorizationServerIssuerForMcpEndpoint(ctx.Context(), endpoint)
+			if err != nil {
+				return authorizationServerMetadataUnavailableResponse(), nil
+			}
+		} else {
 			authorizationServerURL, err = authorizationServerURLForMcpEndpoint(endpoint)
 			if err != nil {
 				return invalidDiscoveryConfigResponse(fmt.Errorf("derive authorization server URL from MCP endpoint: %w", err)), nil
@@ -150,6 +153,16 @@ func WellKnownOAuthProtectedResourceHandler(probedAuthorizationServerIssuer stri
 			Body: body,
 		}, nil
 	}
+}
+
+func authorizationServerMetadataUnavailableResponse() *apptheory.Response {
+	resp := apptheory.MustJSON(503, map[string]string{
+		"error":             "temporarily_unavailable",
+		"error_description": "authorization server metadata is temporarily unavailable",
+	})
+	resp.Headers["cache-control"] = []string{"no-store"}
+	resp.Headers["retry-after"] = []string{"1"}
+	return resp
 }
 
 func protectedResourceNameForRequest(ctx *apptheory.Context) string {

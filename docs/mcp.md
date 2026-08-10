@@ -40,6 +40,10 @@ Protected-resource discovery depends on Lesser OAuth metadata being reachable at
 
 - `https://api.<stageDomain>/.well-known/oauth-authorization-server`
 
+Body resolves and caches the authoritative issuer when its protected-resource metadata route is requested, not during
+Lambda process startup. A temporary Lesser OAuth metadata failure returns HTTP `503` with `Cache-Control: no-store` on
+that discovery request; it does not prevent already-authorized MCP tool calls from reaching the Ka runtime.
+
 ## Authentication
 
 All `/mcp/{actor}` requests require authentication and Streamable HTTP transport headers:
