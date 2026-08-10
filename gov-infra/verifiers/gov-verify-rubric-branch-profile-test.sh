@@ -124,6 +124,31 @@ run_case \
 run_case \
   promotion-valid 0 "staging -> main promotion PASS" \
   "${STAGING_SHA}" main staging "${MAIN_SHA}" "${STAGING_SHA}"
+
+# A promotion workflow can start while the PR is open and reach GOV-3 after
+# GitHub has merged it. First prove that an unrelated main advance does not
+# make the stale event acceptable.
+git -C "${SEED}" switch --quiet main
+printf 'main-advanced-without-promotion\n' >>"${SEED}/state.txt"
+git -C "${SEED}" commit --quiet -am "main advanced without promotion"
+ADVANCED_MAIN_SHA="$(git -C "${SEED}" rev-parse HEAD)"
+git -C "${SEED}" push --quiet origin main
+
+run_case \
+  promotion-stale-unmerged 1 "promotion event base is not current origin/main" \
+  "${STAGING_SHA}" main staging "${MAIN_SHA}" "${STAGING_SHA}"
+
+# Restore the fixture's remote main to the pinned event base, then reproduce
+# GitHub's exact two-parent staging promotion merge without force-pushing a
+# real repository branch.
+git --git-dir="${REMOTE}" update-ref refs/heads/main "${MAIN_SHA}" "${ADVANCED_MAIN_SHA}"
+git -C "${SEED}" switch --quiet -C promotion-merged-during-check "${MAIN_SHA}"
+git -C "${SEED}" merge --quiet --no-ff staging -m "merge staging promotion"
+git -C "${SEED}" push --quiet origin HEAD:main
+
+run_case \
+  promotion-merged-during-check 0 "staging -> main promotion already merged PASS" \
+  "${STAGING_SHA}" main staging "${MAIN_SHA}" "${STAGING_SHA}"
 run_case \
   promotion-invalid-source 1 "unauthorized promotion source" \
   "${FEATURE_CURRENT_SHA}" main feat/current "${MAIN_SHA}" "${FEATURE_CURRENT_SHA}"

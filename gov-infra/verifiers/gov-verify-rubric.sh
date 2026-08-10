@@ -261,6 +261,21 @@ def require_ancestor(ancestor, descendant, failure_message):
         fail(failure_message)
 
 
+def exact_promotion_merge_reachable(base_sha, head_sha, current_main):
+    """Return true only for a reachable two-parent merge of base + staging."""
+    require_commit(base_sha)
+    require_commit(head_sha)
+    require_commit(current_main)
+    merges = git('rev-list', '--merges', '--parents', current_main, f'^{base_sha}')
+    if merges.returncode != 0:
+        fail('could not inspect current main promotion lineage')
+    for line in merges.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[1] == base_sha and fields[2] == head_sha:
+            return True
+    return False
+
+
 def authorized_feature_ref(ref):
     return any(ref.startswith(prefix) and len(ref) > len(prefix) for prefix in FEATURE_PREFIXES)
 
@@ -331,11 +346,17 @@ if event_name == 'pull_request':
             fail('unauthorized promotion source: main accepts only staging')
         current_main = refresh_branch('main')
         print('origin/main=' + current_main)
-        if base_sha != current_main:
-            fail('promotion event base is not current origin/main')
-        if head_sha != current_staging:
-            fail('promotion head is not current origin/staging')
-        print('staging -> main promotion PASS')
+        if base_sha == current_main and head_sha == current_staging:
+            print('staging -> main promotion PASS')
+        else:
+            require_ancestor(
+                head_sha,
+                current_staging,
+                'promotion event head is not retained by current origin/staging',
+            )
+            if not exact_promotion_merge_reachable(base_sha, head_sha, current_main):
+                fail('promotion event base is not current origin/main and exact promotion merge is absent')
+            print('staging -> main promotion already merged PASS')
     else:
         fail('unauthorized pull_request base: expected staging or main')
 elif base_env or head_env:
