@@ -200,6 +200,16 @@ type SeedPublishedInput struct {
 	UpdatedBySubjectID string
 }
 
+// SeedDraftInput is the deterministic recovery application path for legacy
+// declarations with no verified historical publication artifact. It creates a
+// draft only when no soul exists and never overwrites later owner authorship.
+type SeedDraftInput struct {
+	Account            string
+	AgentID            string
+	SoulDocument       *SoulDocument
+	UpdatedBySubjectID string
+}
+
 // SeedInstructionsInput is the deterministic Ptah genesis application path for
 // the initial agent_instructions draft. It is create-only: any existing draft,
 // including an owner-authored replacement, wins unchanged.
@@ -545,6 +555,40 @@ func (s *Store) SeedPublished(ctx context.Context, in SeedPublishedInput) (*Reco
 		}
 	}
 	return nil, false, fmt.Errorf("%w: seed finalized agent soul", ErrContentConflict)
+}
+
+// SeedDraft creates an initial soul draft and otherwise accepts only an
+// identical recovery replay. It never publishes and never mutates an existing
+// owner-authored or differently-provenanced record.
+func (s *Store) SeedDraft(ctx context.Context, in SeedDraftInput) (*Record, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("agent content store is nil")
+	}
+	validated, err := validateUpsertInput(UpsertInput{
+		Account: in.Account, AgentID: in.AgentID, Type: ContentTypeAgentSoul,
+		SoulDocument: in.SoulDocument, UpdatedBySubjectID: in.UpdatedBySubjectID,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	draft, err := s.createInitialSoulDraft(ctx, validated)
+	switch {
+	case err == nil:
+		return draft, true, nil
+	case !errors.Is(err, ErrContentConflict):
+		return nil, false, err
+	}
+	current, err := s.Get(ctx, validated.account, validated.agentID, ContentTypeAgentSoul)
+	if err != nil {
+		return nil, false, err
+	}
+	if current.Document == nil || !sameSoulDocumentAuthoringContent(current.Document, validated.soulDocument) {
+		return nil, false, fmt.Errorf("%w: recovery declaration differs from current agent_soul", ErrContentConflict)
+	}
+	return current, false, nil
 }
 
 // SeedInstructions creates the deterministic Hosted Genesis operating note
