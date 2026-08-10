@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-09T19:43:36.427778Z",
+  "generated_at": "2026-08-10T13:13:51.781875Z",
   "git": {
-    "head": "650a5af3cf0b511fc2b092a0283723555b2f271f",
-    "head_tree": "e3688e80d51f24aa1705aaf37a2e4c18fd8ea022",
-    "merge_base_origin_staging": "c4418cf9b32abb071b869eca65101b453d949bb3",
-    "ref": "theorymcp/equaltoai/body/instance-oauth-discovery",
-    "working_tree_after_run": "5 changed paths after verifier run"
+    "head": "00f614826d4ed353e92f14a60d2ea42eba35858c",
+    "head_tree": "b9d2cc03d8f5b6c9400782e9d52f712b74c378bc",
+    "merge_base_origin_staging": "b840c57944f506e2d1fbe9fa3d9b32e33109e724",
+    "ref": "theorymcp/equaltoai/body/agent-self-recovery",
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

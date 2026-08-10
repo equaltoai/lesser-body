@@ -176,6 +176,7 @@ var profileContracts = map[Profile]Contract{
 			"soul_read",
 			"identity_lookup",
 			"identity_verify",
+			"soul_self_recover",
 		},
 		Resources: []string{
 			"agent://profile",

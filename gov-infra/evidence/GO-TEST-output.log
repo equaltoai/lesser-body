@@ -18,6 +18,7 @@ ok  	github.com/equaltoai/lesser-body/internal/mcpoutputschema	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/mcpserver	(cached)
 ?   	github.com/equaltoai/lesser-body/internal/memory	[no test files]
 ok  	github.com/equaltoai/lesser-body/internal/ptahserver	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/recoverymaterial	(cached)
 ?   	github.com/equaltoai/lesser-body/internal/runtimepolicy	[no test files]
 ok  	github.com/equaltoai/lesser-body/internal/soulapi	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/soulbinding	(cached)

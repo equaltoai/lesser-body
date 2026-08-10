@@ -34,6 +34,7 @@ func registerCommunicationTools(r *mcpruntime.ToolRegistry) error {
 		{Def: soulReadDef(), Handler: handleSoulRead},
 		{Def: identityLookupDef(), Handler: handleIdentityLookup},
 		{Def: identityVerifyDef(), Handler: handleIdentityVerify},
+		{Def: soulSelfRecoverDef(), Handler: handleSoulSelfRecover},
 	} {
 		if tool.Streaming != nil {
 			if err := registerStreamingTool(r, tool.Def, tool.Streaming); err != nil {

@@ -32,6 +32,7 @@ This repo’s CDK stack deploys:
 - Private S3 stream-spill bucket for large logical MCP stream events
 - DynamoDB task table for future MCP task runtime state, with the `tasks` capability still disabled
 - Body-owned DynamoDB tables for Ptah/Ba content, registry, one-time grants, and instance-plane MCP sessions
+- Ka least-privilege access to the Body-owned content/registry tables for bound-actor `soul_self_recover`
 - SSM exports used by the Lesser stack to wire routes
 
 Notes:

@@ -2,10 +2,30 @@ package soulapi
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 )
+
+func TestDoJSONRawPreservesSuccessfulResponseBytes(t *testing.T) {
+	want := []byte(`{"declarations": { "exact": true }}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(want)
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	client := &Client{baseURL: base, http: server.Client()}
+	got, err := client.DoJSONRaw(context.Background(), http.MethodGet, "/recovery", nil, "managed-key", nil)
+	if err != nil {
+		t.Fatalf("DoJSONRaw: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("raw response = %q, want %q", got, want)
+	}
+}
 
 func TestResolveBaseURL_PrefersExplicitSoulBaseURL(t *testing.T) {
 	t.Setenv(envBaseURL, "https://soul.example.com")

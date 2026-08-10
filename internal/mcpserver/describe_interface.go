@@ -100,6 +100,7 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 			{Name: "identity_whoami", Use: "On a souled runtime, read the authenticated soul identity and its private channel preferences."},
 			{Name: "identity_lookup", Use: "On a souled runtime, resolve a public identity by agent ID, local ID, ENS name, handle, or actor URL."},
 			{Name: "identity_verify", Use: "On a souled runtime, verify communication provenance against a resolved soul identity."},
+			{Name: "soul_self_recover", Use: "On a souled runtime, recover this already-bound actor's Host-retained declaration into Ptah without an operator selector."},
 		},
 	},
 	{

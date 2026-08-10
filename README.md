@@ -31,6 +31,7 @@ hardcoded bearer-token client configs are deprecated compatibility paths; see `d
 
 - **MCP tools/resources/prompts** powered by AppTheory’s MCP runtime
 - **Ptah/Ba instance-plane operator surfaces** backed by AppTheory MCP and RFC 9728 protected-resource metadata
+- **Actor-initiated Ptah recovery** for already-bound agents with Host-verified retained declarations
 - **SSM-first cross-stack wiring** (no CloudFormation exports/imports)
 - **Auth + scope enforcement** (`read|write|admin`) for tool calls
 - **Optional DynamoDB-backed MCP sessions** for production continuity

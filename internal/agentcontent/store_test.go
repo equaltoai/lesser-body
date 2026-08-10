@@ -658,6 +658,38 @@ func TestSeedPublishedRepairsMatchingPartialDraft(t *testing.T) {
 	}
 }
 
+func TestSeedDraftIsCreateOnlyAndNeverPublishesLegacyRecovery(t *testing.T) {
+	store, _ := newTestStore(t)
+	historical := false
+	document := &SoulDocument{
+		SchemaVersion: SoulDocumentSchemaVersion, AgentID: "legacy-recovery", Body: "exact recovered declaration",
+		Provenance: &Provenance{
+			DeclarationSchemaVersion: "2", RegistrationID: "reg", ConversationID: "conv", Source: "host_recovery",
+			RecoveryClassification: "legacy_declarations_only", MigrationReadSHA256: "sha256:" + strings.Repeat("a", 64),
+			ProducedAt: "2026-01-01T00:00:00Z", HistoricalPublicationSHA: &historical,
+		},
+	}
+	first, created, err := store.SeedDraft(context.Background(), SeedDraftInput{
+		Account: "account-a", AgentID: document.AgentID, SoulDocument: document, UpdatedBySubjectID: "subject-agent",
+	})
+	if err != nil || !created || first.LifecycleState != LifecycleStateDraft || first.Version != 1 {
+		t.Fatalf("SeedDraft(first) = %+v %t %v", first, created, err)
+	}
+	replay, created, err := store.SeedDraft(context.Background(), SeedDraftInput{
+		Account: "account-a", AgentID: document.AgentID, SoulDocument: cloneSoulDocument(document), UpdatedBySubjectID: "subject-replay",
+	})
+	if err != nil || created || replay.LifecycleState != LifecycleStateDraft || replay.Version != first.Version || replay.UpdatedBySubjectID != first.UpdatedBySubjectID {
+		t.Fatalf("SeedDraft(replay) = %+v %t %v", replay, created, err)
+	}
+	different := cloneSoulDocument(document)
+	different.Body = "owner replacement"
+	if _, _, err := store.SeedDraft(context.Background(), SeedDraftInput{
+		Account: "account-a", AgentID: document.AgentID, SoulDocument: different, UpdatedBySubjectID: "subject-agent",
+	}); !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("SeedDraft(conflict) = %v, want ErrContentConflict", err)
+	}
+}
+
 func TestSeedPublicationVersionGuardNeverPublishesConcurrentOwnerDraft(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()

@@ -97,10 +97,11 @@ var toolScopes = map[string][]string{
 	"sms_send":          {ScopeWrite},
 
 	// Identity reads.
-	"identity_whoami": {ScopeRead},
-	"identity_lookup": {ScopeRead},
-	"identity_verify": {ScopeRead},
-	"soul_read":       {ScopeRead},
+	"identity_whoami":   {ScopeRead},
+	"identity_lookup":   {ScopeRead},
+	"identity_verify":   {ScopeRead},
+	"soul_read":         {ScopeRead},
+	"soul_self_recover": {ScopeWrite},
 
 	// Skills reads.
 	"skills_catalog":   {ScopeRead},
