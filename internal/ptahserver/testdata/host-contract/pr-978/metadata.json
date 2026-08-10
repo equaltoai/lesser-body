@@ -24,12 +24,12 @@
     {
       "source_path": "docs/contracts/hosted-genesis-conversation.md",
       "mirror_file": "hosted-genesis-conversation.md",
-      "sha256": "5bc7b76f9d8fb3bc40c336aef99183980325a35c06309b75534358bcbf878875"
+      "sha256": "90eeab81f1a03c7def988be51e36b3ef5192d79036b93e695b56cdc8c14cda81"
     },
     {
       "source_path": "docs/contracts/openapi.yaml",
       "mirror_file": "openapi.yaml",
-      "sha256": "665ee0b4eef312962ab7474befbbab2375bf9a9a4e043daa601f3c13afbda953"
+      "sha256": "71eb3e0552526468c9e8bfcf13c5e74153d1a2f03f1b9fdfed24db4b7a65eae8"
     },
     {
       "source_path": "docs/spec/v3/schemas/hosted-genesis.conversation.response.schema.json",
