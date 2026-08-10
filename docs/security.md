@@ -254,9 +254,11 @@ At a minimum, the MCP Lambda needs:
 - DynamoDB read/write on the MCP task table when task storage is provisioned. This is transient task runtime state used
   for session-scoped MCP task records; body advertises the MCP `tasks` capability only when `MCP_TASK_TABLE` is set and
   the read-only `skill_bundle_get` task pilot is registered.
-- DynamoDB read/write on Body-owned instance-plane tables for the instance Lambda only:
-  `INSTANCE_CONTENT_TABLE`, `INSTANCE_REGISTRY_TABLE`, `INSTANCE_GRANT_TABLE`, and `INSTANCE_SESSION_TABLE`. These
-  tables back Ptah/Ba operator state and one-time grant/session state; they are not Lesser actor data tables.
+- DynamoDB read/write on Body-owned instance-plane tables for the instance Lambda:
+  `INSTANCE_CONTENT_TABLE`, `INSTANCE_REGISTRY_TABLE`, `INSTANCE_GRANT_TABLE`, and `INSTANCE_SESSION_TABLE`. Ka also
+  receives read/write access to the content and registry tables only for `soul_self_recover`; it receives no
+  grant/session access. Recovery requires OAuth actor binding, `write`, the souled profile, exact Host declaration
+  digest/provenance validation, and never writes Lesser or Host business state.
 - `ssm:GetParameter*` to read cross-stack parameters (Lesser exports, optional lesser-soul exports)
 
 ## Client considerations
