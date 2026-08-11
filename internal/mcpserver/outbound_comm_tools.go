@@ -242,20 +242,8 @@ func resolveOutboundCommIdempotencyKey(ctx context.Context, value string) string
 // owner payload stays byte-for-byte unchanged. actedBy is attribution only,
 // never authorization; admission-time share-grant checks are the enforcement.
 func sharedCallerActedBy(ctx context.Context) string {
-	actor := auth.ActorFromToolContext(ctx)
-	if actor == "" {
-		return ""
-	}
-	principal := auth.PrincipalFromToolContext(ctx)
-	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken {
-		return ""
-	}
-	caller := strings.TrimSpace(principal.Identity)
-	if caller == "" && principal.Claims != nil {
-		caller = strings.TrimSpace(principal.Claims.GetUsername())
-	}
-	caller = normalizeLocalAgentUsername(caller)
-	if caller == "" || caller == actor {
+	_, caller, shared := shareGrantActorCaller(ctx)
+	if !shared {
 		return ""
 	}
 	return caller

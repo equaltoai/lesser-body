@@ -703,7 +703,7 @@ func soulReadPrivateReachabilityRedaction(key string) map[string]any {
 }
 
 func soulReadPrivateMintConversations(ctx context.Context, privateReq soulReadPrivateRequest) (map[string]any, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return nil, err
 	}

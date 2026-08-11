@@ -171,7 +171,7 @@ func handleArticleDraftCreate(ctx context.Context, args json.RawMessage) (*mcpru
 		return nil, invalidParams(err.Error())
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -225,7 +225,7 @@ func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpru
 		format = &normalized
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -272,7 +272,7 @@ func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcprunti
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -334,7 +334,7 @@ func handleArticleDraftList(ctx context.Context, args json.RawMessage) (*mcprunt
 		return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d", articleDraftMaxLimit))
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -366,7 +366,7 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
