@@ -12,6 +12,7 @@ const (
 	toolContextKeyBearerToken
 	toolContextKeyRequestID
 	toolContextKeyRequestSnapshot
+	toolContextKeyActor
 )
 
 // ToolRequestSnapshot carries the sanitized-by-construction request envelope
@@ -79,6 +80,30 @@ func RequestIDFromToolContext(ctx context.Context) string {
 		return ""
 	}
 	val := ctx.Value(toolContextKeyRequestID)
+	out, _ := val.(string)
+	return out
+}
+
+// WithToolActor records the resolved /mcp/{actor} route value (normalized
+// lowercase) in the tool context so agent-scoped tools can resolve the agent
+// context from the actor when the authenticated caller differs from it — the
+// share-grant caller case admitted by the actor-binding middleware.
+func WithToolActor(ctx context.Context, actor string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	actor = strings.ToLower(strings.TrimSpace(actor))
+	if actor != "" {
+		ctx = context.WithValue(ctx, toolContextKeyActor, actor)
+	}
+	return ctx
+}
+
+func ActorFromToolContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	val := ctx.Value(toolContextKeyActor)
 	out, _ := val.(string)
 	return out
 }

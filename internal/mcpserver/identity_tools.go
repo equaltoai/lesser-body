@@ -115,6 +115,20 @@ func authenticatedAgentID(ctx context.Context) (string, error) {
 		return "", newLocalAuthFailure("missing authenticated agent identity", "missing_authenticated_identity")
 	}
 
+	// Share-grant callers (admitted by the actor-binding middleware with a
+	// per-request grant check when caller != actor) resolve agent context from
+	// the actor route value. The admission-time grant check replaces the
+	// bound-self verification below, which only proves the caller's own
+	// binding. Owner requests (actor == caller) and requests without actor
+	// context keep the exact pre-existing behavior.
+	if actor := auth.ActorFromToolContext(ctx); actor != "" && !strings.EqualFold(actor, username) {
+		agentID, err := soulbinding.ResolveAgentID(ctx, actor)
+		if err != nil {
+			return "", &toolUserError{Code: "upstream_error", Message: err.Error(), Status: 500}
+		}
+		return normalizeSoulAgentID(agentID), nil
+	}
+
 	agentID, err := soulbinding.ResolveAgentID(ctx, username)
 	if err != nil {
 		return "", &toolUserError{Code: "upstream_error", Message: err.Error(), Status: 500}
