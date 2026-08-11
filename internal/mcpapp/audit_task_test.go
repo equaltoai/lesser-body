@@ -29,7 +29,7 @@ func TestAuditMcpRequestLogsTaskMetadataWithoutArguments(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	auditMcpRequest(logger, "req-1", "agent1", nil, &mcpruntime.Request{
+	auditMcpRequest(logger, "req-1", "agent1", "agent1", nil, &mcpruntime.Request{
 		JSONRPC: "2.0",
 		ID:      "tool-task",
 		Method:  "tools/call",
@@ -50,7 +50,7 @@ func TestAuditMcpRequestLogsTaskMetadataWithoutArguments(t *testing.T) {
 	}
 
 	buf.Reset()
-	auditMcpRequest(logger, "req-2", "agent1", nil, &mcpruntime.Request{
+	auditMcpRequest(logger, "req-2", "agent1", "agent1", nil, &mcpruntime.Request{
 		JSONRPC: "2.0",
 		ID:      "task-get",
 		Method:  "tasks/get",

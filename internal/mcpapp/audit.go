@@ -199,6 +199,7 @@ func auditMcp(ctx *apptheory.Context, logger *slog.Logger) {
 	}
 
 	identity := strings.TrimSpace(ctx.AuthIdentity)
+	actor := strings.TrimSpace(actorFromRequestContext(ctx))
 	requestID := strings.TrimSpace(ctx.RequestID)
 
 	if strings.HasPrefix(trimmed, "[") {
@@ -207,7 +208,7 @@ func auditMcp(ctx *apptheory.Context, logger *slog.Logger) {
 			return
 		}
 		for _, req := range reqs {
-			auditMcpRequest(logger, requestID, identity, auth.PrincipalFromContext(ctx), req)
+			auditMcpRequest(logger, requestID, identity, actor, auth.PrincipalFromContext(ctx), req)
 		}
 		return
 	}
@@ -216,10 +217,10 @@ func auditMcp(ctx *apptheory.Context, logger *slog.Logger) {
 	if err != nil {
 		return
 	}
-	auditMcpRequest(logger, requestID, identity, auth.PrincipalFromContext(ctx), req)
+	auditMcpRequest(logger, requestID, identity, actor, auth.PrincipalFromContext(ctx), req)
 }
 
-func auditMcpRequest(logger *slog.Logger, requestID string, identity string, principal *auth.Principal, req *mcpruntime.Request) {
+func auditMcpRequest(logger *slog.Logger, requestID string, identity string, actor string, principal *auth.Principal, req *mcpruntime.Request) {
 	if logger == nil || req == nil {
 		return
 	}
@@ -235,6 +236,7 @@ func auditMcpRequest(logger *slog.Logger, requestID string, identity string, pri
 		attrs := []any{
 			"request_id", requestID,
 			"identity", identity,
+			"actor", actor,
 			"tool", strings.TrimSpace(params.Name),
 			"task_requested", taskMetadataPresent(params.Task),
 		}
@@ -244,6 +246,7 @@ func auditMcpRequest(logger *slog.Logger, requestID string, identity string, pri
 		logger.Info("mcp task method",
 			"request_id", requestID,
 			"identity", identity,
+			"actor", actor,
 			"method", req.Method,
 			"task_id", taskIDFromParams(req.Params),
 		)
