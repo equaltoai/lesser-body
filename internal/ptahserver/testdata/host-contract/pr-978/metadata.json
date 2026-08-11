@@ -29,7 +29,7 @@
     {
       "source_path": "docs/contracts/openapi.yaml",
       "mirror_file": "openapi.yaml",
-      "sha256": "71eb3e0552526468c9e8bfcf13c5e74153d1a2f03f1b9fdfed24db4b7a65eae8"
+      "sha256": "8e50112e9684ba2c59f2bd66b6378b73333ec4b2efcf0ce241acc33e315c7dba"
     },
     {
       "source_path": "docs/spec/v3/schemas/hosted-genesis.conversation.response.schema.json",

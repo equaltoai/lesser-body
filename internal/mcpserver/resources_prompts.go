@@ -185,7 +185,7 @@ func resourceJSON(uri string, payload any) ([]mcpruntime.ResourceContent, error)
 }
 
 func resourceProfile(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://profile", err)
 	}
@@ -207,7 +207,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 			return nil, invalidParams("missing timeline")
 		}
 
-		token, err := requireOAuthBearer(ctx)
+		token, err := requireOwnerScopedOAuthBearer(ctx)
 		if err != nil {
 			return authResourceContentsFromError("agent://timeline/"+kind, err)
 		}
@@ -241,7 +241,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 }
 
 func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://followers", err)
 	}
@@ -274,7 +274,7 @@ func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error
 }
 
 func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://following", err)
 	}
@@ -307,7 +307,7 @@ func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error
 }
 
 func resourceNotifications(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://notifications", err)
 	}

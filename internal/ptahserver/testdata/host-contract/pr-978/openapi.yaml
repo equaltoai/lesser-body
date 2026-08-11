@@ -4204,6 +4204,14 @@ paths:
         `comm.boundary_violation` plus `error.details.field=inReplyTo` when the reference is invalid. Canonical mailbox
         replies should use `POST /api/v1/soul/comm/mailbox/{agentId}/messages/{messageRef}/reply`, which derives
         recipient, thread, and provider reply headers from host's mailbox state.
+
+        `actedBy`, when present, is pure caller attribution: the local lesser username of the real human who initiated
+        the send under a share grant. It is never an authorization input (the instance key + `agentId` remain the sole
+        authz input), is never resolved against host-side identity, and never overrides the authenticated
+        instance/agent context. Malformed values fail closed with HTTP 400 `comm.invalid_request` plus
+        `error.details.field=actedBy`. Host persists it with the send record, echoes it in this response and in
+        `GET /api/v1/soul/comm/status/{messageId}`, and includes it in idempotency-key semantics like other payload
+        fields.
       security:
         - instanceKeyAuth: []
       requestBody:
@@ -4254,6 +4262,10 @@ paths:
     get:
       operationId: soulCommStatus
       summary: Get outbound comm delivery status
+      description: |
+        Returns the current delivery status for one outbound comm message owned by the authenticated instance. When
+        the original send carried an `actedBy` caller-attribution value, the response echoes it; attribution only,
+        never authorization.
       security:
         - instanceKeyAuth: []
       parameters:

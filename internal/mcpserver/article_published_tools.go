@@ -108,7 +108,7 @@ func handleArticleDraftPublish(ctx context.Context, args json.RawMessage) (*mcpr
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -167,7 +167,7 @@ func handleArticleUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 		format = &normalized
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -268,7 +268,16 @@ func handleArticleList(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	return articleListResult(conn, limit, authorID, params)
 }
 
+// authenticatedArticleAuthorID resolves the author scope for article reads.
+// Share-grant callers (admitted per request when caller != actor) resolve the
+// actor's author scope: published-article reads then list the agent's
+// articles, and body-side draft ownership checks compare against the agent.
+// Owner requests and contexts without an actor route value keep the exact
+// pre-existing caller-identity behavior.
 func authenticatedArticleAuthorID(ctx context.Context) string {
+	if actor, _, shared := shareGrantActorCaller(ctx); shared {
+		return actor
+	}
 	principal := auth.PrincipalFromToolContext(ctx)
 	if principal == nil {
 		return ""

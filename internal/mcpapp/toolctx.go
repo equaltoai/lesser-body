@@ -21,10 +21,12 @@ func WithToolContext(next apptheory.Handler) apptheory.Handler {
 			principal := auth.PrincipalFromContext(c)
 			token := bearerTokenFromHeaders(c.Request.Headers)
 			requestID := strings.TrimSpace(c.RequestID)
+			actor := actorFromRequestContext(c)
 
-			if principal != nil || token != "" || requestID != "" {
+			if principal != nil || token != "" || requestID != "" || actor != "" {
 				ctx := auth.InjectToolContext(c.Context(), principal, token)
 				ctx = auth.WithToolRequestID(ctx, requestID)
+				ctx = auth.WithToolActor(ctx, actor)
 				setRequestContext(c, ctx)
 			}
 		}
