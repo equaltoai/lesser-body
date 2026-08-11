@@ -10,6 +10,7 @@ import (
 
 var mcpExposeHeaders = []string{
 	"mcp-session-id",
+	"mcp-www-authenticate",
 	"www-authenticate",
 }
 
