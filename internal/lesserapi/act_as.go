@@ -11,6 +11,14 @@ import (
 // Lesser performs the request agent-scoped with the authenticated caller
 // recorded as actedBy attribution. It is honored only on the enabled surfaces
 // enumerated by that contract and ignored everywhere else.
+//
+// Deploy interlock: sending this header REQUIRES lesser >= M4a
+// (docs/contracts/agent-share-act-as.md in lesser; lesser staging
+// ddef1a8a772dcc76d4fa5b60394552ef997fa665). A pre-M4a lesser ignores the
+// header and silently executes the request as the CALLER, not the agent,
+// with no actedBy attribution. There is no upstream version/capability
+// probe, so this milestone carries no runtime gate: operators must deploy or
+// upgrade lesser to M4a or later before admitting share-grant callers.
 const ActAsHeader = "X-Lesser-Act-As"
 
 type actAsContextKey struct{}

@@ -54,17 +54,26 @@ func actingMemoryScopeIdentity(ctx context.Context) (string, error) {
 	return strings.TrimSpace(p.Identity), nil
 }
 
-// requireOwnerScopedOAuthBearer gates tools that proxy the caller's own lesser
-// user bearer token to identity-scoped lesser REST/GraphQL endpoints that have
-// NO upstream act-as surface under lesser's agent-share-act-as contract
-// (docs/contracts/agent-share-act-as.md: deliberate exclusions plus every
-// unlisted endpoint). On the share-grant path these tools cannot honor the
-// /mcp/{actor} scope: proxying would silently act on lesser as the caller, not
-// the agent. Those calls fail closed with an explicit 403; the same operations
-// stay available to the caller on their own actor route. Tools whose upstream
-// surface IS act-as-enabled use requireActAsScopedOAuthBearer instead. Owner
-// requests (caller == actor), non-OAuth principals, and contexts without an
-// actor route value fall through to the exact pre-existing requireOAuthBearer
+// requireOwnerScopedOAuthBearer gates tools and resources that proxy the
+// caller's own lesser user bearer token to identity-scoped lesser
+// REST/GraphQL endpoints that have NO upstream act-as surface under lesser's
+// agent-share-act-as contract (docs/contracts/agent-share-act-as.md:
+// deliberate exclusions plus every unlisted endpoint). On the share-grant
+// path these calls cannot honor the /mcp/{actor} scope: proxying would
+// silently act on lesser as the caller, not the agent. Those calls fail
+// closed with an explicit 403; the same operations stay available to the
+// caller on their own actor route. Call sites whose upstream surface IS
+// act-as-enabled use requireActAsScopedOAuthBearer instead — including the
+// three act-as-enabled resources: profile (GET
+// /api/v1/accounts/verify_credentials), home timeline (GET
+// /api/v1/timelines/home), and notifications (GET /api/v1/notifications).
+// The remaining resources/prompts sites stay gated or caller-scoped:
+// followers/following resolve lesser account followers|following endpoints
+// that are owner-only upstream; prompts render static guidance with no
+// lesser proxy surface; memory/recent keeps reading the caller's own body
+// memory partition (caller-token scoped, never the actor's). Owner requests
+// (caller == actor), non-OAuth principals, and contexts without an actor
+// route value fall through to the exact pre-existing requireOAuthBearer
 // behavior.
 func requireOwnerScopedOAuthBearer(ctx context.Context) (string, error) {
 	if actor, caller, shared := shareGrantActorCaller(ctx); shared {

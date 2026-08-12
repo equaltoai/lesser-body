@@ -379,16 +379,54 @@ func TestSoulReadPrivateMintConversationsFailsClosedForShareGrantCaller(t *testi
 	}
 }
 
-func TestResourceProfileFailsClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
-
-	contents, err := resourceProfile(shareGrantToolContext("arch", "alice"))
+func assertForbiddenShareResourceContents(t *testing.T, contents []mcpruntime.ResourceContent, err error) {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("resourceProfile: %v", err)
+		t.Fatalf("handler returned error: %v", err)
 	}
-	if len(contents) != 1 || !strings.Contains(contents[0].Text, "forbidden") {
+	if len(contents) != 1 {
 		t.Fatalf("contents = %+v", contents)
 	}
+	var payload struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Status  int            `json:"status"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if uerr := json.Unmarshal([]byte(contents[0].Text), &payload); uerr != nil {
+		t.Fatalf("unmarshal resource error payload: %v", uerr)
+	}
+	if payload.Error.Code != "forbidden" || payload.Error.Status != 403 {
+		t.Fatalf("error payload = %s", contents[0].Text)
+	}
+	if payload.Error.Details["reason"] != "caller_token_scoped_upstream" {
+		t.Fatalf("details = %+v", payload.Error.Details)
+	}
+}
+
+func TestResourceFollowersFollowingFailClosedForShareGrantCaller(t *testing.T) {
+	installFailingLesserUpstream(t)
+
+	// Followers/following resolve owner-only upstream endpoints: the share
+	// path keeps the exact pre-existing 403 shape.
+	contents, err := resourceFollowers(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+
+	contents, err = resourceFollowing(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+}
+
+func TestResourceTimelineLocalFederatedStayGatedForShareGrantCaller(t *testing.T) {
+	installFailingLesserUpstream(t)
+
+	// Only the home timeline is act-as-enabled upstream; local/federated
+	// public timelines keep the exact gated 403 shape (mirrors timeline_read).
+	contents, err := resourceTimeline("local")(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+
+	contents, err = resourceTimeline("federated")(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
 }
 
 func TestSharedCallerActedByUnchangedAfterSeamRefactor(t *testing.T) {

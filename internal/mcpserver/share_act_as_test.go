@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -191,6 +192,82 @@ func TestSharePathTimelineHomeSendsActAs(t *testing.T) {
 	if *auth != "Bearer oauth-token" || *act != "arch" || path != "/api/v1/timelines/home" {
 		t.Fatalf("auth=%q act-as=%q path=%q", *auth, *act, path)
 	}
+}
+
+func TestSharePathResourcesSendCallerBearerAndActAsHeader(t *testing.T) {
+	t.Run("profile resource", func(t *testing.T) {
+		var path string
+		auth, act := installActAsUpstream(t, 200, `{"id":"1","username":"arch","acct":"arch"}`, func(_ string, p string) { path = p })
+		contents, err := resourceProfile(shareGrantToolContext("arch", "alice"))
+		if err != nil {
+			t.Fatalf("resourceProfile: %v", err)
+		}
+		if len(contents) != 1 {
+			t.Fatalf("contents = %+v", contents)
+		}
+		if *auth != "Bearer oauth-token" || *act != "arch" || path != "/api/v1/accounts/verify_credentials" {
+			t.Fatalf("auth=%q act-as=%q path=%q", *auth, *act, path)
+		}
+	})
+	t.Run("home timeline resource", func(t *testing.T) {
+		var path string
+		auth, act := installActAsUpstream(t, 200, `[]`, func(_ string, p string) { path = p })
+		contents, err := resourceTimeline("home")(shareGrantToolContext("arch", "alice"))
+		if err != nil {
+			t.Fatalf("resourceTimeline(home): %v", err)
+		}
+		if len(contents) != 1 {
+			t.Fatalf("contents = %+v", contents)
+		}
+		if *auth != "Bearer oauth-token" || *act != "arch" || path != "/api/v1/timelines/home" {
+			t.Fatalf("auth=%q act-as=%q path=%q", *auth, *act, path)
+		}
+	})
+	t.Run("notifications resource", func(t *testing.T) {
+		var path string
+		auth, act := installActAsUpstream(t, 200, `[]`, func(_ string, p string) { path = p })
+		contents, err := resourceNotifications(shareGrantToolContext("arch", "alice"))
+		if err != nil {
+			t.Fatalf("resourceNotifications: %v", err)
+		}
+		if len(contents) != 1 {
+			t.Fatalf("contents = %+v", contents)
+		}
+		if *auth != "Bearer oauth-token" || *act != "arch" || path != "/api/v1/notifications" {
+			t.Fatalf("auth=%q act-as=%q path=%q", *auth, *act, path)
+		}
+	})
+}
+
+func TestOwnerPathResourcesNeverSendActAsHeader(t *testing.T) {
+	owner := func() context.Context { return shareGrantToolContext("arch", "arch") }
+	t.Run("profile resource", func(t *testing.T) {
+		auth, act := installActAsUpstream(t, 200, `{"id":"1","username":"arch"}`, nil)
+		if _, err := resourceProfile(owner()); err != nil {
+			t.Fatalf("owner resourceProfile: %v", err)
+		}
+		if *auth != "Bearer oauth-token" || *act != "" {
+			t.Fatalf("owner path must be byte-identical with no act-as header, auth=%q act-as=%q", *auth, *act)
+		}
+	})
+	t.Run("home timeline resource", func(t *testing.T) {
+		auth, act := installActAsUpstream(t, 200, `[]`, nil)
+		if _, err := resourceTimeline("home")(owner()); err != nil {
+			t.Fatalf("owner resourceTimeline(home): %v", err)
+		}
+		if *auth != "Bearer oauth-token" || *act != "" {
+			t.Fatalf("owner path must be byte-identical with no act-as header, auth=%q act-as=%q", *auth, *act)
+		}
+	})
+	t.Run("notifications resource", func(t *testing.T) {
+		auth, act := installActAsUpstream(t, 200, `[]`, nil)
+		if _, err := resourceNotifications(owner()); err != nil {
+			t.Fatalf("owner resourceNotifications: %v", err)
+		}
+		if *auth != "Bearer oauth-token" || *act != "" {
+			t.Fatalf("owner path must be byte-identical with no act-as header, auth=%q act-as=%q", *auth, *act)
+		}
+	})
 }
 
 func TestOwnerAndActorlessPathsNeverSendActAsHeader(t *testing.T) {
