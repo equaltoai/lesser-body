@@ -25,6 +25,7 @@ type Article struct {
 	OGImage            *string `json:"ogImage,omitempty"`
 	EditorNotes        *string `json:"editorNotes,omitempty"`
 	ReviewStatus       *string `json:"reviewStatus,omitempty"`
+	ActedBy            *Actor  `json:"actedBy,omitempty"` // Lesser share-grant act-as attribution; resolved only for article-author or instance-admin viewers, nil otherwise.
 	PublishedAt        string  `json:"publishedAt,omitempty"`
 	CreatedAt          string  `json:"createdAt,omitempty"`
 	UpdatedAt          string  `json:"updatedAt,omitempty"`
@@ -226,7 +227,7 @@ func updateArticleVariables(input UpdateArticleInput) map[string]any {
 }
 
 func articleFields(includeContent bool) string {
-	fields := "id slug title subtitle excerpt contentFormat readingTimeMinutes wordCount canonicalUrl seoTitle seoDescription ogImage editorNotes reviewStatus publishedAt createdAt updatedAt"
+	fields := "id slug title subtitle excerpt contentFormat readingTimeMinutes wordCount canonicalUrl seoTitle seoDescription ogImage editorNotes reviewStatus actedBy { id username } publishedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}

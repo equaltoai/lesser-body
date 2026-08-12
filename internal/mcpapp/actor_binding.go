@@ -1,13 +1,22 @@
 package mcpapp
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
+	"github.com/equaltoai/lesser-body/internal/agentshare"
 	"github.com/equaltoai/lesser-body/internal/auth"
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func WithActorBinding(next apptheory.Handler) apptheory.Handler {
+	return withActorBinding(next, agentshare.IsActive)
+}
+
+type actorShareGrantChecker func(context.Context, string, string) (bool, error)
+
+func withActorBinding(next apptheory.Handler, shareGrantActive actorShareGrantChecker) apptheory.Handler {
 	if next == nil {
 		return nil
 	}
@@ -23,13 +32,32 @@ func WithActorBinding(next apptheory.Handler) apptheory.Handler {
 				Message: "forbidden",
 			}
 		}
-		if actor == "" || !strings.EqualFold(strings.TrimSpace(ctx.AuthIdentity), actor) {
-			return nil, &apptheory.AppError{
-				Code:    "app.forbidden",
-				Message: "forbidden",
-			}
+		if actor == "" {
+			return actorBindingForbidden()
+		}
+		if strings.EqualFold(strings.TrimSpace(ctx.AuthIdentity), actor) {
+			return next(ctx)
+		}
+
+		principal := auth.PrincipalFromContext(ctx)
+		if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || shareGrantActive == nil {
+			return actorBindingForbidden()
+		}
+		shared, err := shareGrantActive(ctx.Context(), actor, ctx.AuthIdentity)
+		if err != nil {
+			return nil, fmt.Errorf("check actor share grant: %w", err)
+		}
+		if !shared {
+			return actorBindingForbidden()
 		}
 		return next(ctx)
+	}
+}
+
+func actorBindingForbidden() (*apptheory.Response, error) {
+	return nil, &apptheory.AppError{
+		Code:    "app.forbidden",
+		Message: "forbidden",
 	}
 }
 

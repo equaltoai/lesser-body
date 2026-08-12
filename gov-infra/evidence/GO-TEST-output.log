@@ -4,6 +4,7 @@ $ go test ./cmd/... ./internal/...
 ok  	github.com/equaltoai/lesser-body/internal/actorendpoint	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/agentcontent	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/agentregistry	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/agentshare	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/auth	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/baserver	(cached)
 ok  	github.com/equaltoai/lesser-body/internal/cmsapi	(cached)

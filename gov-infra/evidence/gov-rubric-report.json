@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-10T17:30:53.584278Z",
+  "generated_at": "2026-08-12T06:39:22.859157Z",
   "git": {
-    "head": "470c797aa33eaeed599ef59e26679f60f1fc1372",
-    "head_tree": "c86cadf15a893cea3465ae6540b40a477b305717",
-    "merge_base_origin_staging": "21795268846c17d4299baa7d28fec7f6c0609991",
-    "ref": "fix/direct-message-pending-recovery",
+    "head": "753fee231f227d5a4cce0df3c1e9a1b55551c5f8",
+    "head_tree": "87b645f536a394c1360ec4567f051a825282b89a",
+    "merge_base_origin_staging": "2de542e50930c5ff49fea2fc15b872a6d7799ecb",
+    "ref": "theorymcp/equaltoai/body/issue-557-share-act-as-ungate",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {

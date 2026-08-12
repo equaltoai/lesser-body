@@ -108,7 +108,7 @@ func handleArticleDraftPublish(ctx context.Context, args json.RawMessage) (*mcpr
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -167,7 +167,7 @@ func handleArticleUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 		format = &normalized
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -268,7 +268,16 @@ func handleArticleList(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	return articleListResult(conn, limit, authorID, params)
 }
 
+// authenticatedArticleAuthorID resolves the author scope for article reads.
+// Share-grant callers (admitted per request when caller != actor) resolve the
+// actor's author scope: published-article reads then list the agent's
+// articles, and body-side draft ownership checks compare against the agent.
+// Owner requests and contexts without an actor route value keep the exact
+// pre-existing caller-identity behavior.
 func authenticatedArticleAuthorID(ctx context.Context) string {
+	if actor, _, shared := shareGrantActorCaller(ctx); shared {
+		return actor
+	}
 	principal := auth.PrincipalFromToolContext(ctx)
 	if principal == nil {
 		return ""
@@ -393,6 +402,9 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
+	if actedBy := cmsActorAttributionRef(article.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	if article.ReadingTimeMinutes > 0 {
 		out["readingTimeMinutes"] = article.ReadingTimeMinutes
 	}
@@ -436,6 +448,12 @@ func standardArticle(article *cmsapi.Article) map[string]any {
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
+	// actedBy is Lesser's share-grant act-as attribution (not internal
+	// editorial metadata like editorNotes/reviewStatus): surface it only
+	// when Lesser returned it.
+	if actedBy := cmsActorAttributionRef(article.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	return out
 }
 

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/memory"
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
@@ -57,9 +56,9 @@ func handleMemoryAppend(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, invalidParams("invalid expires_at")
 	}
 
-	p := auth.PrincipalFromToolContext(ctx)
-	if p == nil || strings.TrimSpace(p.Identity) == "" {
-		return nil, fmt.Errorf("missing identity")
+	identity, err := actingMemoryScopeIdentity(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	store, err := memory.Default()
@@ -67,7 +66,7 @@ func handleMemoryAppend(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, err
 	}
 
-	res, err := store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+	res, err := store.Append(ctx, identity, memory.AppendInput{
 		EventID:    strings.TrimSpace(in.EventID),
 		OccurredAt: occurredAt,
 		Content:    in.Content,
@@ -111,9 +110,9 @@ func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, invalidParams("invalid end")
 	}
 
-	p := auth.PrincipalFromToolContext(ctx)
-	if p == nil || strings.TrimSpace(p.Identity) == "" {
-		return nil, fmt.Errorf("missing identity")
+	identity, err := actingMemoryScopeIdentity(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	store, err := memory.Default()
@@ -121,7 +120,7 @@ func handleMemoryQuery(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		return nil, err
 	}
 
-	res, err := store.Query(ctx, strings.TrimSpace(p.Identity), memory.QueryInput{
+	res, err := store.Query(ctx, identity, memory.QueryInput{
 		Start:  start,
 		End:    end,
 		HasEnd: strings.TrimSpace(in.End) != "",

@@ -269,6 +269,7 @@ func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
 	auth.ResetForTests()
+	installMissingAgentShareLookup(t)
 
 	token := newTestToken(t, "test", "agent1", []string{"read"})
 

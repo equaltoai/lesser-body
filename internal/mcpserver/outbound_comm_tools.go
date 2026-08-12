@@ -209,6 +209,9 @@ func sendOutboundComm(ctx context.Context, deps *commSendDependencies, channel s
 		"agentId":        deps.agentID,
 		"idempotencyKey": idempotencyKey,
 	}
+	if actedBy := sharedCallerActedBy(ctx); actedBy != "" {
+		payload["actedBy"] = actedBy
+	}
 	for key, value := range body {
 		payload[key] = value
 	}
@@ -230,6 +233,20 @@ func resolveOutboundCommIdempotencyKey(ctx context.Context, value string) string
 		return value
 	}
 	return uuid.NewString()
+}
+
+// sharedCallerActedBy returns the normalized real-caller username to attach as
+// actedBy attribution on outbound comms when a share-grant caller acts through
+// an agent route they do not own. Owner sends (caller == actor), non-OAuth
+// principals, and contexts without an actor route value return "" so the
+// owner payload stays byte-for-byte unchanged. actedBy is attribution only,
+// never authorization; admission-time share-grant checks are the enforcement.
+func sharedCallerActedBy(ctx context.Context) string {
+	_, caller, shared := shareGrantActorCaller(ctx)
+	if !shared {
+		return ""
+	}
+	return caller
 }
 
 func emitCommProgress(emit func(mcpruntime.SSEEvent), progress int, total int, message string) {

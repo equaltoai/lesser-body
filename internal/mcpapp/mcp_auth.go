@@ -112,9 +112,9 @@ func unauthorizedMCPResponseWithOptions(
 	details map[string]any,
 ) *apptheory.Response {
 	headers := map[string][]string{
-		"www-authenticate": {mcpAuthorizationChallenge(challengeOptions)},
-		"content-type":     {"application/json; charset=utf-8"},
+		"content-type": {"application/json; charset=utf-8"},
 	}
+	setMCPAuthorizationChallengeHeaders(headers, mcpAuthorizationChallenge(challengeOptions))
 
 	errBody := map[string]any{
 		"code":    "app.unauthorized",
@@ -147,12 +147,12 @@ func unauthorizedMCPResponseWithOptions(
 
 func insufficientScopeMCPResponse(ctx *apptheory.Context, grantedScopes []string, requiredScopes []string) *apptheory.Response {
 	headers := map[string][]string{}
-	headers["www-authenticate"] = []string{mcpAuthorizationChallenge(mcpAuthorizationChallengeOptions{
+	setMCPAuthorizationChallengeHeaders(headers, mcpAuthorizationChallenge(mcpAuthorizationChallengeOptions{
 		Error:            "insufficient_scope",
 		ResourceMetadata: protectedResourceMetadataURLForRequest(ctx),
 		Scope:            joinScopeChallenge(grantedScopes, requiredScopes),
 		ErrorDescription: insufficientScopeDescription(requiredScopes),
-	})}
+	}))
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
 	errBody := map[string]any{
@@ -188,6 +188,21 @@ func insufficientScopeMCPResponse(ctx *apptheory.Context, grantedScopes []string
 		Headers: headers,
 		Body:    body,
 	}
+}
+
+// setMCPAuthorizationChallengeHeaders emits the RFC 9728 challenge under the
+// canonical www-authenticate header and a byte-identical mcp-www-authenticate
+// bridge header. API Gateway REST v1 remaps www-authenticate to
+// x-amzn-remapped-www-authenticate on 401 responses, so stock MCP clients
+// rely on the bridge header for protected-resource discovery. Challenge
+// responses are marked no-store.
+func setMCPAuthorizationChallengeHeaders(headers map[string][]string, challenge string) {
+	if strings.TrimSpace(challenge) == "" {
+		challenge = "Bearer"
+	}
+	headers["www-authenticate"] = []string{challenge}
+	headers["mcp-www-authenticate"] = []string{challenge}
+	headers["cache-control"] = []string{"no-store"}
 }
 
 func mcpAuthorizationChallenge(options mcpAuthorizationChallengeOptions) string {

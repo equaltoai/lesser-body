@@ -185,7 +185,9 @@ func resourceJSON(uri string, payload any) ([]mcpruntime.ResourceContent, error)
 }
 
 func resourceProfile(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	// verify_credentials is act-as-enabled upstream, so share-grant callers
+	// resolve the agent's account via the caller bearer + X-Lesser-Act-As.
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://profile", err)
 	}
@@ -207,7 +209,17 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 			return nil, invalidParams("missing timeline")
 		}
 
-		token, err := requireOAuthBearer(ctx)
+		// Only the home timeline is act-as-enabled upstream. Local and
+		// federated public timelines have no act-as surface and stay
+		// fail-closed for share-grant callers with the unchanged gated
+		// error shape (mirrors the timeline_read tool gating).
+		var token string
+		var err error
+		if kind == "home" {
+			ctx, token, err = requireActAsScopedOAuthBearer(ctx)
+		} else {
+			token, err = requireOwnerScopedOAuthBearer(ctx)
+		}
 		if err != nil {
 			return authResourceContentsFromError("agent://timeline/"+kind, err)
 		}
@@ -241,7 +253,7 @@ func resourceTimeline(kind string) mcpruntime.ResourceHandler {
 }
 
 func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://followers", err)
 	}
@@ -274,7 +286,7 @@ func resourceFollowers(ctx context.Context) ([]mcpruntime.ResourceContent, error
 }
 
 func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://following", err)
 	}
@@ -307,7 +319,9 @@ func resourceFollowing(ctx context.Context) ([]mcpruntime.ResourceContent, error
 }
 
 func resourceNotifications(ctx context.Context) ([]mcpruntime.ResourceContent, error) {
-	token, err := requireOAuthBearer(ctx)
+	// The notifications stream is act-as-enabled upstream, so share-grant
+	// callers read the agent's notifications via caller bearer + X-Lesser-Act-As.
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authResourceContentsFromError("agent://notifications", err)
 	}

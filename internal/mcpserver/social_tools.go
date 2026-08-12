@@ -198,7 +198,7 @@ func handleProfileRead(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 		}
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -210,6 +210,20 @@ func handleProfileRead(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	out, err := client.DoJSON(ctx, "GET", "/api/v1/accounts/verify_credentials", nil, token, nil)
 	if err != nil {
 		return authToolResultFromError(err)
+	}
+	// Identity honesty: under lesser act-as, verify_credentials resolves the
+	// shared AGENT's account. Mark the structured result so a share-grant
+	// caller never mistakes it for their own identity. The owner path keeps
+	// the exact pre-existing shape.
+	if actor, caller, shared := shareGrantActorCaller(ctx); shared {
+		return toolJSONResult(out, map[string]any{
+			"data": out,
+			"act_as": map[string]any{
+				"actor":  actor,
+				"caller": caller,
+				"note":   "verify_credentials under lesser act-as returns the shared agent's account, not the caller's own identity",
+			},
+		})
 	}
 	return toolJSONResult(out, nil)
 }
@@ -236,7 +250,17 @@ func handleTimelineRead(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, invalidParams("missing timeline")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	// Only the home timeline is act-as-enabled upstream. Local and federated
+	// public timelines have no act-as surface and stay fail-closed for
+	// share-grant callers with the unchanged gated error shape.
+	var token string
+	if in.Timeline == "home" {
+		var actErr error
+		ctx, token, actErr = requireActAsScopedOAuthBearer(ctx)
+		err = actErr
+	} else {
+		token, err = requireOwnerScopedOAuthBearer(ctx)
+	}
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -297,7 +321,7 @@ func handlePostSearch(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 		return nil, invalidParams("missing query")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -521,7 +545,7 @@ func handlePostGet(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolR
 		return nil, invalidParams("invalid view (expected standard or full)")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -565,7 +589,7 @@ func handleFollowersList(ctx context.Context, args json.RawMessage) (*mcpruntime
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -612,7 +636,7 @@ func handleFollowingList(ctx context.Context, args json.RawMessage) (*mcpruntime
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -668,7 +692,7 @@ func handleConversationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 	}
 	limit := boundedConversationReadLimit(in.Limit)
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -772,7 +796,7 @@ func handleConversationGet(ctx context.Context, args json.RawMessage) (*mcprunti
 	}
 	limit := boundedConversationGetLimit(in.Limit)
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -844,7 +868,7 @@ func handleDirectMessagesRead(ctx context.Context, args json.RawMessage) (*mcpru
 	}
 	limit := boundedConversationGetLimit(in.Limit)
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -1471,7 +1495,7 @@ func handleNotificationsRead(ctx context.Context, args json.RawMessage) (*mcprun
 		actorCursorOffset = parsedOffset
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -1595,7 +1619,7 @@ func handleNotificationGet(ctx context.Context, args json.RawMessage) (*mcprunti
 		return nil, invalidParams("invalid view (expected standard or full)")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2068,7 +2092,7 @@ func handleNotificationDismiss(ctx context.Context, args json.RawMessage) (*mcpr
 	}
 	in.ID = strings.TrimSpace(in.ID)
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2123,7 +2147,7 @@ func handlePostCreate(ctx context.Context, args json.RawMessage) (*mcpruntime.To
 		in.Visibility = "public"
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2159,7 +2183,7 @@ func handlePostBoost(ctx context.Context, args json.RawMessage) (*mcpruntime.Too
 		return nil, invalidParams("missing post_id")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2187,7 +2211,7 @@ func handlePostFavorite(ctx context.Context, args json.RawMessage) (*mcpruntime.
 		return nil, invalidParams("missing post_id")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2215,7 +2239,7 @@ func handleAccountResolve(ctx context.Context, args json.RawMessage) (*mcpruntim
 		return nil, invalidParams("missing account")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2261,7 +2285,7 @@ func handleFollow(ctx context.Context, args json.RawMessage) (*mcpruntime.ToolRe
 		return nil, invalidParams("missing account_id")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2289,7 +2313,7 @@ func handleUnfollow(ctx context.Context, args json.RawMessage) (*mcpruntime.Tool
 		return nil, invalidParams("missing account_id")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2321,7 +2345,7 @@ func handleProfileUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 		return nil, invalidParams("no fields provided")
 	}
 
-	token, err := requireOAuthBearer(ctx)
+	token, err := requireOwnerScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -2636,9 +2660,9 @@ func trimDeref(raw *string) string {
 }
 
 func readNotificationCursor(ctx context.Context) (string, error) {
-	p := auth.PrincipalFromToolContext(ctx)
-	if p == nil || strings.TrimSpace(p.Identity) == "" {
-		return "", fmt.Errorf("missing identity")
+	identity, err := actingMemoryScopeIdentity(ctx)
+	if err != nil {
+		return "", err
 	}
 
 	store, err := memory.Default()
@@ -2646,7 +2670,7 @@ func readNotificationCursor(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	res, err := store.Query(ctx, strings.TrimSpace(p.Identity), memory.QueryInput{
+	res, err := store.Query(ctx, identity, memory.QueryInput{
 		Query: notificationCursorMemoryPrefix,
 		Limit: 1,
 		Order: "desc",
@@ -2666,9 +2690,9 @@ func writeNotificationCursor(ctx context.Context, cursor string) error {
 		return nil
 	}
 
-	p := auth.PrincipalFromToolContext(ctx)
-	if p == nil || strings.TrimSpace(p.Identity) == "" {
-		return fmt.Errorf("missing identity")
+	identity, err := actingMemoryScopeIdentity(ctx)
+	if err != nil {
+		return err
 	}
 
 	store, err := memory.Default()
@@ -2680,7 +2704,7 @@ func writeNotificationCursor(ctx context.Context, cursor string) error {
 		return err
 	}
 
-	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+	_, err = store.Append(ctx, identity, memory.AppendInput{
 		EventID: eventID,
 		Content: notificationCursorMemoryPrefix + cursor,
 		Tags:    []string{notificationCursorMemoryTag},
@@ -2689,9 +2713,9 @@ func writeNotificationCursor(ctx context.Context, cursor string) error {
 }
 
 func clearNotificationCursor(ctx context.Context) error {
-	p := auth.PrincipalFromToolContext(ctx)
-	if p == nil || strings.TrimSpace(p.Identity) == "" {
-		return fmt.Errorf("missing identity")
+	identity, err := actingMemoryScopeIdentity(ctx)
+	if err != nil {
+		return err
 	}
 
 	store, err := memory.Default()
@@ -2703,7 +2727,7 @@ func clearNotificationCursor(ctx context.Context) error {
 		return err
 	}
 
-	_, err = store.Append(ctx, strings.TrimSpace(p.Identity), memory.AppendInput{
+	_, err = store.Append(ctx, identity, memory.AppendInput{
 		EventID: eventID,
 		Content: notificationCursorMemoryPrefix,
 		Tags:    []string{notificationCursorMemoryTag},
