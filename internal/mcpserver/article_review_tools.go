@@ -116,7 +116,7 @@ func handleArticleDraftReviewSubmit(ctx context.Context, args json.RawMessage) (
 		return nil, invalidParams("max_output_bytes must not be negative")
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -166,7 +166,7 @@ func handleArticleDraftReviewRead(ctx context.Context, args json.RawMessage) (*m
 		return nil, invalidParams("view=standard requires draft_id; review queues are compact metadata only")
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -227,7 +227,7 @@ func handleArticleDraftReviewVerdict(ctx context.Context, args json.RawMessage) 
 		in.Notes = &trimmed
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}

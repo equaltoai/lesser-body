@@ -34,7 +34,7 @@ func handleMessageRequestsList(ctx context.Context, args json.RawMessage) (*mcpr
 		limit = messageRequestDefaultLimit
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -77,7 +77,7 @@ func handleMessageRequestAccept(ctx context.Context, args json.RawMessage) (*mcp
 	if err != nil {
 		return nil, err
 	}
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -130,7 +130,7 @@ func handleMessageRequestDecline(ctx context.Context, args json.RawMessage) (*mc
 	if err != nil {
 		return nil, err
 	}
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}

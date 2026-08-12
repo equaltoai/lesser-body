@@ -260,13 +260,23 @@ func assertForbiddenShareResult(t *testing.T, res *mcpruntime.ToolResult, err er
 func TestSocialToolsFailClosedForShareGrantCaller(t *testing.T) {
 	installFailingLesserUpstream(t)
 
-	res, err := handlePostCreate(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"content":"hello"}`))
+	// Still-gated sites: upstream surfaces with no act-as support keep the
+	// exact pre-existing 403 shape.
+	res, err := handleFollow(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"account_id":"1"}`))
 	assertForbiddenShareResult(t, res, err)
 
-	res, err = handleNotificationsRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{}`))
+	res, err = handlePostSearch(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"query":"hello"}`))
 	assertForbiddenShareResult(t, res, err)
 
-	res, err = handleProfileRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{}`))
+	res, err = handleProfileUpdate(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"display_name":"x"}`))
+	assertForbiddenShareResult(t, res, err)
+
+	// timeline_read multiplexes timelines: only home is act-as-enabled
+	// upstream, so local/federated stay fail-closed on the share path.
+	res, err = handleTimelineRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"timeline":"local"}`))
+	assertForbiddenShareResult(t, res, err)
+
+	res, err = handleTimelineRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"timeline":"federated"}`))
 	assertForbiddenShareResult(t, res, err)
 }
 
@@ -274,6 +284,9 @@ func TestSocialOwnerPathStillProxiesOwnBearer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
 			t.Fatalf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Lesser-Act-As"); got != "" {
+			t.Fatalf("owner path must never send X-Lesser-Act-As, got %q", got)
 		}
 		if r.URL.Path != "/api/v1/accounts/verify_credentials" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -295,13 +308,34 @@ func TestSocialOwnerPathStillProxiesOwnBearer(t *testing.T) {
 	if res == nil || res.IsError {
 		t.Fatalf("owner profile_read result = %+v", res)
 	}
+	if _, ok := res.StructuredContent["act_as"]; ok {
+		t.Fatalf("owner path must not carry the act-as identity marker, got %+v", res.StructuredContent)
+	}
 }
 
-func TestArticleDraftCreateFailsClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
+func TestArticleDraftCreateReachesUpstreamForShareGrantCaller(t *testing.T) {
+	// article_draft_create is act-as-enabled upstream: the share path must
+	// reach lesser instead of failing closed. The act-as header + caller
+	// bearer assertions live in share_act_as_test.go; here a failing upstream
+	// proves the gate no longer short-circuits with a 403.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"createDraft":{"id":"draft-1","author":{"id":"https://example.com/users/arch","username":"arch"},"contentType":"ARTICLE","status":"DRAFT","contentFormat":"MARKDOWN","revision":1}}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
 
 	res, err := handleArticleDraftCreate(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"content":"draft body"}`))
-	assertForbiddenShareResult(t, res, err)
+	if err != nil {
+		t.Fatalf("article_draft_create: %v", err)
+	}
+	if res == nil || res.IsError {
+		t.Fatalf("article_draft_create result = %+v", res)
+	}
 }
 
 func TestArticleListShareGrantCallerUsesActorAuthorScope(t *testing.T) {
@@ -345,16 +379,54 @@ func TestSoulReadPrivateMintConversationsFailsClosedForShareGrantCaller(t *testi
 	}
 }
 
-func TestResourceProfileFailsClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
-
-	contents, err := resourceProfile(shareGrantToolContext("arch", "alice"))
+func assertForbiddenShareResourceContents(t *testing.T, contents []mcpruntime.ResourceContent, err error) {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("resourceProfile: %v", err)
+		t.Fatalf("handler returned error: %v", err)
 	}
-	if len(contents) != 1 || !strings.Contains(contents[0].Text, "forbidden") {
+	if len(contents) != 1 {
 		t.Fatalf("contents = %+v", contents)
 	}
+	var payload struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Status  int            `json:"status"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if uerr := json.Unmarshal([]byte(contents[0].Text), &payload); uerr != nil {
+		t.Fatalf("unmarshal resource error payload: %v", uerr)
+	}
+	if payload.Error.Code != "forbidden" || payload.Error.Status != 403 {
+		t.Fatalf("error payload = %s", contents[0].Text)
+	}
+	if payload.Error.Details["reason"] != "caller_token_scoped_upstream" {
+		t.Fatalf("details = %+v", payload.Error.Details)
+	}
+}
+
+func TestResourceFollowersFollowingFailClosedForShareGrantCaller(t *testing.T) {
+	installFailingLesserUpstream(t)
+
+	// Followers/following resolve owner-only upstream endpoints: the share
+	// path keeps the exact pre-existing 403 shape.
+	contents, err := resourceFollowers(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+
+	contents, err = resourceFollowing(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+}
+
+func TestResourceTimelineLocalFederatedStayGatedForShareGrantCaller(t *testing.T) {
+	installFailingLesserUpstream(t)
+
+	// Only the home timeline is act-as-enabled upstream; local/federated
+	// public timelines keep the exact gated 403 shape (mirrors timeline_read).
+	contents, err := resourceTimeline("local")(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
+
+	contents, err = resourceTimeline("federated")(shareGrantToolContext("arch", "alice"))
+	assertForbiddenShareResourceContents(t, contents, err)
 }
 
 func TestSharedCallerActedByUnchangedAfterSeamRefactor(t *testing.T) {

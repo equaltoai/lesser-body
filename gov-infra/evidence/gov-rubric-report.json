@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-11T21:00:40.447284Z",
+  "generated_at": "2026-08-12T06:39:22.859157Z",
   "git": {
-    "head": "620cebcf5620dabe54e084b744f2856837ceaa3a",
-    "head_tree": "d5c7327950aabb64b87617836329043989267012",
-    "merge_base_origin_staging": "c4aac95141a512d3aa6b3dcf0a25b843539fa1bc",
-    "ref": "theorymcp/equaltoai/body/issue-555-agent-share-admission",
-    "working_tree_after_run": "8 changed paths after verifier run"
+    "head": "753fee231f227d5a4cce0df3c1e9a1b55551c5f8",
+    "head_tree": "87b645f536a394c1360ec4567f051a825282b89a",
+    "merge_base_origin_staging": "2de542e50930c5ff49fea2fc15b872a6d7799ecb",
+    "ref": "theorymcp/equaltoai/body/issue-557-share-act-as-ungate",
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

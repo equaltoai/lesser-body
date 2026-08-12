@@ -156,6 +156,9 @@ func (c *Client) doRawJSONWithRequestHeaders(ctx context.Context, method string,
 	if strings.TrimSpace(bearerToken) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
 	}
+	if actAs := ActAsFromContext(ctx); actAs != "" {
+		req.Header.Set(ActAsHeader, actAs)
+	}
 	for name, values := range requestHeaders {
 		name = http.CanonicalHeaderKey(strings.TrimSpace(name))
 		if name == "" {
