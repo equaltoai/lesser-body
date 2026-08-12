@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-12T06:07:33.688599Z",
+  "generated_at": "2026-08-12T06:39:22.859157Z",
   "git": {
-    "head": "40c9551af87fa6e33f00d8c0d27ddf6b038e42d4",
-    "head_tree": "0125fe19b9943e9541d45a231a3853815bbabaa0",
+    "head": "753fee231f227d5a4cce0df3c1e9a1b55551c5f8",
+    "head_tree": "87b645f536a394c1360ec4567f051a825282b89a",
     "merge_base_origin_staging": "2de542e50930c5ff49fea2fc15b872a6d7799ecb",
     "ref": "theorymcp/equaltoai/body/issue-557-share-act-as-ungate",
     "working_tree_after_run": "5 changed paths after verifier run"
