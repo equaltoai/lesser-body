@@ -27,6 +27,7 @@ type Draft struct {
 	ID              string  `json:"id"`
 	AuthorID        string  `json:"authorId,omitempty"` // legacy fallback; current Lesser exposes Author.
 	Author          *Actor  `json:"author,omitempty"`
+	ActedBy         *Actor  `json:"actedBy,omitempty"` // Lesser share-grant act-as attribution; nil on the owner path.
 	ContentType     string  `json:"contentType,omitempty"`
 	Title           *string `json:"title,omitempty"`
 	Slug            *string `json:"slug,omitempty"`
@@ -337,7 +338,7 @@ func normalizeContentFormat(value string) string {
 }
 
 func draftFields(includeContent bool) string {
-	fields := "id author { id username } contentType title slug contentFormat status scheduledAt objectId contentHash revision autosaveVersion lastSavedAt createdAt updatedAt"
+	fields := "id author { id username } actedBy { id username } contentType title slug contentFormat status scheduledAt objectId contentHash revision autosaveVersion lastSavedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}

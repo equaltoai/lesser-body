@@ -108,7 +108,7 @@ func handleArticleDraftPublish(ctx context.Context, args json.RawMessage) (*mcpr
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -167,7 +167,7 @@ func handleArticleUpdate(ctx context.Context, args json.RawMessage) (*mcpruntime
 		format = &normalized
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -402,6 +402,9 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
+	if actedBy := cmsActorAttributionRef(article.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	if article.ReadingTimeMinutes > 0 {
 		out["readingTimeMinutes"] = article.ReadingTimeMinutes
 	}
@@ -445,6 +448,12 @@ func standardArticle(article *cmsapi.Article) map[string]any {
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
+	// actedBy is Lesser's share-grant act-as attribution (not internal
+	// editorial metadata like editorNotes/reviewStatus): surface it only
+	// when Lesser returned it.
+	if actedBy := cmsActorAttributionRef(article.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	return out
 }
 

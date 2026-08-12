@@ -171,7 +171,7 @@ func handleArticleDraftCreate(ctx context.Context, args json.RawMessage) (*mcpru
 		return nil, invalidParams(err.Error())
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -225,7 +225,7 @@ func handleArticleDraftUpdate(ctx context.Context, args json.RawMessage) (*mcpru
 		format = &normalized
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -272,7 +272,7 @@ func handleArticleDraftGet(ctx context.Context, args json.RawMessage) (*mcprunti
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -334,7 +334,7 @@ func handleArticleDraftList(ctx context.Context, args json.RawMessage) (*mcprunt
 		return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d", articleDraftMaxLimit))
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -366,7 +366,7 @@ func handleArticleDraftPreview(ctx context.Context, args json.RawMessage) (*mcpr
 		return nil, invalidParams("id is required")
 	}
 
-	token, err := requireOwnerScopedOAuthBearer(ctx)
+	ctx, token, err := requireActAsScopedOAuthBearer(ctx)
 	if err != nil {
 		return authToolResultFromError(err)
 	}
@@ -690,6 +690,9 @@ func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, 
 	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
 	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)
+	if actedBy := cmsActorAttributionRef(draft.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	content := draft.Content
 	if strings.TrimSpace(content) == "" && fallbackContent != nil {
 		content = *fallbackContent
@@ -720,6 +723,9 @@ func standardArticleDraft(draft *cmsapi.Draft) map[string]any {
 	putIfNotEmpty(out, "lastSavedAt", draft.LastSavedAt)
 	putIfNotEmpty(out, "createdAt", draft.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", draft.UpdatedAt)
+	if actedBy := cmsActorAttributionRef(draft.ActedBy); actedBy != nil {
+		out["actedBy"] = actedBy
+	}
 	return out
 }
 
@@ -728,6 +734,23 @@ func stringPtrValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+// cmsActorAttributionRef shapes Lesser's actedBy share-grant act-as
+// attribution for MCP output. It returns nil when Lesser returned no
+// attribution: owner-path responses stay byte-identical and Body never
+// invents attribution Lesser did not return.
+func cmsActorAttributionRef(actor *cmsapi.Actor) map[string]any {
+	if actor == nil {
+		return nil
+	}
+	ref := map[string]any{}
+	putIfNotEmpty(ref, "id", actor.ID)
+	putIfNotEmpty(ref, "username", actor.Username)
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
 }
 
 func articleDraftOmissions(view string, list bool) []any {

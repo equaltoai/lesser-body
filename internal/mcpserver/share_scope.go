@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 )
 
 // shareGrantActorCaller classifies the tool context for actor-scoped identity
@@ -54,16 +55,17 @@ func actingMemoryScopeIdentity(ctx context.Context) (string, error) {
 }
 
 // requireOwnerScopedOAuthBearer gates tools that proxy the caller's own lesser
-// user bearer token to identity-scoped lesser REST/GraphQL endpoints. Lesser's
-// social and CMS contracts scope every one of those calls to the token's own
-// account and define no actor delegation or act-as mechanism (M1 share grants
-// explicitly do not mint tokens, create sessions, or alter DelegatedBy
-// behavior), so on the share-grant path the tool cannot honor the /mcp/{actor}
-// scope: proxying would silently act on lesser as the caller, not the agent.
-// Those calls fail closed with an explicit 403; the same operations stay
-// available to the caller on their own actor route. Owner requests
-// (caller == actor), non-OAuth principals, and contexts without an actor route
-// value fall through to the exact pre-existing requireOAuthBearer behavior.
+// user bearer token to identity-scoped lesser REST/GraphQL endpoints that have
+// NO upstream act-as surface under lesser's agent-share-act-as contract
+// (docs/contracts/agent-share-act-as.md: deliberate exclusions plus every
+// unlisted endpoint). On the share-grant path these tools cannot honor the
+// /mcp/{actor} scope: proxying would silently act on lesser as the caller, not
+// the agent. Those calls fail closed with an explicit 403; the same operations
+// stay available to the caller on their own actor route. Tools whose upstream
+// surface IS act-as-enabled use requireActAsScopedOAuthBearer instead. Owner
+// requests (caller == actor), non-OAuth principals, and contexts without an
+// actor route value fall through to the exact pre-existing requireOAuthBearer
+// behavior.
 func requireOwnerScopedOAuthBearer(ctx context.Context) (string, error) {
 	if actor, caller, shared := shareGrantActorCaller(ctx); shared {
 		return "", &mcpAuthFailure{
@@ -78,4 +80,31 @@ func requireOwnerScopedOAuthBearer(ctx context.Context) (string, error) {
 		}
 	}
 	return requireOAuthBearer(ctx)
+}
+
+// requireActAsScopedOAuthBearer resolves the caller's bearer for tools whose
+// upstream lesser surface is act-as-enabled per lesser's agent-share-act-as
+// contract. On the share-grant path it returns the caller's own bearer together
+// with a context carrying the X-Lesser-Act-As indicator naming the actor route
+// value; lesser then performs its per-request ConsistentRead grant check,
+// scopes the call to the agent, and records the caller as actedBy attribution.
+// Upstream 400/403/500 rejections propagate as tool errors with the upstream
+// reason preserved — there is no retry or fallback to owner semantics. Owner
+// requests (caller == actor), non-OAuth principals (x402), and contexts
+// without an actor route value fall through to the exact pre-existing
+// requireOAuthBearer behavior with the context returned unchanged, so the
+// owner path stays byte-identical and never carries the header.
+func requireActAsScopedOAuthBearer(ctx context.Context) (context.Context, string, error) {
+	if actor, _, shared := shareGrantActorCaller(ctx); shared {
+		token, err := requireOAuthBearer(ctx)
+		if err != nil {
+			return ctx, "", err
+		}
+		return lesserapi.WithActAs(ctx, actor), token, nil
+	}
+	token, err := requireOAuthBearer(ctx)
+	if err != nil {
+		return ctx, "", err
+	}
+	return ctx, token, nil
 }
