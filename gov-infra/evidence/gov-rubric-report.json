@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-13T18:17:38.045632Z",
+  "generated_at": "2026-08-13T18:44:33.919168Z",
   "git": {
-    "head": "1fd8bd52d541768b4d7696e1d6c354be3b6e7b6d",
-    "head_tree": "261ecbdf96d775cda45ac43c4fd6e183229558fc",
+    "head": "3eb6018758efe3c31e9f5d7662865811d25c7a31",
+    "head_tree": "b2ac0e55fa762f19f70ed0a892e8810259914dcb",
     "merge_base_origin_staging": "756a49cdc1c2f17dc56afd87457160709995a082",
     "ref": "theorymcp/equaltoai/body/issue-560-lesser-admission",
     "working_tree_after_run": "6 changed paths after verifier run"
