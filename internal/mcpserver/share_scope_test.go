@@ -196,14 +196,10 @@ func TestAuthenticatedArticleAuthorIDResolution(t *testing.T) {
 }
 
 func TestRequireOwnerScopedOAuthBearer(t *testing.T) {
-	t.Run("grantee fails closed", func(t *testing.T) {
-		_, err := requireOwnerScopedOAuthBearer(shareGrantToolContext("arch", "alice"))
-		failure := mcpAuthFailureFromError(err)
-		if failure == nil || failure.Status != 403 || failure.Code != "forbidden" {
-			t.Fatalf("err=%v", err)
-		}
-		if failure.Details["actor"] != "arch" || failure.Details["caller"] != "alice" || failure.Details["reason"] != "caller_token_scoped_upstream" {
-			t.Fatalf("details=%+v", failure.Details)
+	t.Run("grantee gets the agent-subject bearer", func(t *testing.T) {
+		token, err := requireOwnerScopedOAuthBearer(shareGrantToolContext("arch", "alice"))
+		if err != nil || token != "oauth-token" {
+			t.Fatalf("token=%q err=%v", token, err)
 		}
 	})
 	t.Run("owner gets token", func(t *testing.T) {
@@ -227,6 +223,34 @@ func TestRequireOwnerScopedOAuthBearer(t *testing.T) {
 	})
 }
 
+// installRecordingLesserUpstream installs a lesser stub that records every
+// request (method, path, authorization header) and serves per-path response
+// bodies so a share-grant caller can be observed reaching the upstream with the
+// agent-subject bearer instead of being short-circuited at the Body seam.
+func installRecordingLesserUpstream(t *testing.T, bodies map[string]string, onRequest func(method, path, auth, actAs string)) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if onRequest != nil {
+			onRequest(r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("X-Lesser-Act-As"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if body, ok := bodies[r.URL.Path]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+}
+
+// installFailingLesserUpstream installs a lesser stub that fails the test if any
+// request reaches it. Used by the x402 gate tests, where the OAuth-bearer
+// requirement must short-circuit before any upstream call.
 func installFailingLesserUpstream(t *testing.T) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -240,44 +264,87 @@ func installFailingLesserUpstream(t *testing.T) {
 	lesserapi.ResetForTests()
 }
 
-func assertForbiddenShareResult(t *testing.T, res *mcpruntime.ToolResult, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
+func TestSocialToolsProxyAgentSubjectBearerForShareGrantCaller(t *testing.T) {
+	type request struct {
+		method string
+		path   string
+		auth   string
+		actAs  string
 	}
-	if res == nil || !res.IsError {
-		t.Fatalf("expected error result, got %+v", res)
+	var got []request
+	installRecordingLesserUpstream(t, map[string]string{
+		"/api/v1/timelines/public":            `[]`,
+		"/api/v2/search":                      `{"statuses":[],"accounts":[],"hashtags":[]}`,
+		"/api/v1/statuses/s1":                 `{"id":"s1","content":"hello","account":{"id":"acct1","acct":"arch@example.com"},"visibility":"public"}`,
+		"/api/v1/accounts/alice":              `{"id":"1","username":"alice","acct":"alice"}`,
+		"/api/v1/accounts/verify_credentials": `{"id":"1","username":"arch","acct":"arch"}`,
+		"/api/v1/accounts/1/followers":        `[]`,
+		"/api/v1/accounts/1/following":        `[]`,
+		"/api/v1/accounts/1/follow":           `{"id":"1","following":true}`,
+		"/api/v1/accounts/1/unfollow":         `{"id":"1","following":false}`,
+		"/api/v1/accounts/update_credentials": `{"ok":true}`,
+	}, func(method, path, auth, actAs string) {
+		got = append(got, request{method: method, path: path, auth: auth, actAs: actAs})
+	})
+
+	type call struct {
+		name string
+		fn   func() (*mcpruntime.ToolResult, error)
 	}
-	errPayload, _ := res.StructuredContent["error"].(map[string]any)
-	if errPayload["code"] != "forbidden" {
-		t.Fatalf("error payload = %+v", res.StructuredContent)
+	grantee := shareGrantToolContext("arch", "alice")
+	calls := []call{
+		{"timeline_read local", func() (*mcpruntime.ToolResult, error) {
+			return handleTimelineRead(grantee, json.RawMessage(`{"timeline":"local"}`))
+		}},
+		{"timeline_read federated", func() (*mcpruntime.ToolResult, error) {
+			return handleTimelineRead(grantee, json.RawMessage(`{"timeline":"federated"}`))
+		}},
+		{"post_search", func() (*mcpruntime.ToolResult, error) {
+			return handlePostSearch(grantee, json.RawMessage(`{"query":"hello"}`))
+		}},
+		{"post_get", func() (*mcpruntime.ToolResult, error) {
+			return handlePostGet(grantee, json.RawMessage(`{"id":"s1"}`))
+		}},
+		{"account_resolve", func() (*mcpruntime.ToolResult, error) {
+			return handleAccountResolve(grantee, json.RawMessage(`{"account":"alice"}`))
+		}},
+		{"followers_list", func() (*mcpruntime.ToolResult, error) {
+			return handleFollowersList(grantee, json.RawMessage(`{}`))
+		}},
+		{"following_list", func() (*mcpruntime.ToolResult, error) {
+			return handleFollowingList(grantee, json.RawMessage(`{}`))
+		}},
+		{"follow", func() (*mcpruntime.ToolResult, error) {
+			return handleFollow(grantee, json.RawMessage(`{"account_id":"1"}`))
+		}},
+		{"unfollow", func() (*mcpruntime.ToolResult, error) {
+			return handleUnfollow(grantee, json.RawMessage(`{"account_id":"1"}`))
+		}},
+		{"profile_update", func() (*mcpruntime.ToolResult, error) {
+			return handleProfileUpdate(grantee, json.RawMessage(`{"display_name":"x"}`))
+		}},
 	}
-	if status, _ := errPayload["status"].(int); status != 403 {
-		t.Fatalf("error status = %+v", errPayload)
+	for _, c := range calls {
+		res, err := c.fn()
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if res == nil || res.IsError {
+			t.Fatalf("%s result = %+v", c.name, res)
+		}
 	}
-}
 
-func TestSocialToolsFailClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
-
-	// Still-gated sites: upstream surfaces with no act-as support keep the
-	// exact pre-existing 403 shape.
-	res, err := handleFollow(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"account_id":"1"}`))
-	assertForbiddenShareResult(t, res, err)
-
-	res, err = handlePostSearch(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"query":"hello"}`))
-	assertForbiddenShareResult(t, res, err)
-
-	res, err = handleProfileUpdate(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"display_name":"x"}`))
-	assertForbiddenShareResult(t, res, err)
-
-	// timeline_read multiplexes timelines: only home is act-as-enabled
-	// upstream, so local/federated stay fail-closed on the share path.
-	res, err = handleTimelineRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"timeline":"local"}`))
-	assertForbiddenShareResult(t, res, err)
-
-	res, err = handleTimelineRead(shareGrantToolContext("arch", "alice"), json.RawMessage(`{"timeline":"federated"}`))
-	assertForbiddenShareResult(t, res, err)
+	if len(got) == 0 {
+		t.Fatal("share-grant callers must reach lesser upstream")
+	}
+	for _, req := range got {
+		if req.auth != "Bearer oauth-token" {
+			t.Fatalf("share-grant caller must proxy the agent-subject bearer, got auth=%q for %s %s", req.auth, req.method, req.path)
+		}
+		if req.actAs != "" {
+			t.Fatalf("non-act-as surfaces must not send X-Lesser-Act-As, got %q for %s %s", req.actAs, req.method, req.path)
+		}
+	}
 }
 
 func TestSocialOwnerPathStillProxiesOwnBearer(t *testing.T) {
@@ -369,64 +436,81 @@ func TestArticleListShareGrantCallerUsesActorAuthorScope(t *testing.T) {
 	}
 }
 
-func TestSoulReadPrivateMintConversationsFailsClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
+func TestSoulReadPrivateMintConversationsProxyAgentSubjectBearerForShareGrantCaller(t *testing.T) {
+	var auths []string
+	installRecordingLesserUpstream(t, map[string]string{
+		"/api/v1/souls/bound/me/mint-conversations": `{"version":"1","count":0,"limit":5,"conversations":[]}`,
+	}, func(method, path, auth, _ string) {
+		auths = append(auths, auth)
+	})
 
-	_, err := soulReadPrivateMintConversations(shareGrantToolContext("arch", "alice"), soulReadPrivateRequest{Limit: 5})
-	failure := mcpAuthFailureFromError(err)
-	if failure == nil || failure.Status != 403 || failure.Code != "forbidden" {
-		t.Fatalf("err=%v", err)
+	out, err := soulReadPrivateMintConversations(shareGrantToolContext("arch", "alice"), soulReadPrivateRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("soulReadPrivateMintConversations: %v", err)
+	}
+	if out == nil {
+		t.Fatal("expected a mint-conversation payload")
+	}
+	if len(auths) != 1 || auths[0] != "Bearer oauth-token" {
+		t.Fatalf("share-grant caller must proxy the agent-subject bearer, got auths=%+v", auths)
 	}
 }
 
-func assertForbiddenShareResourceContents(t *testing.T, contents []mcpruntime.ResourceContent, err error) {
-	t.Helper()
+func TestResourceFollowersFollowingProxyAgentSubjectBearerForShareGrantCaller(t *testing.T) {
+	var auths []string
+	installRecordingLesserUpstream(t, map[string]string{
+		"/api/v1/accounts/verify_credentials": `{"id":"1","username":"arch","acct":"arch"}`,
+		"/api/v1/accounts/1/followers":        `[]`,
+		"/api/v1/accounts/1/following":        `[]`,
+	}, func(method, path, auth, _ string) {
+		auths = append(auths, auth)
+	})
+
+	contents, err := resourceFollowers(shareGrantToolContext("arch", "alice"))
 	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
+		t.Fatalf("resourceFollowers: %v", err)
 	}
 	if len(contents) != 1 {
-		t.Fatalf("contents = %+v", contents)
+		t.Fatalf("resourceFollowers contents = %+v", contents)
 	}
-	var payload struct {
-		Error struct {
-			Code    string         `json:"code"`
-			Status  int            `json:"status"`
-			Details map[string]any `json:"details"`
-		} `json:"error"`
-	}
-	if uerr := json.Unmarshal([]byte(contents[0].Text), &payload); uerr != nil {
-		t.Fatalf("unmarshal resource error payload: %v", uerr)
-	}
-	if payload.Error.Code != "forbidden" || payload.Error.Status != 403 {
-		t.Fatalf("error payload = %s", contents[0].Text)
-	}
-	if payload.Error.Details["reason"] != "caller_token_scoped_upstream" {
-		t.Fatalf("details = %+v", payload.Error.Details)
-	}
-}
-
-func TestResourceFollowersFollowingFailClosedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
-
-	// Followers/following resolve owner-only upstream endpoints: the share
-	// path keeps the exact pre-existing 403 shape.
-	contents, err := resourceFollowers(shareGrantToolContext("arch", "alice"))
-	assertForbiddenShareResourceContents(t, contents, err)
 
 	contents, err = resourceFollowing(shareGrantToolContext("arch", "alice"))
-	assertForbiddenShareResourceContents(t, contents, err)
+	if err != nil {
+		t.Fatalf("resourceFollowing: %v", err)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("resourceFollowing contents = %+v", contents)
+	}
+
+	for _, auth := range auths {
+		if auth != "Bearer oauth-token" {
+			t.Fatalf("share-grant caller must proxy the agent-subject bearer, got auths=%+v", auths)
+		}
+	}
 }
 
-func TestResourceTimelineLocalFederatedStayGatedForShareGrantCaller(t *testing.T) {
-	installFailingLesserUpstream(t)
+func TestResourceTimelineLocalFederatedProxyAgentSubjectBearerForShareGrantCaller(t *testing.T) {
+	var auths []string
+	installRecordingLesserUpstream(t, map[string]string{
+		"/api/v1/timelines/public": `[]`,
+	}, func(method, path, auth, _ string) {
+		auths = append(auths, auth)
+	})
 
-	// Only the home timeline is act-as-enabled upstream; local/federated
-	// public timelines keep the exact gated 403 shape (mirrors timeline_read).
-	contents, err := resourceTimeline("local")(shareGrantToolContext("arch", "alice"))
-	assertForbiddenShareResourceContents(t, contents, err)
-
-	contents, err = resourceTimeline("federated")(shareGrantToolContext("arch", "alice"))
-	assertForbiddenShareResourceContents(t, contents, err)
+	for _, kind := range []string{"local", "federated"} {
+		contents, err := resourceTimeline(kind)(shareGrantToolContext("arch", "alice"))
+		if err != nil {
+			t.Fatalf("resourceTimeline(%s): %v", kind, err)
+		}
+		if len(contents) != 1 {
+			t.Fatalf("resourceTimeline(%s) contents = %+v", kind, contents)
+		}
+	}
+	for _, auth := range auths {
+		if auth != "Bearer oauth-token" {
+			t.Fatalf("share-grant caller must proxy the agent-subject bearer, got auths=%+v", auths)
+		}
+	}
 }
 
 func TestSharedCallerActedByUnchangedAfterSeamRefactor(t *testing.T) {
