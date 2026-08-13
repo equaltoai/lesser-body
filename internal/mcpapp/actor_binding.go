@@ -2,6 +2,7 @@ package mcpapp
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/agentshare"
@@ -44,6 +45,11 @@ func actorAdmissionViaLesser(ctx context.Context, actor, bearerToken string) (st
 	resp, err := client.GetActorAccess(ctx, actor, bearerToken)
 	if err != nil {
 		return "", err
+	}
+	// A 200 with authorized=false must deny: body asks lesser for the explicit
+	// decision and must not re-infer it from the relationship alone.
+	if !resp.Authorized {
+		return "", errors.New("lesser denied actor access")
 	}
 	return strings.TrimSpace(resp.Relationship), nil
 }

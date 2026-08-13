@@ -171,6 +171,23 @@ func TestComposedActorBindingAdmission(t *testing.T) {
 		assertComposedForbidden(t, resp, err)
 	})
 
+	t.Run("lesser 200 authorized=false denied", func(t *testing.T) {
+		installComposedBaseEnv(t)
+		token := composedTestJWT(t, "arch", "@alice")
+		installActorAccessHTTPStub(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"actor":"arch","relationship":"owner","authorized":false,"acted_by":"owner"}`)
+		})
+
+		handler := composedHandler(t, func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			t.Fatal("authorized=false must not reach the handler")
+			return nil, nil
+		})
+
+		resp, err := handler(composedOAuthContext(token))
+		assertComposedForbidden(t, resp, err)
+	})
+
 	t.Run("absent DelegatedBy denied without a lesser call", func(t *testing.T) {
 		installComposedBaseEnv(t)
 		token := composedTestJWT(t, "arch", "")
