@@ -9,6 +9,8 @@ Writing dist/checksums.txt...
 dist/lesser-body.zip: OK
 dist/lesser-body-instance.zip: OK
 OK: dist/checksums.txt
+(node:1813279) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
 
 added 10 packages, and audited 31 packages in 1s
 
@@ -34,5 +36,5 @@ lesser-body-managed-live.template.json: OK
 deploy-lesser-body-from-release.sh: OK
 lesser-body-release.json: OK
 apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
-cdk-file-asset-4b267fbc08639b87.zip: OK
+cdk-file-asset-27b8ff19cbd1d9b8.zip: OK
 Verified release assets in dist/release-test
