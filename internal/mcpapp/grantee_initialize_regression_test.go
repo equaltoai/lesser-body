@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v3/testkit"
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
