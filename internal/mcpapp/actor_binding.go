@@ -7,16 +7,18 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/agentshare"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/mcpserver"
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func WithActorBinding(next apptheory.Handler) apptheory.Handler {
-	return withActorBinding(next, agentshare.IsActive)
+	return withActorBinding(next, agentshare.AgentOwner, agentshare.IsActive)
 }
 
+type actorOwnerResolver func(context.Context, string) (string, error)
 type actorShareGrantChecker func(context.Context, string, string) (bool, error)
 
-func withActorBinding(next apptheory.Handler, shareGrantActive actorShareGrantChecker) apptheory.Handler {
+func withActorBinding(next apptheory.Handler, ownerResolver actorOwnerResolver, shareGrantActive actorShareGrantChecker) apptheory.Handler {
 	if next == nil {
 		return nil
 	}
@@ -32,24 +34,63 @@ func withActorBinding(next apptheory.Handler, shareGrantActive actorShareGrantCh
 				Message: "forbidden",
 			}
 		}
+		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeInstanceKey {
+			// The deprecated managed-instance-key path authenticates as the
+			// "instance" identity and is admitted only on the instance actor
+			// route; it has no DelegatedBy and never consults a share grant.
+			if strings.EqualFold(strings.TrimSpace(actor), strings.TrimSpace(principal.Identity)) {
+				return next(ctx)
+			}
+			return actorBindingForbidden()
+		}
 		if actor == "" {
 			return actorBindingForbidden()
 		}
-		if strings.EqualFold(strings.TrimSpace(ctx.AuthIdentity), actor) {
+
+		principal := auth.PrincipalFromContext(ctx)
+		if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken {
+			return actorBindingForbidden()
+		}
+
+		// The token subject is always the agent in the settled identity model,
+		// so AuthIdentity no longer distinguishes owner from grantee. The
+		// authorizing human rides in DelegatedBy; key on it.
+		delegatedBy := agentshare.NormalizePrincipalUsername(claimsDelegatedBy(principal))
+		if delegatedBy == "" {
+			// Absent or unreadable DelegatedBy must fail closed. It must never
+			// fall back to admitting the request as the owner.
+			return actorBindingForbidden()
+		}
+
+		owner, err := ownerResolver(ctx.Context(), actor)
+		if err != nil {
+			return nil, fmt.Errorf("resolve actor owner: %w", err)
+		}
+		owner = agentshare.NormalizePrincipalUsername(owner)
+		if owner == "" {
+			return nil, fmt.Errorf("resolve actor owner: empty owner for %q", actor)
+		}
+
+		if delegatedBy == owner {
+			// Owner path: admit without consulting the share grant.
 			return next(ctx)
 		}
 
-		principal := auth.PrincipalFromContext(ctx)
-		if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken || shareGrantActive == nil {
+		if shareGrantActive == nil {
 			return actorBindingForbidden()
 		}
-		shared, err := shareGrantActive(ctx.Context(), actor, ctx.AuthIdentity)
+		shared, err := shareGrantActive(ctx.Context(), actor, delegatedBy)
 		if err != nil {
 			return nil, fmt.Errorf("check actor share grant: %w", err)
 		}
 		if !shared {
 			return actorBindingForbidden()
 		}
+
+		// Grantee path: record the resolved driver so downstream act-as,
+		// memory-partition, and attribution seams thread it without re-reading
+		// the grant or re-resolving the owner.
+		setRequestContext(ctx, mcpserver.WithShareCaller(ctx.Context(), delegatedBy))
 		return next(ctx)
 	}
 }
@@ -59,6 +100,13 @@ func actorBindingForbidden() (*apptheory.Response, error) {
 		Code:    "app.forbidden",
 		Message: "forbidden",
 	}
+}
+
+func claimsDelegatedBy(principal *auth.Principal) string {
+	if principal == nil || principal.Claims == nil {
+		return ""
+	}
+	return strings.TrimSpace(principal.Claims.DelegatedBy)
 }
 
 func x402GrantMatchesActor(ctx *apptheory.Context, grant *auth.X402InvocationGrant, actor string) bool {

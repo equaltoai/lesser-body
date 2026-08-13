@@ -9,13 +9,39 @@ import (
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 )
 
+type shareCallerContextKey struct{}
+
+// WithShareCaller marks a tool context as admitted through the share-grant path
+// with the given normalized real-caller username. Only the actor-binding
+// middleware sets this marker, and only after a per-request agentshare.IsActive
+// check passes, so its presence is the admission classification rather than a
+// re-derived guess. Owner requests, non-OAuth principals, and actor-less
+// contexts never carry the marker.
+func WithShareCaller(ctx context.Context, caller string) context.Context {
+	caller = strings.TrimSpace(caller)
+	if ctx == nil || caller == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, shareCallerContextKey{}, caller)
+}
+
+// ShareCallerFromContext returns the share-grant caller recorded by
+// WithShareCaller, or false when the context carries no share marker.
+func ShareCallerFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	caller, ok := ctx.Value(shareCallerContextKey{}).(string)
+	return strings.TrimSpace(caller), ok
+}
+
 // shareGrantActorCaller classifies the tool context for actor-scoped identity
 // resolution. The actor route value is injected into the tool context only for
-// admitted requests (owner, active share grantee, or x402 grant), and the
-// OAuth principal-type gate keeps the x402 payment path on its pre-existing
-// behavior. shared is true exactly when an OAuth caller's normalized identity
-// differs from the normalized actor route value — the share-grant caller case
-// admitted per request by the actor-binding middleware.
+// admitted requests, and the OAuth principal-type gate keeps the x402 payment
+// path on its pre-existing behavior. shared is true exactly when the
+// actor-binding middleware admitted the request through the share-grant path
+// and recorded the grantee caller via WithShareCaller — never by comparing the
+// token subject (which is always the agent) against the actor.
 func shareGrantActorCaller(ctx context.Context) (actor string, caller string, shared bool) {
 	actor = auth.ActorFromToolContext(ctx)
 	if actor == "" {
@@ -25,15 +51,10 @@ func shareGrantActorCaller(ctx context.Context) (actor string, caller string, sh
 	if principal == nil || principal.Type != auth.PrincipalTypeOAuthToken {
 		return actor, "", false
 	}
-	caller = strings.TrimSpace(principal.Identity)
-	if caller == "" && principal.Claims != nil {
-		caller = strings.TrimSpace(principal.Claims.GetUsername())
+	if caller, ok := ShareCallerFromContext(ctx); ok {
+		return actor, caller, true
 	}
-	caller = normalizeLocalAgentUsername(caller)
-	if caller == "" || caller == actor {
-		return actor, caller, false
-	}
-	return actor, caller, true
+	return actor, "", false
 }
 
 // actingMemoryScopeIdentity resolves which body-owned memory-store partition a
