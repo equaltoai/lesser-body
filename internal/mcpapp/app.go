@@ -31,7 +31,7 @@ func New(name, version string) (*apptheory.App, error) {
 
 	rootHandler := WithBrowserCORS(SharedMcpRetiredHandler())
 	runtimeHandler := withActorOAuthSessionRecovery(srv.Handler())
-	actorHandler := WithBrowserCORS(WithClientCompatibilityHeaders(WithMCPAuthorization(WithActorBinding(WithRuntimePolicy(WithAudit(WithToolContext(runtimeHandler), logger))))))
+	actorHandler := WithErrorBoundary(WithBrowserCORS(WithClientCompatibilityHeaders(WithMCPAuthorization(WithActorBinding(WithRuntimePolicy(WithAudit(WithToolContext(runtimeHandler), logger)))))), logger)
 
 	app.Post("/mcp/{actor}", actorHandler)
 	app.Get("/mcp/{actor}", actorHandler)
