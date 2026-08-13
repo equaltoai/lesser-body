@@ -301,12 +301,16 @@ func TestMcpActorRoute_InitializeAllowed(t *testing.T) {
 func TestMcpActorRoute_RejectsGranteeWithoutActiveGrant(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
-	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
 	auth.ResetForTests()
 
-	// The default package-level agent-share fixture resolves the owner as
-	// "owner" and has no grants, so a non-owner DelegatedBy is denied at
-	// actor binding on the very next request.
+	// A non-owner DelegatedBy is denied at actor binding. The default
+	// package-level admission override admits as owner, so replace it with a
+	// denial to exercise the non-owner path on the very next request.
+	restoreAdmission := mcpapp.SetActorAdmissionForTests(func(context.Context, string, string) (string, error) {
+		return "", errors.New("lesser denied")
+	})
+	defer restoreAdmission()
+
 	token := newTestTokenWithDelegatedBy(t, "test", "agent1", []string{"read"}, "alice")
 
 	app, err := mcpapp.New("test", "dev")

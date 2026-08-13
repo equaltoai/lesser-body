@@ -17,13 +17,12 @@ func TestGranteeAdmissionThreadsShareCallerThroughToolContext(t *testing.T) {
 		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
 	}
 	handler := withActorBinding(WithToolContext(next),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) { return true, nil },
+		func(ctx context.Context, actor, bearer string) (string, error) {
+			return "grantee", nil
+		},
 	)
 
-	ctx := actorOAuthContextWithDelegatedBy("arch", "@alice")
-	ctx.Request.Headers = map[string][]string{"authorization": {"Bearer caller-token"}}
-	resp, err := handler(ctx)
+	resp, err := handler(actorOAuthContextWithToken("arch", "@alice", "caller-token"))
 	if err != nil || resp == nil || resp.Status != 200 {
 		t.Fatalf("grantee pipeline failed: response=%+v err=%v", resp, err)
 	}
@@ -37,14 +36,12 @@ func TestOwnerAdmissionNeverThreadsShareCaller(t *testing.T) {
 		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
 	}
 	handler := withActorBinding(WithToolContext(next),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) {
-			t.Fatal("owner grant check must not run")
-			return false, nil
+		func(ctx context.Context, actor, bearer string) (string, error) {
+			return "owner", nil
 		},
 	)
 
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "owner"))
+	resp, err := handler(actorOAuthContextWithToken("arch", "owner", "caller-token"))
 	if err != nil || resp == nil || resp.Status != 200 {
 		t.Fatalf("owner pipeline failed: response=%+v err=%v", resp, err)
 	}

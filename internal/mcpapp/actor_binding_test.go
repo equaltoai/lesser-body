@@ -10,198 +10,169 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
-func TestWithActorBinding_OwnerPathAdmitsWithoutGrantCheck(t *testing.T) {
-	grantChecks := 0
-	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) {
-			grantChecks++
-			return false, nil
-		},
-	)
+func TestWithActorBinding_OwnerAdmitsWithoutShareMarker(t *testing.T) {
+	var admitCalls int
+	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		if caller, shared := mcpserver.ShareCallerFromContext(ctx.Context()); shared || caller != "" {
+			t.Fatalf("owner admission must not thread a share caller, caller=%q shared=%t", caller, shared)
+		}
+		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
+	}, func(ctx context.Context, actor, bearer string) (string, error) {
+		admitCalls++
+		if actor != "arch" || bearer != "caller-token" {
+			t.Fatalf("admission must receive route actor and caller bearer, got %q/%q", actor, bearer)
+		}
+		return "owner", nil
+	})
 
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "owner"))
+	resp, err := handler(actorOAuthContextWithToken("arch", "owner", "caller-token"))
 	if err != nil || resp == nil || resp.Status != 200 {
 		t.Fatalf("owner admission: response=%+v err=%v", resp, err)
 	}
-	if grantChecks != 0 {
-		t.Fatalf("owner path must not consult the share grant, calls=%d", grantChecks)
+	if admitCalls != 1 {
+		t.Fatalf("expected exactly one admission call, got %d", admitCalls)
 	}
 }
 
-func TestWithActorBinding_GranteeActiveAdmittedAndMarked(t *testing.T) {
-	grantChecks := 0
+func TestWithActorBinding_GranteeAdmitsAndThreadsShareCaller(t *testing.T) {
 	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		principal := auth.PrincipalFromContext(ctx)
 		if principal == nil || principal.Identity != "arch" {
 			t.Fatalf("shared admission must keep the agent as the token subject, got %+v", principal)
 		}
-		if principal.Claims == nil || principal.Claims.DelegatedBy != "@alice" {
-			t.Fatalf("shared admission must retain DelegatedBy, got %+v", principal)
-		}
 		if caller, shared := mcpserver.ShareCallerFromContext(ctx.Context()); !shared || caller != "alice" {
 			t.Fatalf("grantee admission must thread the share caller, caller=%q shared=%t", caller, shared)
 		}
 		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
-	},
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(_ context.Context, agent, grantee string) (bool, error) {
-			grantChecks++
-			if agent != "arch" || grantee != "alice" {
-				t.Fatalf("grant checker must receive route actor and DelegatedBy, got %q/%q", agent, grantee)
-			}
-			return true, nil
-		},
-	)
+	}, func(ctx context.Context, actor, bearer string) (string, error) {
+		if actor != "arch" || bearer != "caller-token" {
+			t.Fatalf("admission must receive route actor and caller bearer, got %q/%q", actor, bearer)
+		}
+		return "grantee", nil
+	})
 
-	ctx := actorOAuthContextWithDelegatedBy("arch", "@alice")
-	ctx.Request.Headers = map[string][]string{"authorization": {"Bearer caller-token"}}
-	resp, err := handler(ctx)
+	resp, err := handler(actorOAuthContextWithToken("arch", "@alice", "caller-token"))
 	if err != nil || resp == nil || resp.Status != 200 {
-		t.Fatalf("active share admission: response=%+v err=%v", resp, err)
-	}
-	if grantChecks != 1 {
-		t.Fatalf("expected exactly one per-request grant check, got %d", grantChecks)
+		t.Fatalf("grantee admission: response=%+v err=%v", resp, err)
 	}
 }
 
-func TestWithActorBinding_GranteeRevokedDeniedOnNextRequest(t *testing.T) {
-	checks := 0
-	nextCalls := 0
-	handler := withActorBinding(func(*apptheory.Context) (*apptheory.Response, error) {
-		nextCalls++
-		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
-	},
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) {
-			checks++
-			return checks == 1, nil
-		},
-	)
+func TestWithActorBinding_AdmissionErrorFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"lesser 403", errors.New("lesser api error (status=403)")},
+		{"lesser 401", errors.New("lesser api error (status=401)")},
+		{"transport error", errors.New("request failed: connection refused")},
+		{"timeout", context.DeadlineExceeded},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+				t.Fatal("error path must not reach the handler")
+				return nil, nil
+			}, func(ctx context.Context, actor, bearer string) (string, error) {
+				return "", tc.err
+			})
 
-	if resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "alice")); err != nil || resp == nil || resp.Status != 200 {
-		t.Fatalf("first active request failed: response=%+v err=%v", resp, err)
+			resp, err := handler(actorOAuthContextWithToken("arch", "alice", "caller-token"))
+			if resp != nil {
+				t.Fatalf("error path must not return a success response: %+v", resp)
+			}
+			appErr, ok := err.(*apptheory.AppError)
+			if !ok || appErr.Code != "app.forbidden" {
+				t.Fatalf("error path must fail closed with the existing 403, got %T %+v", err, err)
+			}
+		})
 	}
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "alice"))
+}
+
+func TestWithActorBinding_MalformedRelationshipFailsClosed(t *testing.T) {
+	for _, relationship := range []string{"", "admin", "member"} {
+		relationship := relationship
+		t.Run("relationship_"+relationship, func(t *testing.T) {
+			handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+				t.Fatal("malformed relationship must not reach the handler")
+				return nil, nil
+			}, func(ctx context.Context, actor, bearer string) (string, error) {
+				return relationship, nil
+			})
+
+			resp, err := handler(actorOAuthContextWithToken("arch", "alice", "caller-token"))
+			if resp != nil {
+				t.Fatalf("malformed relationship must not return success: %+v", resp)
+			}
+			appErr, ok := err.(*apptheory.AppError)
+			if !ok || appErr.Code != "app.forbidden" {
+				t.Fatalf("malformed relationship must fail closed with 403, got %T %+v", err, err)
+			}
+		})
+	}
+}
+
+func TestWithActorBinding_NilAdmissionFailsClosed(t *testing.T) {
+	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		t.Fatal("nil admission must not reach the handler")
+		return nil, nil
+	}, nil)
+
+	resp, err := handler(actorOAuthContextWithToken("arch", "alice", "caller-token"))
 	if resp != nil {
-		t.Fatalf("revoked next request must be denied, got %+v", resp)
+		t.Fatalf("nil admission must not return success: %+v", resp)
 	}
 	appErr, ok := err.(*apptheory.AppError)
 	if !ok || appErr.Code != "app.forbidden" {
-		t.Fatalf("revoked next request must use the existing 403 error, got %T %+v", err, err)
-	}
-	if checks != 2 || nextCalls != 1 {
-		t.Fatalf("expected two uncached checks and one dispatch, checks=%d dispatches=%d", checks, nextCalls)
+		t.Fatalf("nil admission must fail closed with 403, got %T %+v", err, err)
 	}
 }
 
-func TestWithActorBinding_GranteeMissingGrantMatchesExistingForbidden(t *testing.T) {
-	missingHandler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) { return false, nil },
-	)
-	existingHandler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		nil,
-	)
+func TestWithActorBinding_AbsentDelegatedByDeniedBeforeAdmission(t *testing.T) {
+	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		t.Fatal("absent DelegatedBy must not reach the handler")
+		return nil, nil
+	}, func(ctx context.Context, actor, bearer string) (string, error) {
+		t.Fatal("absent DelegatedBy must not call admission")
+		return "", nil
+	})
 
-	_, missingErr := missingHandler(actorOAuthContextWithDelegatedBy("arch", "alice"))
-	_, existingErr := existingHandler(actorOAuthContextWithDelegatedBy("arch", "alice"))
-	missingAppErr, missingOK := missingErr.(*apptheory.AppError)
-	existingAppErr, existingOK := existingErr.(*apptheory.AppError)
-	if !missingOK || !existingOK {
-		t.Fatalf("expected AppError denials, missing=%T existing=%T", missingErr, existingErr)
-	}
-	if missingAppErr.Code != "app.forbidden" || missingAppErr.Code != existingAppErr.Code || missingAppErr.Message != existingAppErr.Message {
-		t.Fatalf("missing grant must be indistinguishable from existing denial, missing=%+v existing=%+v", missingAppErr, existingAppErr)
-	}
-}
-
-func TestWithActorBinding_GrantReadFailureFailsClosedOperationally(t *testing.T) {
-	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "owner", nil },
-		func(context.Context, string, string) (bool, error) { return false, errors.New("dynamodb timeout") },
-	)
-
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "alice"))
-	if resp != nil {
-		t.Fatalf("read failure must not return success response: %+v", resp)
-	}
-	if err == nil {
-		t.Fatal("read failure must surface an operational error")
-	}
-	if appErr, ok := err.(*apptheory.AppError); ok && appErr.Code == "app.forbidden" {
-		t.Fatalf("operational failure must not be collapsed into a missing-grant signal: %+v", appErr)
-	}
-}
-
-func TestWithActorBinding_OwnerReadFailureFailsClosed(t *testing.T) {
-	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "", errors.New("dynamodb timeout") },
-		func(context.Context, string, string) (bool, error) {
-			t.Fatal("grant check must not run after owner read failure")
-			return false, nil
-		},
-	)
-
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "owner"))
-	if resp != nil {
-		t.Fatalf("owner read failure must not return success: %+v", resp)
-	}
-	if err == nil {
-		t.Fatal("owner read failure must surface an operational error")
-	}
-}
-
-func TestWithActorBinding_EmptyOwnerFailsClosed(t *testing.T) {
-	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) { return "  ", nil },
-		func(context.Context, string, string) (bool, error) {
-			t.Fatal("grant check must not run for an empty owner")
-			return false, nil
-		},
-	)
-
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", "owner"))
-	if resp != nil {
-		t.Fatalf("empty owner must not admit: %+v", resp)
-	}
-	if err == nil {
-		t.Fatal("empty owner must fail closed with an operational error")
-	}
-}
-
-func TestWithActorBinding_AbsentDelegatedByDenied(t *testing.T) {
-	grantChecks := 0
-	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) {
-			t.Fatal("owner resolver must not run for absent DelegatedBy")
-			return "", nil
-		},
-		func(context.Context, string, string) (bool, error) { grantChecks++; return true, nil },
-	)
-
-	resp, err := handler(actorOAuthContextWithDelegatedBy("arch", ""))
+	resp, err := handler(actorOAuthContextWithToken("arch", "", "caller-token"))
 	if resp != nil {
 		t.Fatalf("absent DelegatedBy must not admit: %+v", resp)
 	}
 	appErr, ok := err.(*apptheory.AppError)
 	if !ok || appErr.Code != "app.forbidden" {
-		t.Fatalf("absent DelegatedBy must deny with the existing 403 error, got %T %+v", err, err)
+		t.Fatalf("absent DelegatedBy must deny with the existing 403, got %T %+v", err, err)
 	}
-	if grantChecks != 0 {
-		t.Fatalf("absent DelegatedBy must not consult the share grant, calls=%d", grantChecks)
+}
+
+func TestWithActorBinding_AbsentBearerDeniedBeforeAdmission(t *testing.T) {
+	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		t.Fatal("absent bearer must not reach the handler")
+		return nil, nil
+	}, func(ctx context.Context, actor, bearer string) (string, error) {
+		t.Fatal("absent bearer must not call admission")
+		return "", nil
+	})
+
+	ctx := actorOAuthContextWithToken("arch", "alice", "")
+	ctx.Request.Headers = nil
+	resp, err := handler(ctx)
+	if resp != nil {
+		t.Fatalf("absent bearer must not admit: %+v", resp)
+	}
+	appErr, ok := err.(*apptheory.AppError)
+	if !ok || appErr.Code != "app.forbidden" {
+		t.Fatalf("absent bearer must deny with the existing 403, got %T %+v", err, err)
 	}
 }
 
 func TestWithActorBinding_LeavesX402PathUntouched(t *testing.T) {
-	grantChecks := 0
 	handler := withActorBinding(okActorHandler(t),
-		func(context.Context, string) (string, error) {
-			t.Fatal("owner resolver must not run on x402 path")
+		func(ctx context.Context, actor, bearer string) (string, error) {
+			t.Fatal("admission must not run on x402 path")
 			return "", nil
 		},
-		func(context.Context, string, string) (bool, error) { grantChecks++; return false, nil },
 	)
 	ctx := &apptheory.Context{
 		AuthIdentity: "public-paid",
@@ -220,25 +191,16 @@ func TestWithActorBinding_LeavesX402PathUntouched(t *testing.T) {
 	if err != nil || resp == nil || resp.Status != 200 {
 		t.Fatalf("matching x402 grant path changed: response=%+v err=%v", resp, err)
 	}
-	if grantChecks != 0 {
-		t.Fatalf("x402 path must not consult actor share grants, calls=%d", grantChecks)
-	}
 }
 
 func TestWithActorBinding_RejectsMissingActor(t *testing.T) {
 	handler := withActorBinding(func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		t.Fatal("next handler should not be called")
 		return nil, nil
-	},
-		func(context.Context, string) (string, error) {
-			t.Fatal("owner resolver must not run without actor")
-			return "", nil
-		},
-		func(context.Context, string, string) (bool, error) {
-			t.Fatal("grant check must not run without actor")
-			return false, nil
-		},
-	)
+	}, func(ctx context.Context, actor, bearer string) (string, error) {
+		t.Fatal("admission must not run without actor")
+		return "", nil
+	})
 
 	resp, err := handler(&apptheory.Context{
 		AuthIdentity: "arch",
@@ -253,11 +215,14 @@ func TestWithActorBinding_RejectsMissingActor(t *testing.T) {
 	}
 }
 
-func actorOAuthContextWithDelegatedBy(actor, delegatedBy string) *apptheory.Context {
+func actorOAuthContextWithToken(actor, delegatedBy, bearer string) *apptheory.Context {
 	ctx := &apptheory.Context{
 		AuthIdentity: actor,
 		Params:       map[string]string{"actor": actor},
 		Request:      apptheory.Request{Path: "/mcp/" + actor},
+	}
+	if bearer != "" {
+		ctx.Request.Headers = map[string][]string{"authorization": {"Bearer " + bearer}}
 	}
 	auth.WithPrincipal(ctx, &auth.Principal{
 		Type:     auth.PrincipalTypeOAuthToken,

@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
@@ -16,16 +17,16 @@ import (
 // TestGranteeInitializeSucceeds drives the full production app through the
 // composed chain (WithMCPAuthorization → WithActorBinding → … → initialize)
 // with a grantee-shaped principal: token subject is the agent della-marlowe,
-// IsAgent=true, DelegatedBy=aron, an active share grant exists, and the agent
-// has a soul binding. The grantee must be admitted and initialize must return
-// HTTP 200. This locks the grantee handshake path that the live incident
+// IsAgent=true, DelegatedBy=aron, and Lesser's actor-admission endpoint reports
+// relationship "grantee". The grantee must be admitted and initialize must
+// return HTTP 200. This locks the grantee handshake path that the live incident
 // reported as an app.internal 500.
 func TestGranteeInitializeSucceeds(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_STREAM_TABLE", "")
 	t.Setenv("MCP_TASK_TABLE", "")
 	t.Setenv("MCP_ALLOWED_ORIGINS", "")
-	t.Setenv("MCP_ENDPOINT", "https://api.theory.greater.website/mcp/{actor}")
+	t.Setenv("MCP_ENDPOINT", "")
 	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
 	t.Setenv("JWT_SECRET", "test-secret")
 	t.Setenv("JWT_SECRET_ARN", "")
@@ -33,8 +34,9 @@ func TestGranteeInitializeSucceeds(t *testing.T) {
 	t.Cleanup(auth.ResetForTests)
 	installTrustConfigIsolation(t)
 
-	state := &composedAdmissionState{owner: "theory", grantExists: true, grantRevoked: false}
-	installComposedAgentShareDB(t, state)
+	installActorAccessHTTPStub(t, func(w http.ResponseWriter, r *http.Request) {
+		writeActorAccessJSON(w, "grantee", "aron")
+	})
 
 	soulbinding.ResetForTests()
 	t.Cleanup(soulbinding.ResetForTests)

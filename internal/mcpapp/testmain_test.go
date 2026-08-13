@@ -1,48 +1,26 @@
 package mcpapp_test
 
 import (
+	"context"
 	"os"
-	"strings"
 	"testing"
 
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
-
-	"github.com/equaltoai/lesser-body/internal/agentshare"
+	"github.com/equaltoai/lesser-body/internal/mcpapp"
 )
 
-// TestMain installs a package-level default agent-share fixture so the full-app
-// owner-path tests resolve the agent owner deterministically without each test
-// wiring its own DynamoDB fake. The default owner is "owner" and no share grants
-// exist, which keeps the owner path open and every non-owner caller denied.
+// TestMain installs a package-level default actor-admission override so the
+// full-app owner-path tests admit deterministically without each test wiring
+// its own Lesser HTTP stub. The default relationship is "owner", which keeps
+// the owner path open; every test that needs a different admission decision
+// (grantee, 403, unreachable, etc.) replaces this override with
+// mcpapp.SetActorAdmissionForTests or installActorAccessHTTPStub.
 func TestMain(m *testing.M) {
-	setDefaultAgentShareOwner()
+	restore := mcpapp.SetActorAdmissionForTests(defaultOwnerAdmission)
 	code := m.Run()
-	agentshare.ResetForTests()
+	restore()
 	os.Exit(code)
 }
 
-// setDefaultAgentShareOwner reinstalls the package-level default agent-share
-// fixture. Tests that override the factory (e.g. the composed admission test)
-// call this on cleanup so later tests still see the default rather than the
-// production DynamoDB factory left behind by agentshare.ResetForTests.
-func setDefaultAgentShareOwner() {
-	agentshare.SetDBFactoryForTests(func() (tablecore.DB, error) {
-		return &fakeTableTheoryDB{firstFn: defaultAgentShareFirst}, nil
-	})
-}
-
-func defaultAgentShareFirst(dest any, where map[string]any) error {
-	pk, _ := where["PK"].(string)
-	sk, _ := where["SK"].(string)
-	if sk == "METADATA" {
-		return setAdmissionFields(dest, map[string]any{
-			"PK":         pk,
-			"SK":         sk,
-			"Username":   strings.TrimPrefix(pk, "USER#"),
-			"IsAgent":    true,
-			"AgentOwner": "owner",
-		})
-	}
-	return tableerrors.ErrItemNotFound
+func defaultOwnerAdmission(_ context.Context, _ string, _ string) (string, error) {
+	return "owner", nil
 }
