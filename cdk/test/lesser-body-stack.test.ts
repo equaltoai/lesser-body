@@ -144,6 +144,7 @@ test("lesser table policy uses least-privilege primary table access", () => {
         '"LBMEMORY#*"',
         '"SOUL_BODY_BINDING_USERNAME#*"',
         '"INSTANCE#CONFIG"',
+        '"USER#*"',
       ]) {
         assert.equal(json.includes(want), true, `expected read policy to contain ${want}: ${json}`);
       }
@@ -171,6 +172,32 @@ test("lesser table policy uses least-privilege primary table access", () => {
   }
 
   assert.equal(foundDescribe && foundRead && foundMemoryWrite, true, mustJSON(lesserTableStatements));
+});
+
+test("MCP handler lesser-table read policy permits USER# partition for actor admission", () => {
+  const resources = mustResources(synthRuntimeTemplate());
+  const handler = mcpHandlerLambdaFunction(resources);
+  const statements = policyStatementsForLambda(resources, handler);
+  const readGrant = statements.find((statement) => {
+    const json = mustJSON(statement);
+    return (
+      json.includes('"dynamodb:LeadingKeys"') &&
+      (json.includes('"dynamodb:GetItem"') || json.includes('"dynamodb:Query"')) &&
+      !json.includes('"dynamodb:PutItem"')
+    );
+  });
+  assert.notEqual(readGrant, undefined, "MCP handler is missing a lesser-table read grant");
+
+  const json = mustJSON(readGrant);
+  for (const want of [
+    '"dynamodb:GetItem"',
+    '"dynamodb:Query"',
+    '"dynamodb:LeadingKeys"',
+    '"USER#*"',
+  ]) {
+    assert.equal(json.includes(want), true, `expected actor-admission read grant to permit ${want}: ${json}`);
+  }
+  assert.equal(json.includes('"dynamodb:PutItem"'), false, `actor-admission read grant must not widen writes: ${json}`);
 });
 
 test("managed template pins MCP table logical IDs", () => {
@@ -455,6 +482,7 @@ test("instance-plane Lesser table read includes binding lookup without memory ac
   }
   for (const unwanted of [
     '"LBMEMORY#*"',
+    '"USER#*"',
     '"dynamodb:BatchGetItem"',
     '"dynamodb:BatchWriteItem"',
     '"dynamodb:DeleteItem"',

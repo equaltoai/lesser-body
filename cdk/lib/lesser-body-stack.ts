@@ -530,8 +530,12 @@ function configureLesserTableAccess(
     actions: ["dynamodb:DescribeTable"],
     resources: [tableArn],
   }));
+  // Actor admission reads USER#<agent>/METADATA (agentshare.AgentOwner) and
+  // USER#<agent>/AGENT_SHARE#GRANTEE#<grantee> (agentshare.IsActive). Only the
+  // actor-facing MCP handler performs those reads; the instance handler never
+  // serves /mcp/{actor}, so it keeps the narrower binding/config grant.
   const lesserTableReadKeys = includeMemoryWrite
-    ? ["LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"]
+    ? ["LBMEMORY#*", "SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG", "USER#*"]
     : ["SOUL_BODY_BINDING_USERNAME#*", "INSTANCE#CONFIG"];
   handler.addToRolePolicy(new iam.PolicyStatement({
     actions: ["dynamodb:Query", "dynamodb:GetItem"],
