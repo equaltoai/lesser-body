@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-13T18:44:33.919168Z",
+  "generated_at": "2026-08-13T21:10:46.403199Z",
   "git": {
-    "head": "3eb6018758efe3c31e9f5d7662865811d25c7a31",
-    "head_tree": "b2ac0e55fa762f19f70ed0a892e8810259914dcb",
-    "merge_base_origin_staging": "756a49cdc1c2f17dc56afd87457160709995a082",
-    "ref": "theorymcp/equaltoai/body/issue-560-lesser-admission",
+    "head": "56356eb0ac5ab9fbb9a8fe39ec599daaaa27baee",
+    "head_tree": "cd9aa526a42fe0512f55dd7afdb1e0f718639e7f",
+    "merge_base_origin_staging": "1ff17532b5d5f1d0283b328ebd64c486a2de1ebc",
+    "ref": "theorymcp/equaltoai/body/issue-567-share-scope-ungate",
     "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {

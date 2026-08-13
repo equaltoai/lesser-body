@@ -1,5 +1,5 @@
 $ bash scripts/check_cdk_discovery_routes.sh
-(node:1829540) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:1877720) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
 81 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.
 OK: synthesized template includes per-actor MCP transport and discovery routes
