@@ -240,6 +240,14 @@ func classifyBoundOperationCaller(ctx context.Context) boundCallerClass {
 		return boundCallerClassBoundBody
 	}
 
+	// Share-grant callers (admitted per request and marked by the actor-binding
+	// middleware) act as the agent, so they inherit the bound-body caller class
+	// rather than being misclassified as a delegated principal by DelegatedBy,
+	// which now names the authorizing human on every actor-scoped token.
+	if _, _, shared := shareGrantActorCaller(ctx); shared {
+		return boundCallerClassBoundBody
+	}
+
 	if strings.TrimSpace(claims.DelegatedBy) != "" {
 		return boundCallerClassPrincipalOperator
 	}
