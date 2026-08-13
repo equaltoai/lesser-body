@@ -57,6 +57,36 @@ func newTestTokenWithClientClass(t testing.TB, secret string, username string, s
 		Scopes:      scopes,
 		ClientID:    "test-client",
 		ClientClass: clientClass,
+		IsAgent:     true,
+		DelegatedBy: "owner",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return signed
+}
+
+func newTestTokenWithDelegatedBy(t testing.TB, secret string, username string, scopes []string, delegatedBy string) string {
+	t.Helper()
+
+	now := time.Now().UTC()
+	claims := &auth.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   username,
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			ID:        "jti_test",
+		},
+		Username:    username,
+		Scopes:      scopes,
+		ClientID:    "test-client",
+		ClientClass: "cli",
+		IsAgent:     true,
+		DelegatedBy: delegatedBy,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -79,9 +109,12 @@ func newTestTokenWithTimesAndAudience(t testing.TB, secret string, username stri
 			ID:        "jti_test",
 			Audience:  jwt.ClaimStrings(audience),
 		},
-		Username: username,
-		Scopes:   scopes,
-		ClientID: "test-client",
+		Username:    username,
+		Scopes:      scopes,
+		ClientID:    "test-client",
+		ClientClass: "agent",
+		IsAgent:     true,
+		DelegatedBy: "owner",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -265,13 +298,16 @@ func TestMcpActorRoute_InitializeAllowed(t *testing.T) {
 	}
 }
 
-func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
+func TestMcpActorRoute_RejectsGranteeWithoutActiveGrant(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("JWT_SECRET", "test")
+	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
 	auth.ResetForTests()
-	installMissingAgentShareLookup(t)
 
-	token := newTestToken(t, "test", "agent1", []string{"read"})
+	// The default package-level agent-share fixture resolves the owner as
+	// "owner" and has no grants, so a non-owner DelegatedBy is denied at
+	// actor binding on the very next request.
+	token := newTestTokenWithDelegatedBy(t, "test", "agent1", []string{"read"}, "alice")
 
 	app, err := mcpapp.New("test", "dev")
 	if err != nil {
@@ -279,7 +315,7 @@ func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
 	}
 
 	env := testkit.New()
-	resp := invokeJSONAtPath(t, env, app, "/mcp/other-agent", map[string][]string{
+	resp := invokeJSONAtPath(t, env, app, "/mcp/agent1", map[string][]string{
 		"authorization": {"Bearer " + token},
 	}, &mcpruntime.Request{
 		JSONRPC: "2.0",
@@ -288,7 +324,7 @@ func TestMcpActorRoute_RejectsIdentityMismatch(t *testing.T) {
 	})
 
 	if resp.Status != 403 {
-		t.Fatalf("expected 403 for actor/token mismatch, got %d (%s)", resp.Status, string(resp.Body))
+		t.Fatalf("expected 403 for a grantee without an active grant, got %d (%s)", resp.Status, string(resp.Body))
 	}
 }
 

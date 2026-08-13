@@ -49,12 +49,21 @@ func installSoulBindingLookupMap(t *testing.T, bindings map[string]string) {
 }
 
 func shareGrantToolContext(actor string, caller string) context.Context {
+	// Settled identity model: the token subject is always the agent (actor);
+	// the real driver rides in DelegatedBy (caller). The owner case is
+	// represented as caller == actor (EqualFold), which carries no share marker;
+	// any other caller represents an admitted share grantee and carries the
+	// marker that shareGrantActorCaller reads.
 	ctx := auth.InjectToolContext(context.Background(), &auth.Principal{
 		Type:     auth.PrincipalTypeOAuthToken,
-		Identity: caller,
-		Claims:   &auth.Claims{Username: caller, Scopes: []string{"read", "write"}},
+		Identity: actor,
+		Claims:   &auth.Claims{Username: actor, DelegatedBy: caller, Scopes: []string{"read", "write"}},
 	}, "oauth-token")
-	return auth.WithToolActor(ctx, actor)
+	ctx = auth.WithToolActor(ctx, actor)
+	if strings.EqualFold(strings.TrimSpace(caller), strings.TrimSpace(actor)) {
+		return ctx
+	}
+	return WithShareCaller(ctx, strings.ToLower(strings.TrimSpace(caller)))
 }
 
 func resetCommTestClients(t *testing.T) {

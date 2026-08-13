@@ -45,7 +45,7 @@ func TestShareGrantActorCallerClassification(t *testing.T) {
 	})
 	t.Run("owner mixed case is not shared", func(t *testing.T) {
 		_, caller, shared := shareGrantActorCaller(shareGrantToolContext("arch", "Arch"))
-		if shared || caller != "arch" {
+		if shared || caller != "" {
 			t.Fatalf("mixed-case owner must normalize to not-shared, caller=%q shared=%t", caller, shared)
 		}
 	})
@@ -74,10 +74,10 @@ func TestActingMemoryScopeIdentityResolution(t *testing.T) {
 			t.Fatalf("identity=%q err=%v", identity, err)
 		}
 	})
-	t.Run("owner keeps exact caller identity bytes", func(t *testing.T) {
+	t.Run("owner resolves the actor partition", func(t *testing.T) {
 		identity, err := actingMemoryScopeIdentity(shareGrantToolContext("arch", "Arch"))
-		if err != nil || identity != "Arch" {
-			t.Fatalf("owner identity must stay byte-identical, got %q err=%v", identity, err)
+		if err != nil || identity != "arch" {
+			t.Fatalf("owner memory scope must be the agent partition, got %q err=%v", identity, err)
 		}
 	})
 	t.Run("no actor keeps caller identity", func(t *testing.T) {
@@ -187,8 +187,8 @@ func TestAuthenticatedArticleAuthorIDResolution(t *testing.T) {
 	if got := authenticatedArticleAuthorID(shareGrantToolContext("arch", "alice")); got != "arch" {
 		t.Fatalf("grantee author scope = %q, want actor", got)
 	}
-	if got := authenticatedArticleAuthorID(shareGrantToolContext("arch", "Arch")); got != "Arch" {
-		t.Fatalf("owner author scope must stay byte-identical, got %q", got)
+	if got := authenticatedArticleAuthorID(shareGrantToolContext("arch", "Arch")); got != "arch" {
+		t.Fatalf("owner author scope must be the agent partition, got %q", got)
 	}
 	if got := authenticatedArticleAuthorID(articleDraftTestContext()); got != "alice" {
 		t.Fatalf("no-actor author scope = %q", got)
