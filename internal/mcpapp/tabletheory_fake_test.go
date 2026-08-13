@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/equaltoai/lesser-body/internal/agentshare"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
@@ -179,20 +178,6 @@ func installMissingSoulBindingLookup(t testing.TB) {
 	soulbinding.SetDBFactoryForTests(func() (tablecore.DB, error) {
 		return &fakeTableTheoryDB{
 			firstFn: func(dest any, where map[string]any) error {
-				return tableerrors.ErrItemNotFound
-			},
-		}, nil
-	})
-}
-
-func installMissingAgentShareLookup(t testing.TB) {
-	t.Helper()
-	t.Setenv("LESSER_TABLE_NAME", "test-main-table")
-	agentshare.ResetForTests()
-	t.Cleanup(agentshare.ResetForTests)
-	agentshare.SetDBFactoryForTests(func() (tablecore.DB, error) {
-		return &fakeTableTheoryDB{
-			firstFn: func(any, map[string]any) error {
 				return tableerrors.ErrItemNotFound
 			},
 		}, nil
