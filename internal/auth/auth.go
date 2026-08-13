@@ -133,6 +133,14 @@ func LegacyInstanceKeyInboundAuthEnabled() bool {
 	}
 }
 
+// BearerTokenFromRequest returns the raw OAuth bearer token carried in the
+// request Authorization header, or false when the header is absent or
+// malformed. It performs no validation; callers that need identity must use
+// Hook or PrincipalFromContext.
+func BearerTokenFromRequest(ctx *apptheory.Context) (string, bool) {
+	return bearerToken(ctx)
+}
+
 func bearerToken(ctx *apptheory.Context) (string, bool) {
 	if ctx == nil {
 		return "", false

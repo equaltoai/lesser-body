@@ -2,42 +2,75 @@ package mcpapp
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/agentshare"
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
-func WithActorBinding(next apptheory.Handler) apptheory.Handler {
-	return withActorBinding(next, agentshare.AgentOwner, agentshare.IsActive)
+// actorAdmission resolves the caller's relationship to the routed actor via
+// Lesser's actor-admission endpoint. It returns the relationship exactly as
+// Lesser reported it ("owner" or "grantee") or an error. The middleware admits
+// only those two values and fails closed on every other outcome.
+type actorAdmission func(ctx context.Context, actor, bearerToken string) (string, error)
+
+var actorAdmissionForTests actorAdmission
+
+// SetActorAdmissionForTests replaces the production Lesser admission call for
+// tests and returns a restore function. Passing nil restores the production
+// Lesser call.
+func SetActorAdmissionForTests(fn actorAdmission) func() {
+	prev := actorAdmissionForTests
+	actorAdmissionForTests = fn
+	return func() { actorAdmissionForTests = prev }
 }
 
-type actorOwnerResolver func(context.Context, string) (string, error)
-type actorShareGrantChecker func(context.Context, string, string) (bool, error)
+func WithActorBinding(next apptheory.Handler) apptheory.Handler {
+	admit := actorAdmissionViaLesser
+	if actorAdmissionForTests != nil {
+		admit = actorAdmissionForTests
+	}
+	return withActorBinding(next, admit)
+}
 
-func withActorBinding(next apptheory.Handler, ownerResolver actorOwnerResolver, shareGrantActive actorShareGrantChecker) apptheory.Handler {
+func actorAdmissionViaLesser(ctx context.Context, actor, bearerToken string) (string, error) {
+	client, err := lesserapi.Default()
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.GetActorAccess(ctx, actor, bearerToken)
+	if err != nil {
+		return "", err
+	}
+	// A 200 with authorized=false must deny: body asks lesser for the explicit
+	// decision and must not re-infer it from the relationship alone.
+	if !resp.Authorized {
+		return "", errors.New("lesser denied actor access")
+	}
+	return strings.TrimSpace(resp.Relationship), nil
+}
+
+func withActorBinding(next apptheory.Handler, admit actorAdmission) apptheory.Handler {
 	if next == nil {
 		return nil
 	}
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		actor := actorFromRequestContext(ctx)
+		actor := agentshare.NormalizePrincipalUsername(actorFromRequestContext(ctx))
 		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeX402Grant {
 			if x402GrantMatchesActor(ctx, principal.X402Grant, actor) {
 				return next(ctx)
 			}
-			return nil, &apptheory.AppError{
-				Code:    "app.forbidden",
-				Message: "forbidden",
-			}
+			return actorBindingForbidden()
 		}
 		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeInstanceKey {
 			// The deprecated managed-instance-key path authenticates as the
 			// "instance" identity and is admitted only on the instance actor
-			// route; it has no DelegatedBy and never consults a share grant.
+			// route; it has no DelegatedBy and never consults Lesser admission.
 			if strings.EqualFold(strings.TrimSpace(actor), strings.TrimSpace(principal.Identity)) {
 				return next(ctx)
 			}
@@ -54,7 +87,8 @@ func withActorBinding(next apptheory.Handler, ownerResolver actorOwnerResolver, 
 
 		// The token subject is always the agent in the settled identity model,
 		// so AuthIdentity no longer distinguishes owner from grantee. The
-		// authorizing human rides in DelegatedBy; key on it.
+		// authorizing human rides in DelegatedBy; key on it and forward the
+		// caller's own bearer to Lesser for the authoritative decision.
 		delegatedBy := agentshare.NormalizePrincipalUsername(claimsDelegatedBy(principal))
 		if delegatedBy == "" {
 			// Absent or unreadable DelegatedBy must fail closed. It must never
@@ -62,36 +96,34 @@ func withActorBinding(next apptheory.Handler, ownerResolver actorOwnerResolver, 
 			return actorBindingForbidden()
 		}
 
-		owner, err := ownerResolver(ctx.Context(), actor)
-		if err != nil {
-			return nil, fmt.Errorf("resolve actor owner: %w", err)
-		}
-		owner = agentshare.NormalizePrincipalUsername(owner)
-		if owner == "" {
-			return nil, fmt.Errorf("resolve actor owner: empty owner for %q", actor)
+		bearerToken, ok := auth.BearerTokenFromRequest(ctx)
+		if !ok || strings.TrimSpace(bearerToken) == "" {
+			return actorBindingForbidden()
 		}
 
-		if delegatedBy == owner {
-			// Owner path: admit without consulting the share grant.
+		if admit == nil {
+			return actorBindingForbidden()
+		}
+		relationship, err := admit(ctx.Context(), actor, bearerToken)
+		if err != nil {
+			// 401, transport error, timeout, malformed body, and any other
+			// non-200 outcome all fail closed here. Never admit on an error
+			// path and never fall back to admitting as owner.
+			return actorBindingForbidden()
+		}
+
+		switch relationship {
+		case "owner":
 			return next(ctx)
-		}
-
-		if shareGrantActive == nil {
+		case "grantee":
+			// Grantee path: record the resolved driver so downstream act-as,
+			// memory-partition, and attribution seams thread it without
+			// re-resolving the grant.
+			setRequestContext(ctx, mcpserver.WithShareCaller(ctx.Context(), delegatedBy))
+			return next(ctx)
+		default:
 			return actorBindingForbidden()
 		}
-		shared, err := shareGrantActive(ctx.Context(), actor, delegatedBy)
-		if err != nil {
-			return nil, fmt.Errorf("check actor share grant: %w", err)
-		}
-		if !shared {
-			return actorBindingForbidden()
-		}
-
-		// Grantee path: record the resolved driver so downstream act-as,
-		// memory-partition, and attribution seams thread it without re-reading
-		// the grant or re-resolving the owner.
-		setRequestContext(ctx, mcpserver.WithShareCaller(ctx.Context(), delegatedBy))
-		return next(ctx)
 	}
 }
 

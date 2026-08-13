@@ -13,10 +13,10 @@ type shareCallerContextKey struct{}
 
 // WithShareCaller marks a tool context as admitted through the share-grant path
 // with the given normalized real-caller username. Only the actor-binding
-// middleware sets this marker, and only after a per-request agentshare.IsActive
-// check passes, so its presence is the admission classification rather than a
-// re-derived guess. Owner requests, non-OAuth principals, and actor-less
-// contexts never carry the marker.
+// middleware sets this marker, and only after Lesser's actor-admission endpoint
+// reports relationship "grantee", so its presence is the admission
+// classification rather than a re-derived guess. Owner requests, non-OAuth
+// principals, and actor-less contexts never carry the marker.
 func WithShareCaller(ctx context.Context, caller string) context.Context {
 	caller = strings.TrimSpace(caller)
 	if ctx == nil || caller == "" {

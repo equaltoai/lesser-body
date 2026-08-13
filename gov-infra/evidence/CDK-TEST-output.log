@@ -7,28 +7,30 @@ $ cd cdk && npm test
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-✔ secret read policy includes legacy and managed instance-key patterns (660.655539ms)
-✔ managed template supports an exact lesser-host instance key ARN (137.786769ms)
-✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite (98.822733ms)
-✔ managed template requires app-scoped Lesser parameter paths (98.915638ms)
-✔ lesser table policy uses least-privilege primary table access (77.86788ms)
-✔ managed template pins MCP table logical IDs (95.04638ms)
-✔ every MCP-serving lambda uses the 24-hour session TTL (169.243846ms)
-✔ runtime stack uses AppTheory durable stream table schema (76.769994ms)
-✔ runtime stack provisions internal MCP task storage without SSM export (74.868198ms)
-✔ remote MCP server uses actor-path wiring (77.019774ms)
-✔ runtime stack preserves named MCP table fingerprints (74.96578ms)
-✔ stream table export name stays stable across baseline reset (75.620272ms)
-✔ runtime stack provisions instance-plane lambda with owned tables (74.845535ms)
-✔ Ka self-recovery receives only the Body content and registry tables (73.629889ms)
-✔ instance-plane lambda receives managed Lesser/Host genesis configuration (89.056674ms)
-✔ instance-plane Lesser table read includes binding lookup without memory access (88.436438ms)
-✔ runtime stack publishes additive instance-plane SSM exports (75.414785ms)
-ℹ tests 17
-ℹ suites 0
-ℹ pass 17
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 2174.699
+(node:1829406) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[32m✔ secret read policy includes legacy and managed instance-key patterns [90m(654.077317ms)[39m[39m
+[32m✔ managed template supports an exact lesser-host instance key ARN [90m(129.31142ms)[39m[39m
+[32m✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite [90m(96.875451ms)[39m[39m
+[32m✔ managed template requires app-scoped Lesser parameter paths [90m(100.696093ms)[39m[39m
+[32m✔ lesser table policy uses least-privilege primary table access [90m(79.998579ms)[39m[39m
+[32m✔ managed template pins MCP table logical IDs [90m(97.047751ms)[39m[39m
+[32m✔ every MCP-serving lambda uses the 24-hour session TTL [90m(169.281502ms)[39m[39m
+[32m✔ runtime stack uses AppTheory durable stream table schema [90m(76.881273ms)[39m[39m
+[32m✔ runtime stack provisions internal MCP task storage without SSM export [90m(74.397167ms)[39m[39m
+[32m✔ remote MCP server uses actor-path wiring [90m(77.085773ms)[39m[39m
+[32m✔ runtime stack preserves named MCP table fingerprints [90m(74.572786ms)[39m[39m
+[32m✔ stream table export name stays stable across baseline reset [90m(75.488315ms)[39m[39m
+[32m✔ runtime stack provisions instance-plane lambda with owned tables [90m(72.300221ms)[39m[39m
+[32m✔ Ka self-recovery receives only the Body content and registry tables [90m(72.465499ms)[39m[39m
+[32m✔ instance-plane lambda receives managed Lesser/Host genesis configuration [90m(87.83026ms)[39m[39m
+[32m✔ instance-plane Lesser table read includes binding lookup without memory access [90m(88.145227ms)[39m[39m
+[32m✔ runtime stack publishes additive instance-plane SSM exports [90m(77.00636ms)[39m[39m
+[34mℹ tests 17[39m
+[34mℹ suites 0[39m
+[34mℹ pass 17[39m
+[34mℹ fail 0[39m
+[34mℹ cancelled 0[39m
+[34mℹ skipped 0[39m
+[34mℹ todo 0[39m
+[34mℹ duration_ms 2159.7872[39m
