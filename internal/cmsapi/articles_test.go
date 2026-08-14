@@ -44,10 +44,17 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"data":{"articleBySlug":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`))
 		case "BodyArticles":
-			if op.Variables["authorId"] != "agent1" || op.Variables["after"] != "cursor-1" {
+			if op.Variables["authorId"] != "agent1" {
 				t.Fatalf("list variables = %+v", op.Variables)
 			}
-			_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-1"}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false},"totalCount":1}}}`))
+			switch op.Variables["after"] {
+			case "cursor-1":
+				_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-2","node":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"article-cursor-2","endCursor":"article-cursor-2"},"totalCount":2}}}`))
+			case "cursor-2":
+				_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-3","node":{"id":"https://example.com/articles/second","slug":"second","title":"Second","content":"body","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:01:00Z","createdAt":"2026-05-19T23:01:00Z","updatedAt":"2026-05-19T23:01:00Z"}}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":true,"startCursor":"article-cursor-3","endCursor":"article-cursor-3"},"totalCount":2}}}`))
+			default:
+				t.Fatalf("list after variable = %+v", op.Variables)
+			}
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -80,15 +87,32 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 	if err != nil || gotBySlug.ID != "https://example.com/articles/hello" {
 		t.Fatalf("GetArticleBySlug = %+v, %v", gotBySlug, err)
 	}
-	listed, err := client.ListArticles(context.Background(), "token", 2, "cursor-1", "agent1", false)
+	compactList, err := client.ListArticles(context.Background(), "token", 2, "cursor-1", "agent1", false)
 	if err != nil {
 		t.Fatalf("ListArticles: %v", err)
 	}
-	if len(listed.Edges) != 1 || listed.Edges[0].Cursor != "article-cursor-1" || listed.Edges[0].Node != nil {
-		t.Fatalf("compact list should decode depth-safe cursors without nodes, got %+v", listed.Edges)
+	if len(compactList.Edges) != 1 || compactList.Edges[0].Cursor != "article-cursor-2" || compactList.Edges[0].Node == nil {
+		t.Fatalf("compact list should decode populated edge nodes, got %+v", compactList.Edges)
+	}
+	if compactList.Edges[0].Node.ID != "https://example.com/articles/hello" || compactList.Edges[0].Node.Content != "" {
+		t.Fatalf("compact list node = %+v", compactList.Edges[0].Node)
+	}
+	if !compactList.PageInfo.HasNextPage || compactList.PageInfo.EndCursor == nil || *compactList.PageInfo.EndCursor != "article-cursor-2" || compactList.TotalCount != 2 {
+		t.Fatalf("compact list pagination = %+v, totalCount=%d", compactList.PageInfo, compactList.TotalCount)
 	}
 
-	if len(operations) != 5 {
+	standardList, err := client.ListArticles(context.Background(), "token", 3, "cursor-2", "agent1", true)
+	if err != nil {
+		t.Fatalf("ListArticles with content: %v", err)
+	}
+	if len(standardList.Edges) != 1 || standardList.Edges[0].Node == nil || standardList.Edges[0].Node.Content != "body" {
+		t.Fatalf("standard list should decode node content, got %+v", standardList.Edges)
+	}
+	if standardList.PageInfo.HasNextPage || !standardList.PageInfo.HasPreviousPage || standardList.PageInfo.StartCursor == nil || *standardList.PageInfo.StartCursor != "article-cursor-3" {
+		t.Fatalf("standard list pagination = %+v", standardList.PageInfo)
+	}
+
+	if len(operations) != 6 {
 		t.Fatalf("operations = %d", len(operations))
 	}
 	if !strings.Contains(operations[0].Query, "publishDraft") || strings.Contains(operations[0].Query, " content ") {
@@ -97,10 +121,13 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 	if !strings.Contains(operations[1].Query, "updateArticle") || !strings.Contains(operations[1].Query, " content") {
 		t.Fatalf("standard update query = %s", operations[1].Query)
 	}
-	if !strings.Contains(operations[4].Query, "articles(authorId: $authorId") || !strings.Contains(operations[4].Query, "edges { cursor }") {
+	if !strings.Contains(operations[4].Query, "articles(authorId: $authorId") || !strings.Contains(operations[4].Query, "edges { cursor node {") {
 		t.Fatalf("compact list query = %s", operations[4].Query)
 	}
-	if strings.Contains(operations[4].Query, "node {") || strings.Contains(operations[4].Query, " content ") {
-		t.Fatalf("list query must stay within Lesser agent depth-3 by avoiding edge nodes/content, got %s", operations[4].Query)
+	if strings.Contains(operations[4].Query, " content ") {
+		t.Fatalf("compact list query must omit content, got %s", operations[4].Query)
+	}
+	if !strings.Contains(operations[5].Query, "edges { cursor node {") || !strings.Contains(operations[5].Query, " content ") {
+		t.Fatalf("standard list query must select node content, got %s", operations[5].Query)
 	}
 }
