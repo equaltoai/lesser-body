@@ -149,21 +149,26 @@ Scoped public x402 invocation grants:
   request is rejected. Public x402 grants never grant principal/operator authority and do not bypass tool-internal OAuth
   requirements for tools that still require a principal session.
 
-Share-grant callers (lesser agent share act-as):
+Share-grant callers (lesser agent share):
 
-- An OAuth caller holding an active lesser share grant for the actor is admitted by the actor-binding middleware and
-  may drive the act-as-enabled subset of `/mcp/{actor}` tools and resources. Body forwards the caller's own bearer
-  together with `X-Lesser-Act-As: {actor}`; lesser performs its per-request grant check, executes the call
-  agent-scoped, and records the caller as actedBy attribution.
-- Act-as-enabled resources: `agent://profile`, `agent://timeline/home`, and `agent://notifications`. The
-  followers/following resources stay gated 403 (their upstream lesser endpoints are owner-only); local/federated
-  timeline branches stay gated 403 (public timelines have no upstream act-as surface); prompts render static guidance
-  with no lesser proxy surface.
-- Deploy interlock: this surface REQUIRES lesser >= M4a (`docs/contracts/agent-share-act-as.md` in lesser; lesser
-  staging `ddef1a8a772dcc76d4fa5b60394552ef997fa665`). A pre-M4a lesser ignores `X-Lesser-Act-As` and silently
-  executes share-path requests as the CALLER, not the agent, with no attribution. Body has no upstream
-  version/capability probe in this milestone, so there is no runtime gate: operators must deploy or upgrade lesser to
-  M4a or later before admitting share-grant callers.
+- An OAuth caller holding an active lesser share grant for the actor is admitted by the actor-binding
+  middleware (per-request `/api/v1/agents/{actor}/access`, fail-closed) and may drive the actor-scoped
+  `/mcp/{actor}` surface. Under the shipped identity model (lesser#1397) the token subject is always the
+  agent — the account owner — with the authorizing human carried in `DelegatedBy`. Body proxies the
+  caller's bearer to lesser, so every identity-scoped call authenticates as the agent on both the owner
+  and the share-grant path; there is no caller/agent split to refuse at the Body seam.
+- Act-as-enabled surfaces additionally send `X-Lesser-Act-As: {actor}` for `actedBy` attribution (not
+  authorization): the surfaces enumerated in lesser's `docs/contracts/agent-share-act-as.md` (profile, home
+  timeline, notifications, conversations, message-request decisions, and the CMS/status write surfaces).
+  The remaining surfaces — followers/following, local/federated timelines, post/search reads, follow/unfollow,
+  profile update, and agent soul mint-conversation reads — proxy the agent-subject bearer directly with no
+  act-as header; lesser scopes them to the agent from the token subject and records the driver in the audit's
+  `delegated_by` metadata. Prompts render static guidance with no lesser proxy surface.
+- Deploy interlock: the act-as header REQUIRES lesser >= M4a (`docs/contracts/agent-share-act-as.md` in
+  lesser; lesser staging `ddef1a8a772dcc76d4fa5b60394552ef997fa665`). A pre-M4a lesser ignores
+  `X-Lesser-Act-As` and silently executes act-as-path requests as the CALLER, not the agent, with no
+  attribution. Body has no upstream version/capability probe in this milestone, so there is no runtime gate:
+  operators must deploy or upgrade lesser to M4a or later before admitting share-grant callers.
 
 ## Discovery and registration chain
 

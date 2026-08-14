@@ -7,7 +7,7 @@ $ cd cdk && npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.co
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-(node:1829483) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(node:1877653) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
 (Use `node --trace-warnings ...` to show where the warning was created)
 Resources:
   McpHandlerServiceRole4A94FED3:
@@ -241,7 +241,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 529ddcae37c0c9e1b37a3f45c2766f8a7974e57a2437ca44cb552252812a1cd8.zip
+        S3Key: b5268581f44b0c05ba3ab94554e487acf82f7c485be03b1b392c44f32556dd06.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -287,7 +287,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.529ddcae37c0c9e1b37a3f45c2766f8a7974e57a2437ca44cb552252812a1cd8.zip
+      aws:asset:path: asset.b5268581f44b0c05ba3ab94554e487acf82f7c485be03b1b392c44f32556dd06.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1366,7 +1366,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 60c70beafed2f81fe02f0848bc90909420e703fd9cc2389d24e911d2f0038be5.zip
+        S3Key: b02cdaa891a272d163a4d6fe58728a625d8d92488d85d591c12706ed874f8e6f.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1402,7 +1402,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.60c70beafed2f81fe02f0848bc90909420e703fd9cc2389d24e911d2f0038be5.zip
+      aws:asset:path: asset.b02cdaa891a272d163a4d6fe58728a625d8d92488d85d591c12706ed874f8e6f.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:

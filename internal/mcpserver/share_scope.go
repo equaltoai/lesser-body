@@ -75,40 +75,23 @@ func actingMemoryScopeIdentity(ctx context.Context) (string, error) {
 	return strings.TrimSpace(p.Identity), nil
 }
 
-// requireOwnerScopedOAuthBearer gates tools and resources that proxy the
-// caller's own lesser user bearer token to identity-scoped lesser
-// REST/GraphQL endpoints that have NO upstream act-as surface under lesser's
-// agent-share-act-as contract (docs/contracts/agent-share-act-as.md:
-// deliberate exclusions plus every unlisted endpoint). On the share-grant
-// path these calls cannot honor the /mcp/{actor} scope: proxying would
-// silently act on lesser as the caller, not the agent. Those calls fail
-// closed with an explicit 403; the same operations stay available to the
-// caller on their own actor route. Call sites whose upstream surface IS
-// act-as-enabled use requireActAsScopedOAuthBearer instead — including the
-// three act-as-enabled resources: profile (GET
-// /api/v1/accounts/verify_credentials), home timeline (GET
-// /api/v1/timelines/home), and notifications (GET /api/v1/notifications).
-// The remaining resources/prompts sites stay gated or caller-scoped:
-// followers/following resolve lesser account followers|following endpoints
-// that are owner-only upstream; prompts render static guidance with no
-// lesser proxy surface; memory/recent keeps reading the caller's own body
-// memory partition (caller-token scoped, never the actor's). Owner requests
-// (caller == actor), non-OAuth principals, and contexts without an actor
-// route value fall through to the exact pre-existing requireOAuthBearer
-// behavior.
+// requireOwnerScopedOAuthBearer resolves the caller's OAuth bearer for tools
+// and resources whose upstream lesser surface has no X-Lesser-Act-As
+// indicator (docs/contracts/agent-share-act-as.md: the deliberate exclusions
+// plus every unlisted endpoint). Under the shipped identity model
+// (lesser#1397) the token subject is always the agent — the account owner —
+// with the authorizing human carried in DelegatedBy, so proxying the caller's
+// bearer to lesser authenticates as the agent on the owner path and the
+// share-grant path alike. The pre-M1 premise that a grantee's bearer carried
+// the grantee as subject (and therefore proxying would act as the caller, not
+// the agent) no longer holds, so the former share-caller refusal is removed:
+// there is no caller/agent split left to refuse, and these surfaces carry no
+// ActedBy attribution (that is requireActAsScopedOAuthBearer's job). The
+// historical name is retained to keep the call sites stable; "owner-scoped"
+// now describes the bearer's subject (the account owner, i.e. the agent), not
+// a caller-is-owner gate. Owner requests, non-OAuth principals (x402), and
+// actor-less contexts are unaffected: this is exactly requireOAuthBearer.
 func requireOwnerScopedOAuthBearer(ctx context.Context) (string, error) {
-	if actor, caller, shared := shareGrantActorCaller(ctx); shared {
-		return "", &mcpAuthFailure{
-			Code:    "forbidden",
-			Message: "shared callers cannot drive " + actor + "'s lesser account: the upstream lesser contract scopes this call to the caller's own bearer token and defines no actor delegation",
-			Status:  403,
-			Details: map[string]any{
-				"reason": "caller_token_scoped_upstream",
-				"actor":  actor,
-				"caller": caller,
-			},
-		}
-	}
 	return requireOAuthBearer(ctx)
 }
 
