@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-14T14:47:00.452981Z",
+  "generated_at": "2026-08-14T15:04:49.667436Z",
   "git": {
-    "head": "7494c94df7c9266740787aedb4780150fcac2811",
-    "head_tree": "08272333948f52b2c613b38e2763783d8bf5cd3c",
+    "head": "e4a7e23f79841a7a115e304a56f9d7120878e956",
+    "head_tree": "bc26b34172b7388b57365974ede7e0a6ed0e76a2",
     "merge_base_origin_staging": "372bb17cf132ad4716cda3d0f4e1d71ad6fac09b",
     "ref": "theorymcp/equaltoai/body/issue-571-restore-article-list",
     "working_tree_after_run": "5 changed paths after verifier run"
