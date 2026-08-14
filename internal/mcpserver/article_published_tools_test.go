@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,18 @@ import (
 	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
+const articleListCompactEnvelopeCeilingBytes = 48 * 1024
+
+type articleFixtureOptions struct {
+	includeContent bool
+	contentRunes   int
+	titleRunes     int
+	subtitleRunes  int
+	excerptRunes   int
+}
+
 func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T) {
-	conn := realisticArticleConnection(articleDraftDefaultLimit)
+	conn := realisticArticleConnection(articleDraftDefaultLimit, articleFixtureOptions{})
 	var operation cmsapi.Operation
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
@@ -64,6 +75,9 @@ func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T)
 	if measurement.JSONRPCEnvelopeBytes > articleListDefaultBudgetBytes {
 		t.Fatalf("default compact article_list envelope = %d, want <= %d", measurement.JSONRPCEnvelopeBytes, articleListDefaultBudgetBytes)
 	}
+	if measurement.JSONRPCEnvelopeBytes > articleListCompactEnvelopeCeilingBytes {
+		t.Fatalf("default compact article_list envelope = %d, want <= fixed ceiling %d", measurement.JSONRPCEnvelopeBytes, articleListCompactEnvelopeCeilingBytes)
+	}
 
 	data := articleListStructuredData(t, result)
 	if data["view"] != readViewCompact {
@@ -99,8 +113,8 @@ func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T)
 	if first["id"] != "https://example.com/articles/article-01" || first["slug"] != "article-01" || first["title"] != "Article 01 title" || first["cursor"] != "article-cursor-01" {
 		t.Fatalf("first article ref = %#v", first)
 	}
-	if preview, _ := first["contentPreview"].(string); strings.TrimSpace(preview) == "" || !strings.Contains(preview, "article-01 body") {
-		t.Fatalf("first article contentPreview = %#v", first["contentPreview"])
+	if _, hasPreview := first["contentPreview"]; hasPreview {
+		t.Fatalf("production compact article_list must not include contentPreview without GraphQL content: %#v", first)
 	}
 	if _, hasContent := first["content"]; hasContent {
 		t.Fatalf("compact article ref must not include full content: %#v", first)
@@ -110,8 +124,53 @@ func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T)
 	}
 }
 
+func TestArticleListCompactDefaultPageTruncatesMetadataWithinBudget(t *testing.T) {
+	result, err := articleListResult(realisticArticleConnection(articleDraftDefaultLimit, articleFixtureOptions{
+		titleRunes:    120,
+		subtitleRunes: 200,
+		excerptRunes:  500,
+	}), articleDraftDefaultLimit, "alice", articleDraftViewParams{
+		View:           readViewCompact,
+		PreviewRunes:   articleDraftPreviewRunes,
+		MaxOutputBytes: articleListDefaultBudgetBytes,
+	})
+	if err != nil {
+		t.Fatalf("articleListResult: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("articleListResult = %+v", result)
+	}
+
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		t.Fatalf("measureToolResultPayload: %v", err)
+	}
+	t.Logf("article_list compact long-metadata envelope=%d structured=%d text=%d budget=%d",
+		measurement.JSONRPCEnvelopeBytes,
+		measurement.StructuredContentBytes,
+		measurement.ContentTextBytes,
+		articleListDefaultBudgetBytes,
+	)
+	if measurement.JSONRPCEnvelopeBytes > articleListDefaultBudgetBytes {
+		t.Fatalf("bounded compact article_list envelope = %d, want <= %d", measurement.JSONRPCEnvelopeBytes, articleListDefaultBudgetBytes)
+	}
+
+	data := articleListStructuredData(t, result)
+	articles := articleRecords(t, data["articles"])
+	first := articles[0]
+	if got, _ := first["title"].(string); len([]rune(got)) > articleCompactTitleRunes {
+		t.Fatalf("title = %q, want <= %d runes", got, articleCompactTitleRunes)
+	}
+	if got, _ := first["subtitle"].(string); len([]rune(got)) > articleCompactSubtitleRunes || !strings.HasSuffix(got, "…") {
+		t.Fatalf("subtitle = %q, want truncated to <= %d runes", got, articleCompactSubtitleRunes)
+	}
+	if got, _ := first["excerpt"].(string); len([]rune(got)) > articleCompactExcerptRunes || !strings.HasSuffix(got, "…") {
+		t.Fatalf("excerpt = %q, want truncated to <= %d runes", got, articleCompactExcerptRunes)
+	}
+}
+
 func TestArticleListMixedPageUsesUnavailableCursorRef(t *testing.T) {
-	conn := realisticArticleConnection(1)
+	conn := realisticArticleConnection(1, articleFixtureOptions{})
 	conn.Edges = append(conn.Edges,
 		cmsapi.ArticleEdge{Cursor: "article-cursor-missing"},
 		cmsapi.ArticleEdge{},
@@ -150,8 +209,99 @@ func TestArticleListMixedPageUsesUnavailableCursorRef(t *testing.T) {
 	}
 }
 
+func TestArticleListStandardDefaultPageFitsBudget(t *testing.T) {
+	conn := realisticArticleConnection(articleListStandardDefaultLimit, articleFixtureOptions{
+		includeContent: true,
+		contentRunes:   20 * 1024,
+	})
+	var operation cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&operation); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeArticleDraftGraphQLData(t, w, map[string]any{"articles": conn})
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleList(articleDraftTestContext(), json.RawMessage(`{"view":"standard"}`))
+	if err != nil {
+		t.Fatalf("article_list standard: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("article_list standard result = %+v", result)
+	}
+	if operation.OperationName != "BodyArticles" {
+		t.Fatalf("operation = %+v", operation)
+	}
+	if operation.Variables["first"] != float64(articleListStandardDefaultLimit) {
+		t.Fatalf("standard default limit variables = %+v", operation.Variables)
+	}
+
+	measurement, err := measureToolResultPayload(result)
+	if err != nil {
+		t.Fatalf("measureToolResultPayload: %v", err)
+	}
+	t.Logf("article_list standard default envelope=%d structured=%d text=%d budget=%d",
+		measurement.JSONRPCEnvelopeBytes,
+		measurement.StructuredContentBytes,
+		measurement.ContentTextBytes,
+		articleListStandardDefaultBudgetBytes,
+	)
+	if measurement.JSONRPCEnvelopeBytes > articleListStandardDefaultBudgetBytes {
+		t.Fatalf("default standard article_list envelope = %d, want <= %d", measurement.JSONRPCEnvelopeBytes, articleListStandardDefaultBudgetBytes)
+	}
+
+	data := articleListStructuredData(t, result)
+	if data["view"] != readViewStandard {
+		t.Fatalf("view = %#v, data = %#v", data["view"], data)
+	}
+	if intFromAny(data["limit"]) != articleListStandardDefaultLimit || intFromAny(data["count"]) != articleListStandardDefaultLimit {
+		t.Fatalf("limit/count = %#v/%#v", data["limit"], data["count"])
+	}
+	budget, _ := data["budget"].(map[string]any)
+	if intFromAny(budget["maxOutputBytes"]) != articleListStandardDefaultBudgetBytes {
+		t.Fatalf("budget = %#v", budget)
+	}
+	articles := articleRecords(t, data["articles"])
+	if len(articles) != articleListStandardDefaultLimit || strings.TrimSpace(fmt.Sprint(articles[0]["content"])) == "" {
+		t.Fatalf("standard articles = %#v", articles)
+	}
+}
+
+func TestArticleListStandardRejectsUnsafeLimitBeforeDispatch(t *testing.T) {
+	serverCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalled = true
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleList(articleDraftTestContext(), json.RawMessage(`{"view":"standard","limit":80}`))
+	if result != nil {
+		t.Fatalf("result = %+v, want nil on invalid params", result)
+	}
+	var invalid *InvalidParamsError
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "view=standard") || !strings.Contains(err.Error(), "10") || !strings.Contains(err.Error(), "between 1 and") {
+		t.Fatalf("err = %v, want standard limit invalid params", err)
+	}
+	if serverCalled {
+		t.Fatal("standard unsafe limit should fail before Lesser dispatch")
+	}
+}
+
 func TestArticleListStandardViewDoesNotDeclareCompactOmissions(t *testing.T) {
-	result, err := articleListResult(realisticArticleConnection(1), 1, "alice", articleDraftViewParams{
+	result, err := articleListResult(realisticArticleConnection(1, articleFixtureOptions{includeContent: true}), 1, "alice", articleDraftViewParams{
 		View: readViewStandard,
 	})
 	if err != nil {
@@ -175,7 +325,7 @@ func TestArticleListStandardViewDoesNotDeclareCompactOmissions(t *testing.T) {
 	}
 }
 
-func realisticArticleConnection(count int) *cmsapi.ArticleConnection {
+func realisticArticleConnection(count int, opts articleFixtureOptions) *cmsapi.ArticleConnection {
 	if count < 1 {
 		count = 1
 	}
@@ -189,15 +339,31 @@ func realisticArticleConnection(count int) *cmsapi.ArticleConnection {
 	for i := 1; i <= count; i++ {
 		suffix := fmt.Sprintf("%02d", i)
 		slug := "article-" + suffix
+		title := fmt.Sprintf("Article %s title", suffix)
+		if opts.titleRunes > 0 {
+			title = sizedString(title, opts.titleRunes)
+		}
 		subtitle := fmt.Sprintf("Subtitle %s %s", suffix, strings.Repeat("detail ", 6))
+		if opts.subtitleRunes > 0 {
+			subtitle = sizedString(subtitle, opts.subtitleRunes)
+		}
 		excerpt := fmt.Sprintf("Excerpt %s %s", suffix, strings.Repeat("summary ", 16))
-		content := fmt.Sprintf("%s %s", slug+" body", strings.Repeat(slug+" body paragraph ", 24))
+		if opts.excerptRunes > 0 {
+			excerpt = sizedString(excerpt, opts.excerptRunes)
+		}
+		content := ""
+		if opts.includeContent {
+			content = fmt.Sprintf("%s %s", slug+" body", strings.Repeat(slug+" body paragraph ", 24))
+			if opts.contentRunes > 0 {
+				content = sizedString(slug+" body ", opts.contentRunes)
+			}
+		}
 		edges = append(edges, cmsapi.ArticleEdge{
 			Cursor: fmt.Sprintf("article-cursor-%s", suffix),
 			Node: &cmsapi.Article{
 				ID:                 "https://example.com/articles/" + slug,
 				Slug:               slug,
-				Title:              fmt.Sprintf("Article %s title", suffix),
+				Title:              title,
 				Subtitle:           &subtitle,
 				Excerpt:            &excerpt,
 				Content:            content,
@@ -221,6 +387,18 @@ func realisticArticleConnection(count int) *cmsapi.ArticleConnection {
 		},
 		TotalCount: count + 7,
 	}
+}
+
+func sizedString(prefix string, runes int) string {
+	if runes <= 0 {
+		return strings.TrimSpace(prefix)
+	}
+	trimmed := strings.TrimSpace(prefix)
+	current := len([]rune(trimmed))
+	if current >= runes {
+		return string([]rune(trimmed)[:runes])
+	}
+	return trimmed + strings.Repeat("x", runes-current)
 }
 
 func articleListStructuredData(t *testing.T, result *mcpruntime.ToolResult) map[string]any {

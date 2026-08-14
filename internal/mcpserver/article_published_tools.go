@@ -82,12 +82,18 @@ func articleListDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum Article refs to return. Defaults to 20."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum Article refs to return. Defaults to 20 for compact and 10 for standard. standard is capped at 10 because it returns full Article content for each item."},
 				"cursor":{"type":"string","description":"Optional pagination cursor from a previous article_list response."},
 				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact refs. standard returns Article content for each listed Article."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget when content is available. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
-			}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact and standard responses default to bounded budgets and return response_too_large if exceeded."}
+			},
+			"allOf":[
+				{
+					"if":{"properties":{"view":{"const":"standard"}}},
+					"then":{"properties":{"limit":{"maximum":10}}}
+				}
+			]
 		}`),
 	}
 }
@@ -240,15 +246,28 @@ func handleArticleList(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, invalidParams("invalid args: " + err.Error())
 	}
-	if params.View == readViewCompact && !params.ExplicitBudgetHint {
-		params.MaxOutputBytes = articleListDefaultBudgetBytes
-	}
 	limit := in.Limit
 	if limit == 0 {
 		limit = articleDraftDefaultLimit
+		if params.View == readViewStandard {
+			limit = articleListStandardDefaultLimit
+		}
 	}
-	if limit < 1 || limit > articleDraftMaxLimit {
+	maxLimit := articleDraftMaxLimit
+	if params.View == readViewStandard {
+		maxLimit = articleListStandardMaxLimit
+	}
+	if limit < 1 || limit > maxLimit {
+		if params.View == readViewStandard {
+			return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d for view=standard", articleListStandardMaxLimit))
+		}
 		return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d", articleDraftMaxLimit))
+	}
+	if !params.ExplicitBudgetHint {
+		params.MaxOutputBytes = articleListDefaultBudgetBytes
+		if params.View == readViewStandard {
+			params.MaxOutputBytes = articleListStandardDefaultBudgetBytes
+		}
 	}
 
 	token, err := requireOAuthBearer(ctx)
@@ -399,10 +418,10 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 			"resultAccess":   toolResultAccessPath("payload.article", "data.article"),
 		},
 	}
-	putIfNotEmpty(out, "title", article.Title)
+	putCompactArticleField(out, "title", article.Title, articleCompactTitleRunes)
 	putIfNotEmpty(out, "slug", article.Slug)
-	putIfNotEmpty(out, "subtitle", stringPtrValue(article.Subtitle))
-	putIfNotEmpty(out, "excerpt", stringPtrValue(article.Excerpt))
+	putCompactArticleField(out, "subtitle", stringPtrValue(article.Subtitle), articleCompactSubtitleRunes)
+	putCompactArticleField(out, "excerpt", stringPtrValue(article.Excerpt), articleCompactExcerptRunes)
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
@@ -425,6 +444,14 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 		out["contentTruncated"] = truncated
 	}
 	return out
+}
+
+func putCompactArticleField(out map[string]any, key string, value string, maxRunes int) {
+	if out == nil {
+		return
+	}
+	value, _ = compactStringWithTruncation(value, maxRunes)
+	putIfNotEmpty(out, key, value)
 }
 
 func standardArticle(article *cmsapi.Article) map[string]any {

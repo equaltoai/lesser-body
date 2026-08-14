@@ -14,11 +14,17 @@ import (
 )
 
 const (
-	articleDraftDefaultLimit       = 20
-	articleDraftMaxLimit           = 80
-	articleDraftPreviewRunes       = 240
-	articleDraftDefaultBudgetBytes = 12000
-	articleListDefaultBudgetBytes  = 64 * 1024
+	articleDraftDefaultLimit              = 20
+	articleDraftMaxLimit                  = 80
+	articleDraftPreviewRunes              = 240
+	articleDraftDefaultBudgetBytes        = 12000
+	articleListDefaultBudgetBytes         = 64 * 1024
+	articleListStandardDefaultLimit       = 10
+	articleListStandardMaxLimit           = 10
+	articleListStandardDefaultBudgetBytes = 512 * 1024
+	articleCompactTitleRunes              = 120
+	articleCompactSubtitleRunes           = 160
+	articleCompactExcerptRunes            = 256
 )
 
 func registerArticleTools(r *mcpruntime.ToolRegistry) error {
