@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-13T21:10:46.403199Z",
+  "generated_at": "2026-08-14T13:44:36.748669Z",
   "git": {
-    "head": "56356eb0ac5ab9fbb9a8fe39ec599daaaa27baee",
-    "head_tree": "cd9aa526a42fe0512f55dd7afdb1e0f718639e7f",
-    "merge_base_origin_staging": "1ff17532b5d5f1d0283b328ebd64c486a2de1ebc",
-    "ref": "theorymcp/equaltoai/body/issue-567-share-scope-ungate",
+    "head": "ea9483f6332d2fd2a638055645e8c713f0a100b4",
+    "head_tree": "082339f005e50748153e01188b8c3d1676a95daa",
+    "merge_base_origin_staging": "372bb17cf132ad4716cda3d0f4e1d71ad6fac09b",
+    "ref": "theorymcp/equaltoai/body/issue-571-restore-article-list",
     "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
