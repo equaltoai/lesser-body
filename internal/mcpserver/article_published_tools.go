@@ -82,12 +82,18 @@ func articleListDef() mcpruntime.ToolDef {
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
-				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum Article refs to return. Defaults to 20."},
+				"limit":{"type":"integer","minimum":1,"maximum":80,"description":"Maximum Article refs to return. Defaults to 20 for compact and 10 for standard. standard is capped at 10 because it returns full Article content for each item."},
 				"cursor":{"type":"string","description":"Optional pagination cursor from a previous article_list response."},
 				"view":{"type":"string","enum":["compact","standard"],"description":"Defaults to compact refs. standard returns Article content for each listed Article."},
 				"preview_chars":{"type":"integer","minimum":0,"description":"Optional compact content preview character budget when content is available. Zero means the tool default."},
-				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact responses default to a bounded budget and return response_too_large if exceeded."}
-			}
+				"max_output_bytes":{"type":"integer","minimum":0,"description":"Optional MCP response budget. Compact and standard responses default to bounded budgets and return response_too_large if exceeded."}
+			},
+			"allOf":[
+				{
+					"if":{"properties":{"view":{"const":"standard"}},"required":["view"]},
+					"then":{"properties":{"limit":{"maximum":10}}}
+				}
+			]
 		}`),
 	}
 }
@@ -243,9 +249,25 @@ func handleArticleList(ctx context.Context, args json.RawMessage) (*mcpruntime.T
 	limit := in.Limit
 	if limit == 0 {
 		limit = articleDraftDefaultLimit
+		if params.View == readViewStandard {
+			limit = articleListStandardDefaultLimit
+		}
 	}
-	if limit < 1 || limit > articleDraftMaxLimit {
+	maxLimit := articleDraftMaxLimit
+	if params.View == readViewStandard {
+		maxLimit = articleListStandardMaxLimit
+	}
+	if limit < 1 || limit > maxLimit {
+		if params.View == readViewStandard {
+			return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d for view=standard", articleListStandardMaxLimit))
+		}
 		return nil, invalidParams(fmt.Sprintf("limit must be between 1 and %d", articleDraftMaxLimit))
+	}
+	if !params.ExplicitBudgetHint {
+		params.MaxOutputBytes = articleListDefaultBudgetBytes
+		if params.View == readViewStandard {
+			params.MaxOutputBytes = articleListStandardDefaultBudgetBytes
+		}
 	}
 
 	token, err := requireOAuthBearer(ctx)
@@ -324,7 +346,7 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 			if cursor == "" {
 				continue
 			}
-			articles = append(articles, compactArticleCursorRef(cursor))
+			articles = append(articles, compactArticleUnavailableCursorRef(cursor))
 			continue
 		}
 		item := shapeArticle(edge.Node, params, nil)
@@ -349,9 +371,9 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 		"nextCursor": nextCursor,
 		"pageInfo":   conn.PageInfo,
 		"totalCount": conn.TotalCount,
-		"omitted":    articleListOmissions(),
+		"omitted":    articleListOmissions(params.View),
 		"budget":     articleDraftBudget(params),
-		"policy":     articleListPolicyMetadata(),
+		"policy":     articleListPolicyMetadata(params.View),
 	}
 	text := map[string]any{
 		"tool":     "article_list",
@@ -365,12 +387,13 @@ func articleListResult(conn *cmsapi.ArticleConnection, limit int, authorID strin
 	return articleDraftStructuredResult("article_list", params.View, fmt.Sprintf("%d Article refs", len(articles)), payload, text, params.MaxOutputBytes)
 }
 
-func compactArticleCursorRef(cursor string) map[string]any {
+func compactArticleUnavailableCursorRef(cursor string) map[string]any {
 	cursor = strings.TrimSpace(cursor)
 	return map[string]any{
-		"cursor":       cursor,
-		"depthSafeRef": true,
-		"contractNote": "Lesser #1221 must expose a depth-safe Article list item before article IDs/slugs can be returned from article_list under the agent depth-3 profile.",
+		"cursor":      cursor,
+		"unavailable": true,
+		"reason":      "deleted_or_unauthorized_mid_page",
+		"explanation": "Lesser returned a pagination cursor without an article node; the article was deleted or became unauthorized during this page read.",
 	}
 }
 
@@ -395,10 +418,10 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 			"resultAccess":   toolResultAccessPath("payload.article", "data.article"),
 		},
 	}
-	putIfNotEmpty(out, "title", article.Title)
+	putCompactArticleField(out, "title", article.Title, articleCompactTitleRunes)
 	putIfNotEmpty(out, "slug", article.Slug)
-	putIfNotEmpty(out, "subtitle", stringPtrValue(article.Subtitle))
-	putIfNotEmpty(out, "excerpt", stringPtrValue(article.Excerpt))
+	putCompactArticleField(out, "subtitle", stringPtrValue(article.Subtitle), articleCompactSubtitleRunes)
+	putCompactArticleField(out, "excerpt", stringPtrValue(article.Excerpt), articleCompactExcerptRunes)
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
@@ -421,6 +444,14 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 		out["contentTruncated"] = truncated
 	}
 	return out
+}
+
+func putCompactArticleField(out map[string]any, key string, value string, maxRunes int) {
+	if out == nil {
+		return
+	}
+	value, _ = compactStringWithTruncation(value, maxRunes)
+	putIfNotEmpty(out, key, value)
 }
 
 func standardArticle(article *cmsapi.Article) map[string]any {
@@ -474,19 +505,15 @@ func articleOmissions(view string, list bool) []any {
 	}
 }
 
-func articleListOmissions() []any {
+func articleListOmissions(view string) []any {
+	if view == readViewStandard {
+		return []any{}
+	}
 	return []any{
 		map[string]any{
-			"path":      "articles[].id",
-			"reason":    "graphql_depth_budget",
-			"handoff":   "equaltoai/lesser#1221",
-			"expansion": "pending Lesser depth-safe Article list item contract",
-		},
-		map[string]any{
 			"path":      "articles[].content",
-			"reason":    "graphql_depth_budget",
-			"handoff":   "equaltoai/lesser#1221",
-			"expansion": "pending Lesser depth-safe Article list item contract",
+			"reason":    "compact_default",
+			"expansion": "call article_get with view=standard",
 		},
 	}
 }
@@ -501,11 +528,13 @@ func articlePolicyMetadata() map[string]any {
 	}
 }
 
-func articleListPolicyMetadata() map[string]any {
+func articleListPolicyMetadata(view string) map[string]any {
 	out := articlePolicyMetadata()
 	out["graphqlDepthSafe"] = true
-	out["listSelection"] = "edges.cursor"
-	out["conditionalHandoff"] = "equaltoai/lesser#1221 must provide a depth-safe Article list-item contract for IDs/slugs/content refs."
+	out["listSelection"] = "edges.cursor plus article node fields"
+	if view == readViewCompact {
+		out["fullContentExpansion"] = "call article_get with view=standard"
+	}
 	return out
 }
 

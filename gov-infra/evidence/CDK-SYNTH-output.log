@@ -7,8 +7,6 @@ $ cd cdk && npm run synth -- -c app=lesser -c stage=dev -c baseDomain=example.co
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-(node:1877653) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
-(Use `node --trace-warnings ...` to show where the warning was created)
 Resources:
   McpHandlerServiceRole4A94FED3:
     Type: AWS::IAM::Role
@@ -241,7 +239,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: b5268581f44b0c05ba3ab94554e487acf82f7c485be03b1b392c44f32556dd06.zip
+        S3Key: 83f7a6361ea0dbefe2a304cea334f8a4322448153ee302ff50bcccede3e006cc.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -287,7 +285,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.b5268581f44b0c05ba3ab94554e487acf82f7c485be03b1b392c44f32556dd06.zip
+      aws:asset:path: asset.83f7a6361ea0dbefe2a304cea334f8a4322448153ee302ff50bcccede3e006cc.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1366,7 +1364,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: b02cdaa891a272d163a4d6fe58728a625d8d92488d85d591c12706ed874f8e6f.zip
+        S3Key: 91c57977b2f4725e70e19f19a9f0794992804cb3867f56321898dd1f03555c91.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1402,7 +1400,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.b02cdaa891a272d163a4d6fe58728a625d8d92488d85d591c12706ed874f8e6f.zip
+      aws:asset:path: asset.91c57977b2f4725e70e19f19a9f0794992804cb3867f56321898dd1f03555c91.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:
