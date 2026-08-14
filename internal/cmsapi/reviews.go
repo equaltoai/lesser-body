@@ -50,6 +50,22 @@ type DraftReview struct {
 	PublishEligibility        DraftPublishEligibility    `json:"publishEligibility"`
 }
 
+// DraftReviewNotFoundError reports a missing caller-authorized draftReview
+// lookup in a way the MCP tool layer can classify without parsing free-form
+// error text. Lookup names the Lesser review-state identifier (`id`); the tool
+// layer may remap that to a caller-facing argument name such as `draft_id`.
+type DraftReviewNotFoundError struct {
+	Lookup string
+	Value  string
+}
+
+func (e *DraftReviewNotFoundError) Error() string {
+	if e == nil {
+		return "draft review not found"
+	}
+	return fmt.Sprintf("draft review %q not found", e.Value)
+}
+
 // DraftReviewGrant is Lesser's caller-visible grant and reviewer projection.
 type DraftReviewGrant struct {
 	ReviewerID string  `json:"reviewerId"`
@@ -178,7 +194,7 @@ func (c *Client) readArticleDraftReview(ctx context.Context, bearerToken, draftI
 		return nil, err
 	}
 	if data.DraftReview == nil {
-		return nil, fmt.Errorf("draft review %q not found", draftID)
+		return nil, &DraftReviewNotFoundError{Lookup: "id", Value: draftID}
 	}
 	normalizeDraftReview(data.DraftReview)
 	return data.DraftReview, nil

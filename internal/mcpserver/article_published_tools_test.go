@@ -26,6 +26,207 @@ type articleFixtureOptions struct {
 	excerptRunes   int
 }
 
+func TestArticleGetReturnsCleanNotFoundForMissingSlugIDAndURL(t *testing.T) {
+	var operations []cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
+		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		switch op.OperationName {
+		case "BodyArticle":
+			_, _ = w.Write([]byte(`{"data":{"article":null}}`))
+		case "BodyArticleBySlug":
+			_, _ = w.Write([]byte(`{"data":{"articleBySlug":null}}`))
+		default:
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	for _, tc := range []struct {
+		name       string
+		args       string
+		wantOp     string
+		wantLookup string
+	}{
+		{name: "missing by id", args: `{"id":"article-123"}`, wantOp: "BodyArticle", wantLookup: "id"},
+		{name: "missing by canonical url in id field", args: `{"id":"https://example.com/articles/missing"}`, wantOp: "BodyArticle", wantLookup: "id"},
+		{name: "missing by slug", args: `{"slug":"missing-slug"}`, wantOp: "BodyArticleBySlug", wantLookup: "slug"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(operations)
+			result, err := handleArticleGet(articleDraftTestContext(), json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("handleArticleGet: %v", err)
+			}
+			payload := toolErrorPayloadForTest(t, result)
+			if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+				t.Fatalf("error payload = %#v, want not_found/404", payload)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["lookup"] != tc.wantLookup || details["tool"] != "article_get" {
+				t.Fatalf("error details = %#v, want lookup=%q tool=article_get", details, tc.wantLookup)
+			}
+			if len(operations) != before+1 || operations[before].OperationName != tc.wantOp {
+				t.Fatalf("operations = %+v, want trailing op %q", operations, tc.wantOp)
+			}
+		})
+	}
+}
+
+func TestArticleUpdateReturnsCleanNotFoundForMissingCanonicalIDAndURL(t *testing.T) {
+	var operations []cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
+		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		if op.OperationName != "BodyUpdateArticle" {
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+		_, _ = w.Write([]byte(`{"data":{"updateArticle":null}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{name: "missing by id", args: `{"id":"article-123","title":"Updated"}`},
+		{name: "missing by canonical url in id field", args: `{"id":"https://example.com/articles/missing","title":"Updated"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(operations)
+			result, err := handleArticleUpdate(articleDraftTestContext(), json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("handleArticleUpdate: %v", err)
+			}
+			payload := toolErrorPayloadForTest(t, result)
+			if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+				t.Fatalf("error payload = %#v, want not_found/404", payload)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["lookup"] != "id" || details["tool"] != "article_update" {
+				t.Fatalf("error details = %#v, want lookup=id tool=article_update", details)
+			}
+			if len(operations) != before+1 || operations[before].OperationName != "BodyUpdateArticle" {
+				t.Fatalf("operations = %+v, want trailing op %q", operations, "BodyUpdateArticle")
+			}
+		})
+	}
+}
+
+func TestArticleGetReturnsSuccessForExistingSlugIDAndURL(t *testing.T) {
+	const articleURL = "https://example.com/articles/hello"
+	var operations []cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
+		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		switch op.OperationName {
+		case "BodyArticle":
+			_, _ = fmt.Fprintf(w, `{"data":{"article":{"id":%q,"slug":"hello","title":"Hello","content":"body","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`, articleURL)
+		case "BodyArticleBySlug":
+			_, _ = fmt.Fprintf(w, `{"data":{"articleBySlug":{"id":%q,"slug":"hello","title":"Hello","content":"body","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}}`, articleURL)
+		default:
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	for _, tc := range []struct {
+		name   string
+		args   string
+		wantOp string
+	}{
+		{name: "existing by id", args: `{"id":"article-123","view":"standard"}`, wantOp: "BodyArticle"},
+		{name: "existing by url", args: `{"id":"https://example.com/articles/hello","view":"standard"}`, wantOp: "BodyArticle"},
+		{name: "existing by slug", args: `{"slug":"hello","view":"standard"}`, wantOp: "BodyArticleBySlug"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(operations)
+			result, err := handleArticleGet(articleDraftTestContext(), json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("handleArticleGet: %v", err)
+			}
+			if result == nil || result.IsError {
+				t.Fatalf("result = %+v, want success", result)
+			}
+			if len(operations) != before+1 || operations[before].OperationName != tc.wantOp {
+				t.Fatalf("operations = %+v, want trailing op %q", operations, tc.wantOp)
+			}
+
+			data := articleListStructuredData(t, result)
+			if data["tool"] != "article_get" || data["operation"] != "read" || data["view"] != readViewStandard {
+				t.Fatalf("structured data = %#v", data)
+			}
+			article, _ := data["article"].(map[string]any)
+			if article["id"] != articleURL || article["slug"] != "hello" || article["content"] != "body" {
+				t.Fatalf("article = %#v", article)
+			}
+		})
+	}
+}
+
+func TestArticleToolErrorFallbackDoesNotLeakRawErrors(t *testing.T) {
+	result, err := articleDraftToolResultFromError("article_get", errors.New("raw transport secret must not escape"))
+	if err != nil {
+		t.Fatalf("articleDraftToolResultFromError: %v", err)
+	}
+	payload := toolErrorPayloadForTest(t, result)
+	if payload["code"] != "internal_error" || intFromAny(payload["status"]) != http.StatusInternalServerError {
+		t.Fatalf("error payload = %#v, want internal_error/500", payload)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "raw transport secret") {
+		t.Fatalf("raw handler text escaped in result: %s", encoded)
+	}
+}
+
 func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T) {
 	conn := realisticArticleConnection(articleDraftDefaultLimit, articleFixtureOptions{})
 	var operation cmsapi.Operation

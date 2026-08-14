@@ -405,6 +405,10 @@ func articleDraftOwnerLookupNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
+	var draftNotFound *cmsapi.DraftNotFoundError
+	if errors.As(err, &draftNotFound) {
+		return true
+	}
 	var gqlErr *cmsapi.GraphQLErrors
 	if errors.As(err, &gqlErr) {
 		code, status := articleDraftGraphQLErrorContract(gqlErr)
@@ -900,6 +904,22 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 	if failure := mcpAuthFailureFromError(err); failure != nil {
 		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
 	}
+	var articleNotFound *cmsapi.ArticleNotFoundError
+	if errors.As(err, &articleNotFound) {
+		return articleNotFoundToolResult(toolName, "Article not found", articleNotFound.Lookup)
+	}
+	var draftNotFound *cmsapi.DraftNotFoundError
+	if errors.As(err, &draftNotFound) {
+		return articleNotFoundToolResult(toolName, "Article draft not found", draftNotFound.Lookup)
+	}
+	var reviewNotFound *cmsapi.DraftReviewNotFoundError
+	if errors.As(err, &reviewNotFound) {
+		message := "Article draft not found"
+		if toolName == "article_draft_review_read" {
+			message = "Article draft review not found"
+		}
+		return articleNotFoundToolResult(toolName, message, reviewNotFound.Lookup)
+	}
 	var gqlErr *cmsapi.GraphQLErrors
 	if errors.As(err, &gqlErr) {
 		details := map[string]any{"source": "lesser_cms_graphql", "tool": toolName}
@@ -917,7 +937,29 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 			"upstreamCode": apiErr.Status,
 		})
 	}
-	return nil, err
+	return normalizedToolResultFromError(toolName, err)
+}
+
+func articleNotFoundToolResult(toolName, message, lookup string) (*mcpruntime.ToolResult, error) {
+	details := map[string]any{
+		"source": "lesser_cms_graphql",
+		"tool":   toolName,
+	}
+	if lookup = strings.TrimSpace(articleNotFoundLookup(toolName, lookup)); lookup != "" {
+		details["lookup"] = lookup
+	}
+	return toolErrorResult("not_found", message, http.StatusNotFound, details)
+}
+
+func articleNotFoundLookup(toolName, lookup string) string {
+	lookup = strings.TrimSpace(lookup)
+	switch toolName {
+	case "article_draft_review_read":
+		if lookup == "" || lookup == "id" {
+			return "draft_id"
+		}
+	}
+	return lookup
 }
 
 func articleDraftGraphQLErrorContract(gqlErr *cmsapi.GraphQLErrors) (string, int) {

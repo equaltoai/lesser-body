@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,5 +148,27 @@ func TestArticleDraftReviewClientValidatesInputsBeforeRequest(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestReadArticleDraftReviewMissingReturnsDraftReviewNotFoundError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"draftReview":null}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	got, err := client.ReadArticleDraftReview(context.Background(), "token", "missing-review")
+	if got != nil {
+		t.Fatalf("ReadArticleDraftReview = %+v, want nil on missing review", got)
+	}
+
+	var notFound *DraftReviewNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("ReadArticleDraftReview error = %T %v, want *DraftReviewNotFoundError", err, err)
+	}
+	if notFound.Lookup != "id" || notFound.Value != "missing-review" {
+		t.Fatalf("DraftReviewNotFoundError = %+v, want lookup=%q value=%q", notFound, "id", "missing-review")
 	}
 }
