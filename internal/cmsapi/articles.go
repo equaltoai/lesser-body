@@ -31,6 +31,25 @@ type Article struct {
 	UpdatedAt          string  `json:"updatedAt,omitempty"`
 }
 
+// ArticleNotFoundError reports a missing published article lookup in a way the
+// MCP tool layer can classify without parsing free-form error text.
+type ArticleNotFoundError struct {
+	Lookup string
+	Value  string
+}
+
+func (e *ArticleNotFoundError) Error() string {
+	if e == nil {
+		return "article not found"
+	}
+	switch strings.TrimSpace(e.Lookup) {
+	case "slug":
+		return fmt.Sprintf("article slug %q not found", e.Value)
+	default:
+		return fmt.Sprintf("article %q not found", e.Value)
+	}
+}
+
 // UpdateArticleInput is the bounded subset of Lesser UpdateArticleInput exposed
 // through body. Slug changes are intentionally not surfaced because canonical
 // published Article slugs are immutable in Lesser M1.
@@ -144,7 +163,7 @@ func (c *Client) GetArticle(ctx context.Context, bearerToken string, id string, 
 		return nil, err
 	}
 	if data.Article == nil {
-		return nil, fmt.Errorf("article %q not found", id)
+		return nil, &ArticleNotFoundError{Lookup: articleLookup(id), Value: id}
 	}
 	return data.Article, nil
 }
@@ -169,7 +188,7 @@ func (c *Client) GetArticleBySlug(ctx context.Context, bearerToken string, slug 
 		return nil, err
 	}
 	if data.ArticleBySlug == nil {
-		return nil, fmt.Errorf("article slug %q not found", slug)
+		return nil, &ArticleNotFoundError{Lookup: "slug", Value: slug}
 	}
 	return data.ArticleBySlug, nil
 }
@@ -227,4 +246,12 @@ func articleFields(includeContent bool) string {
 		fields += " content"
 	}
 	return fields
+}
+
+func articleLookup(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return "url"
+	}
+	return "id"
 }

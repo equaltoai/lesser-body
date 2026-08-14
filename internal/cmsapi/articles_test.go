@@ -3,6 +3,7 @@ package cmsapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -135,5 +136,60 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 	}
 	if !strings.Contains(operations[5].Query, "edges { cursor node {") || !strings.Contains(operations[5].Query, " content ") {
 		t.Fatalf("standard list query must select node content, got %s", operations[5].Query)
+	}
+}
+
+func TestGetArticleMissingReturnsArticleNotFoundErrorForIDAndURL(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		locator    string
+		wantLookup string
+	}{
+		{name: "id", locator: "article-123", wantLookup: "id"},
+		{name: "url", locator: "https://example.com/articles/missing", wantLookup: "url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"article":null}}`))
+			}))
+			defer server.Close()
+
+			client := newTestClient(t, server.URL)
+			got, err := client.GetArticle(context.Background(), "token", tc.locator, true)
+			if got != nil {
+				t.Fatalf("GetArticle = %+v, want nil on missing article", got)
+			}
+
+			var notFound *ArticleNotFoundError
+			if !errors.As(err, &notFound) {
+				t.Fatalf("GetArticle error = %T %v, want *ArticleNotFoundError", err, err)
+			}
+			if notFound.Lookup != tc.wantLookup || notFound.Value != tc.locator {
+				t.Fatalf("ArticleNotFoundError = %+v, want lookup=%q value=%q", notFound, tc.wantLookup, tc.locator)
+			}
+		})
+	}
+}
+
+func TestGetArticleBySlugMissingReturnsArticleNotFoundError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"articleBySlug":null}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	got, err := client.GetArticleBySlug(context.Background(), "token", "missing-slug", true)
+	if got != nil {
+		t.Fatalf("GetArticleBySlug = %+v, want nil on missing article", got)
+	}
+
+	var notFound *ArticleNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("GetArticleBySlug error = %T %v, want *ArticleNotFoundError", err, err)
+	}
+	if notFound.Lookup != "slug" || notFound.Value != "missing-slug" {
+		t.Fatalf("ArticleNotFoundError = %+v, want lookup=%q value=%q", notFound, "slug", "missing-slug")
 	}
 }

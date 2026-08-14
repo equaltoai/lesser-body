@@ -900,6 +900,17 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 	if failure := mcpAuthFailureFromError(err); failure != nil {
 		return toolErrorResult(failure.Code, failure.Message, failure.Status, failure.Details)
 	}
+	var articleNotFound *cmsapi.ArticleNotFoundError
+	if errors.As(err, &articleNotFound) {
+		details := map[string]any{
+			"source": "lesser_cms_graphql",
+			"tool":   toolName,
+		}
+		if lookup := strings.TrimSpace(articleNotFound.Lookup); lookup != "" {
+			details["lookup"] = lookup
+		}
+		return toolErrorResult("not_found", "Article not found", http.StatusNotFound, details)
+	}
 	var gqlErr *cmsapi.GraphQLErrors
 	if errors.As(err, &gqlErr) {
 		details := map[string]any{"source": "lesser_cms_graphql", "tool": toolName}
@@ -917,7 +928,7 @@ func articleDraftToolResultFromError(toolName string, err error) (*mcpruntime.To
 			"upstreamCode": apiErr.Status,
 		})
 	}
-	return nil, err
+	return normalizedToolResultFromError(toolName, err)
 }
 
 func articleDraftGraphQLErrorContract(gqlErr *cmsapi.GraphQLErrors) (string, int) {
