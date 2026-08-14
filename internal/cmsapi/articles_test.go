@@ -49,8 +49,14 @@ func TestPublishedArticleOperationsBuildM1GraphQLContract(t *testing.T) {
 			}
 			switch op.Variables["after"] {
 			case "cursor-1":
+				if op.Variables["first"] != float64(2) {
+					t.Fatalf("compact list first = %+v", op.Variables["first"])
+				}
 				_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-2","node":{"id":"https://example.com/articles/hello","slug":"hello","title":"Hello","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:00:00Z","createdAt":"2026-05-19T23:00:00Z","updatedAt":"2026-05-19T23:00:00Z"}}],"pageInfo":{"hasNextPage":true,"hasPreviousPage":false,"startCursor":"article-cursor-2","endCursor":"article-cursor-2"},"totalCount":2}}}`))
 			case "cursor-2":
+				if op.Variables["first"] != float64(3) {
+					t.Fatalf("standard list first = %+v", op.Variables["first"])
+				}
 				_, _ = w.Write([]byte(`{"data":{"articles":{"edges":[{"cursor":"article-cursor-3","node":{"id":"https://example.com/articles/second","slug":"second","title":"Second","content":"body","contentFormat":"MARKDOWN","readingTimeMinutes":1,"wordCount":10,"publishedAt":"2026-05-19T23:01:00Z","createdAt":"2026-05-19T23:01:00Z","updatedAt":"2026-05-19T23:01:00Z"}}],"pageInfo":{"hasNextPage":false,"hasPreviousPage":true,"startCursor":"article-cursor-3","endCursor":"article-cursor-3"},"totalCount":2}}}`))
 			default:
 				t.Fatalf("list after variable = %+v", op.Variables)

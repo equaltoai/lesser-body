@@ -18,6 +18,7 @@ const (
 	articleDraftMaxLimit           = 80
 	articleDraftPreviewRunes       = 240
 	articleDraftDefaultBudgetBytes = 12000
+	articleListDefaultBudgetBytes  = 64 * 1024
 )
 
 func registerArticleTools(r *mcpruntime.ToolRegistry) error {
@@ -438,9 +439,10 @@ func articleCMS(ctx context.Context) (*cmsapi.Client, error) {
 }
 
 type articleDraftViewParams struct {
-	View           string
-	PreviewRunes   int
-	MaxOutputBytes int
+	View               string
+	PreviewRunes       int
+	MaxOutputBytes     int
+	ExplicitBudgetHint bool
 }
 
 func parseArticleDraftViewParams(args json.RawMessage) (articleDraftViewParams, error) {
@@ -460,10 +462,16 @@ func parseArticleDraftViewParams(args json.RawMessage) (articleDraftViewParams, 
 		previewRunes = shared.PreviewChars
 	}
 	budget := shared.MaxOutputBytes
+	explicitBudget := budget > 0
 	if budget <= 0 && view == readViewCompact {
 		budget = articleDraftDefaultBudgetBytes
 	}
-	return articleDraftViewParams{View: view, PreviewRunes: previewRunes, MaxOutputBytes: budget}, nil
+	return articleDraftViewParams{
+		View:               view,
+		PreviewRunes:       previewRunes,
+		MaxOutputBytes:     budget,
+		ExplicitBudgetHint: explicitBudget,
+	}, nil
 }
 
 func normalizeArticleDraftContentFormat(value string) (string, error) {
