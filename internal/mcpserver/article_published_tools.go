@@ -90,7 +90,7 @@ func articleListDef() mcpruntime.ToolDef {
 			},
 			"allOf":[
 				{
-					"if":{"properties":{"view":{"const":"standard"}}},
+					"if":{"properties":{"view":{"const":"standard"}},"required":["view"]},
 					"then":{"properties":{"limit":{"maximum":10}}}
 				}
 			]

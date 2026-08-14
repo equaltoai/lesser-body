@@ -15,6 +15,8 @@ import (
 )
 
 const articleListCompactEnvelopeCeilingBytes = 48 * 1024
+const articleListCompactLongMetadataEnvelopeCeilingBytes = 60 * 1024
+const articleListStandardEnvelopeCeilingBytes = 448 * 1024
 
 type articleFixtureOptions struct {
 	includeContent bool
@@ -126,7 +128,7 @@ func TestArticleListDefaultCompactPageFitsListBudgetAndShapesNodes(t *testing.T)
 
 func TestArticleListCompactDefaultPageTruncatesMetadataWithinBudget(t *testing.T) {
 	result, err := articleListResult(realisticArticleConnection(articleDraftDefaultLimit, articleFixtureOptions{
-		titleRunes:    120,
+		titleRunes:    articleCompactTitleRunes + 1,
 		subtitleRunes: 200,
 		excerptRunes:  500,
 	}), articleDraftDefaultLimit, "alice", articleDraftViewParams{
@@ -154,12 +156,15 @@ func TestArticleListCompactDefaultPageTruncatesMetadataWithinBudget(t *testing.T
 	if measurement.JSONRPCEnvelopeBytes > articleListDefaultBudgetBytes {
 		t.Fatalf("bounded compact article_list envelope = %d, want <= %d", measurement.JSONRPCEnvelopeBytes, articleListDefaultBudgetBytes)
 	}
+	if measurement.JSONRPCEnvelopeBytes > articleListCompactLongMetadataEnvelopeCeilingBytes {
+		t.Fatalf("bounded compact article_list envelope = %d, want <= fixed ceiling %d", measurement.JSONRPCEnvelopeBytes, articleListCompactLongMetadataEnvelopeCeilingBytes)
+	}
 
 	data := articleListStructuredData(t, result)
 	articles := articleRecords(t, data["articles"])
 	first := articles[0]
-	if got, _ := first["title"].(string); len([]rune(got)) > articleCompactTitleRunes {
-		t.Fatalf("title = %q, want <= %d runes", got, articleCompactTitleRunes)
+	if got, _ := first["title"].(string); len([]rune(got)) > articleCompactTitleRunes || !strings.HasSuffix(got, "…") {
+		t.Fatalf("title = %q, want truncated to <= %d runes", got, articleCompactTitleRunes)
 	}
 	if got, _ := first["subtitle"].(string); len([]rune(got)) > articleCompactSubtitleRunes || !strings.HasSuffix(got, "…") {
 		t.Fatalf("subtitle = %q, want truncated to <= %d runes", got, articleCompactSubtitleRunes)
@@ -256,6 +261,9 @@ func TestArticleListStandardDefaultPageFitsBudget(t *testing.T) {
 	if measurement.JSONRPCEnvelopeBytes > articleListStandardDefaultBudgetBytes {
 		t.Fatalf("default standard article_list envelope = %d, want <= %d", measurement.JSONRPCEnvelopeBytes, articleListStandardDefaultBudgetBytes)
 	}
+	if measurement.JSONRPCEnvelopeBytes > articleListStandardEnvelopeCeilingBytes {
+		t.Fatalf("default standard article_list envelope = %d, want <= fixed ceiling %d", measurement.JSONRPCEnvelopeBytes, articleListStandardEnvelopeCeilingBytes)
+	}
 
 	data := articleListStructuredData(t, result)
 	if data["view"] != readViewStandard {
@@ -323,6 +331,12 @@ func TestArticleListStandardViewDoesNotDeclareCompactOmissions(t *testing.T) {
 	if len(articles) != 1 || articles[0]["content"] == nil {
 		t.Fatalf("standard articles = %#v", articles)
 	}
+}
+
+func TestArticleListInputSchemaRequiresExplicitStandardViewForTightLimitCap(t *testing.T) {
+	assertInputSchemaAccepts(t, articleListDef().InputSchema, `{"limit":20}`)
+	assertInputSchemaAccepts(t, articleListDef().InputSchema, `{"view":"standard","limit":10}`)
+	assertInputSchemaRejects(t, articleListDef().InputSchema, `{"view":"standard","limit":20}`)
 }
 
 func realisticArticleConnection(count int, opts articleFixtureOptions) *cmsapi.ArticleConnection {
@@ -449,4 +463,100 @@ func omissionRecords(t *testing.T, raw any) []map[string]any {
 		out = append(out, record)
 	}
 	return out
+}
+
+func assertInputSchemaAccepts(t *testing.T, schema json.RawMessage, payload string) {
+	t.Helper()
+	if violations := validateInputSchemaDocument(t, schema, payload); len(violations) > 0 {
+		t.Fatalf("payload %s rejected by input schema: %s", payload, strings.Join(violations, "; "))
+	}
+}
+
+func assertInputSchemaRejects(t *testing.T, schema json.RawMessage, payload string) {
+	t.Helper()
+	if violations := validateInputSchemaDocument(t, schema, payload); len(violations) == 0 {
+		t.Fatalf("payload %s unexpectedly accepted by input schema", payload)
+	}
+}
+
+func validateInputSchemaDocument(t *testing.T, schema json.RawMessage, payload string) []string {
+	t.Helper()
+	var declared any
+	if err := json.Unmarshal(schema, &declared); err != nil {
+		t.Fatalf("unmarshal input schema: %v", err)
+	}
+	var value any
+	if err := json.Unmarshal([]byte(payload), &value); err != nil {
+		t.Fatalf("unmarshal payload %s: %v", payload, err)
+	}
+	var violations []string
+	validateInputSchema("input", declared, value, &violations)
+	return violations
+}
+
+func validateInputSchema(path string, schema any, value any, violations *[]string) {
+	node, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+
+	if branches, ok := node["allOf"].([]any); ok {
+		for _, branch := range branches {
+			validateInputSchema(path, branch, value, violations)
+		}
+	}
+
+	if ifSchema, ok := node["if"]; ok {
+		var conditionViolations []string
+		validateInputSchema(path, ifSchema, value, &conditionViolations)
+		if len(conditionViolations) == 0 {
+			if thenSchema, ok := node["then"]; ok {
+				validateInputSchema(path, thenSchema, value, violations)
+			}
+		} else if elseSchema, ok := node["else"]; ok {
+			validateInputSchema(path, elseSchema, value, violations)
+		}
+	}
+
+	if want, ok := node["const"]; ok && fmt.Sprint(value) != fmt.Sprint(want) {
+		*violations = append(*violations, fmt.Sprintf("%s: value %#v does not match const %#v", path, value, want))
+	}
+
+	if want, ok := node["type"].(string); ok && !kaJSONTypeMatches(want, value) {
+		*violations = append(*violations, fmt.Sprintf("%s: value has JSON type %s, want %s", path, kaJSONType(value), want))
+		return
+	}
+
+	switch typed := value.(type) {
+	case map[string]any:
+		properties, _ := node["properties"].(map[string]any)
+		if required, ok := node["required"].([]any); ok {
+			for _, raw := range required {
+				key, _ := raw.(string)
+				if key == "" {
+					continue
+				}
+				if _, present := typed[key]; !present {
+					*violations = append(*violations, fmt.Sprintf("%s.%s: missing required property", path, key))
+				}
+			}
+		}
+		for key, child := range typed {
+			if childSchema, present := properties[key]; present {
+				validateInputSchema(path+"."+key, childSchema, child, violations)
+			}
+		}
+	case float64:
+		if minimum, ok := schemaNumber(node["minimum"]); ok && typed < minimum {
+			*violations = append(*violations, fmt.Sprintf("%s: value %v is below minimum %v", path, typed, minimum))
+		}
+		if maximum, ok := schemaNumber(node["maximum"]); ok && typed > maximum {
+			*violations = append(*violations, fmt.Sprintf("%s: value %v exceeds maximum %v", path, typed, maximum))
+		}
+	}
+}
+
+func schemaNumber(value any) (float64, bool) {
+	number, ok := value.(float64)
+	return number, ok
 }
