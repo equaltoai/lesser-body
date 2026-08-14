@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-14T15:26:30.690450Z",
+  "generated_at": "2026-08-14T15:50:29.345317Z",
   "git": {
-    "head": "0bed3a7c5dca3c28cc7a2ba0c0b14aa1ab7b1043",
-    "head_tree": "55968f1e5dcccf1ff53c39983b909e9a142b8ffc",
+    "head": "e0b77498e303fa5f4b9f2d8023f33d4b697f16e0",
+    "head_tree": "c09d18c7a8833b8bb966ec7dfa7179920745d915",
     "merge_base_origin_staging": "aee6a258f9e5eba3b8f4863bc50469f322d64175",
     "ref": "codex/issue-568-article-get-not-found",
     "working_tree_after_run": "5 changed paths after verifier run"
