@@ -697,16 +697,16 @@ Scope key:
 | `notification_get` | Read | Expand a compact notification ref through Lesser's notification read route. |
 | `notification_dismiss` | Write | Dismiss one notification or all notifications by marking them read through Lesser. |
 | `article_draft_create` | Write | Create an owner-scoped unpublished Article draft for the authenticated actor through Lesser CMS; defaults to a compact draft ref, never auto-publishes, and creates no cross-actor read grant. |
-| `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. |
-| `article_draft_get` | Read | Read one Article draft when Lesser authorizes the caller as its owner or through an active reviewer grant. Owner reads retain the existing `draft(id:)` projection; authorized reviewer reads fall back to the exact `DraftReview` source/hash/revision snapshot. Revoked or unauthorized cross-actor ids return not found. Compact refs expand with `article_draft_get(view=standard)`. |
+| `article_draft_update` | Write | Update an owner-scoped unpublished Article draft belonging to the authenticated actor; defaults compact and does not grant reviewer access, preview, or publish. Missing or cross-actor ids return `not_found`/404 with `details.lookup="id"`. |
+| `article_draft_get` | Read | Read one Article draft when Lesser authorizes the caller as its owner or through an active reviewer grant. Owner reads retain the existing `draft(id:)` projection; authorized reviewer reads fall back to the exact `DraftReview` source/hash/revision snapshot. Revoked, unauthorized, or missing ids return `not_found`/404 with `details.lookup="id"`. Compact refs expand with `article_draft_get(view=standard)`. |
 | `article_draft_list` | Read | List only the authenticated actor's owner-scoped unpublished Article draft refs through Lesser CMS; compact results include title, save/create/update timestamps, `contentHash`, and `revision` for triage and concurrency checks, while full content still requires `article_draft_get`. |
-| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer when Lesser authorizes the caller as its owner or through an active reviewer grant. Body uses caller-authorized review state for the `DRAFT` preflight; revoked or unauthorized cross-actor ids return not found, and raw draft content is not returned by preview. |
+| `article_draft_preview` | Read | Render one Article draft through Lesser's canonical renderer/sanitizer when Lesser authorizes the caller as its owner or through an active reviewer grant. Body uses caller-authorized review state for the `DRAFT` preflight; revoked, unauthorized, or missing ids return `not_found`/404 with `details.lookup="id"`, and raw draft content is not returned by preview. |
 | `article_draft_review_submit` | Write | Submit an owner-scoped Article draft to one Lesser reviewer by creating or refreshing Lesser's revocable review grant. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
-| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated compact review queue. State mode defaults to compact metadata, while `view=standard` returns Lesser's complete, untruncated source and canonical rendering from the same authoritative snapshot as the hash/revision binding, grants, verdict staleness, and publish eligibility. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
+| `article_draft_review_read` | Read | With `draft_id`, read the caller-authorized Lesser review state; without it, list the caller's active paginated compact review queue. State mode defaults to compact metadata, while `view=standard` returns Lesser's complete, untruncated source and canonical rendering from the same authoritative snapshot as the hash/revision binding, grants, verdict staleness, and publish eligibility. Missing state lookups return `not_found`/404 with `details.lookup="draft_id"`. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
 | `article_draft_review_verdict` | Write | Submit Lesser's `APPROVED` or `CHANGES_REQUESTED` verdict with optional notes; Lesser records reviewer attribution and remains the publish-gate authority. Every MCP-created Article draft is agent-generated, so Lesser requires unanimous current approval from every active reviewer plus active approval from the configured instance principal before publishing. |
-| `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor ids return not found and success returns the canonical published Article ID and URL. |
-| `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. |
-| `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. |
+| `article_draft_publish` | Write | Publish an owner-scoped Article draft belonging to the authenticated actor through Lesser CMS; cross-actor or missing draft ids return `not_found`/404 with `details.lookup="id"`, and success returns the canonical published Article ID and URL. |
+| `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. Missing ids return `not_found`/404 with `details.lookup="id"`. |
+| `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. Missing records return `not_found`/404 with `details.lookup` equal to the caller's actual field (`id` or `slug`). |
 | `article_list` | Read | List the authenticated actor's published Article refs through Lesser CMS; defaults compact. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
@@ -1548,7 +1548,8 @@ index/ref pages and expand only the items they need:
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
   draft id as a final published Article id. Authoring mutations and publish remain owner-scoped. In addition to
   `article_draft_review_read`, an actively granted reviewer can use `article_draft_get` and
-  `article_draft_preview`; Lesser remains the authorization authority and revoked/absent grants fail as not found.
+  `article_draft_preview`; Lesser remains the authorization authority and revoked/absent grants fail as `not_found`/404
+  with `details.lookup="id"`.
 - `article_draft_preview({"id":"<draft-id>"})` calls Lesser's additive `draftPreview(id: ID!)` GraphQL field and
   returns Lesser-rendered, sanitized Article HTML. Compact view defaults to a bounded `renderedHtmlPreview` plus
   byte metadata; `view:"standard"` is the explicit expansion for full `renderedHtml`. Renderer failures surface as
@@ -1562,7 +1563,11 @@ index/ref pages and expand only the items they need:
 - `article_list({"limit":10})` lists the authenticated actor's published Article refs with compact defaults and
   `article_get(view=standard)` expansion metadata. `article_get` may read by canonical `id`/URL or by `slug`; `id`
   is preferred when available. `article_update` updates bounded scalar content fields and does not expose slug mutation,
-  because canonical published Article slugs/URLs are stable in the Lesser M1 contract.
+  because canonical published Article slugs/URLs are stable in the Lesser M1 contract. `article_get` missing lookups
+  return `not_found`/404 with `details.lookup` echoing the request field (`id` or `slug`), `article_update` returns
+  the same shape with `details.lookup="id"`, and the owner/reviewer sibling reads `article_draft_get`,
+  `article_draft_update`, `article_draft_preview`, `article_draft_review_read`, and `article_draft_publish` return
+  `details.lookup="id"`, `"id"`, `"id"`, `"draft_id"`, and `"id"` respectively on missing record paths.
 
 ### Named-counterpart DM workflow
 
