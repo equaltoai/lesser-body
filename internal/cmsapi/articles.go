@@ -32,7 +32,9 @@ type Article struct {
 }
 
 // ArticleNotFoundError reports a missing published article lookup in a way the
-// MCP tool layer can classify without parsing free-form error text.
+// MCP tool layer can classify without parsing free-form error text. Lookup
+// names the caller-visible input field (`id` or `slug`), not an inferred value
+// shape.
 type ArticleNotFoundError struct {
 	Lookup string
 	Value  string
@@ -139,7 +141,7 @@ func (c *Client) UpdateArticle(ctx context.Context, bearerToken string, id strin
 		return nil, err
 	}
 	if data.UpdateArticle == nil {
-		return nil, fmt.Errorf("updateArticle returned no article")
+		return nil, &ArticleNotFoundError{Lookup: "id", Value: id}
 	}
 	return data.UpdateArticle, nil
 }
@@ -163,7 +165,7 @@ func (c *Client) GetArticle(ctx context.Context, bearerToken string, id string, 
 		return nil, err
 	}
 	if data.Article == nil {
-		return nil, &ArticleNotFoundError{Lookup: articleLookup(id), Value: id}
+		return nil, &ArticleNotFoundError{Lookup: "id", Value: id}
 	}
 	return data.Article, nil
 }
@@ -246,12 +248,4 @@ func articleFields(includeContent bool) string {
 		fields += " content"
 	}
 	return fields
-}
-
-func articleLookup(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
-		return "url"
-	}
-	return "id"
 }

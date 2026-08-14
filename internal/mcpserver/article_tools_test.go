@@ -66,7 +66,7 @@ func TestArticleDraftGetUsesCallerAuthorizedReviewAfterOwnerLookupNotFound(t *te
 		w.Header().Set("Content-Type", "application/json")
 		switch op.OperationName {
 		case "BodyArticleDraft":
-			_, _ = w.Write([]byte(`{"data":{"draft":null},"errors":[{"message":"draft not found","path":["draft"],"extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+			_, _ = w.Write([]byte(`{"data":{"draft":null}}`))
 		case "BodyArticleDraftReview":
 			_, _ = fmt.Fprintf(w, `{"data":{"draftReview":{"draftId":"draft-1","ownerId":"author","title":"Review me","slug":"review-me","content":%q,"renderedHtml":"<h1>Review me</h1>","renderErrors":[],"contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-08-09T12:00:00Z","createdAt":"2026-08-09T11:00:00Z","contentHash":"sha256:review","revision":4,"activeReviewerIds":["reviewer"],"publishEligible":false,"publishBlockingReasons":["REVIEW_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"}],"grant":{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"},"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":["REVIEW_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`, source)
 		default:
@@ -197,7 +197,7 @@ func TestArticleDraftPreviewDelegatesOwnerOrActiveReviewerAuthorizationToLesser(
 		switch op.OperationName {
 		case "BodyArticleDraftReview":
 			if op.Variables["id"] == "draft-revoked" {
-				_, _ = w.Write([]byte(`{"data":{"draftReview":null},"errors":[{"message":"draft review not found","path":["draftReview"],"extensions":{"code":"NOT_FOUND","http_status":404}}]}`))
+				_, _ = w.Write([]byte(`{"data":{"draftReview":null}}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":{"draftReview":{"draftId":"draft-1","contentFormat":"MARKDOWN","status":"DRAFT","updatedAt":"2026-08-09T12:00:00Z","createdAt":"2026-08-09T11:00:00Z","contentHash":"sha256:review","revision":4,"activeReviewerIds":["reviewer"],"publishEligible":false,"publishBlockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false,"grantCount":1,"grantsTruncated":false,"grants":[],"grant":{"reviewerId":"reviewer","grantedAt":"2026-08-09T11:30:00Z","status":"ACTIVE"},"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":[],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`))
@@ -238,8 +238,94 @@ func TestArticleDraftPreviewDelegatesOwnerOrActiveReviewerAuthorizationToLesser(
 	if revoked == nil || !revoked.IsError {
 		t.Fatalf("revoked reviewer preview = %+v", revoked)
 	}
+	revokedPayload := toolErrorPayloadForTest(t, revoked)
+	revokedDetails, _ := revokedPayload["details"].(map[string]any)
+	if revokedPayload["code"] != "not_found" || intFromAny(revokedPayload["status"]) != http.StatusNotFound ||
+		revokedDetails["lookup"] != "id" || revokedDetails["tool"] != "article_draft_preview" {
+		t.Fatalf("revoked preview payload = %#v, details = %#v", revokedPayload, revokedDetails)
+	}
 	if len(operations) != 3 || operations[0] != "BodyArticleDraftReview" || operations[1] != "BodyArticleDraftPreview" || operations[2] != "BodyArticleDraftReview" {
 		t.Fatalf("preview must use Lesser's caller-authorized review preflight and grant-aware draftPreview, operations = %+v", operations)
+	}
+}
+
+func TestArticleDraftUpdateReturnsNotFoundForTypedMissingOwnerLookup(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		if op.OperationName != "BodyArticleDraft" {
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+		_, _ = w.Write([]byte(`{"data":{"draft":null}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftUpdate(articleDraftTestContext(), json.RawMessage(`{"id":"draft-missing","title":"Updated"}`))
+	if err != nil {
+		t.Fatalf("article_draft_update: %v", err)
+	}
+	payload := toolErrorPayloadForTest(t, result)
+	if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+		t.Fatalf("error payload = %#v, want not_found/404", payload)
+	}
+	details, _ := payload["details"].(map[string]any)
+	if details["lookup"] != "id" || details["tool"] != "article_draft_update" {
+		t.Fatalf("error details = %#v, want lookup=id tool=article_draft_update", details)
+	}
+	if len(operations) != 1 || operations[0] != "BodyArticleDraft" {
+		t.Fatalf("update preflight operations = %+v, want only BodyArticleDraft", operations)
+	}
+}
+
+func TestArticleDraftPublishReturnsNotFoundForTypedMissingOwnerLookup(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		if op.OperationName != "BodyArticleDraft" {
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+		_, _ = w.Write([]byte(`{"data":{"draft":null}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftPublish(articleDraftTestContext(), json.RawMessage(`{"id":"draft-missing"}`))
+	if err != nil {
+		t.Fatalf("article_draft_publish: %v", err)
+	}
+	payload := toolErrorPayloadForTest(t, result)
+	if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+		t.Fatalf("error payload = %#v, want not_found/404", payload)
+	}
+	details, _ := payload["details"].(map[string]any)
+	if details["lookup"] != "id" || details["tool"] != "article_draft_publish" {
+		t.Fatalf("error details = %#v, want lookup=id tool=article_draft_publish", details)
+	}
+	if len(operations) != 1 || operations[0] != "BodyArticleDraft" {
+		t.Fatalf("publish preflight operations = %+v, want only BodyArticleDraft", operations)
 	}
 }
 

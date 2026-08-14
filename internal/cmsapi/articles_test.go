@@ -146,7 +146,7 @@ func TestGetArticleMissingReturnsArticleNotFoundErrorForIDAndURL(t *testing.T) {
 		wantLookup string
 	}{
 		{name: "id", locator: "article-123", wantLookup: "id"},
-		{name: "url", locator: "https://example.com/articles/missing", wantLookup: "url"},
+		{name: "canonical url in id field", locator: "https://example.com/articles/missing", wantLookup: "id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

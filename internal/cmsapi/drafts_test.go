@@ -3,6 +3,7 @@ package cmsapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,6 +154,28 @@ func TestArticleDraftPreviewOperationBuildsM45GraphQLContract(t *testing.T) {
 	}
 	if strings.Contains(query, "draft(id:") {
 		t.Fatalf("preview query must use draftPreview contract, got %s", query)
+	}
+}
+
+func TestGetArticleDraftMissingReturnsDraftNotFoundError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"draft":null}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL)
+	got, err := client.GetArticleDraft(context.Background(), "token", "missing-draft", true)
+	if got != nil {
+		t.Fatalf("GetArticleDraft = %+v, want nil on missing draft", got)
+	}
+
+	var notFound *DraftNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("GetArticleDraft error = %T %v, want *DraftNotFoundError", err, err)
+	}
+	if notFound.Lookup != "id" || notFound.Value != "missing-draft" {
+		t.Fatalf("DraftNotFoundError = %+v, want lookup=%q value=%q", notFound, "id", "missing-draft")
 	}
 }
 

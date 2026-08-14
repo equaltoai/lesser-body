@@ -65,7 +65,7 @@ func TestArticleGetReturnsCleanNotFoundForMissingSlugIDAndURL(t *testing.T) {
 		wantLookup string
 	}{
 		{name: "missing by id", args: `{"id":"article-123"}`, wantOp: "BodyArticle", wantLookup: "id"},
-		{name: "missing by url", args: `{"id":"https://example.com/articles/missing"}`, wantOp: "BodyArticle", wantLookup: "url"},
+		{name: "missing by canonical url in id field", args: `{"id":"https://example.com/articles/missing"}`, wantOp: "BodyArticle", wantLookup: "id"},
 		{name: "missing by slug", args: `{"slug":"missing-slug"}`, wantOp: "BodyArticleBySlug", wantLookup: "slug"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,6 +84,62 @@ func TestArticleGetReturnsCleanNotFoundForMissingSlugIDAndURL(t *testing.T) {
 			}
 			if len(operations) != before+1 || operations[before].OperationName != tc.wantOp {
 				t.Fatalf("operations = %+v, want trailing op %q", operations, tc.wantOp)
+			}
+		})
+	}
+}
+
+func TestArticleUpdateReturnsCleanNotFoundForMissingCanonicalIDAndURL(t *testing.T) {
+	var operations []cmsapi.Operation
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want exact caller bearer", got)
+			http.Error(w, "unexpected bearer", http.StatusInternalServerError)
+			return
+		}
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		if op.OperationName != "BodyUpdateArticle" {
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+		_, _ = w.Write([]byte(`{"data":{"updateArticle":null}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{name: "missing by id", args: `{"id":"article-123","title":"Updated"}`},
+		{name: "missing by canonical url in id field", args: `{"id":"https://example.com/articles/missing","title":"Updated"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(operations)
+			result, err := handleArticleUpdate(articleDraftTestContext(), json.RawMessage(tc.args))
+			if err != nil {
+				t.Fatalf("handleArticleUpdate: %v", err)
+			}
+			payload := toolErrorPayloadForTest(t, result)
+			if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+				t.Fatalf("error payload = %#v, want not_found/404", payload)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["lookup"] != "id" || details["tool"] != "article_update" {
+				t.Fatalf("error details = %#v, want lookup=id tool=article_update", details)
+			}
+			if len(operations) != before+1 || operations[before].OperationName != "BodyUpdateArticle" {
+				t.Fatalf("operations = %+v, want trailing op %q", operations, "BodyUpdateArticle")
 			}
 		})
 	}

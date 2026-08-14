@@ -249,6 +249,46 @@ func TestArticleDraftReviewStandardStateTransportsExactLesserSnapshot(t *testing
 	}
 }
 
+func TestArticleDraftReviewReadReturnsNotFoundForTypedMissingState(t *testing.T) {
+	var operations []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Errorf("decode operation: %v", err)
+			http.Error(w, "invalid operation", http.StatusBadRequest)
+			return
+		}
+		operations = append(operations, op.OperationName)
+		w.Header().Set("Content-Type", "application/json")
+		if op.OperationName != "BodyArticleDraftReview" {
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+		_, _ = w.Write([]byte(`{"data":{"draftReview":null}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftReviewRead(articleDraftTestContext(), json.RawMessage(`{"draft_id":"draft-missing"}`))
+	if err != nil {
+		t.Fatalf("article_draft_review_read: %v", err)
+	}
+	payload := toolErrorPayloadForTest(t, result)
+	if payload["code"] != "not_found" || intFromAny(payload["status"]) != http.StatusNotFound {
+		t.Fatalf("error payload = %#v, want not_found/404", payload)
+	}
+	details, _ := payload["details"].(map[string]any)
+	if details["lookup"] != "draft_id" || details["tool"] != "article_draft_review_read" {
+		t.Fatalf("error details = %#v, want lookup=draft_id tool=article_draft_review_read", details)
+	}
+	if len(operations) != 1 || operations[0] != "BodyArticleDraftReview" {
+		t.Fatalf("operations = %+v, want only BodyArticleDraftReview", operations)
+	}
+}
+
 func TestArticleDraftReviewDefaultQueueFitsDefaultBudget(t *testing.T) {
 	budget := reviewOutputBudget(0)
 	for _, tc := range []struct {

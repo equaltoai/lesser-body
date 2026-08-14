@@ -44,6 +44,21 @@ type Draft struct {
 	UpdatedAt       string  `json:"updatedAt,omitempty"`
 }
 
+// DraftNotFoundError reports a missing ARTICLE draft lookup in a way the MCP
+// tool layer can classify without parsing free-form error text. Lookup names
+// the caller-visible input field (`id`).
+type DraftNotFoundError struct {
+	Lookup string
+	Value  string
+}
+
+func (e *DraftNotFoundError) Error() string {
+	if e == nil {
+		return "draft not found"
+	}
+	return fmt.Sprintf("draft %q not found", e.Value)
+}
+
 // DraftPreview is Lesser's canonical ARTICLE draft preview contract. The HTML
 // is rendered and sanitized by Lesser; body never renders draft source locally.
 type DraftPreview struct {
@@ -180,7 +195,7 @@ func (c *Client) GetArticleDraft(ctx context.Context, bearerToken string, id str
 		return nil, err
 	}
 	if data.Draft == nil {
-		return nil, fmt.Errorf("draft %q not found", id)
+		return nil, &DraftNotFoundError{Lookup: "id", Value: id}
 	}
 	return data.Draft, nil
 }
