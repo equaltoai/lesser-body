@@ -178,6 +178,13 @@ func TestActorMCPOAuthDeadSessionWriteCallExecutesExactlyOnce(t *testing.T) {
 }
 
 func TestActorMCPOAuthDeadSessionSSEStreamIsNotRebound(t *testing.T) {
+	previousLogger := slog.Default()
+	var logOutput strings.Builder
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logOutput, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
 	t.Setenv("MCP_SESSION_TABLE", "")
 	t.Setenv("MCP_STREAM_TABLE", "")
 	t.Setenv("MCP_TASK_TABLE", "")
@@ -210,10 +217,14 @@ func TestActorMCPOAuthDeadSessionSSEStreamIsNotRebound(t *testing.T) {
 			"last-event-id":        {"event-from-dead-session"},
 		},
 	})
-	assertActorSessionInvalidTokenResponse(t, resp)
+	assertSessionNotFound404(t, resp)
+	if got := firstHeader(resp.Headers, "cache-control"); got != "no-store" {
+		t.Fatalf("dead OAuth SSE cache-control = %q, want no-store", got)
+	}
 	if got := firstHeader(resp.Headers, "mcp-session-id"); got != "" {
 		t.Fatalf("dead SSE resume was rebound to session %q", got)
 	}
+	assertSanitizedSessionNotFoundAudit(t, logOutput.String(), "agent1", "dead-stream-session", token)
 }
 
 func TestOAuthSessionRebindLeavesUnauthenticatedDeadSessionAs404(t *testing.T) {
@@ -323,44 +334,13 @@ func assertSessionNotFound404(t testing.TB, resp apptheory.Response) {
 		t.Fatalf("session-not-found body changed: %s", string(resp.Body))
 	}
 	if got := firstHeader(resp.Headers, "www-authenticate"); got != "" {
-		t.Fatalf("non-OAuth 404 gained WWW-Authenticate: %q", got)
+		t.Fatalf("session-not-found 404 gained WWW-Authenticate: %q", got)
+	}
+	if got := firstHeader(resp.Headers, "mcp-www-authenticate"); got != "" {
+		t.Fatalf("session-not-found 404 gained MCP-WWW-Authenticate: %q", got)
 	}
 	if got := firstHeader(resp.Headers, "mcp-session-id"); got != "" {
 		t.Fatalf("non-OAuth 404 gained mcp-session-id: %q", got)
-	}
-}
-
-func assertActorSessionInvalidTokenResponse(t testing.TB, resp apptheory.Response) {
-	t.Helper()
-
-	if resp.Status != 401 {
-		t.Fatalf("dead session status = %d, want 401; body = %s", resp.Status, string(resp.Body))
-	}
-	const wantChallenge = `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"`
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != wantChallenge {
-		t.Fatalf("WWW-Authenticate = %q, want %q", got, wantChallenge)
-	}
-	if expose := firstHeader(resp.Headers, "access-control-expose-headers"); !strings.Contains(strings.ToLower(expose), "www-authenticate") {
-		t.Fatalf("access-control-expose-headers = %q, want www-authenticate", expose)
-	}
-
-	var out struct {
-		Error struct {
-			Code    string         `json:"code"`
-			Message string         `json:"message"`
-			Details map[string]any `json:"details"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		t.Fatalf("decode unauthorized response: %v; body = %s", err, string(resp.Body))
-	}
-	if out.Error.Code != "app.unauthorized" || out.Error.Message != "unauthorized" {
-		t.Fatalf("unauthorized error shape = %+v", out.Error)
-	}
-	if out.Error.Details["reason"] != "mcp_session_not_found" ||
-		out.Error.Details["authAction"] != "reauthorize" ||
-		out.Error.Details["refreshRequired"] != true {
-		t.Fatalf("unauthorized session recovery details = %+v", out.Error.Details)
 	}
 }
 
@@ -410,5 +390,41 @@ func assertSanitizedSessionRebindAudit(t testing.TB, logs string, forbiddenValue
 	}
 	if count != 1 {
 		t.Fatalf("rebind audit event count = %d, want 1; logs = %s", count, logs)
+	}
+}
+
+func assertSanitizedSessionNotFoundAudit(t testing.TB, logs string, forbiddenValues ...string) {
+	t.Helper()
+
+	count := 0
+	scanner := bufio.NewScanner(strings.NewReader(logs))
+	for scanner.Scan() {
+		var event map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatalf("decode structured log event: %v; line = %s", err, scanner.Text())
+		}
+		if event["msg"] != "mcp session not found" {
+			continue
+		}
+		count++
+		if event["principal_type"] != string(auth.PrincipalTypeOAuthToken) ||
+			event["reason"] != "mcp_session_not_found" {
+			t.Fatalf("session-not-found audit fields = %+v", event)
+		}
+		serialized, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal session-not-found audit event: %v", err)
+		}
+		for _, forbiddenValue := range forbiddenValues {
+			if forbiddenValue != "" && strings.Contains(string(serialized), forbiddenValue) {
+				t.Fatalf("session-not-found audit exposed sensitive value %q: %s", forbiddenValue, serialized)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan structured logs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("session-not-found audit event count = %d, want 1; logs = %s", count, logs)
 	}
 }

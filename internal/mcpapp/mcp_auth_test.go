@@ -1,6 +1,7 @@
 package mcpapp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -52,6 +53,10 @@ func TestUnauthorizedMCPResponse_EmitsBridgeChallengeHeaders(t *testing.T) {
 		t.Fatalf("expected 401 response, got %+v", resp)
 	}
 	requireBridgeChallengeHeaders(t, resp)
+	if got := firstHeader(resp.Headers, "www-authenticate"); strings.Contains(got, `error=`) {
+		t.Fatalf("absent bearer challenge gained an error parameter: %q", got)
+	}
+	assertMCPUnauthorizedDetails(t, resp, "authorize", false, "missing_or_invalid_bearer")
 }
 
 func TestOAuthUnauthorizedMCPResponse_EmitsBridgeChallengeHeaders(t *testing.T) {
@@ -67,6 +72,30 @@ func TestOAuthUnauthorizedMCPResponse_EmitsBridgeChallengeHeaders(t *testing.T) 
 	if got := firstHeader(resp.Headers, "www-authenticate"); !strings.Contains(got, `scope="read write"`) {
 		t.Fatalf("challenge missing scope: %q", got)
 	}
+	if got := firstHeader(resp.Headers, "www-authenticate"); strings.Contains(got, `error=`) {
+		t.Fatalf("absent bearer challenge gained an error parameter: %q", got)
+	}
+	assertMCPUnauthorizedDetails(t, resp, "authorize", false, "missing_or_invalid_bearer")
+}
+
+func TestOAuthUnauthorizedMCPResponse_RejectedBearerSignalsRefresh(t *testing.T) {
+	ctx := mcpAuthChallengeTestContext()
+	ctx.Request.Headers["authorization"] = []string{"Bearer rejected-token"}
+
+	resp := OAuthUnauthorizedMCPResponse(
+		ctx,
+		"https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1",
+		MCPAuthorizationScopes,
+	)
+	if resp == nil || resp.Status != 401 {
+		t.Fatalf("expected 401 response, got %+v", resp)
+	}
+	requireBridgeChallengeHeaders(t, resp)
+	const wantChallenge = `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"`
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != wantChallenge {
+		t.Fatalf("www-authenticate = %q, want %q", got, wantChallenge)
+	}
+	assertMCPUnauthorizedDetails(t, resp, "refresh_or_reauthorize", true, "invalid_oauth_bearer")
 }
 
 func TestInsufficientScopeMCPResponse_EmitsBridgeChallengeHeaders(t *testing.T) {
@@ -98,5 +127,27 @@ func TestClientCompatibilityHeaders_ExposesBridgeChallengeHeader(t *testing.T) {
 	}
 	if !strings.Contains(expose, "www-authenticate") {
 		t.Fatalf("access-control-expose-headers = %q, want www-authenticate", expose)
+	}
+}
+
+func assertMCPUnauthorizedDetails(t testing.TB, resp *apptheory.Response, wantAction string, wantRefresh bool, wantReason string) {
+	t.Helper()
+
+	var payload struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		t.Fatalf("decode unauthorized response: %v; body = %s", err, string(resp.Body))
+	}
+	if got := payload.Error.Details["authAction"]; got != wantAction {
+		t.Fatalf("authAction = %v, want %q; details = %+v", got, wantAction, payload.Error.Details)
+	}
+	if got := payload.Error.Details["refreshRequired"]; got != wantRefresh {
+		t.Fatalf("refreshRequired = %v, want %t; details = %+v", got, wantRefresh, payload.Error.Details)
+	}
+	if got := payload.Error.Details["reason"]; got != wantReason {
+		t.Fatalf("reason = %v, want %q; details = %+v", got, wantReason, payload.Error.Details)
 	}
 }

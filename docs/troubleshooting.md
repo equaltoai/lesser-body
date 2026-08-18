@@ -83,6 +83,8 @@ Fix:
 - Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
 - Route-level `401` responses, tool errors, and resource payloads all use the same detail fields so client logic can make
   the same retry decision in each surface.
+- For route-level `401`, a bare challenge means no bearer was presented; `error="invalid_token"` with
+  `refreshRequired=true` means Body rejected a presented bearer.
 
 ## 403 `app.forbidden` on `tools/call`
 
@@ -246,6 +248,7 @@ Fix:
 Symptoms:
 
 - Server issues a new `mcp-session-id` frequently.
+- An SSE `GET` or `Last-Event-ID` resume returns `404` with `{"error":"session not found"}`.
 
 Common causes:
 
@@ -255,6 +258,8 @@ Common causes:
 Fix:
 
 - Always call `initialize` first and store the returned `mcp-session-id`.
+- On the spec-shaped dead-session `404`, discard the old session id and re-initialize; do not refresh credentials solely
+  because the MCP session died.
 - Enable session table in infra (recommended for production).
 
 ## MCP tasks are missing, inaccessible, or stuck

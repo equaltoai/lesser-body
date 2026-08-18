@@ -377,17 +377,18 @@ Body keeps the recovery wrapper directly around the raw AppTheory handler and in
 middleware, which makes those gates run once on the original request and makes the replay the sole runtime dispatch.
 
 SSE `GET` listeners and `Last-Event-ID` resumes are deliberately not rebound because stream/event state belongs to the
-old session. An authenticated OAuth `GET` with a dead session retains the surface-specific HTTP `401 invalid_token`
-challenge:
+old session. A `GET` with a dead session retains AppTheory's spec-shaped lifecycle response:
 
 ```text
-WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<this surface's protected-resource metadata URL>", scope="read write"
+HTTP/1.1 404 Not Found
+{"error":"session not found"}
 ```
 
-The 24-hour TTL remains a load/continuity mitigation rather than an authorization mechanism. Non-OAuth and
-unauthenticated recovery contexts keep AppTheory's spec-shaped `404` session-not-found response. MCP `2026-07-28`
-requests remain stateless: they neither mint nor consume a session id and never enter the rebind path. Transparent
-session rebind does not refresh or replace the caller's valid OAuth token.
+This is not a credential failure: clients should discard the dead session and re-initialize rather than refresh or
+re-authorize. The 24-hour TTL remains a load/continuity mitigation rather than an authorization mechanism. MCP
+`2026-07-28` requests remain stateless: they neither mint nor consume a session id and never enter the rebind path.
+Authenticated dead-session responses retain `Cache-Control: no-store`. Transparent session rebind does not refresh or
+replace the caller's valid OAuth token.
 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
@@ -396,6 +397,11 @@ initialization:
   `error.details`
 - tools return MCP error results with `isError=true` and `structuredContent.error`
 - Lesser-backed resources return JSON content with a top-level `error` object
+
+Route-level challenges distinguish discovery from credential rejection. A request without a bearer receives the bare
+`Bearer` discovery challenge with no `error` parameter. A presented bearer that Body rejects receives
+`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. Both challenge classes retain
+the canonical `www-authenticate` header, the byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
 
 For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
 the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's

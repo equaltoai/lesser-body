@@ -358,7 +358,7 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -388,7 +388,7 @@ func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for audience mismatch, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }

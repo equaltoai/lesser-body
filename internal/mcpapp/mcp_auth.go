@@ -72,6 +72,9 @@ func unauthorizedMCPResponse(ctx *apptheory.Context) *apptheory.Response {
 // for an MCP resource. Instance-plane handlers use it to preserve the same
 // authorization bootstrap contract as actor-scoped MCP handlers.
 func OAuthUnauthorizedMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
+	if auth.BearerCredentialClassFromRequest(ctx) == auth.BearerCredentialPresented {
+		return rejectedOAuthBearerMCPResponse(ctx, resourceMetadataURL, scopes)
+	}
 	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
 		ResourceMetadata: resourceMetadataURL,
 		Scope:            scopes,
@@ -84,7 +87,7 @@ func OAuthUnauthorizedMCPResponse(ctx *apptheory.Context, resourceMetadataURL st
 	})
 }
 
-func actorSessionNotFoundMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
+func rejectedOAuthBearerMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
 	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
 		Error:            "invalid_token",
 		ResourceMetadata: resourceMetadataURL,
@@ -92,18 +95,10 @@ func actorSessionNotFoundMCPResponse(ctx *apptheory.Context, resourceMetadataURL
 	}, map[string]any{
 		"source":          "lesser_body",
 		"reauthorize":     true,
-		"authAction":      "reauthorize",
+		"authAction":      "refresh_or_reauthorize",
 		"refreshRequired": true,
-		"reason":          "mcp_session_not_found",
+		"reason":          "invalid_oauth_bearer",
 	})
-}
-
-func genericSessionNotFoundMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
-	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
-		Error:            "invalid_token",
-		ResourceMetadata: resourceMetadataURL,
-		Scope:            scopes,
-	}, nil)
 }
 
 func unauthorizedMCPResponseWithOptions(

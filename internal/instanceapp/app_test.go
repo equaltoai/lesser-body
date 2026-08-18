@@ -884,10 +884,16 @@ func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 	for _, surface := range []string{instanceapp.SurfacePtah, instanceapp.SurfaceBa} {
 		path := "/instance/" + surface + "/mcp"
 		for _, tc := range []struct {
-			name    string
-			headers map[string][]string
+			name      string
+			headers   map[string][]string
+			wantError string
 		}{
 			{name: "missing bearer", headers: nil},
+			{
+				name:      "rejected bearer",
+				headers:   map[string][]string{"authorization": {"Bearer rejected-token"}},
+				wantError: `error="invalid_token", `,
+			},
 			{name: "x402 headers are not auth", headers: map[string][]string{
 				"lesser-x402-grant-id":   {"grant-123"},
 				"lesser-x402-grant":      {"grant-token"},
@@ -905,7 +911,7 @@ func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 					t.Fatalf("status = %d, want 401; body = %s", resp.Status, string(resp.Body))
 				}
 				metadataURL := "https://api.example.com/.well-known/oauth-protected-resource/instance/" + surface + "/mcp"
-				wantChallenge := `Bearer resource_metadata="` + metadataURL + `", scope="read write"`
+				wantChallenge := `Bearer ` + tc.wantError + `resource_metadata="` + metadataURL + `", scope="read write"`
 				if got := firstHeader(resp.Headers, "www-authenticate"); got != wantChallenge {
 					t.Fatalf("WWW-Authenticate = %q, want %q", got, wantChallenge)
 				}
