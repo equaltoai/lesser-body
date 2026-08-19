@@ -239,7 +239,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: 542150d2095d85f196994792f10609556cf677e9868d298075e02c541504da1c.zip
+        S3Key: 94e195a0eec7761d902922a1724e89a3f6c94d7884b4c1a9d2553442845bb84c.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -285,7 +285,7 @@ Resources:
       - McpHandlerServiceRole4A94FED3
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/McpHandler/Resource
-      aws:asset:path: asset.542150d2095d85f196994792f10609556cf677e9868d298075e02c541504da1c.zip
+      aws:asset:path: asset.94e195a0eec7761d902922a1724e89a3f6c94d7884b4c1a9d2553442845bb84c.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   McpServerApiAccessLogs6D5B26D2:
@@ -1364,7 +1364,7 @@ Resources:
         - arm64
       Code:
         S3Bucket: cdk-hnb659fds-assets-000000000000-us-east-1
-        S3Key: f4958fee2deb3daff4d853efe0d0bdfaaa74180ed416e860e2c8d3940959e636.zip
+        S3Key: d8774668a953ec6633b6f44c628b22095a61e9cfa2bed322f2710d26104754a7.zip
       Environment:
         Variables:
           SERVICE_VERSION: dev
@@ -1400,7 +1400,7 @@ Resources:
       - InstanceMcpHandlerServiceRoleF472AD79
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/InstanceMcpHandler/Resource
-      aws:asset:path: asset.f4958fee2deb3daff4d853efe0d0bdfaaa74180ed416e860e2c8d3940959e636.zip
+      aws:asset:path: asset.d8774668a953ec6633b6f44c628b22095a61e9cfa2bed322f2710d26104754a7.zip
       aws:asset:is-bundled: false
       aws:asset:property: Code
   InstanceMcpLambdaArnParam:
@@ -1461,7 +1461,7 @@ Resources:
   CDKMetadata:
     Type: AWS::CDK::Metadata
     Properties:
-      Analytics: v2:deflate64:H4sIAAAAAAAA/5WRwU4jMQyGn4WeUy+0sAduBQSXXVG1e1sh5MmYIe0kGY0dulWUd18lATGVuHDy59j+88tewOLnEs7P8MBz3e7nvWkgbgX1XuGBn2OPtmkR4n1wWox36vbFTXlNozXMxrukDFqIG99TLpS49r3Rx9JXKClePiMzCcMqB8VLiDdB70lukElVzAOV/saZNf+Mm13Ppg6zNV5CKTHU1lUQf0c9CT02O9LCs/T0rvdpY5p/Q7sObAWFLLkinVTvO4b4y3cPow9DVv/gpHAwHQod8AhxQyyrwZSlfOJKax+cqDsaen/Mqvl1km0Fu7LJChtiH0ZNZU0fybtm5d8kr77NT5WSao8OrW8biH+wqWcpkBSzhXwVHNGS0JhUOUf+yrhOTUsnnz0GGYKo28Di7ZcuTkvr0b+ZlsbsOinnW4Id/3hbXMLFFZyf7diY+RicGEuwqfE/HQsQYJICAAA=
+      Analytics: v2:deflate64:H4sIAAAAAAAA/5WSsU4DMQyGn4XOaYAWGNhaECwgqpYNocqXM0faS3I6O5QqyrujJK24SixM/hwnv3/ZmcjJzbW8OIMdjVW9Hbe6kmHFoLYCdrQOLZiqBhkevFWsnRV3H3bIC+yNJtLORqHByLB0LaZCjgvXarXP9zJFQdM1ECGTnKUgaCrD3Kst8hwIRcH0oNBbGBn9re3odjR0mKzRVOYSyXJ15tndY4uML9UGFdMovh/0fm0M839olwcrBkaDNktH0bqGZHhyzWPvfJfUjxwFdLoBxh3sZVgi8azTeSi/OFPKecviHrvW7ZNqOh1kK4YmT7LAEsn5XmEe0zE5aBZ+Rv50dToqFEW9t2BcXcnwClVZS4YoiIxMW4EeDDL2UeR1pFbaNmJYOmn24rnzLO48sTN/ujgtLXr3pWvsk+sorKtRbuj8a3IlL9Ov25DW495b1gblssQfThs8+5ICAAA=
     Metadata:
       aws:cdk:path: lesser-dev-lesser-body/CDKMetadata/Default
 Parameters:
