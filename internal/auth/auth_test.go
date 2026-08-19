@@ -83,6 +83,42 @@ func TestHook_RejectsManagedInstanceKeyFallbackByDefault(t *testing.T) {
 	}
 }
 
+func TestBearerCredentialClassFromRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string][]string
+		want    BearerCredentialClass
+	}{
+		{
+			name: "absent",
+			want: BearerCredentialAbsent,
+		},
+		{
+			name: "non bearer authorization",
+			headers: map[string][]string{
+				"authorization": {"Basic credentials"},
+			},
+			want: BearerCredentialAbsent,
+		},
+		{
+			name: "presented bearer",
+			headers: map[string][]string{
+				"Authorization": {"Bearer rejected-token"},
+			},
+			want: BearerCredentialPresented,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &apptheory.Context{Request: apptheory.Request{Headers: tt.headers}}
+			if got := BearerCredentialClassFromRequest(ctx); got != tt.want {
+				t.Fatalf("BearerCredentialClassFromRequest() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateTokenAudience(t *testing.T) {
 	t.Run("matches configured resource", func(t *testing.T) {
 		claims := &Claims{
