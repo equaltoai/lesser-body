@@ -3,8 +3,15 @@
 ## Proposed change
 
 Refine the authenticated MCP transport contract so an absent bearer keeps the bare OAuth discovery challenge, a
-presented-but-rejected bearer adds RFC 6750 `invalid_token` plus refresh-oriented details, and a dead session on an SSE
-`GET` retains AppTheory's `404 {"error":"session not found"}` lifecycle signal.
+generically rejected bearer adds RFC 6750 `invalid_token` plus refresh-oriented details, a valid-signature bearer for
+the wrong resource uses `invalid_token` without inviting refresh, and a dead session on an SSE `GET` retains
+AppTheory's `404 {"error":"session not found"}` lifecycle signal.
+
+| Challenge class | RFC 6750 error | `details.reason` | `details.authAction` | `details.refreshRequired` |
+|-----------------|----------------|------------------|----------------------|---------------------------|
+| Absent bearer | omitted | `missing_or_invalid_bearer` | `authorize` | `false` |
+| Generic rejected bearer | `invalid_token` | `invalid_oauth_bearer` | `refresh_or_reauthorize` | `true` |
+| Audience mismatch | `invalid_token` | `audience_mismatch` | `reauthorize` | `false` |
 
 ## Surfaces affected
 
@@ -20,7 +27,8 @@ presented-but-rejected bearer adds RFC 6750 `invalid_token` plus refresh-oriente
 
 Additive, backward-compatible RFC 6750 refinement for bearer rejection, plus restoration of the MCP session-lifecycle
 signal. No challenge parameter is removed or re-meaninged. Clients that only react to HTTP status continue to receive a
-failure; clients that inspect the challenge or session response can now choose refresh versus re-initialize correctly.
+failure; clients that inspect the challenge or session response can now choose refresh, re-authorization for the correct
+resource, or re-initialization correctly.
 
 ## MCP client class enumeration
 
@@ -28,7 +36,8 @@ failure; clients that inspect the challenge or session response can now choose r
 
 - Affected: yes.
 - Surface used: OAuth protected-resource discovery and Streamable HTTP MCP transport.
-- Expected impact: rejected credentials can enter refresh/re-authorization; dead SSE sessions can re-initialize.
+- Expected impact: rejected credentials can enter refresh/re-authorization, wrong-resource tokens request
+  re-authorization without a futile refresh loop, and dead SSE sessions can re-initialize.
 - Coordination: release note and contract tests; no client update is required to preserve existing behavior.
 
 ### Kimi
@@ -48,7 +57,7 @@ failure; clients that inspect the challenge or session response can now choose r
 ### Anthropic AgentCore
 
 - Affected: yes where it consumes the authenticated actor or instance transport.
-- Expected impact: same standards-based refresh and re-initialize distinction.
+- Expected impact: same standards-based refresh, wrong-resource re-authorization, and re-initialize distinction.
 - Coordination: release-note advisory and staged interoperability probe.
 
 ### Other MCP clients
@@ -80,8 +89,9 @@ failure; clients that inspect the challenge or session response can now choose r
 ## Rollout mechanics
 
 - Consumer validation: dev/lab, then deploy-stage staging where used, then live under operator authorization.
-- Rollback signals: missing bare discovery challenge, missing `invalid_token` on rejected bearer, a dead-session SSE
-  request returning credential-shaped `401`, or loss of either challenge header/no-store directive.
+- Rollback signals: missing bare discovery challenge, missing `invalid_token` on rejected bearer, audience mismatch
+  inviting refresh, a dead-session SSE request returning credential-shaped `401`, or loss of either challenge
+  header/no-store directive.
 - Discovery and OAuth metadata regeneration: not required because neither published shape changes.
 
 ## Audit-log implications
@@ -92,9 +102,10 @@ identity, session ids, bearer tokens, or request bodies.
 
 ## Release-notes content
 
-MCP authorization challenges now distinguish missing credentials from rejected bearer tokens. Rejected tokens include
-RFC 6750 `invalid_token` and refresh-oriented details; dead SSE sessions return the MCP runtime's `404 session not
-found` signal so clients re-initialize instead of re-authorizing.
+MCP authorization challenges now distinguish missing credentials, generically rejected bearer tokens, and tokens for
+the wrong resource. Generic rejections include RFC 6750 `invalid_token` and refresh-oriented details; audience
+mismatches retain `invalid_token` but request re-authorization without refresh. Dead SSE sessions return the MCP
+runtime's `404 session not found` signal so clients re-initialize instead of re-authorizing.
 
 ## Proposed next skill
 

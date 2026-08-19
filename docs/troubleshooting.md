@@ -83,8 +83,9 @@ Fix:
 - Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
 - Route-level `401` responses, tool errors, and resource payloads all use the same detail fields so client logic can make
   the same retry decision in each surface.
-- For route-level `401`, a bare challenge means no bearer was presented; `error="invalid_token"` with
-  `refreshRequired=true` means Body rejected a presented bearer.
+- For route-level `401`, a bare challenge means no bearer was presented. A generic rejected bearer returns
+  `error="invalid_token"` with `refreshRequired=true`; `reason="audience_mismatch"` keeps `invalid_token` but returns
+  `authAction="reauthorize"` and `refreshRequired=false` because refreshing cannot change the token resource.
 
 ## 403 `app.forbidden` on `tools/call`
 

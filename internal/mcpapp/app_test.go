@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -390,6 +391,24 @@ func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
 	}
 	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+	var out struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		t.Fatalf("unmarshal audience-mismatch response: %v", err)
+	}
+	wantDetails := map[string]any{
+		"source":          "lesser_body",
+		"reauthorize":     true,
+		"authAction":      "reauthorize",
+		"refreshRequired": false,
+		"reason":          "audience_mismatch",
+	}
+	if !reflect.DeepEqual(out.Error.Details, wantDetails) {
+		t.Fatalf("audience-mismatch details = %#v, want %#v", out.Error.Details, wantDetails)
 	}
 }
 

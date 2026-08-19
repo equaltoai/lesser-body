@@ -56,7 +56,11 @@ func WithMCPAuthorization(next apptheory.Handler) apptheory.Handler {
 		}
 		if principal := auth.PrincipalFromContext(ctx); principal != nil && principal.Type == auth.PrincipalTypeOAuthToken {
 			if err := auth.ValidateTokenAudience(principal.Claims, expectedAudience); err != nil {
-				return unauthorizedMCPResponse(ctx), nil
+				return audienceMismatchOAuthBearerMCPResponse(
+					ctx,
+					protectedResourceMetadataURLForRequest(ctx),
+					MCPAuthorizationScopes,
+				), nil
 			}
 		}
 		ctx.AuthIdentity = identity
@@ -98,6 +102,20 @@ func rejectedOAuthBearerMCPResponse(ctx *apptheory.Context, resourceMetadataURL 
 		"authAction":      "refresh_or_reauthorize",
 		"refreshRequired": true,
 		"reason":          "invalid_oauth_bearer",
+	})
+}
+
+func audienceMismatchOAuthBearerMCPResponse(ctx *apptheory.Context, resourceMetadataURL string, scopes string) *apptheory.Response {
+	return unauthorizedMCPResponseWithOptions(ctx, mcpAuthorizationChallengeOptions{
+		Error:            "invalid_token",
+		ResourceMetadata: resourceMetadataURL,
+		Scope:            scopes,
+	}, map[string]any{
+		"source":          "lesser_body",
+		"reauthorize":     true,
+		"authAction":      "reauthorize",
+		"refreshRequired": false,
+		"reason":          "audience_mismatch",
 	})
 }
 

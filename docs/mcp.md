@@ -399,9 +399,12 @@ initialization:
 - Lesser-backed resources return JSON content with a top-level `error` object
 
 Route-level challenges distinguish discovery from credential rejection. A request without a bearer receives the bare
-`Bearer` discovery challenge with no `error` parameter. A presented bearer that Body rejects receives
-`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. Both challenge classes retain
-the canonical `www-authenticate` header, the byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
+`Bearer` discovery challenge with no `error` parameter. A presented bearer that Body generically rejects receives
+`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. A valid-signature bearer for
+the wrong MCP resource retains `error="invalid_token"` but returns `reason="audience_mismatch"`,
+`authAction="reauthorize"`, and `refreshRequired=false` so a client obtains a token for the correct resource instead of
+refreshing into the same audience again. All challenge classes retain the canonical `www-authenticate` header, the
+byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
 
 For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
 the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's
@@ -417,7 +420,8 @@ Article GraphQL failures promote Lesser's canonical `extensions.code` and `exten
 omit valid extensions fall back to `lesser_cms_graphql_error`/`502`. Raw handler errors never escape as JSON-RPC
 `-32000` failures.
 
-Clients should refresh or re-authorize, then retry the MCP operation.
+Clients should follow `authAction`: refresh or re-authorize a generic rejected bearer, but re-authorize without refresh
+for `reason="audience_mismatch"`, then retry the MCP operation.
 
 Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth
 fields aligned:
