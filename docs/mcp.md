@@ -400,11 +400,25 @@ initialization:
 
 Route-level challenges distinguish discovery from credential rejection. A request without a bearer receives the bare
 `Bearer` discovery challenge with no `error` parameter. A presented bearer that Body generically rejects receives
-`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. A valid-signature bearer for
-the wrong MCP resource retains `error="invalid_token"` but returns `reason="audience_mismatch"`,
+`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. On the actor plane
+(`/mcp/{actor}`) only, a valid-signature bearer for the wrong actor MCP resource retains `error="invalid_token"` but
+returns `reason="audience_mismatch"`,
 `authAction="reauthorize"`, and `refreshRequired=false` so a client obtains a token for the correct resource instead of
-refreshing into the same audience again. All challenge classes retain the canonical `www-authenticate` header, the
-byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
+refreshing into the same audience again. Those `401` challenge classes retain the canonical `www-authenticate` header,
+the byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
+
+The Ptah/Ba instance plane has a separate principal gate. On `/instance/ptah/mcp` or `/instance/ba/mcp`, a bearer with
+a valid signature but the wrong instance-resource audience returns HTTP `403` with this response shape, not a `401`
+`audience_mismatch` challenge:
+
+```json
+{
+  "error": {
+    "code": "instance_principal_not_allowed",
+    "message": "instance-plane MCP requires an account-holder OAuth token for this instance resource"
+  }
+}
+```
 
 For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
 the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's
@@ -420,8 +434,10 @@ Article GraphQL failures promote Lesser's canonical `extensions.code` and `exten
 omit valid extensions fall back to `lesser_cms_graphql_error`/`502`. Raw handler errors never escape as JSON-RPC
 `-32000` failures.
 
-Clients should follow `authAction`: refresh or re-authorize a generic rejected bearer, but re-authorize without refresh
-for `reason="audience_mismatch"`, then retry the MCP operation.
+Clients should follow `authAction`: refresh or re-authorize a generic rejected bearer, but on the actor plane
+re-authorize without refresh for `reason="audience_mismatch"`, then retry the MCP operation. Instance-plane clients
+should treat `403` `instance_principal_not_allowed` as a principal/resource mismatch rather than waiting for an
+`audience_mismatch` challenge.
 
 Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth
 fields aligned:
