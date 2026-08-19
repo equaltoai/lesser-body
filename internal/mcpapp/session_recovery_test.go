@@ -230,7 +230,7 @@ func TestActorMCPOAuthDeadSessionSSEStreamIsNotRebound(t *testing.T) {
 func TestOAuthSessionRebindLeavesUnauthenticatedDeadSessionAs404(t *testing.T) {
 	server := mcpruntime.NewServer("unauthenticated-session-test", "dev")
 	app := apptheory.New()
-	app.Post("/mcp", mcpapp.WithOAuthSessionRecovery(server.Handler(), nil, mcpapp.MCPAuthorizationScopes))
+	app.Post("/mcp", mcpapp.WithOAuthSessionRecovery(server.Handler()))
 
 	body, err := json.Marshal(&mcpruntime.Request{
 		JSONRPC: "2.0",

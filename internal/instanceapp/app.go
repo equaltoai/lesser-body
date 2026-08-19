@@ -66,13 +66,7 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 }
 
 func instanceMCPHandler(server *mcpruntime.Server, endpointTemplate string, surface string) apptheory.Handler {
-	runtimeHandler := mcpapp.WithOAuthSessionRecovery(
-		server.Handler(),
-		func(ctx *apptheory.Context) string {
-			return instanceProtectedResourceMetadataURLForRequest(ctx, endpointTemplate, surface)
-		},
-		mcpapp.MCPAuthorizationScopes,
-	)
+	runtimeHandler := mcpapp.WithOAuthSessionRecovery(server.Handler())
 	return withInstanceMCPAuthorization(requireInstancePrincipal(withToolContext(runtimeHandler)), endpointTemplate, surface)
 }
 

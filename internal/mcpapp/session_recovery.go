@@ -30,11 +30,7 @@ var errSessionRebindInitialize = errors.New("MCP session rebind initialize faile
 // GET is never rebound because it is the SSE listener/resume transport and its
 // event state belongs to the old session. Every GET caller retains AppTheory's
 // spec-shaped 404 so MCP clients re-initialize instead of refreshing OAuth.
-func WithOAuthSessionRecovery(
-	next apptheory.Handler,
-	_ func(*apptheory.Context) string,
-	_ string,
-) apptheory.Handler {
+func WithOAuthSessionRecovery(next apptheory.Handler) apptheory.Handler {
 	return withOAuthSessionRecovery(next)
 }
 
