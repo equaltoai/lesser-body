@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-19T00:52:49.746616Z",
+  "generated_at": "2026-08-21T11:00:31.553811Z",
   "git": {
-    "head": "79fca105625afb4dad684cc5a2cb4772692f49fa",
-    "head_tree": "2d113f07c7125af5f6f3070daa2df3c09914d2de",
-    "merge_base_origin_staging": "99ab1e5d032da238d4b70449d2b43e1255ef600e",
-    "ref": "theorymcp/equaltoai/body/issue-575-auth-challenge-semantics",
+    "head": "826ccc89d4809b7a759e0745c0e6113cb1a17414",
+    "head_tree": "b9865d8a127543adf8f16ac7b43a17099419de16",
+    "merge_base_origin_staging": "dca147b67c0fe590f9399450faa209ee2b4b0b38",
+    "ref": "theorymcp/equaltoai/body/issue-577-framework-alignment-final",
     "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
