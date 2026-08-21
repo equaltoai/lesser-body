@@ -15,7 +15,7 @@
     "release-template": "npm run build && node dist/bin/release-template.js"
   },
   "dependencies": {
-    "@theory-cloud/apptheory-cdk": "https://github.com/theory-cloud/AppTheory/releases/download/v3.0.2/theory-cloud-apptheory-cdk-3.0.2.tgz",
+    "@theory-cloud/apptheory-cdk": "https://github.com/theory-cloud/AppTheory/releases/download/v3.1.1/theory-cloud-apptheory-cdk-3.1.1.tgz",
     "aws-cdk-lib": "2.265.0",
     "constructs": "10.8.0"
   },
@@ -23,10 +23,5 @@
     "@types/node": "25.5.0",
     "aws-cdk": "2.1130.0",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "@theory-cloud/apptheory-cdk": {
-      "aws-cdk-lib": "$aws-cdk-lib"
-    }
   }
 }
