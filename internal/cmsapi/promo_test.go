@@ -371,3 +371,31 @@ func TestClassifyPromoOwnerSelfReview(t *testing.T) {
 		t.Fatalf("owner self-review must classify distinctly, got %v", err)
 	}
 }
+
+// TestClassifyPromoFailurePreservesStructuredExtensions pins the extensions
+// lane: an extensions-bearing AppError (code/http_status — e.g. Lesser's
+// per-request act-as FORBIDDEN on a lapsed share grant) bypasses message-sentinel
+// classification and stays a raw GraphQLErrors so the tool layer renders its real
+// code/status instead of a message-classified Unknown/502.
+func TestClassifyPromoFailurePreservesStructuredExtensions(t *testing.T) {
+	client := newPromoTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"no active agent share grant authorizes this caller","path":["promoPackage"],"extensions":{"code":"FORBIDDEN","http_status":403}}]}`))
+	})
+	_, err := client.GetPromoPackage(context.Background(), "token", "pkg-1")
+	var classified *PromoPackageClassifiedError
+	if errors.As(err, &classified) {
+		t.Fatalf("extensions-bearing AppError must not be message-classified, got %+v", classified)
+	}
+	var gqlErr *GraphQLErrors
+	if !errors.As(err, &gqlErr) {
+		t.Fatalf("extensions-bearing AppError must stay a raw GraphQLErrors, got %T: %v", err, err)
+	}
+	if len(gqlErr.Errors) != 1 {
+		t.Fatalf("errors = %+v", gqlErr.Errors)
+	}
+	ext := gqlErr.Errors[0].Extensions
+	if ext["code"] != "FORBIDDEN" || ext["http_status"] != float64(403) {
+		t.Fatalf("extensions must be preserved verbatim, got %+v", ext)
+	}
+}

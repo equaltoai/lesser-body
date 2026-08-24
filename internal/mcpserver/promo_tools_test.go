@@ -685,3 +685,52 @@ func TestPromoActorIsolation(t *testing.T) {
 		}
 	})
 }
+
+// TestPromoActAsGrantLapseRenders403Lane pins the extensions lane through the
+// handler envelope: Lesser's per-request act-as FORBIDDEN (a routine expired or
+// revoked share grant) carries structured AppError extensions and must render
+// 403 with Lesser's code — mirroring the article surface's
+// articleDraftGraphQLErrorContract behavior — never a message-classified
+// Unknown/502.
+func TestPromoActAsGrantLapseRenders403Lane(t *testing.T) {
+	newMediaGraphQLStub(t, map[string]string{
+		"BodyPromoPackage": `{"data":null,"errors":[{"message":"no active agent share grant authorizes this caller","path":["promoPackage"],"extensions":{"code":"FORBIDDEN","http_status":403}}]}`,
+	})
+	result, err := handlePromoState(promoTestContext(), json.RawMessage(`{"package_id":"pkg-1"}`))
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("lapsed act-as grant must fail, got %+v", result)
+	}
+	errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+	if got := errorPayload["code"]; got != "FORBIDDEN" {
+		t.Fatalf("code = %v, want FORBIDDEN", got)
+	}
+	if got := errorPayload["status"]; got != 403 {
+		t.Fatalf("status = %v, want 403", got)
+	}
+}
+
+// TestPromoExtensionsErrorSurfacesRealStatus pins the extensions lane for an
+// extensions-bearing non-promo AppError: it renders its real status/code, never
+// the message-classified Unknown/502 fallback.
+func TestPromoExtensionsErrorSurfacesRealStatus(t *testing.T) {
+	newMediaGraphQLStub(t, map[string]string{
+		"BodyPromoPackage": `{"data":null,"errors":[{"message":"act-as resolution failed","path":["promoPackage"],"extensions":{"code":"INTERNAL","http_status":500}}]}`,
+	})
+	result, err := handlePromoRead(promoTestContext(), json.RawMessage(`{"package_id":"pkg-1"}`))
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("extensions error must fail, got %+v", result)
+	}
+	errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+	if got := errorPayload["code"]; got != "INTERNAL" {
+		t.Fatalf("code = %v, want INTERNAL", got)
+	}
+	if got := errorPayload["status"]; got != 500 {
+		t.Fatalf("status = %v, want 500", got)
+	}
+}

@@ -331,6 +331,16 @@ func classifyPromoFailure(err error) error {
 	if len(gqlErr.Errors) == 0 {
 		return err
 	}
+	// Lesser's structured AppError extensions (code/http_status) are the
+	// authoritative lane signal: a per-request act-as FORBIDDEN, a validation
+	// BAD_REQUEST, or any other AppError must surface its real code/status (the
+	// tool layer renders these through the shared articleDraftGraphQLErrorContract
+	// lane), never fall through to message-sentinel classification or render
+	// Unknown/502. Message classification exists for Lesser's extension-less
+	// plain errors only.
+	if promoHasStructuredExtensions(gqlErr) {
+		return err
+	}
 	message := strings.TrimSpace(gqlErr.Errors[0].Message)
 	class, statusID, reasons := classifyPromoMessage(message)
 	return &PromoPackageClassifiedError{
@@ -339,6 +349,26 @@ func classifyPromoFailure(err error) error {
 		StatusID:        statusID,
 		BlockingReasons: reasons,
 	}
+}
+
+// promoHasStructuredExtensions reports whether any GraphQL error carries
+// Lesser's structured AppError extensions — a non-empty code string or a
+// 4xx/5xx http_status. Presence means the error is an AppError projection whose
+// extensions are the authoritative envelope signal; extension-less errors keep
+// the message-sentinel classification lane.
+func promoHasStructuredExtensions(gqlErr *GraphQLErrors) bool {
+	if gqlErr == nil {
+		return false
+	}
+	for _, item := range gqlErr.Errors {
+		if code, ok := item.Extensions["code"].(string); ok && strings.TrimSpace(code) != "" {
+			return true
+		}
+		if status, ok := item.Extensions["http_status"].(float64); ok && status >= 400 && status <= 599 {
+			return true
+		}
+	}
+	return false
 }
 
 type promoPackageResponse struct {
