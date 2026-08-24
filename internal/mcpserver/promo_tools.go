@@ -569,6 +569,8 @@ func promoReadResult(pkg *cmsapi.PromoPackage, maxOutputBytes int) (*mcpruntime.
 		payload["releasedStatusId"] = *pkg.ReleasedStatusID
 		payload["outboundPost"] = map[string]any{"statusId": *pkg.ReleasedStatusID}
 		payload["guidance"] = "The outbound post is live. Expand the released status id with post_get({\"id\":\"<releasedStatusId>\"}) to read the post."
+	} else if state == promoStateReleased {
+		payload["guidance"] = "Released; status id unavailable — lesser-side anomaly, see state details."
 	} else if state == promoStateReleasing {
 		payload["guidance"] = "PACKAGE_RELEASING: a release is mid-flight or crashed between reservation and stamp. Do NOT retry — an operator must reconcile the reservation per " + promoRunbookPath + "."
 	} else {

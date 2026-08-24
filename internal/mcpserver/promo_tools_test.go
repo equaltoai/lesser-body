@@ -306,6 +306,39 @@ func TestPromoReadNotReleasedGuidesToState(t *testing.T) {
 	}
 }
 
+// TestPromoReadReleasedWithoutStatusIDSurfacesAnomaly drives promo_read on a
+// package Lesser marks RELEASED but whose releasedStatusId is missing: the
+// guidance names the released state and the lesser-side anomaly instead of
+// contradicting it with "not released yet".
+func TestPromoReadReleasedWithoutStatusIDSurfacesAnomaly(t *testing.T) {
+	pkg := promoFixturePackage(cmsapi.PromoPackageStatusReleased, true, "")
+	// ReleasedStatusID stays nil: the released-without-id edge.
+	newMediaGraphQLStub(t, map[string]string{
+		"BodyPromoPackage": promoPackageStubBody(t, pkg),
+	})
+	result, err := handlePromoRead(promoTestContext(), json.RawMessage(`{"package_id":"pkg-1"}`))
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("promo_read failed: result=%+v err=%v", result, err)
+	}
+	data := structuredData(t, result)
+	if got := data["state"]; got != promoStateReleased {
+		t.Fatalf("state = %v, want %q", got, promoStateReleased)
+	}
+	if _, ok := data["releasedStatusId"]; ok {
+		t.Fatalf("missing status id must not surface a releasedStatusId: %+v", data)
+	}
+	guidance, _ := data["guidance"].(string)
+	lower := strings.ToLower(guidance)
+	for _, marker := range []string{"released", "status id unavailable", "anomaly"} {
+		if !strings.Contains(lower, strings.ToLower(marker)) {
+			t.Fatalf("guidance must mention %q, got %q", marker, guidance)
+		}
+	}
+	if strings.Contains(lower, "not released") {
+		t.Fatalf("guidance must not claim the package is not released, got %q", guidance)
+	}
+}
+
 // TestPromoReleaseErrorLanes pins the structured error envelope for the release
 // lanes: the stamp failure (post EXISTS) and the releasing reservation both map
 // to operator reconciliation with the runbook cited and retryable=false; the
