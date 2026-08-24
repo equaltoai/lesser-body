@@ -263,6 +263,8 @@ type setDraftEditorialMediaResponse struct {
 // MintUploadGrant requests a one-time, hash-bound, presigned-companion upload
 // grant from Lesser. Lesser owns mint admission (image/* only, bounded size,
 // 64-lowercase-hex sha256); body transports the caller's bearer untouched.
+// Execute failures surface classified so the tool layer renders the stable
+// body-owned mint lane.
 func (c *Client) MintUploadGrant(ctx context.Context, bearerToken, contentType string, maxSizeBytes int, sha256 string) (*UploadGrant, error) {
 	contentType = strings.TrimSpace(contentType)
 	sha256 = strings.ToLower(strings.TrimSpace(sha256))
@@ -281,7 +283,11 @@ func (c *Client) MintUploadGrant(ctx context.Context, bearerToken, contentType s
 		Variables:     map[string]any{"input": map[string]any{"contentType": contentType, "maxSizeBytes": maxSizeBytes, "sha256": sha256}},
 	})
 	if err != nil {
-		return nil, err
+		// Classified for symmetry with finalize/media_state: lesser mint
+		// validation failures carry AppError extensions, but the wrap renders
+		// every failure through the same stable body-owned lane and keeps the
+		// not-found classification honest if lesser ever returns it on mint.
+		return nil, classifyUploadGrantFailure(err)
 	}
 	var data mintUploadGrantResponse
 	if err := unmarshalData(resp, &data); err != nil {
@@ -327,7 +333,10 @@ func (c *Client) FinalizeUploadGrant(ctx context.Context, bearerToken, grantID s
 
 // GetUploadGrant inspects one grant's lifecycle state (owner-scoped). While the
 // grant is MINTED, Lesser re-presigns the PUT URL, so the returned URL is not
-// stable; clients must not cache-bust on it.
+// stable; clients must not cache-bust on it. Lesser reports an unknown or
+// unowned grant as an extensions-free GraphQL error ("upload grant not found"),
+// which is classified here so the media_state grant lane renders
+// media_not_found/404 instead of the unclassified 502 lane.
 func (c *Client) GetUploadGrant(ctx context.Context, bearerToken, grantID string) (*UploadGrant, error) {
 	grantID = strings.TrimSpace(grantID)
 	if grantID == "" {
@@ -339,7 +348,11 @@ func (c *Client) GetUploadGrant(ctx context.Context, bearerToken, grantID string
 		Variables:     map[string]any{"grantId": grantID},
 	})
 	if err != nil {
-		return nil, err
+		// Lesser's owner-scoped uploadGrant query returns ErrUploadGrantNotFound
+		// ("upload grant not found") as an extensions-free GraphQL error for an
+		// unknown or unowned grant; classify so the media_state grant lane renders
+		// media_not_found/404 instead of the unclassified 502 lane.
+		return nil, classifyUploadGrantFailure(err)
 	}
 	var data uploadGrantQueryResponse
 	if err := unmarshalData(resp, &data); err != nil {

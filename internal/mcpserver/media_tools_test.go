@@ -235,8 +235,9 @@ func TestMediaTwoStepUploadContract(t *testing.T) {
 }
 
 // TestMediaFinalizeErrorLanes pins the classified failure envelope for each
-// two-step lane: expired, failed digest, not-minted, and the residual N1
-// object-missing class (size-abort / never-PUT) rendered as re-mint guidance.
+// two-step lane: expired, failed digest, not-minted, object-empty, and the
+// residual N1 object-missing class (size-abort / never-PUT) rendered as re-mint
+// guidance.
 func TestMediaFinalizeErrorLanes(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -274,6 +275,13 @@ func TestMediaFinalizeErrorLanes(t *testing.T) {
 			wantCode:    mediaErrorUploadNotFinalized,
 			wantStatus:  http.StatusConflict,
 			guidance:    []string{"re-mint", "size-abort", "retry finalize once"},
+		},
+		{
+			name:        "object_empty",
+			gqlResponse: `{"data":null,"errors":[{"message":"uploaded object is empty","path":["finalizeUploadGrant"]}]}`,
+			wantCode:    mediaErrorUploadNotFinalized,
+			wantStatus:  http.StatusConflict,
+			guidance:    []string{"PUT", "retry finalize once"},
 		},
 		{
 			name:        "not_found_unowned",
@@ -470,6 +478,67 @@ func TestMediaStateModes(t *testing.T) {
 	})
 }
 
+// TestMediaStateGrantErrorLanes pins the classified failure envelope for the
+// media_state grant mode (N1). Lesser's uploadGrant query is not a CMS root
+// field, so ErrUploadGrantNotFound ("upload grant not found") surfaces as an
+// EXTENSIONS-FREE GraphQL error for an unknown or unowned grant; body must
+// classify it to media_not_found/404 instead of the unclassified
+// lesser_cms_graphql_error/502 lane. The draft-binding lanes above are
+// untouched by this mode.
+func TestMediaStateGrantErrorLanes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		gqlResponse string
+		wantCode    string
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "not_found_unowned",
+			gqlResponse: `{"data":null,"errors":[{"message":"upload grant not found","path":["uploadGrant"]}]}`,
+			wantCode:    mediaErrorNotFound,
+			wantStatus:  http.StatusNotFound,
+		},
+		{
+			name:        "unavailable_stays_unknown_lane",
+			gqlResponse: `{"data":null,"errors":[{"message":"upload grant service is unavailable","path":["uploadGrant"]}]}`,
+			wantCode:    "lesser_cms_graphql_error",
+			wantStatus:  http.StatusBadGateway,
+			wantMessage: "upload grant service is unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newMediaGraphQLStub(t, map[string]string{
+				"BodyUploadGrant": tc.gqlResponse,
+			})
+			result, err := handleMediaState(mediaTestContext(), json.RawMessage(`{"grant_id":"grant-1"}`))
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if result == nil || !result.IsError {
+				t.Fatalf("expected an error result, got %+v", result)
+			}
+			errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+			if errorPayload == nil {
+				t.Fatalf("structuredContent.error missing: %#v", result.StructuredContent)
+			}
+			if got := errorPayload["code"]; got != tc.wantCode {
+				t.Fatalf("error code = %v, want %v", got, tc.wantCode)
+			}
+			if got := normalizeErrorStatus(errorPayload["status"]); got != tc.wantStatus {
+				t.Fatalf("error status = %v, want %v", got, tc.wantStatus)
+			}
+			if tc.wantMessage != "" {
+				details, _ := errorPayload["details"].(map[string]any)
+				upstream, _ := details["upstream"].(string)
+				if !strings.Contains(upstream, tc.wantMessage) {
+					t.Fatalf("details.upstream must mention %q, got %q", tc.wantMessage, upstream)
+				}
+			}
+		})
+	}
+}
+
 func TestMediaReadMintsGrantScopedExactAssetURL(t *testing.T) {
 	newMediaGraphQLStub(t, map[string]string{
 		"BodyDraftEditorialMediaAccess": `{"data":{"draftEditorialMediaAccess":{"mediaId":"media-1","url":"https://media.example.com/exact.png?signature=review","expiresAt":"2026-08-24T12:30:00Z","contentHash":"sha256:` + strings.Repeat("a", 64) + `"}}}`,
@@ -538,6 +607,69 @@ func TestMediaMintValidationFailures(t *testing.T) {
 	}
 	if len(stub.operations()) != 0 {
 		t.Fatalf("client-side validation must not call lesser, ops=%v", stub.operations())
+	}
+}
+
+// TestMediaMintLesserErrorLanes pins the mint lane's classified envelope for
+// lesser-side failures (client-side pre-validation is covered by
+// TestMediaMintValidationFailures). Mint's Execute error is classified for
+// symmetry with finalize/media_state: lesser validation failures render the
+// stable media_mint_invalid/422 lane with the upstream message preserved, while
+// unmapped failures stay on the generic lesser_cms_graphql_error/502 lane
+// instead of leaking a raw GraphQL envelope.
+func TestMediaMintLesserErrorLanes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		gqlResponse string
+		wantCode    string
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "validation_unsupported_type",
+			gqlResponse: `{"data":null,"errors":[{"message":"unsupported content type","path":["mintUploadGrant"]}]}`,
+			wantCode:    mediaErrorMintInvalid,
+			wantStatus:  http.StatusUnprocessableEntity,
+			wantMessage: "unsupported content type",
+		},
+		{
+			name:        "unavailable_stays_unknown_lane",
+			gqlResponse: `{"data":null,"errors":[{"message":"upload grant service is unavailable","path":["mintUploadGrant"]}]}`,
+			wantCode:    "lesser_cms_graphql_error",
+			wantStatus:  http.StatusBadGateway,
+			wantMessage: "upload grant service is unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newMediaGraphQLStub(t, map[string]string{
+				"BodyMintUploadGrant": tc.gqlResponse,
+			})
+			result, err := handleUploadGrantMint(mediaTestContext(), json.RawMessage(`{"content_type":"image/png","max_size_bytes":1024,"sha256":"`+strings.Repeat("a", 64)+`"}`))
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if result == nil || !result.IsError {
+				t.Fatalf("expected an error result, got %+v", result)
+			}
+			errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+			if errorPayload == nil {
+				t.Fatalf("structuredContent.error missing: %#v", result.StructuredContent)
+			}
+			if got := errorPayload["code"]; got != tc.wantCode {
+				t.Fatalf("error code = %v, want %v", got, tc.wantCode)
+			}
+			if got := normalizeErrorStatus(errorPayload["status"]); got != tc.wantStatus {
+				t.Fatalf("error status = %v, want %v", got, tc.wantStatus)
+			}
+			if tc.wantMessage != "" {
+				details, _ := errorPayload["details"].(map[string]any)
+				message, _ := details["message"].(string)
+				upstream, _ := details["upstream"].(string)
+				if !strings.Contains(message, tc.wantMessage) && !strings.Contains(upstream, tc.wantMessage) {
+					t.Fatalf("details must mention %q (message=%q upstream=%q)", tc.wantMessage, message, upstream)
+				}
+			}
+		})
 	}
 }
 
