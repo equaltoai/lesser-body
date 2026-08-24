@@ -78,6 +78,17 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 		},
 	},
 	{
+		Name: "promo packages",
+		Tools: []describeInterfaceTool{
+			{Name: "promo_compose", Use: "Stage a promo package (post text, published-article reference, ordered PUBLISHED asset ids) without publishing it."},
+			{Name: "promo_review_share", Use: "Share a promo package with one reviewer (7-day bounded grant); the reviewer's approval becomes required for release."},
+			{Name: "promo_review_submit", Use: "Record a hash-bound reviewer verdict carrying the content hash the reviewer actually inspected."},
+			{Name: "promo_state", Use: "Inspect a promo package's lifecycle state and approval matrix (owner or active reviewer grant)."},
+			{Name: "promo_release", Use: "Release an approved promo package: creates the outbound public/unlisted post with the exact approved PUBLISHED assets."},
+			{Name: "promo_read", Use: "Read a released promo package and its outbound post reference; follow the released status id with post_get."},
+		},
+	},
+	{
 		Name: "DMs and notifications",
 		Tools: []describeInterfaceTool{
 			{Name: "conversations_read", Use: "List direct-message conversations; use compact view as an index."},
@@ -203,6 +214,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → `article_draft_review_submit` → reviewer `article_draft_review_read` and `article_draft_review_verdict` → author re-reads review state and confirms every active reviewer verdict, principal approval, and Lesser publish eligibility → `article_draft_publish`.\n")
 	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer uses `article_draft_review_read`, `article_draft_get`, and `article_draft_preview` as needed → reviewer calls `article_draft_review_verdict`; Lesser authorizes every reviewer read from the active grant, and every MCP-created Article draft requires unanimous current reviewer approval plus active approval from the configured instance principal before publishing.\n")
 	out.WriteString("- Editorial media upload: `upload_grant_mint` (content_type `image/*`, size cap, sha256 of the intended bytes) → PUT the exact declared bytes to the returned presigned URL out-of-band → `upload_finalize` (one-time; verifies digest and size) → `draft_media_attach` with role and caption/credit/alt → `media_state` and `media_read` for review; an expired or failed grant requires a fresh `upload_grant_mint`.\n")
+	out.WriteString("- Promo package promotion: `promo_compose` (published-article reference, post text ≤ 5000 bytes, public/unlisted visibility, ordered PUBLISHED asset ids) → `promo_review_share` with each reviewer → reviewers `promo_state`/`promo_read` the package and `promo_review_submit` a hash-bound verdict → owner re-reads `promo_state` and confirms every requested approval plus principal approval (operator content doctrine) → `promo_release` → follow the surfaced status id with `post_get`. A releasing reservation (PACKAGE_RELEASING) is never retryable — an operator reconciles it per lesser's promo package release recovery runbook.\n")
 
 	out.WriteString("\n## Read-result budgeting and expansion\n")
 	out.WriteString("- When advertised by a tool, `view` selects the projection: `standard` preserves the compatibility shape, `compact`/`summary` bounds discovery context, and `full` is explicit audit/debug expansion.\n")

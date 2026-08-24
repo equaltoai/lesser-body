@@ -741,6 +741,12 @@ Scope key:
 | `draft_media_attach` | Write | Bind one admitted asset to an owner-scoped draft with role `HERO`/`INLINE`/`SOCIAL_CARD` and optional per-usage caption/credit/alt/focus through Lesser's `setDraftEditorialMedia` contract (full-list replace; Body applies the delta and returns Lesser's resulting binding list). Re-attaching replaces the usage; a rejected/unavailable asset stays unattached. |
 | `draft_media_detach` | Write | Unbind one asset from an owner-scoped draft's ordered media association; detaching an unbound `media_id` is a no-op returning the unchanged list. |
 | `draft_media_reorder` | Write | Replace an owner-scoped draft's full ordered media association with `media_ids` in the requested order; `media_ids` must name exactly the currently bound assets, and INLINE usages are re-indexed to their position in the new order. |
+| `promo_compose` | Write | Create a promo package or replace its content through Lesser's `composePromoPackage` contract: outbound post text (public/unlisted only), a published-article reference, and an ORDERED set of PUBLISHED media asset IDs (attachment order). Every content change re-hashes the package and stales prior approvals, so release stays blocked until the changed package is re-reviewed and re-authorized. Compose only stages content — it never publishes. Operator content doctrine: no content shall be published by agents without principal approval; additional approvals, once requested, are also required. Lesser owns admission (published-article ref, notes size limit, PUBLISHED-only assets). |
+| `promo_review_share` | Write | Share a promo package with one reviewer through Lesser's `sharePromoPackageForReview` contract, creating or refreshing the revocable 7-day review grant. Once requested, the reviewer's approval is REQUIRED for release — revocation cannot delete a required approval. |
+| `promo_review_submit` | Write | Record a hash-bound reviewer verdict through Lesser's `submitPromoPackageReview` contract. `content_hash` is REQUIRED and must carry the contentHash the reviewer actually inspected (returned by `promo_state`/`promo_read`): a recomposed package (hash mismatch) rejects the submit with `promo_review_content_changed`/409 instead of blessing unseen content. `APPROVED` or `CHANGES_REQUESTED` are the only verdicts. |
+| `promo_state` | Read | Inspect one promo package's lifecycle state and approval matrix through Lesser's `promoPackage` query (owner or active reviewer grant). Envelope states: `draft`, `approved`, `releasing`, `released` (plus `unknown`); also surfaces status, contentHash, active reviewers, grants/verdicts, release eligibility, and the blocking reasons (`REVIEW_APPROVAL_REQUIRED` / `PRINCIPAL_APPROVAL_REQUIRED` / `PRINCIPAL_APPROVAL_UNAVAILABLE` / `ASSET_MISSING` / `ASSET_NOT_PUBLISHED` / `ASSET_DIGEST_CHANGED` / `PACKAGE_RELEASED` / `PACKAGE_RELEASING`). Lesser filters grants/verdicts owner-or-self for non-owners; Body transports that filtered surface verbatim. `PACKAGE_RELEASED` means the package is already released (the review projection is read-only post-release); `PACKAGE_RELEASING` means a release is mid-flight or crashed — operator reconciliation, never retry. |
+| `promo_release` | Write | Release an approved promo package through Lesser's `releasePromoPackage` contract: creates the outbound public/unlisted post with the exact approved PUBLISHED assets and AI-authorship disclosure intact. Release is blocked with explicit reasons until every required reviewer approval and (where required) the instance principal's approval are current for the exact reviewed content. A failed release never blindly retries: a surfaced status id means the post EXISTS (`promo_release_reconcile_required`/409, runbook cited, never retry-safe); `PACKAGE_RELEASING` likewise. |
+| `promo_read` | Read | Read a released promo package and its outbound post reference through Lesser's `promoPackage` query (owner or active reviewer grant): the full package (post text, visibility, contentHash, assets), the released status id (the outbound post created by the release transition), and the review surface. A package that is not yet released returns its current lifecycle state instead. Follow the released status id with `post_get` to expand the outbound post. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
 | `post_favorite` | Write | Favorite a post. |
@@ -1828,6 +1834,100 @@ All seven default to a 24,000-byte final MCP-envelope budget when `max_output_by
 Grant creation is authorized by Lesser's `shareDraftForReview` contract. Body deliberately adds no local owner check:
 the CSR-010 `draftOwnedByAuthenticatedActor` post-response layer is intentionally not applied to
 `article_draft_review_submit`, unlike sibling draft tools, because Body must not re-derive Lesser's access decision.
+
+### Promo package workflow (M4)
+
+Body transports Lesser's M4 promo package contract: outbound post text plus an exact, ordered set of approved PUBLISHED
+media assets, promoting a published article through a public/unlisted post. The six promo tools forward the exact
+caller OAuth bearer to Lesser `POST /api/graphql`, are available in both drone and souled runtime profiles, and use
+structured-first responses with source `lesser_cms_graphql`. The operator content doctrine is binding: no content shall
+be published by agents without principal approval; additional approvals, once requested, are also required. Body
+transports the doctrine — Lesser enforces it at the release gate.
+
+| Tool | Required input | Optional input | Success `structuredContent.data` |
+|---|---|---|---|
+| `promo_compose` | `article_id: string`, `post_text: string` (≤ 5000 bytes), `visibility: public \| unlisted`, `asset_media_ids: string[]` (ordered, ≥ 1) | `package_id` (replace content), `max_output_bytes` | `tool`, `operation:"composed"`, `source`, `packageId`, `contentHash`, `package`, `guidance` |
+| `promo_review_share` | `package_id: string`, `reviewer: string` | `max_output_bytes` | `tool`, `operation:"shared"`, `source`, `packageId`, `review`, `guidance` |
+| `promo_review_submit` | `package_id: string`, `verdict: approved \| changes_requested`, `content_hash: string` (sha256 of the inspected content) | `notes`, `max_output_bytes` | `tool`, `operation:"verdict_submitted"`, `source`, `packageId`, `contentHash`, `review` |
+| `promo_state` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"state"`, `source`, `packageId`, `state`, `status`, `package`, `blockingReasons` where present, `guidance` |
+| `promo_release` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"released"`, `source`, `packageId`, `statusId`, `package`, `url` where present, `guidance` |
+| `promo_read` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"read"`, `source`, `packageId`, `state`, `status`, `package`, `releasedStatusId`/`outboundPost` when released, `guidance` |
+
+All six default to a 24,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted.
+
+Envelope states are derived strictly from Lesser-authoritative fields (pinned in `TestPromoEnvelopeStateMapping`):
+
+- `draft` — DRAFT with no current release eligibility (blocked approvals or assets).
+- `approved` — DRAFT whose every required approval and asset binding is current for the exact reviewed content.
+- `releasing` — the transient release reservation: a release is mid-flight or crashed between reservation and stamp.
+  Release and composition are refused; `PACKAGE_RELEASING` is surfaced as a blocking reason even when the review
+  projection omits it. This is operator reconciliation, NEVER retryable.
+- `released` — the outbound post exists (`releasedStatusId`).
+- `unknown` — an unrecognized Lesser status (fail-closed, not mapped to a permissive state).
+
+Error lanes (structured envelope, `details` always carries `source: "lesser_cms_graphql"`):
+
+- `promo_release_reconcile_required`/409 — the stamp failed after the post was created (a surfaced `details.statusId`
+  means the post EXISTS) or the `PACKAGE_RELEASING` reservation is held. `details.retryable: false`; `details.runbook`
+  cites the promo package release recovery runbook (`docs/operations/promo-package-release-recovery-runbook.md` in the
+  lesser repo, which owns the reconciliation writes). A retry would create a second public post.
+- `promo_release_approval_required`/409 — every required reviewer approval is not current; `details.blockingReasons`
+  carries the doctrine reasons; retryable after re-review.
+- `promo_release_principal_approval_required`/409 — a non-principal release needs an active current principal approval.
+- `promo_release_asset_unavailable`/409 — an asset can no longer serve the exact approved bytes
+  (`ASSET_MISSING`/`ASSET_NOT_PUBLISHED`/`ASSET_DIGEST_CHANGED`).
+- `promo_already_released`/409 — re-release is refused; read the package with `promo_read`.
+- `promo_review_content_changed`/409 — the submitted `content_hash` no longer matches (the package was recomposed after
+  inspection); re-read the current hash and re-inspect.
+- `promo_conflict`/409 — a concurrent change; retry after re-reading state.
+- `promo_owner_self_review`/422 — an owner cannot review their own package.
+- `promo_not_found`/404 — unknown or unauthorized package.
+- `promo_validation`/422 — Lesser rejected the request (published-article ref, notes size limit, visibility, asset set).
+
+Workflow:
+
+1. Compose the package. Every content change re-hashes the package and stales prior approvals:
+
+   ```json
+   {"tool":"promo_compose","arguments":{"article_id":"<canonical object URL>","post_text":"Launching!","visibility":"public","asset_media_ids":["<published media id>"]}}
+   ```
+
+   Keep the returned `contentHash`; it is the reviewed content's binding.
+
+2. Share with each reviewer (7-day bounded grant):
+
+   ```json
+   {"tool":"promo_review_share","arguments":{"package_id":"<package-id>","reviewer":"<reviewer username>"}}
+   ```
+
+   Once requested, the reviewer's approval is REQUIRED for release — revocation cannot delete a required approval.
+
+3. Reviewers inspect (`promo_state`/`promo_read`) and submit hash-bound verdicts carrying the hash they actually
+   inspected:
+
+   ```json
+   {"tool":"promo_review_submit","arguments":{"package_id":"<package-id>","verdict":"approved","content_hash":"<contentHash from promo_state>","notes":"Looks good"}}
+   ```
+
+   A recomposed package rejects the submit with `promo_review_content_changed`/409 instead of blessing unseen content.
+
+4. Re-read the approval matrix and confirm every required approval plus principal approval is current before releasing:
+
+   ```json
+   {"tool":"promo_state","arguments":{"package_id":"<package-id>"}}
+   ```
+
+   If a release is refused, `details.blockingReasons` names the doctrine reasons (`REVIEW_APPROVAL_REQUIRED` /
+   `PRINCIPAL_APPROVAL_REQUIRED` / `ASSET_*`).
+
+5. Release:
+
+   ```json
+   {"tool":"promo_release","arguments":{"package_id":"<package-id>"}}
+   ```
+
+   Success returns the created outbound post's `statusId`; expand it with `post_get`. A failed release never blindly
+   retries: a surfaced status id means the post EXISTS — reconcile per the runbook, never retry-safe.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with

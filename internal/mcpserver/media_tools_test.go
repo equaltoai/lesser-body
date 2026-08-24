@@ -478,6 +478,40 @@ func TestMediaStateModes(t *testing.T) {
 	})
 }
 
+// TestMediaStateDraftBindingRequestsAccessUrlMinting pins the M4 lesser F5
+// coordination: lesser's draftReview mints per-usage access URLs ONLY when the
+// caller passes includeAccessUrls:true (default false). Body's media_state
+// draft-mode read relies on that per-read URL (its corrected M3 docs promise
+// it), so the BodyDraftEditorialMedia query must carry the explicit opt-in and
+// the minted accessUrl/accessExpiresAt must surface through the tool.
+func TestMediaStateDraftBindingRequestsAccessUrlMinting(t *testing.T) {
+	usage := `{"mediaId":"media-1","role":"HERO","caption":"Launch artwork","state":"READY","accessUrl":"https://media.example.com/draft-1/media-1.png?signature=review","accessExpiresAt":"2026-08-24T12:30:00Z","contentHash":"sha256:` + strings.Repeat("a", 64) + `"}`
+	stub := newMediaGraphQLStub(t, map[string]string{
+		"BodyDraftEditorialMedia": `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` + usage + `],"activeReviewerIds":["reviewer"],"verdicts":[],"publishEligibility":{"eligible":false,"blockingReasons":["REVIEW_APPROVAL_REQUIRED"],"reviewersApproved":false,"principalApprovalRequired":true,"principalApproved":false}}}}`,
+	})
+	result, err := handleMediaState(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-1"}`))
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("binding state failed: %+v err=%v", result, err)
+	}
+	op := stub.lastBody("BodyDraftEditorialMedia")
+	if op == nil {
+		t.Fatalf("no BodyDraftEditorialMedia call observed")
+	}
+	if !strings.Contains(op.Query, "includeAccessUrls: true") {
+		t.Fatalf("BodyDraftEditorialMedia query must request access-url minting, got %s", op.Query)
+	}
+	data := structuredData(t, result)
+	usagePayload, _ := data["usage"].(map[string]any)
+	if usagePayload == nil {
+		t.Fatalf("media_state result missing usage: %+v", data)
+	}
+	accessURL, _ := usagePayload["accessUrl"].(string)
+	accessExpiresAt, _ := usagePayload["accessExpiresAt"].(string)
+	if !strings.HasPrefix(accessURL, "https://media.example.com/draft-1/media-1.png") || accessExpiresAt == "" {
+		t.Fatalf("media_state must surface the per-read accessUrl/accessExpiresAt, got accessUrl=%q accessExpiresAt=%q", accessURL, accessExpiresAt)
+	}
+}
+
 // TestMediaStateGrantErrorLanes pins the classified failure envelope for the
 // media_state grant mode (N1). Lesser's uploadGrant query is not a CMS root
 // field, so ErrUploadGrantNotFound ("upload grant not found") surfaces as an
