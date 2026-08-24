@@ -826,3 +826,151 @@ func draftMediaBindingsOutputSchema() json.RawMessage {
 		"additionalProperties":false
 	}`)
 }
+
+func promoComposeOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"contentHash":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","contentHash","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReviewShareOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"review":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","review"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReviewSubmitOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"contentHash":{"type":"string"},
+					"review":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","packageId","contentHash","review"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoStateOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
+					"status":{"type":"string","enum":["DRAFT","RELEASING","RELEASED"]},
+					"package":{"type":"object","additionalProperties":true},
+					"blockingReasons":{"type":"array","items":{"type":"string"}},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","state","status","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReleaseOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"statusId":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"url":{"type":"string"},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","statusId","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReadOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
+					"status":{"type":"string","enum":["DRAFT","RELEASING","RELEASED"]},
+					"package":{"type":"object","additionalProperties":true},
+					"releasedStatusId":{"type":"string"},
+					"outboundPost":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","state","status","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
