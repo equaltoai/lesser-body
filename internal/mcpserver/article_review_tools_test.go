@@ -12,7 +12,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func TestArticleDraftReviewToolContract(t *testing.T) {

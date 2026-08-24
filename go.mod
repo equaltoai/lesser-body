@@ -10,8 +10,8 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.1
-	github.com/theory-cloud/apptheory/v3 v3.1.1
-	github.com/theory-cloud/tabletheory/v3 v3.0.5
+	github.com/theory-cloud/apptheory/v4 v4.0.0
+	github.com/theory-cloud/tabletheory/v3 v3.0.6
 )
 
 require (

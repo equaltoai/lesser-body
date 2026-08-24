@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 	"log/slog"
 )
 

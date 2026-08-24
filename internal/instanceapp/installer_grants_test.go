@@ -10,8 +10,8 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 	"github.com/theory-cloud/tabletheory/v3"
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
 	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"

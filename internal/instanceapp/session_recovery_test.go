@@ -7,8 +7,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func TestInstanceMCPOAuthDeadSessionTransparentlyRebinds(t *testing.T) {

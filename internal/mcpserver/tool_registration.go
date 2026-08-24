@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/equaltoai/lesser-body/internal/mcpoutputschema"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 // registerTool keeps every schema-bearing Ka tool's declared output contract

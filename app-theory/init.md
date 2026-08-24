@@ -19,41 +19,41 @@ This action writes exactly:
 This section defines the **pinned destination frameworks**. These values are **constants** provided by the GovTheory pack.
 
 ### AppTheory (pinned)
-- Go module: `github.com/theory-cloud/apptheory/v3@v3.0.2`
-- Go runtime import: `github.com/theory-cloud/apptheory/v3/runtime`
-- TypeScript CDK package: `@theory-cloud/apptheory-cdk` release tarball `theory-cloud-apptheory-cdk-3.0.2.tgz`
-- Runtime docs entrypoints (for tag `v3.0.2`):
+- Go module: `github.com/theory-cloud/apptheory/v4@v4.0.0`
+- Go runtime import: `github.com/theory-cloud/apptheory/v4/runtime`
+- TypeScript CDK package: `@theory-cloud/apptheory-cdk` release tarball `theory-cloud-apptheory-cdk-4.0.0.tgz`
+- Runtime docs entrypoints (for tag `v4.0.0`):
   - `docs/getting-started.md`
   - `docs/integrations/agentcore-mcp.md`
   - `docs/integrations/mcp.md`
   - `docs/integrations/remote-mcp.md`
   - `docs/migration/from-lift.md`
 - Copy/paste runtime dependency command:
-  - `go get github.com/theory-cloud/apptheory/v3@v3.0.2`
+  - `go get github.com/theory-cloud/apptheory/v4@v4.0.0`
 - Recommended pinned runtime docs links:
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/docs/getting-started.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/docs/integrations/agentcore-mcp.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/docs/integrations/mcp.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/docs/integrations/remote-mcp.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/docs/migration/from-lift.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/docs/getting-started.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/docs/integrations/agentcore-mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/docs/integrations/mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/docs/integrations/remote-mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/docs/migration/from-lift.md`
 - Recommended pinned CDK docs links:
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/cdk/docs/getting-started.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/cdk/docs/api-reference.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/cdk/docs/mcp-server-remote-mcp.md`
-  - `https://github.com/theory-cloud/AppTheory/blob/v3.0.2/cdk/docs/rest-api-router-streaming.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/cdk/docs/getting-started.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/cdk/docs/api-reference.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/cdk/docs/mcp-server-remote-mcp.md`
+  - `https://github.com/theory-cloud/AppTheory/blob/v4.0.0/cdk/docs/rest-api-router-streaming.md`
 
 ### TableTheory (pinned)
-- Go module: `github.com/theory-cloud/tabletheory/v3@v3.0.4`
-- Docs entrypoints (for tag `v3.0.4`):
+- Go module: `github.com/theory-cloud/tabletheory/v3@v3.0.6`
+- Docs entrypoints (for tag `v3.0.6`):
   - `docs/getting-started.md`
   - `docs/api-reference.md`
   - `docs/migration-guide.md`
 - Copy/paste dependency command:
-  - `go get github.com/theory-cloud/tabletheory/v3@v3.0.4`
+  - `go get github.com/theory-cloud/tabletheory/v3@v3.0.6`
 - Recommended pinned docs links:
-  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.4/docs/getting-started.md`
-  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.4/docs/api-reference.md`
-  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.4/docs/migration-guide.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.6/docs/getting-started.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.6/docs/api-reference.md`
+  - `https://github.com/theory-cloud/TableTheory/blob/v3.0.6/docs/migration-guide.md`
 
 ## Local agent execution plan
 
@@ -69,8 +69,8 @@ The goal is to produce a repository that:
    - `internal/` (implementation)
    - `pkg/` (optional public packages)
 2) Initialize the Go module (if not already) and add pinned framework dependencies:
-   - Add the AppTheory Go runtime at `v3.0.2`.
-   - Add TableTheory at `v3.0.4` if the app uses DynamoDB tables.
+   - Add the AppTheory Go runtime at `v4.0.0`.
+   - Add TableTheory at `v3.0.6` if the app uses DynamoDB tables.
 3) Follow AppTheory runtime/bootstrap docs and wire your entrypoints.
 
 **Acceptance criteria**
