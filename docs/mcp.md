@@ -734,6 +734,13 @@ Scope key:
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. Missing ids return `not_found`/404 with `details.lookup="id"`. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. Missing records return `not_found`/404 with `details.lookup` equal to the caller's actual field (`id` or `slug`). |
 | `article_list` | Read | List the authenticated actor's published Article refs through Lesser CMS; defaults compact. |
+| `upload_grant_mint` | Write | Step 1 of the two-step upload contract: request a one-time, hash-bound, presigned-companion upload grant from Lesser for `image/*` editorial media (canonical content type without parameters, bounded size, 64-lowercase-hex `sha256` of the exact intended bytes). The response carries the presigned PUT URL, grant id, and a prominent 15-minute expiry; the client must PUT the exact declared bytes out-of-band before `upload_finalize`. An expired grant requires a fresh mint. Lesser owns mint admission. |
+| `upload_finalize` | Write | Step 2 of the two-step upload contract: ask Lesser to verify the uploaded bytes against the grant (digest, size cap, SVG safety) and admit the editorial media record. Call only after the out-of-band PUT. Finalize is one-time: success consumes the grant to `USED`; digest failure consumes it to `FAILED_DIGEST`. Expired/consumed/failed grants surface classified envelope errors (`media_grant_expired`/410, `media_digest_mismatch`/422, `media_grant_not_minted`/409, `media_upload_not_finalized`/409 with re-mint guidance, including the size-abort lane Lesser reports as object-missing). |
+| `media_state` | Read | Inspect editorial-media lifecycle with `grant_id` (grant states `MINTED`/`USED`/`FAILED_DIGEST`/`EXPIRED`) or `draft_id`+`media_id` (per-usage state, provenance summary, review staleness via verdict `contentHash` vs draft `contentHash`, and `BOUND_MEDIA_*` publish blocking reasons; owner or active reviewer). Envelope states: `received`, `processing`, `ready_internal`, `attached`, `awaiting_review`, `approved_for_revision`, `stale`, `published`, `rejected_unsupported`, `unavailable_removed`, `expired`, `missing`. Never mints content URLs — use `media_read`. |
+| `media_read` | Read | Grant-scoped reviewer read: mint Lesser's short-lived exact-asset URL for one `media_id` bound to an authorized `draft_id` (owner or active reviewer). The URL expires at `expiresAt` and is per-request, not a stable cache-busting URL. |
+| `draft_media_attach` | Write | Bind one admitted asset to an owner-scoped draft with role `HERO`/`INLINE`/`SOCIAL_CARD` and optional per-usage caption/credit/alt/focus through Lesser's `setDraftEditorialMedia` contract (full-list replace; Body applies the delta and returns Lesser's resulting binding list). Re-attaching replaces the usage; a rejected/unavailable asset stays unattached. |
+| `draft_media_detach` | Write | Unbind one asset from an owner-scoped draft's ordered media association; detaching an unbound `media_id` is a no-op returning the unchanged list. |
+| `draft_media_reorder` | Write | Replace an owner-scoped draft's full ordered media association with `media_ids` in the requested order; `media_ids` must name exactly the currently bound assets, and INLINE usages are re-indexed to their position in the new order. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
 | `post_favorite` | Write | Favorite a post. |
@@ -1570,6 +1577,16 @@ index/ref pages and expand only the items they need:
   editorial triage. Body keeps Lesser's depth-3 connection query at `edges.cursor`, then hydrates those cursor IDs in
   bounded depth-safe `draft(id:)` batches; call `article_draft_get({"id":"<draft-id>","view":"standard"})` only when
   an agent explicitly needs draft content or full metadata.
+- Editorial media upload (two-step presigned-companion contract): `upload_grant_mint({"content_type":"image/png","max_size_bytes":<cap>,"sha256":"<64-lowercase-hex>"})`
+  returns a presigned PUT URL, `grant.id`, and a prominent 15-minute `expiresAt`; the client PUTs the exact declared
+  bytes out-of-band, then `upload_finalize({"grant_id":"<grant-id>"})` (one-time) verifies digest/size and admits the
+  editorial media record. Expired or consumed grants require a fresh `upload_grant_mint`; digest failures consume the
+  grant to `FAILED_DIGEST`; the size-abort lane surfaces as `media_upload_not_finalized` with re-mint guidance.
+  Attach the admitted `media.mediaId` to a draft with `draft_media_attach` (role `HERO`/`INLINE`/`SOCIAL_CARD` plus
+  per-usage caption/credit/alt), inspect state and `BOUND_MEDIA_*` blocking reasons with
+  `media_state({"draft_id":...,"media_id":...})`, and mint the grant-scoped exact-asset URL for review with
+  `media_read({"draft_id":...,"media_id":...})`. `draft_media_detach` and `draft_media_reorder` maintain the ordered
+  association through Lesser's full-list `setDraftEditorialMedia` contract.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
   draft id as a final published Article id. Authoring mutations and publish remain owner-scoped. In addition to
@@ -1739,6 +1756,72 @@ Lesser alone enforces the approval rules. Human-authored drafts with active invi
 reviewer's current approval. Agent-generated drafts additionally require an active approval by the configured instance
 principal. Grants are revocable, and a re-grant requires a fresh verdict. `article_draft_publish` delegates to the same
 Lesser publish mutation, so Body neither duplicates nor relaxes these gates.
+
+### Editorial media upload and binding workflow
+
+Body exposes Lesser's presigned-companion upload grants (M3) and editorial-media bindings (M1/M2) without computing
+admission, hashes, or publish decisions itself. The seven media tools forward the exact caller OAuth bearer to Lesser
+`POST /api/graphql`, are available in both drone and souled runtime profiles, and use structured-first responses with
+source `lesser_cms_graphql`.
+
+| Tool | Required input | Optional input | Success `structuredContent.data` |
+|---|---|---|---|
+| `upload_grant_mint` | `content_type: string` (`image/*`, canonical), `max_size_bytes: integer >= 1`, `sha256: string` (64 lowercase hex) | `max_output_bytes: integer >= 0` | `tool`, `operation:"minted"`, `source`, `grant` (id, `presignedUrl`, `mediaId`, `expiresAt`, …), `expiresInSeconds`, `guidance` |
+| `upload_finalize` | `grant_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"finalized"`, `source`, `grant` (status `USED`), `media` (`mediaId`, `contentType`, `size`, `contentHash`, `status`, `visibility`), `guidance` |
+| `media_state` | `grant_id: string` **or** `draft_id: string` + `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"state"`, `source`, `mode` (`upload_grant`/`draft_binding`), `state`, `grantState`/`usage`, plus verdicts, `contentHash`, `blockingReasons`, `activeReviewerIds` where present |
+| `media_read` | `draft_id: string`, `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"read"`, `source`, `access` (`mediaId`, `url`, `expiresAt`, `contentHash`), `guidance` |
+| `draft_media_attach` | `draft_id: string`, `media_id: string`, `role: HERO \| INLINE \| SOCIAL_CARD` | `inline_position`, `caption`, `credit`, `alt`, `focus`, `max_output_bytes` | `tool`, `operation:"attached"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+| `draft_media_detach` | `draft_id: string`, `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"detached"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+| `draft_media_reorder` | `draft_id: string`, `media_ids: string[]` (exactly the bound set, ordered) | `max_output_bytes: integer >= 0` | `tool`, `operation:"reordered"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+
+All seven default to a 24,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted.
+
+1. Mint a one-time, hash-bound upload grant. Lesser owns admission: `image/*` only, canonical content type without
+   parameters, size cap, and the 64-lowercase-hex `sha256` of the exact intended bytes.
+
+   ```json
+   {"tool":"upload_grant_mint","arguments":{"content_type":"image/png","max_size_bytes":5242880,"sha256":"<64 lowercase hex>"}}
+   ```
+
+2. PUT the exact declared bytes to the returned `grant.presignedUrl` **out-of-band** (between the two calls). The
+   grant TTL is 15 minutes; the presigned URL is re-signed on each grant-state read while the grant is `MINTED`, so
+   clients must not cache-bust on the URL. An expired grant requires a fresh `upload_grant_mint`.
+
+3. Finalize once. Lesser verifies the stored object's digest, size cap, and SVG safety before any media record exists;
+   only finalize is one-time:
+
+   ```json
+   {"tool":"upload_finalize","arguments":{"grant_id":"<grant-id>"}}
+   ```
+
+   Success consumes the grant to `USED` and returns the admitted internal media record. Classified failure lanes:
+   `media_grant_expired`/410 (fresh mint), `media_digest_mismatch`/422 (consumed to `FAILED_DIGEST`; fresh mint),
+   `media_grant_not_minted`/409 (already consumed), and `media_upload_not_finalized`/409. Lesser reports the
+   over-cap/size-abort lane as an object-missing-class error (residual N1), so Body renders re-mint guidance for that
+   class instead of a missing-object retry loop.
+
+4. Attach the admitted asset to a draft with role and per-usage caption/credit/alt through Lesser's full-list
+   `setDraftEditorialMedia` contract; Body applies the delta:
+
+   ```json
+   {"tool":"draft_media_attach","arguments":{"draft_id":"draft-1","media_id":"<media-id>","role":"HERO","caption":"Launch artwork","alt":"A rocket leaving a violet planet"}}
+   ```
+
+   `draft_media_detach` removes an asset; `draft_media_reorder` replaces the full ordered association and re-indexes
+   INLINE usages. All three return Lesser's resulting binding list, `contentHash`, and `revision`.
+
+5. Inspect lifecycle state (owner or active reviewer) and mint the grant-scoped exact-asset URL for review:
+
+   ```json
+   {"tool":"media_state","arguments":{"draft_id":"draft-1","media_id":"<media-id>"}}
+   {"tool":"media_read","arguments":{"draft_id":"draft-1","media_id":"<media-id>"}}
+   ```
+
+   `media_state` surfaces the envelope state (`received`, `processing`, `ready_internal`, `attached`,
+   `awaiting_review`, `approved_for_revision`, `stale`, `published`, `rejected_unsupported`, `unavailable_removed`,
+   `expired`, `missing`), Lesser's provenance summary, review staleness (verdict `contentHash` vs draft `contentHash`),
+   and `BOUND_MEDIA_*` publish blocking reasons. `media_read` mints the short-lived exact-asset URL; it is per-request,
+   not a stable cache-busting URL.
 
 Grant creation is authorized by Lesser's `shareDraftForReview` contract. Body deliberately adds no local owner check:
 the CSR-010 `draftOwnedByAuthenticatedActor` post-response layer is intentionally not applied to

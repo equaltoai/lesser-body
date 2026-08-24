@@ -66,6 +66,18 @@ var describeInterfaceDomains = []describeInterfaceDomain{
 		},
 	},
 	{
+		Name: "editorial media",
+		Tools: []describeInterfaceTool{
+			{Name: "upload_grant_mint", Use: "Mint a one-time, hash-bound upload grant with a presigned PUT URL (step 1 of the two-step upload contract)."},
+			{Name: "upload_finalize", Use: "Verify the uploaded bytes and admit the editorial media record (step 2; call after the out-of-band PUT)."},
+			{Name: "media_state", Use: "Inspect a draft-bound asset's lifecycle, provenance, review staleness, and BOUND_MEDIA_* blocking reasons, or an upload grant's lifecycle."},
+			{Name: "media_read", Use: "Mint Lesser's grant-scoped short-lived exact-asset URL for a bound asset (reviewer read path)."},
+			{Name: "draft_media_attach", Use: "Bind an admitted asset to a draft with role and per-usage caption/credit/alt."},
+			{Name: "draft_media_detach", Use: "Unbind an asset from a draft's ordered media association."},
+			{Name: "draft_media_reorder", Use: "Replace a draft's ordered media association with a requested order."},
+		},
+	},
+	{
 		Name: "DMs and notifications",
 		Tools: []describeInterfaceTool{
 			{Name: "conversations_read", Use: "List direct-message conversations; use compact view as an index."},
@@ -190,6 +202,7 @@ func renderDescribeInterface(ctx context.Context) string {
 	out.WriteString("- Notification discovery: `notifications_read({\"limit\":10,\"view\":\"compact\"})` → select a notification ID → `notification_get({\"id\":\"<notification-id>\",\"view\":\"standard\"})`.\n")
 	out.WriteString("- Article publication: `article_draft_create` or `article_draft_update` → `article_draft_preview` → `article_draft_review_submit` → reviewer `article_draft_review_read` and `article_draft_review_verdict` → author re-reads review state and confirms every active reviewer verdict, principal approval, and Lesser publish eligibility → `article_draft_publish`.\n")
 	out.WriteString("- Article review: author calls `article_draft_review_submit` → reviewer uses `article_draft_review_read`, `article_draft_get`, and `article_draft_preview` as needed → reviewer calls `article_draft_review_verdict`; Lesser authorizes every reviewer read from the active grant, and every MCP-created Article draft requires unanimous current reviewer approval plus active approval from the configured instance principal before publishing.\n")
+	out.WriteString("- Editorial media upload: `upload_grant_mint` (content_type `image/*`, size cap, sha256 of the intended bytes) → PUT the exact declared bytes to the returned presigned URL out-of-band → `upload_finalize` (one-time; verifies digest and size) → `draft_media_attach` with role and caption/credit/alt → `media_state` and `media_read` for review; an expired or failed grant requires a fresh `upload_grant_mint`.\n")
 
 	out.WriteString("\n## Read-result budgeting and expansion\n")
 	out.WriteString("- When advertised by a tool, `view` selects the projection: `standard` preserves the compatibility shape, `compact`/`summary` bounds discovery context, and `full` is explicit audit/debug expansion.\n")
