@@ -268,6 +268,17 @@ func classifyPromoMessage(message string) (PromoPackageErrorClass, string, []str
 		return PromoPackageErrorOwnerSelfReview, "", reasons
 	case strings.Contains(msg, "not found"):
 		return PromoPackageErrorNotFound, "", reasons
+	// Lesser's compose/share admission sentinels (pkg/services/cms/promo_package.go).
+	// These are caller-correctable request failures, not upstream outages, so they
+	// classify to the validation lane instead of falling through to Unknown/502.
+	case strings.Contains(msg, "post text is required"),
+		strings.Contains(msg, "article reference is required"),
+		strings.Contains(msg, "must reference a published article"),
+		strings.Contains(msg, "requires at least one published asset"),
+		strings.Contains(msg, "reviewer are required"),
+		strings.Contains(msg, "grant is not active"),
+		strings.Contains(msg, "submit requires the inspected content hash"):
+		return PromoPackageErrorValidation, "", reasons
 	case strings.Contains(msg, "validation"), strings.Contains(msg, "invalid"), strings.Contains(msg, "visibility"), strings.Contains(msg, "exceeds"):
 		return PromoPackageErrorValidation, "", reasons
 	case strings.Contains(msg, "unavailable"), strings.Contains(msg, "capability"):

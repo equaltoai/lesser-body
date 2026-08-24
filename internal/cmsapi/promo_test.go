@@ -233,6 +233,26 @@ func TestClassifyPromoReleaseErrorLanes(t *testing.T) {
 			gqlResponse: `{"data":null,"errors":[{"message":"promo package is already released","path":["releasePromoPackage"]}]}`,
 			wantClass:   PromoPackageErrorAlreadyReleased,
 		},
+		{
+			name:        "compose_must_reference_published_article",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package must reference a published article","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+		{
+			name:        "compose_requires_published_asset",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package requires at least one published asset","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+		{
+			name:        "compose_post_text_required",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package post text is required","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+		{
+			name:        "share_missing_arguments",
+			gqlResponse: `{"data":null,"errors":[{"message":"owner, package, and reviewer are required","path":["sharePromoPackageForReview"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newPromoTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -260,6 +280,25 @@ func TestClassifyPromoReleaseErrorLanes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClassifyPromoGrantNotActiveLane pins the expired/revoked-grant admission:
+// a reviewer whose grant lapsed between state read and submit gets the
+// validation lane (422, retry after re-sharing), not an upstream 502.
+func TestClassifyPromoGrantNotActiveLane(t *testing.T) {
+	client := newPromoTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"promo package review grant is not active","path":["submitPromoPackageReview"]}]}`))
+	})
+	_, err := client.SubmitPromoPackageReview(context.Background(), "token", "pkg-1", PromoPackageVerdictApproved, nil, promoContentHashForTest())
+	var classified *PromoPackageClassifiedError
+	if !errors.As(err, &classified) || classified.Class != PromoPackageErrorValidation {
+		t.Fatalf("inactive grant must classify as validation, got %v", err)
+	}
+}
+
+func promoContentHashForTest() string {
+	return "sha256:" + strings.Repeat("a", 64)
 }
 
 func TestClassifyPromoSubmitContentChangedConflict(t *testing.T) {
