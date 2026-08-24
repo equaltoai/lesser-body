@@ -837,6 +837,13 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 		pkg.Review.ReleaseBlockingReasons = nil
 		return mustKaToolResult(promoStateResult(pkg, promoDefaultBudgetBytes))
 	})
+	add("promo_state", "unknown_status", func(t *testing.T) *mcpruntime.ToolResult {
+		// Lesser's status is transported verbatim and can be a value outside the
+		// DRAFT/RELEASING/RELEASED enum (the envelope state mapping still fails
+		// closed to "unknown"). The status property must stay enum-free so a
+		// strict MCP client does not reject an unrecognized upstream status.
+		return mustKaToolResult(promoStateResult(promoFixturePackage("SOMETHING_NEW", false, ""), promoDefaultBudgetBytes))
+	})
 	add("promo_release", "released", func(t *testing.T) *mcpruntime.ToolResult {
 		return mustKaToolResult(promoReleaseResult(&cmsapi.PromoPackageReleaseResult{
 			Package:  promoFixturePackage(cmsapi.PromoPackageStatusReleased, true, "status-1"),
@@ -846,6 +853,9 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 	})
 	add("promo_read", "released", func(t *testing.T) *mcpruntime.ToolResult {
 		return mustKaToolResult(promoReadResult(promoFixturePackage(cmsapi.PromoPackageStatusReleased, true, "status-1"), promoDefaultBudgetBytes))
+	})
+	add("promo_read", "unknown_status", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReadResult(promoFixturePackage("SOMETHING_NEW", false, ""), promoDefaultBudgetBytes))
 	})
 
 	return fixtures

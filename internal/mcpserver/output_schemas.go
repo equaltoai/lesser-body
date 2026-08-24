@@ -909,7 +909,7 @@ func promoStateOutputSchema() json.RawMessage {
 					"source":{"type":"string"},
 					"packageId":{"type":"string"},
 					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
-					"status":{"type":"string","enum":["DRAFT","RELEASING","RELEASED"]},
+					"status":{"type":"string"},
 					"package":{"type":"object","additionalProperties":true},
 					"blockingReasons":{"type":"array","items":{"type":"string"}},
 					"guidance":{"type":"string"}
@@ -960,7 +960,7 @@ func promoReadOutputSchema() json.RawMessage {
 					"source":{"type":"string"},
 					"packageId":{"type":"string"},
 					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
-					"status":{"type":"string","enum":["DRAFT","RELEASING","RELEASED"]},
+					"status":{"type":"string"},
 					"package":{"type":"object","additionalProperties":true},
 					"releasedStatusId":{"type":"string"},
 					"outboundPost":{"type":"object","additionalProperties":true},
