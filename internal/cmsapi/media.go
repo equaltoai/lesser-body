@@ -367,13 +367,21 @@ func (c *Client) GetUploadGrant(ctx context.Context, bearerToken, grantID string
 // ReadDraftEditorialMedia reads the exact ordered editorial-media bindings of a
 // draft the caller owns or reviews. The same projection serves media_state and
 // the read-modify-write base for attach/detach/reorder.
+//
+// The projection explicitly requests includeAccessUrls:true because the media
+// tools' documented contract promises the per-usage short-lived access URL on
+// this read (media_state surfaces accessUrl/accessExpiresAt). Since lesser M4
+// (fold-in: access-URL minting scoping) draftReview mints those URLs ONLY on
+// explicit opt-in — the argument defaults to false — passing it keeps the M3
+// media_state promise intact; the exact-asset draftEditorialMediaAccess lane
+// remains the reviewer read for one asset.
 func (c *Client) ReadDraftEditorialMedia(ctx context.Context, bearerToken, draftID string) (*DraftMediaState, error) {
 	draftID = strings.TrimSpace(draftID)
 	if draftID == "" {
 		return nil, fmt.Errorf("draft id is required")
 	}
 	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyDraftEditorialMedia($id: ID!) { draftReview(id: $id) { " + draftMediaStateFields() + " } }",
+		Query:         "query BodyDraftEditorialMedia($id: ID!) { draftReview(id: $id, includeAccessUrls: true) { " + draftMediaStateFields() + " } }",
 		OperationName: "BodyDraftEditorialMedia",
 		Variables:     map[string]any{"id": draftID},
 	})
