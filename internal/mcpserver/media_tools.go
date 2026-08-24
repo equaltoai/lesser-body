@@ -114,7 +114,7 @@ func uploadFinalizeDef() mcpruntime.ToolDef {
 func mediaStateDef() mcpruntime.ToolDef {
 	return mcpruntime.ToolDef{
 		Name:         "media_state",
-		Description:  "Inspect the editorial-media lifecycle of one asset. Provide draft_id+media_id to inspect a draft-bound asset's state, provenance summary, review staleness (verdict contentHash vs draft contentHash), and BOUND_MEDIA_* publish blocking reasons (owner or active reviewer); provide grant_id to inspect an upload grant's lifecycle (MINTED/USED/FAILED_DIGEST/EXPIRED). Lesser is the state authority; Body transports it verbatim. This tool never mints a content URL — use media_read for the grant-scoped reviewer read.",
+		Description:  "Inspect the editorial-media lifecycle of one asset. Provide draft_id+media_id to inspect a draft-bound asset's state, provenance summary, review staleness (verdict contentHash vs draft contentHash), and BOUND_MEDIA_* publish blocking reasons (owner or active reviewer); provide grant_id to inspect an upload grant's lifecycle (MINTED/USED/FAILED_DIGEST/EXPIRED). Lesser is the state authority; Body transports it verbatim. State reads include the per-usage short-lived access URL (accessUrl/accessExpiresAt) that Lesser's draftReview projection mints for authorized callers (draft owner or active reviewer) — it is re-minted on each read and expires quickly, not a stable cache-busting URL. For an explicit grant-scoped reviewer read of one exact asset, use media_read.",
 		Annotations:  readOnlyToolAnnotations(),
 		OutputSchema: mediaStateOutputSchema(),
 		InputSchema: json.RawMessage(`{
