@@ -46,6 +46,11 @@ var profileOrder = []Profile{
 	ProfileSouled,
 }
 
+// profileContracts is the authoritative per-profile surface. The seven
+// editorial-media tools follow the article_* precedent in this same file: they
+// are editorial content tooling (not communication or wallet surfaces), so they
+// are exposed in BOTH profiles — matching docs/mcp.md's "available in both
+// drone and souled runtime profiles" claim for the media workflow.
 var profileContracts = map[Profile]Contract{
 	ProfileDrone: {
 		Profile:               ProfileDrone,
@@ -83,6 +88,13 @@ var profileContracts = map[Profile]Contract{
 			"article_update",
 			"article_get",
 			"article_list",
+			"draft_media_attach",
+			"draft_media_detach",
+			"draft_media_reorder",
+			"media_read",
+			"media_state",
+			"upload_finalize",
+			"upload_grant_mint",
 			"post_create",
 			"post_boost",
 			"post_favorite",
@@ -150,6 +162,13 @@ var profileContracts = map[Profile]Contract{
 			"article_update",
 			"article_get",
 			"article_list",
+			"draft_media_attach",
+			"draft_media_detach",
+			"draft_media_reorder",
+			"media_read",
+			"media_state",
+			"upload_finalize",
+			"upload_grant_mint",
 			"post_create",
 			"post_boost",
 			"post_favorite",
