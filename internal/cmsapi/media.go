@@ -179,6 +179,7 @@ const (
 	UploadGrantErrorValidation
 	UploadGrantErrorUnavailable
 	UploadGrantErrorCreateFailed
+	UploadGrantErrorNotFound
 )
 
 // UploadGrantClassifiedError wraps a lesser upload-grant failure with its
@@ -217,6 +218,13 @@ func classifyUploadGrantMessage(message string) UploadGrantErrorClass {
 		return UploadGrantErrorObjectMissing
 	case strings.Contains(msg, "is empty"), strings.Contains(msg, "object is empty"):
 		return UploadGrantErrorObjectEmpty
+	// Lesser's ErrUploadGrantNotFound sentinel ("upload grant not found") is a
+	// GraphQL error, never data:null; it must land on the not-found class so the
+	// tool layer renders media_not_found/404 instead of the unknown/502 lane.
+	// This case sits after the object-missing/empty cases because those
+	// sentinels also contain "not found"/"is empty" substrings.
+	case strings.Contains(msg, "not found"):
+		return UploadGrantErrorNotFound
 	case strings.Contains(msg, "validation"), strings.Contains(msg, "content type"), strings.Contains(msg, "sha256"), strings.Contains(msg, "max size"):
 		return UploadGrantErrorValidation
 	case strings.Contains(msg, "unavailable"), strings.Contains(msg, "capability"):
@@ -307,9 +315,11 @@ func (c *Client) FinalizeUploadGrant(ctx context.Context, bearerToken, grantID s
 		return nil, err
 	}
 	if data.FinalizeUploadGrant == nil || data.FinalizeUploadGrant.Media == nil {
-		// Lesser's owner-scoped finalize returns no result for an unknown or
-		// unowned grant; surface it as not-found so the tool layer renders the
-		// fail-closed envelope rather than a bare internal error.
+		// Lesser's owner-scoped finalize returns ErrUploadGrantNotFound as a
+		// GraphQL error ("upload grant not found") for an unknown or unowned
+		// grant; it never returns data:null on this path. This nil-result guard
+		// is a defensive fallback only — classifyUploadGrantFailure above has
+		// already classified the real not-found lane.
 		return nil, &UploadGrantNotFoundError{Lookup: "grant_id", Value: grantID}
 	}
 	return data.FinalizeUploadGrant, nil

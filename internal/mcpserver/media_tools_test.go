@@ -260,6 +260,12 @@ func TestMediaFinalizeErrorLanes(t *testing.T) {
 			guidance:    []string{"re-mint", "size-abort", "retry finalize once"},
 		},
 		{
+			name:        "not_found_unowned",
+			gqlResponse: `{"data":null,"errors":[{"message":"upload grant not found","path":["finalizeUploadGrant"]}]}`,
+			wantCode:    mediaErrorNotFound,
+			wantStatus:  http.StatusNotFound,
+		},
+		{
 			name:        "size_abort_download",
 			gqlResponse: `{"data":null,"errors":[{"message":"uploaded object not found; PUT the declared bytes before finalizing","path":["finalizeUploadGrant"]}]}`,
 			wantCode:    mediaErrorUploadNotFinalized,
@@ -468,12 +474,13 @@ func TestMediaReadMintsGrantScopedExactAssetURL(t *testing.T) {
 	}
 }
 
-// TestMediaActorIsolation pins that a non-owner caller cannot finalize or read
-// another actor's grant: lesser's owner-scoped lookup returns nothing and body
-// surfaces media_not_found.
+// TestMediaActorIsolation pins that a non-owner caller cannot finalize another
+// actor's grant: lesser's owner-scoped finalize returns ErrUploadGrantNotFound
+// as a GraphQL error ("upload grant not found") — never data:null — and body
+// classifies it to media_not_found/404.
 func TestMediaActorIsolation(t *testing.T) {
 	newMediaGraphQLStub(t, map[string]string{
-		"BodyFinalizeUploadGrant": `{"data":{"finalizeUploadGrant":null}}`,
+		"BodyFinalizeUploadGrant": `{"data":null,"errors":[{"message":"upload grant not found","path":["finalizeUploadGrant"]}]}`,
 	})
 	result, err := handleUploadFinalize(mediaTestContext(), json.RawMessage(`{"grant_id":"alice-grant"}`))
 	if err != nil {

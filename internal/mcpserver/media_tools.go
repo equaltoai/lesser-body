@@ -1006,6 +1006,13 @@ func mediaClassifiedErrorResult(toolName string, classified *cmsapi.UploadGrantC
 				"tool":     toolName,
 				"guidance": "PUT the exact declared bytes to the presigned URL, then retry finalize once.",
 			})
+	case cmsapi.UploadGrantErrorNotFound:
+		return toolErrorResult(mediaErrorNotFound,
+			"Upload grant not found or not owned by the caller", http.StatusNotFound, map[string]any{
+				"source": "lesser_cms_graphql",
+				"tool":   toolName,
+				"lookup": "grant_id",
+			})
 	case cmsapi.UploadGrantErrorValidation:
 		return toolErrorResult(mediaErrorMintInvalid,
 			"Lesser rejected the upload grant request", http.StatusUnprocessableEntity, map[string]any{
