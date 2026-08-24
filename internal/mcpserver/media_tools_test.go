@@ -41,6 +41,7 @@ type mediaGraphQLStub struct {
 	mu      sync.Mutex
 	byOp    map[string]string
 	ops     []string
+	bodies  []cmsapi.Operation
 	headers []http.Header
 }
 
@@ -70,6 +71,7 @@ func (h *mediaGraphQLStub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Lock()
 	h.ops = append(h.ops, op.OperationName)
+	h.bodies = append(h.bodies, op)
 	h.headers = append(h.headers, r.Header.Clone())
 	h.mu.Unlock()
 
@@ -96,6 +98,20 @@ func (h *mediaGraphQLStub) lastHeader(name string) string {
 		return ""
 	}
 	return h.headers[len(h.headers)-1].Get(name)
+}
+
+// lastBody returns the most recent operation with the given operation name,
+// including its variables, or nil.
+func (h *mediaGraphQLStub) lastBody(operationName string) *cmsapi.Operation {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.bodies) - 1; i >= 0; i-- {
+		if h.bodies[i].OperationName == operationName {
+			op := h.bodies[i]
+			return &op
+		}
+	}
+	return nil
 }
 
 func mediaGrantJSON(status, presignedURL string) string {
@@ -606,6 +622,83 @@ func TestDraftMediaAttachDetachReorder(t *testing.T) {
 	if err != nil && !errors.As(err, &paramsErr) {
 		t.Fatalf("reorder with unbound media error type = %T, want *InvalidParamsError", err)
 	}
+}
+
+// TestDraftMediaAttachFillsFirstFreeInlinePositionAfterDetach pins F4: detach
+// preserves gaps and lesser only requires unique inline positions, so an
+// auto-position computed by counting usages can collide with an occupied slot
+// and get rejected. After detaching the middle inline asset, a fresh attach
+// must fill the freed slot (first free position) and send unique positions.
+func TestDraftMediaAttachFillsFirstFreeInlinePositionAfterDetach(t *testing.T) {
+	newMediaGraphQLStub(t, map[string]string{
+		"BodyDraftEditorialMedia": `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-2", 1) + `,` + mediaInlineUsageJSON("media-4", 2) +
+			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-4", 2) +
+			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+	})
+
+	// Detach the middle inline asset (media-2 at position 1), leaving positions
+	// 0 and 2 occupied.
+	detach, err := handleDraftMediaDetach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-2"}`))
+	if err != nil || detach == nil || detach.IsError {
+		t.Fatalf("detach failed: %+v err=%v", detach, err)
+	}
+
+	// Post-detach state: inline positions 0 and 2 only (the gap is preserved by
+	// the full-list contract). Attaching a new inline without inline_position
+	// must pick position 1 rather than colliding at 2.
+	stub := newMediaGraphQLStub(t, map[string]string{
+		"BodyDraftEditorialMedia": `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-4", 2) +
+			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-3", 1) + `,` + mediaInlineUsageJSON("media-4", 2) +
+			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+	})
+
+	attach, err := handleDraftMediaAttach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-3","role":"INLINE"}`))
+	if err != nil || attach == nil || attach.IsError {
+		t.Fatalf("attach after gapped detach failed: %+v err=%v", attach, err)
+	}
+
+	setOp := stub.lastBody("BodySetDraftEditorialMedia")
+	if setOp == nil {
+		t.Fatalf("no BodySetDraftEditorialMedia call observed")
+	}
+	mediaVariables, _ := setOp.Variables["media"].([]any)
+	if len(mediaVariables) != 3 {
+		t.Fatalf("attach must send 3 usages through the full-list contract, got %d: %+v", len(mediaVariables), setOp.Variables)
+	}
+	positions := map[string]int{}
+	for _, raw := range mediaVariables {
+		usage, _ := raw.(map[string]any)
+		mediaID, _ := usage["mediaId"].(string)
+		position, ok := usage["inlinePosition"].(float64)
+		if !ok {
+			t.Fatalf("usage %s missing inlinePosition: %+v", mediaID, usage)
+		}
+		positions[mediaID] = int(position)
+	}
+	want := map[string]int{"media-1": 0, "media-3": 1, "media-4": 2}
+	for mediaID, wantPosition := range want {
+		if got, ok := positions[mediaID]; !ok || got != wantPosition {
+			t.Fatalf("usage %s inline position = %d (present=%v), want %d; all=%+v", mediaID, got, ok, wantPosition, positions)
+		}
+	}
+	seen := map[int]string{}
+	for mediaID, position := range positions {
+		if existing, dup := seen[position]; dup {
+			t.Fatalf("duplicate inline position %d across %s and %s", position, existing, mediaID)
+		}
+		seen[position] = mediaID
+	}
+}
+
+func mediaInlineUsageJSON(mediaID string, position int) string {
+	contentHash := "sha256:" + strings.Repeat("a", 64)
+	return fmt.Sprintf(`{"mediaId":%q,"role":"INLINE","inlinePosition":%d,"caption":"caption-%s","state":"READY","contentHash":%q,"provenance":{"origin":"ILLUSTRATED","responsibleActorId":"alice","sourceReferences":[],"recordedAt":"2026-08-24T12:00:00Z","contentIntegrity":%q}}`, mediaID, position, mediaID, contentHash, contentHash)
 }
 
 func structuredData(t *testing.T, result *mcpruntime.ToolResult) map[string]any {

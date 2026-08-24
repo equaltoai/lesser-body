@@ -158,7 +158,7 @@ func draftMediaAttachDef() mcpruntime.ToolDef {
 				"draft_id":{"type":"string","description":"Lesser CMS draft id owned by the authenticated actor."},
 				"media_id":{"type":"string","description":"Lesser media id (from upload_finalize) to bind."},
 				"role":{"type":"string","enum":["HERO","INLINE","SOCIAL_CARD"],"description":"Lesser's canonical editorial media role."},
-				"inline_position":{"type":"integer","minimum":0,"description":"Zero-based insertion point; INLINE only. Defaults to appending after the current inline usages."},
+				"inline_position":{"type":"integer","minimum":0,"description":"Zero-based insertion point; INLINE only. Defaults to the first free inline position (appends at the end when the sequence is dense)."},
 				"caption":{"type":"string","description":"Optional per-usage caption."},
 				"credit":{"type":"string","description":"Optional reader-facing attribution line."},
 				"alt":{"type":"string","description":"Optional per-usage alt text; effectiveAltText falls back to the media-global description."},
@@ -444,7 +444,11 @@ func handleDraftMediaAttach(ctx context.Context, args json.RawMessage) (*mcprunt
 	usages := currentUsageInputs(state)
 	position := in.InlinePosition
 	if in.Role == cmsapi.EditorialMediaRoleInline && position == nil {
-		next := inlineUsageCount(usages)
+		// Lesser requires unique inline positions (not contiguity), and detach
+		// preserves gaps, so counting usages can collide with an occupied slot.
+		// Fill the first free position: it is always unoccupied, keeps the
+		// sequence dense after middle detaches, and is deterministic.
+		next := firstFreeInlinePosition(usages)
 		position = &next
 	}
 	usage := cmsapi.MediaUsageInput{
@@ -631,14 +635,22 @@ func currentUsageInputs(state *cmsapi.DraftMediaState) []cmsapi.MediaUsageInput 
 	return usages
 }
 
-func inlineUsageCount(usages []cmsapi.MediaUsageInput) int {
-	count := 0
+// firstFreeInlinePosition returns the smallest inline position not currently
+// occupied by an inline usage. Non-inline usages (HERO/SOCIAL_CARD) carry no
+// position and never occupy a slot.
+func firstFreeInlinePosition(usages []cmsapi.MediaUsageInput) int {
+	occupied := make(map[int]struct{}, len(usages))
 	for _, usage := range usages {
-		if usage.Role == cmsapi.EditorialMediaRoleInline {
-			count++
+		if usage.Role != cmsapi.EditorialMediaRoleInline || usage.InlinePosition == nil {
+			continue
+		}
+		occupied[*usage.InlinePosition] = struct{}{}
+	}
+	for position := 0; ; position++ {
+		if _, taken := occupied[position]; !taken {
+			return position
 		}
 	}
-	return count
 }
 
 // mediaEnvelopeStateForGrant maps an upload grant's lifecycle onto the envelope
