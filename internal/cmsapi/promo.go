@@ -266,6 +266,16 @@ func classifyPromoMessage(message string) (PromoPackageErrorClass, string, []str
 		return PromoPackageErrorAssetUnavailable, "", reasons
 	case strings.Contains(msg, "owner cannot review their own package"):
 		return PromoPackageErrorOwnerSelfReview, "", reasons
+	// Lesser's compose admission lookup failures (buildPromoPackageContent in
+	// pkg/services/cms/promo_package.go): a foreign (not-the-composer) asset, an
+	// unknown media id, or an unknown article id is a caller-correctable request
+	// failure, never a package-id not-found. A create carries no package id at
+	// all, so these must classify to the validation lane BEFORE the generic
+	// "not found" bucket, which is reserved for package-id lookups only.
+	case strings.Contains(msg, "does not belong to the composer"),
+		strings.Contains(msg, "asset lookup failed"),
+		strings.Contains(msg, "article lookup failed"):
+		return PromoPackageErrorValidation, "", reasons
 	case strings.Contains(msg, "not found"):
 		return PromoPackageErrorNotFound, "", reasons
 	// Lesser's compose/share admission sentinels (pkg/services/cms/promo_package.go).

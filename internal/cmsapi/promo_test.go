@@ -301,6 +301,53 @@ func promoContentHashForTest() string {
 	return "sha256:" + strings.Repeat("a", 64)
 }
 
+// TestClassifyPromoComposeAdmissionLookupLanes pins the compose admission lanes
+// at the client boundary: a foreign (not-the-composer) asset, an unknown media
+// id, or an unknown article id classifies as validation — never the package
+// not-found bucket, which is reserved for package-id lookups (a create carries
+// no package id at all, so 404 with details.lookup package_id would be actively
+// wrong on compose).
+func TestClassifyPromoComposeAdmissionLookupLanes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		gqlResponse string
+		wantClass   PromoPackageErrorClass
+	}{
+		{
+			name:        "foreign_asset",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package asset \"media-9\" does not belong to the composer","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+		{
+			name:        "nonexistent_asset",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package asset lookup failed: media not found","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+		{
+			name:        "nonexistent_article",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package article lookup failed: article not found","path":["composePromoPackage"]}]}`,
+			wantClass:   PromoPackageErrorValidation,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newPromoTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.gqlResponse))
+			})
+			_, err := client.ComposePromoPackage(context.Background(), "token", PromoPackageComposeInput{
+				ArticleID:     "https://example.com/articles/1",
+				PostText:      "Launching!",
+				Visibility:    PromoPackageVisibilityPublic,
+				AssetMediaIDs: []string{"media-9"},
+			})
+			var classified *PromoPackageClassifiedError
+			if !errors.As(err, &classified) || classified.Class != tc.wantClass {
+				t.Fatalf("admission failure must classify as %v, got %v", tc.wantClass, err)
+			}
+		})
+	}
+}
+
 func TestClassifyPromoSubmitContentChangedConflict(t *testing.T) {
 	client := newPromoTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

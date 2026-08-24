@@ -577,6 +577,63 @@ func TestPromoComposeValidation(t *testing.T) {
 	})
 }
 
+// TestPromoComposeAdmissionLookupLanes pins the compose admission error lanes
+// through the handler envelope: a foreign (not-the-composer) asset, an unknown
+// media id, or an unknown article id is a caller-correctable validation failure
+// (422 promo_validation with Lesser's message preserved) — never the package
+// not-found bucket (404 with details.lookup package_id), which is reserved for
+// package-id lookups.
+func TestPromoComposeAdmissionLookupLanes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		gqlResponse string
+		wantMessage string
+	}{
+		{
+			name:        "foreign_asset",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package asset \"media-9\" does not belong to the composer","path":["composePromoPackage"]}]}`,
+			wantMessage: `promo package asset "media-9" does not belong to the composer`,
+		},
+		{
+			name:        "nonexistent_asset",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package asset lookup failed: media not found","path":["composePromoPackage"]}]}`,
+			wantMessage: "promo package asset lookup failed: media not found",
+		},
+		{
+			name:        "nonexistent_article",
+			gqlResponse: `{"data":null,"errors":[{"message":"promo package article lookup failed: article not found","path":["composePromoPackage"]}]}`,
+			wantMessage: "promo package article lookup failed: article not found",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newMediaGraphQLStub(t, map[string]string{
+				"BodyComposePromoPackage": tc.gqlResponse,
+			})
+			result, err := handlePromoCompose(promoTestContext(), json.RawMessage(`{"article_id":"https://example.com/articles/1","post_text":"Launching!","visibility":"public","asset_media_ids":["media-9"]}`))
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if result == nil || !result.IsError {
+				t.Fatalf("compose admission failure must fail, got %+v", result)
+			}
+			errorPayload, _ := result.StructuredContent["error"].(map[string]any)
+			if got := errorPayload["code"]; got != promoErrorValidation {
+				t.Fatalf("code = %v, want %v", got, promoErrorValidation)
+			}
+			if got := errorPayload["status"]; got != 422 {
+				t.Fatalf("status = %v, want 422", got)
+			}
+			details, _ := errorPayload["details"].(map[string]any)
+			if got := details["message"]; got != tc.wantMessage {
+				t.Fatalf("details.message = %v, want %q", got, tc.wantMessage)
+			}
+			if got := details["lookup"]; got != nil {
+				t.Fatalf("validation lane must not carry the package-id lookup mislabel, got %v", got)
+			}
+		})
+	}
+}
+
 // TestPromoActorIsolation covers the two isolation seams: a cross-actor read
 // maps lesser's not-found to the 404 lane, and a share-grant caller submits
 // through the X-Lesser-Act-As seam naming the actor route.
