@@ -26,7 +26,10 @@ const (
 	mediaStateReadyInternal       = "ready_internal"        // grant USED / EditorialMediaState.READY, internal
 	mediaStateAttached            = "attached"              // bound to a draft usage
 	mediaStateAwaitingReview      = "awaiting_review"       // bound + active reviewers, no current verdict
-	mediaStateApprovedForRevision = "approved_for_revision" // verdict bound to a prior revision (not current)
+	// Lesser emits Stale as the logical negation of Current
+	// (cms_converters.go: Current: isCurrent, Stale: !isCurrent), so a
+	// non-current verdict is ALWAYS stale; there is no producible
+	// approved-but-superseded lane distinct from stale.
 	mediaStateStale               = "stale"                 // verdict marked stale (M2 contentHash mismatch)
 	mediaStatePublished           = "published"             // publishedUrl/publishedAt present
 	mediaStateRejectedUnsupported = "rejected_unsupported"  // REJECTED / FAILED_DIGEST
@@ -462,7 +465,11 @@ func handleDraftMediaAttach(ctx context.Context, args json.RawMessage) (*mcprunt
 	}
 	replaced := false
 	for i := range usages {
-		if usages[i].MediaID == in.MediaID && usages[i].Role == in.Role {
+		if usages[i].MediaID == in.MediaID {
+			// Replace on MediaID regardless of role: lesser's contract is one
+			// usage per media_id (it rejects duplicate media ids), so a
+			// role-switch re-attach must replace the existing usage entirely
+			// rather than append a duplicate.
 			usages[i] = usage
 			replaced = true
 			break
@@ -697,19 +704,25 @@ func mediaEnvelopeStateForUsage(state *cmsapi.DraftMediaState, usage *cmsapi.Edi
 		return mediaStateProcessing
 	case cmsapi.EditorialMediaStateRejected:
 		return mediaStateRejectedUnsupported
-	case cmsapi.EditorialMediaStateWithdrawn, cmsapi.EditorialMediaStateSuperseded, cmsapi.EditorialMediaStateUnavailable, cmsapi.EditorialMediaStateMissing:
+	case cmsapi.EditorialMediaStateWithdrawn, cmsapi.EditorialMediaStateSuperseded, cmsapi.EditorialMediaStateUnavailable:
 		return mediaStateUnavailableRemoved
+	case cmsapi.EditorialMediaStateMissing:
+		// Lesser emits MISSING when a binding has no servable asset
+		// (cms_converters.go defaults EditorialMediaState to Missing for a nil
+		// media record); this is the dedicated envelope state, distinct from
+		// the withdrawn/superseded/unavailable lifecycle lane.
+		return mediaStateMissing
 	case cmsapi.EditorialMediaStateReady:
 		if usage.PublishedURL != nil && strings.TrimSpace(*usage.PublishedURL) != "" {
 			return mediaStatePublished
 		}
 		if state != nil {
 			if latest := latestVerdict(state); latest != nil {
+				// Lesser sets Stale = !Current, so the non-current case is
+				// exactly the stale case; no separate approved-for-revision
+				// lane is producible.
 				if latest.Stale {
 					return mediaStateStale
-				}
-				if !latest.Current {
-					return mediaStateApprovedForRevision
 				}
 			}
 			if len(state.ActiveReviewerIDs) > 0 {

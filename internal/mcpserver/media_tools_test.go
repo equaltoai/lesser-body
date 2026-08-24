@@ -378,7 +378,7 @@ func TestMediaEnvelopeStateMapping(t *testing.T) {
 			}, nil, mediaStateUnavailableRemoved},
 			{"missing", func() *cmsapi.EditorialMediaUsage {
 				return &cmsapi.EditorialMediaUsage{State: cmsapi.EditorialMediaStateMissing}
-			}, nil, mediaStateUnavailableRemoved},
+			}, nil, mediaStateMissing},
 			{"published", func() *cmsapi.EditorialMediaUsage {
 				url := "https://cdn.example.com/media-1.png"
 				return &cmsapi.EditorialMediaUsage{State: cmsapi.EditorialMediaStateReady, PublishedURL: &url}
@@ -394,11 +394,6 @@ func TestMediaEnvelopeStateMapping(t *testing.T) {
 			}, &cmsapi.DraftMediaState{Verdicts: []cmsapi.DraftReviewVerdictRecord{{
 				Verdict: cmsapi.DraftReviewVerdictApproved, Current: false, Stale: true, RecordedAt: "2026-08-24T12:00:00Z",
 			}}}, mediaStateStale},
-			{"approved_for_revision", func() *cmsapi.EditorialMediaUsage {
-				return &cmsapi.EditorialMediaUsage{State: cmsapi.EditorialMediaStateReady}
-			}, &cmsapi.DraftMediaState{Verdicts: []cmsapi.DraftReviewVerdictRecord{{
-				Verdict: cmsapi.DraftReviewVerdictApproved, Current: false, Stale: false, RecordedAt: "2026-08-24T12:00:00Z",
-			}}}, mediaStateApprovedForRevision},
 			{"current_verdict_stays_attached", func() *cmsapi.EditorialMediaUsage {
 				return &cmsapi.EditorialMediaUsage{State: cmsapi.EditorialMediaStateReady}
 			}, &cmsapi.DraftMediaState{Verdicts: []cmsapi.DraftReviewVerdictRecord{{
@@ -699,6 +694,39 @@ func TestDraftMediaAttachFillsFirstFreeInlinePositionAfterDetach(t *testing.T) {
 func mediaInlineUsageJSON(mediaID string, position int) string {
 	contentHash := "sha256:" + strings.Repeat("a", 64)
 	return fmt.Sprintf(`{"mediaId":%q,"role":"INLINE","inlinePosition":%d,"caption":"caption-%s","state":"READY","contentHash":%q,"provenance":{"origin":"ILLUSTRATED","responsibleActorId":"alice","sourceReferences":[],"recordedAt":"2026-08-24T12:00:00Z","contentIntegrity":%q}}`, mediaID, position, mediaID, contentHash, contentHash)
+}
+
+// TestDraftMediaAttachRoleSwitchReplacesUsage pins F5c: re-attaching an
+// already-bound media_id with a DIFFERENT role must replace the existing usage
+// entirely (lesser's setDraftEditorialMedia rejects duplicate media ids), not
+// append a second binding for the same asset.
+func TestDraftMediaAttachRoleSwitchReplacesUsage(t *testing.T) {
+	stub := newMediaGraphQLStub(t, map[string]string{
+		"BodyDraftEditorialMedia":    `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` + mediaFixtureUsageJSON() + `],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` + mediaInlineUsageJSON("media-1", 0) + `],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+	})
+
+	// media-1 is bound as HERO; re-attach it as INLINE.
+	attach, err := handleDraftMediaAttach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-1","role":"INLINE"}`))
+	if err != nil || attach == nil || attach.IsError {
+		t.Fatalf("role-switch attach failed: %+v err=%v", attach, err)
+	}
+
+	setOp := stub.lastBody("BodySetDraftEditorialMedia")
+	if setOp == nil {
+		t.Fatalf("no BodySetDraftEditorialMedia call observed")
+	}
+	mediaVariables, _ := setOp.Variables["media"].([]any)
+	if len(mediaVariables) != 1 {
+		t.Fatalf("role-switch attach must send exactly one usage, got %d: %+v", len(mediaVariables), setOp.Variables)
+	}
+	usage, _ := mediaVariables[0].(map[string]any)
+	if got := usage["mediaId"]; got != "media-1" {
+		t.Fatalf("usage mediaId = %v, want media-1", got)
+	}
+	if got := usage["role"]; got != "INLINE" {
+		t.Fatalf("usage role = %v, want INLINE (role switch must replace)", got)
+	}
 }
 
 func structuredData(t *testing.T, result *mcpruntime.ToolResult) map[string]any {

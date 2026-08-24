@@ -757,7 +757,7 @@ func mediaStateOutputSchema() json.RawMessage {
 					"operation":{"type":"string"},
 					"source":{"type":"string"},
 					"mode":{"type":"string","enum":["upload_grant","draft_binding"]},
-					"state":{"type":"string","enum":["received","processing","ready_internal","attached","awaiting_review","approved_for_revision","stale","published","rejected_unsupported","unavailable_removed","expired","missing"]},
+					"state":{"type":"string","enum":["received","processing","ready_internal","attached","awaiting_review","stale","published","rejected_unsupported","unavailable_removed","expired","missing"]},
 					"grantState":{"type":"string","enum":["MINTED","USED","FAILED_DIGEST","EXPIRED"]},
 					"grant":{"type":"object","additionalProperties":true},
 					"draftId":{"type":"string"},
