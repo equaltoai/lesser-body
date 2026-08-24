@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 
 	"github.com/equaltoai/lesser-body/internal/auth"

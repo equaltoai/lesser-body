@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 	"github.com/theory-cloud/tabletheory/v3"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
@@ -195,6 +195,10 @@ func registerTools(r *mcpruntime.ToolRegistry) error {
 	}
 
 	if err := registerArticleTools(r); err != nil {
+		return err
+	}
+
+	if err := registerMediaTools(r); err != nil {
 		return err
 	}
 

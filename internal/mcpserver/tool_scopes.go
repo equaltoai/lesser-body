@@ -3,7 +3,7 @@ package mcpserver
 import (
 	"sync"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 // Scope names carried in a caller's JWT claims.
@@ -67,6 +67,10 @@ var toolScopes = map[string][]string{
 	"article_get":               {ScopeRead},
 	"article_list":              {ScopeRead},
 
+	// Editorial media reads.
+	"media_state": {ScopeRead},
+	"media_read":  {ScopeRead},
+
 	// Article writes.
 	"article_draft_create":         {ScopeWrite},
 	"article_draft_update":         {ScopeWrite},
@@ -74,6 +78,13 @@ var toolScopes = map[string][]string{
 	"article_draft_review_verdict": {ScopeWrite},
 	"article_draft_publish":        {ScopeWrite},
 	"article_update":               {ScopeWrite},
+
+	// Editorial media writes: upload admission and draft binding side effects.
+	"upload_grant_mint":   {ScopeWrite},
+	"upload_finalize":     {ScopeWrite},
+	"draft_media_attach":  {ScopeWrite},
+	"draft_media_detach":  {ScopeWrite},
+	"draft_media_reorder": {ScopeWrite},
 
 	// Memory.
 	"memory_query":  {ScopeRead},

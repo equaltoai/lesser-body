@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func TestWithErrorBoundary_LogsErrorWithoutSecrets(t *testing.T) {

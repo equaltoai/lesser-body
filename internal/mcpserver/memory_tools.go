@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/equaltoai/lesser-body/internal/memory"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func registerMemoryTools(r *mcpruntime.ToolRegistry) error {

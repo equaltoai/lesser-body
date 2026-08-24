@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func TestAuditParserEquivalence_DispatchableToolCallsAreAuthorized(t *testing.T) {

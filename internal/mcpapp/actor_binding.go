@@ -9,7 +9,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 // actorAdmission resolves the caller's relationship to the routed actor via
@@ -118,8 +118,11 @@ func withActorBinding(next apptheory.Handler, admit actorAdmission) apptheory.Ha
 		case "grantee":
 			// Grantee path: record the resolved driver so downstream act-as,
 			// memory-partition, and attribution seams thread it without
-			// re-resolving the grant.
-			setRequestContext(ctx, mcpserver.WithShareCaller(ctx.Context(), delegatedBy))
+			// re-resolving the grant. The value lands on the apptheory request
+			// and the per-POST tool-context hook folds it into the tool
+			// context; the former reflect+unsafe request-context override is
+			// gone.
+			mcpserver.SetShareCallerOnAppTheoryContext(ctx, delegatedBy)
 			return next(ctx)
 		default:
 			return actorBindingForbidden()

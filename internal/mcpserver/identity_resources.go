@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/equaltoai/lesser-body/internal/soulapi"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func resourceChannels(ctx context.Context) ([]mcpruntime.ResourceContent, error) {

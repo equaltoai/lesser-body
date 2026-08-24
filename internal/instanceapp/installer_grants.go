@@ -12,7 +12,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/downloadgrant"
 	"github.com/equaltoai/lesser-body/internal/installpack"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 const (
