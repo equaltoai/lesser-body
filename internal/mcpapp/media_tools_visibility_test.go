@@ -60,6 +60,15 @@ func TestMediaToolsVisibleInSouledRuntimeSurface(t *testing.T) {
 	})
 
 	t.Run("well-known hint list includes media tools", func(t *testing.T) {
+		// Assertion strength: souled membership ONLY. The .well-known/mcp.json
+		// hint list is filtered through the hardcoded ProfileSouled allowlist
+		// (mcpapp/well_known.go: ToolAllowed(ProfileSouled, ...)), so this
+		// subtest proves each media tool passes the souled profile — it is not
+		// drone coverage and not per-actor filtering. The .well-known surface is
+		// intentionally a static hint surface; per-actor filtering happens at
+		// tools/list, whose drone leg is asserted by
+		// TestMediaToolsVisibleInDroneRuntimeSurface below. Do not mistake this
+		// subtest for a drone assertion.
 		resp := env.Invoke(context.Background(), app, apptheory.Request{
 			Method: "GET",
 			Path:   "/.well-known/mcp.json",
