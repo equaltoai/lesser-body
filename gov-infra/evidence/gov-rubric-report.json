@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-24T06:56:45.065480Z",
+  "generated_at": "2026-08-24T07:31:50.860858Z",
   "git": {
-    "head": "2faace7bf246d929616219bfec95afc405ca99e8",
-    "head_tree": "8c368437b5cd4b8d1c1bb97264b7aa7ed29d3e20",
+    "head": "cbdfdf5b180bf1660fd5d62bd8aac55b7cc391a3",
+    "head_tree": "9a7b7e01825b5161e9a56bae13174f72b31689e4",
     "merge_base_origin_staging": "82b49c975518109cd514499cf7603053c8b02b2c",
     "ref": "theorymcp/equaltoai/body/mcp-media-surface-m3-580",
-    "working_tree_after_run": "15 changed paths after verifier run"
+    "working_tree_after_run": "5 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
