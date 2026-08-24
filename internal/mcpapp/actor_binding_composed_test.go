@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
@@ -36,7 +36,10 @@ func TestComposedActorBindingAdmission(t *testing.T) {
 		called := false
 		handler := composedHandler(t, func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			called = true
-			if caller, shared := mcpserver.ShareCallerFromContext(ctx.Context()); shared || caller != "" {
+			// Tool-context derivation is the per-POST hook's job; the test
+			// applies it explicitly to read the folded values.
+			toolCtx := mcpapp.ToolContextHook(ctx, ctx.Context())
+			if caller, shared := mcpserver.ShareCallerFromContext(toolCtx); shared || caller != "" {
 				t.Fatalf("owner admission must not thread a share caller, caller=%q shared=%t", caller, shared)
 			}
 			return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
@@ -70,7 +73,8 @@ func TestComposedActorBindingAdmission(t *testing.T) {
 		called := false
 		handler := composedHandler(t, func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			called = true
-			if caller, shared := mcpserver.ShareCallerFromContext(ctx.Context()); !shared || caller != "alice" {
+			toolCtx := mcpapp.ToolContextHook(ctx, ctx.Context())
+			if caller, shared := mcpserver.ShareCallerFromContext(toolCtx); !shared || caller != "alice" {
 				t.Fatalf("grantee admission must thread the share caller into the tool context, caller=%q shared=%t", caller, shared)
 			}
 			return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
@@ -261,7 +265,11 @@ func installActorAccessUnreachable(t *testing.T) {
 
 func composedHandler(t *testing.T, next apptheory.Handler) apptheory.Handler {
 	t.Helper()
-	return mcpapp.WithMCPAuthorization(mcpapp.WithActorBinding(mcpapp.WithToolContext(next)))
+	// The production chain applies tool-context derivation per-POST via the
+	// server hook; tests apply it inside the terminal handler (see the two
+	// assertions above) so the middleware composition here stays the chain the
+	// server actually runs.
+	return mcpapp.WithMCPAuthorization(mcpapp.WithActorBinding(next))
 }
 
 func composedOAuthContext(token string) *apptheory.Context {

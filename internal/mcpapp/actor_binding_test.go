@@ -7,7 +7,7 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func TestWithActorBinding_OwnerAdmitsWithoutShareMarker(t *testing.T) {
@@ -40,7 +40,10 @@ func TestWithActorBinding_GranteeAdmitsAndThreadsShareCaller(t *testing.T) {
 		if principal == nil || principal.Identity != "arch" {
 			t.Fatalf("shared admission must keep the agent as the token subject, got %+v", principal)
 		}
-		if caller, shared := mcpserver.ShareCallerFromContext(ctx.Context()); !shared || caller != "alice" {
+		// Tool-context derivation is the per-POST hook's job; apply it here to
+		// read the folded share caller.
+		toolCtx := ToolContextHook(ctx, ctx.Context())
+		if caller, shared := mcpserver.ShareCallerFromContext(toolCtx); !shared || caller != "alice" {
 			t.Fatalf("grantee admission must thread the share caller, caller=%q shared=%t", caller, shared)
 		}
 		return apptheory.MustJSON(200, map[string]bool{"ok": true}), nil
