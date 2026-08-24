@@ -21,21 +21,21 @@ const (
 	// Envelope states (the theory-report editorial-media lifecycle vocabulary).
 	// Each state is derived strictly from Lesser-authoritative fields; the
 	// mapping table is pinned in TestMediaEnvelopeStateMapping.
-	mediaStateReceived            = "received"              // grant MINTED / unknown upstream state
-	mediaStateProcessing          = "processing"            // EditorialMediaState.PROCESSING
-	mediaStateReadyInternal       = "ready_internal"        // grant USED / EditorialMediaState.READY, internal
-	mediaStateAttached            = "attached"              // bound to a draft usage
-	mediaStateAwaitingReview      = "awaiting_review"       // bound + active reviewers, no current verdict
+	mediaStateReceived       = "received"        // grant MINTED / unknown upstream state
+	mediaStateProcessing     = "processing"      // EditorialMediaState.PROCESSING
+	mediaStateReadyInternal  = "ready_internal"  // grant USED / EditorialMediaState.READY, internal
+	mediaStateAttached       = "attached"        // bound to a draft usage
+	mediaStateAwaitingReview = "awaiting_review" // bound + active reviewers, no current verdict
 	// Lesser emits Stale as the logical negation of Current
 	// (cms_converters.go: Current: isCurrent, Stale: !isCurrent), so a
 	// non-current verdict is ALWAYS stale; there is no producible
 	// approved-but-superseded lane distinct from stale.
-	mediaStateStale               = "stale"                 // verdict marked stale (M2 contentHash mismatch)
-	mediaStatePublished           = "published"             // publishedUrl/publishedAt present
-	mediaStateRejectedUnsupported = "rejected_unsupported"  // REJECTED / FAILED_DIGEST
-	mediaStateUnavailableRemoved  = "unavailable_removed"   // MISSING/WITHDRAWN/SUPERSEDED/UNAVAILABLE
-	mediaStateExpired             = "expired"               // upload grant EXPIRED (fresh mint required)
-	mediaStateMissing             = "missing"               // binding has no servable asset
+	mediaStateStale               = "stale"                // verdict marked stale (M2 contentHash mismatch)
+	mediaStatePublished           = "published"            // publishedUrl/publishedAt present
+	mediaStateRejectedUnsupported = "rejected_unsupported" // REJECTED / FAILED_DIGEST
+	mediaStateUnavailableRemoved  = "unavailable_removed"  // MISSING/WITHDRAWN/SUPERSEDED/UNAVAILABLE
+	mediaStateExpired             = "expired"              // upload grant EXPIRED (fresh mint required)
+	mediaStateMissing             = "missing"              // binding has no servable asset
 
 	// Envelope error codes for the upload-grant / editorial-media lanes.
 	mediaErrorGrantExpired       = "media_grant_expired"
