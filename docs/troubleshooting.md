@@ -83,6 +83,21 @@ Fix:
 - Inspect the returned error details for `authAction`, `refreshRequired`, and any parsed upstream `apiError`.
 - Route-level `401` responses, tool errors, and resource payloads all use the same detail fields so client logic can make
   the same retry decision in each surface.
+- For route-level `401`, a bare challenge means no bearer was presented. A generic rejected bearer returns
+  `error="invalid_token"` with `refreshRequired=true`. On actor-plane `/mcp/{actor}` only,
+  `reason="audience_mismatch"` keeps `invalid_token` but returns `authAction="reauthorize"` and
+  `refreshRequired=false` because refreshing cannot change the token resource.
+- On `/instance/ptah/mcp` or `/instance/ba/mcp`, a valid-signature bearer with the wrong instance-resource audience does
+  not produce the actor-plane `audience_mismatch` challenge. It returns HTTP `403` with this response shape:
+
+  ```json
+  {
+    "error": {
+      "code": "instance_principal_not_allowed",
+      "message": "instance-plane MCP requires an account-holder OAuth token for this instance resource"
+    }
+  }
+  ```
 
 ## 403 `app.forbidden` on `tools/call`
 
@@ -246,6 +261,7 @@ Fix:
 Symptoms:
 
 - Server issues a new `mcp-session-id` frequently.
+- An SSE `GET` or `Last-Event-ID` resume returns `404` with `{"error":"session not found"}`.
 
 Common causes:
 
@@ -255,6 +271,8 @@ Common causes:
 Fix:
 
 - Always call `initialize` first and store the returned `mcp-session-id`.
+- On the spec-shaped dead-session `404`, discard the old session id and re-initialize; do not refresh credentials solely
+  because the MCP session died.
 - Enable session table in infra (recommended for production).
 
 ## MCP tasks are missing, inaccessible, or stuck

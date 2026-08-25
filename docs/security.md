@@ -193,7 +193,8 @@ results, or communication payloads by default.
 When an authenticated OAuth caller's non-stream request is rebound from a dead MCP session, Body emits one sanitized
 `mcp session rebound` audit event containing only the request id, principal type, and `mcp_session_rebound` reason. It
 does not log the actor identity, old or new session id, bearer token, or request body. Dead-session SSE `GET` requests
-are not rebound and retain the sanitized authorization-rejection event and `mcp_session_not_found` reason.
+are not rebound and emit a sanitized `mcp session not found` lifecycle event with the `mcp_session_not_found` reason;
+they do not turn session death into an authorization-rejection event.
 
 ## Private soul self-scope reads
 

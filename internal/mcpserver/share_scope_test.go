@@ -12,7 +12,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func x402GrantToolContext(actor string, identity string) context.Context {

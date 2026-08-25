@@ -11,8 +11,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/instancex402"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 const testSoulAgentID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

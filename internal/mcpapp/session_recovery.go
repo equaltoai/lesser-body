@@ -9,11 +9,9 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
-
-type sessionNotFoundResponseFactory func(*apptheory.Context, string, string) *apptheory.Response
 
 const internalSessionRebindRequestID = "lesser-body-session-rebind"
 
@@ -30,36 +28,19 @@ var errSessionRebindInitialize = errors.New("MCP session rebind initialize faile
 // so the raw-runtime replay is the request's only dispatch opportunity.
 //
 // GET is never rebound because it is the SSE listener/resume transport and its
-// event state belongs to the old session. OAuth GET callers retain the existing
-// invalid_token challenge. Non-OAuth callers retain AppTheory's spec-shaped 404.
-func WithOAuthSessionRecovery(
-	next apptheory.Handler,
-	resourceMetadataURL func(*apptheory.Context) string,
-	scopes string,
-) apptheory.Handler {
-	return withOAuthSessionRecovery(next, resourceMetadataURL, scopes, genericSessionNotFoundMCPResponse)
+// event state belongs to the old session. Every GET caller retains AppTheory's
+// spec-shaped 404 so MCP clients re-initialize instead of refreshing OAuth.
+func WithOAuthSessionRecovery(next apptheory.Handler) apptheory.Handler {
+	return withOAuthSessionRecovery(next)
 }
 
 func withActorOAuthSessionRecovery(next apptheory.Handler) apptheory.Handler {
-	return withOAuthSessionRecovery(
-		next,
-		protectedResourceMetadataURLForRequest,
-		MCPAuthorizationScopes,
-		actorSessionNotFoundMCPResponse,
-	)
+	return withOAuthSessionRecovery(next)
 }
 
-func withOAuthSessionRecovery(
-	next apptheory.Handler,
-	resourceMetadataURL func(*apptheory.Context) string,
-	scopes string,
-	responseFactory sessionNotFoundResponseFactory,
-) apptheory.Handler {
+func withOAuthSessionRecovery(next apptheory.Handler) apptheory.Handler {
 	if next == nil {
 		return nil
-	}
-	if responseFactory == nil {
-		responseFactory = genericSessionNotFoundMCPResponse
 	}
 
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
@@ -69,8 +50,9 @@ func withOAuthSessionRecovery(
 		}
 
 		if isMCPStreamRequest(ctx) {
-			auditMCPSessionRecoveryChallenge(ctx)
-			return sessionNotFoundChallenge(ctx, resourceMetadataURL, scopes, responseFactory), nil
+			auditMCPSessionNotFound(ctx)
+			setResponseHeader(resp, "cache-control", "no-store")
+			return resp, nil
 		}
 
 		freshSessionID, err := initializeReplacementMCPSession(ctx, next)
@@ -88,19 +70,6 @@ func withOAuthSessionRecovery(
 		}
 		return replayResp, replayErr
 	}
-}
-
-func sessionNotFoundChallenge(
-	ctx *apptheory.Context,
-	resourceMetadataURL func(*apptheory.Context) string,
-	scopes string,
-	responseFactory sessionNotFoundResponseFactory,
-) *apptheory.Response {
-	metadataURL := ""
-	if resourceMetadataURL != nil {
-		metadataURL = strings.TrimSpace(resourceMetadataURL(ctx))
-	}
-	return responseFactory(ctx, metadataURL, strings.TrimSpace(scopes))
 }
 
 func initializeReplacementMCPSession(ctx *apptheory.Context, runtimeHandler apptheory.Handler) (string, error) {
@@ -256,8 +225,8 @@ func auditMCPSessionRebind(ctx *apptheory.Context) {
 	)
 }
 
-func auditMCPSessionRecoveryChallenge(ctx *apptheory.Context) {
-	slog.WarnContext(contextForSessionRecovery(ctx), "mcp authorization rejected",
+func auditMCPSessionNotFound(ctx *apptheory.Context) {
+	slog.WarnContext(contextForSessionRecovery(ctx), "mcp session not found",
 		"request_id", requestIDForSessionRecovery(ctx),
 		"principal_type", string(auth.PrincipalTypeOAuthToken),
 		"reason", "mcp_session_not_found",

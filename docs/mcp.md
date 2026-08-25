@@ -377,17 +377,18 @@ Body keeps the recovery wrapper directly around the raw AppTheory handler and in
 middleware, which makes those gates run once on the original request and makes the replay the sole runtime dispatch.
 
 SSE `GET` listeners and `Last-Event-ID` resumes are deliberately not rebound because stream/event state belongs to the
-old session. An authenticated OAuth `GET` with a dead session retains the surface-specific HTTP `401 invalid_token`
-challenge:
+old session. A `GET` with a dead session retains AppTheory's spec-shaped lifecycle response:
 
 ```text
-WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<this surface's protected-resource metadata URL>", scope="read write"
+HTTP/1.1 404 Not Found
+{"error":"session not found"}
 ```
 
-The 24-hour TTL remains a load/continuity mitigation rather than an authorization mechanism. Non-OAuth and
-unauthenticated recovery contexts keep AppTheory's spec-shaped `404` session-not-found response. MCP `2026-07-28`
-requests remain stateless: they neither mint nor consume a session id and never enter the rebind path. Transparent
-session rebind does not refresh or replace the caller's valid OAuth token.
+This is not a credential failure: clients should discard the dead session and re-initialize rather than refresh or
+re-authorize. The 24-hour TTL remains a load/continuity mitigation rather than an authorization mechanism. MCP
+`2026-07-28` requests remain stateless: they neither mint nor consume a session id and never enter the rebind path.
+Authenticated dead-session responses retain `Cache-Control: no-store`. Transparent session rebind does not refresh or
+replace the caller's valid OAuth token.
 
 `lesser-body` does not refresh OAuth access tokens on the caller's behalf. If a token expires after session
 initialization:
@@ -396,6 +397,28 @@ initialization:
   `error.details`
 - tools return MCP error results with `isError=true` and `structuredContent.error`
 - Lesser-backed resources return JSON content with a top-level `error` object
+
+Route-level challenges distinguish discovery from credential rejection. A request without a bearer receives the bare
+`Bearer` discovery challenge with no `error` parameter. A presented bearer that Body generically rejects receives
+`error="invalid_token"`, `authAction="refresh_or_reauthorize"`, and `refreshRequired=true`. On the actor plane
+(`/mcp/{actor}`) only, a valid-signature bearer for the wrong actor MCP resource retains `error="invalid_token"` but
+returns `reason="audience_mismatch"`,
+`authAction="reauthorize"`, and `refreshRequired=false` so a client obtains a token for the correct resource instead of
+refreshing into the same audience again. Those `401` challenge classes retain the canonical `www-authenticate` header,
+the byte-identical `mcp-www-authenticate` bridge, and `Cache-Control: no-store`.
+
+The Ptah/Ba instance plane has a separate principal gate. On `/instance/ptah/mcp` or `/instance/ba/mcp`, a bearer with
+a valid signature but the wrong instance-resource audience returns HTTP `403` with this response shape, not a `401`
+`audience_mismatch` challenge:
+
+```json
+{
+  "error": {
+    "code": "instance_principal_not_allowed",
+    "message": "instance-plane MCP requires an account-holder OAuth token for this instance resource"
+  }
+}
+```
 
 For every Body MCP tool that declares an `outputSchema`, the schema admits either the tool's established success shape or
 the shared `structuredContent.error` shape. Ka and Ptah apply the shared error alternative during static registration; Ba's
@@ -411,7 +434,10 @@ Article GraphQL failures promote Lesser's canonical `extensions.code` and `exten
 omit valid extensions fall back to `lesser_cms_graphql_error`/`502`. Raw handler errors never escape as JSON-RPC
 `-32000` failures.
 
-Clients should refresh or re-authorize, then retry the MCP operation.
+Clients should follow `authAction`: refresh or re-authorize a generic rejected bearer, but on the actor plane
+re-authorize without refresh for `reason="audience_mismatch"`, then retry the MCP operation. Instance-plane clients
+should treat `403` `instance_principal_not_allowed` as a principal/resource mismatch rather than waiting for an
+`audience_mismatch` challenge.
 
 Across route-level, tool-level, and resource-level auth failures, lesser-body now keeps the same machine-readable auth
 fields aligned:
@@ -708,6 +734,19 @@ Scope key:
 | `article_update` | Write | Update a published Article by canonical Article ID; canonical slug/URL changes are not exposed. Missing ids return `not_found`/404 with `details.lookup="id"`. |
 | `article_get` | Read | Read one published Article by canonical Article ID/URL or slug; defaults compact with `article_get(view=standard)` expansion. Missing records return `not_found`/404 with `details.lookup` equal to the caller's actual field (`id` or `slug`). |
 | `article_list` | Read | List the authenticated actor's published Article refs through Lesser CMS; defaults compact. |
+| `upload_grant_mint` | Write | Step 1 of the two-step upload contract: request a one-time, hash-bound, presigned-companion upload grant from Lesser for `image/*` editorial media (canonical content type without parameters, bounded size, 64-lowercase-hex `sha256` of the exact intended bytes). The response carries the presigned PUT URL, grant id, and a prominent 15-minute expiry; the client must PUT the exact declared bytes out-of-band before `upload_finalize`. An expired grant requires a fresh mint. Lesser owns mint admission. |
+| `upload_finalize` | Write | Step 2 of the two-step upload contract: ask Lesser to verify the uploaded bytes against the grant (digest, size cap, SVG safety) and admit the editorial media record. Call only after the out-of-band PUT. Finalize is one-time: success consumes the grant to `USED`; digest failure consumes it to `FAILED_DIGEST`. Expired/consumed/failed grants surface classified envelope errors (`media_grant_expired`/410, `media_digest_mismatch`/422, `media_grant_not_minted`/409, `media_upload_not_finalized`/409 with re-mint guidance, including the size-abort lane Lesser reports as object-missing). Unknown or unowned grants surface `media_not_found`/404 — Lesser reports `ErrUploadGrantNotFound` as a GraphQL error, never `data:null`. |
+| `media_state` | Read | Inspect editorial-media lifecycle with `grant_id` (grant states `MINTED`/`USED`/`FAILED_DIGEST`/`EXPIRED`) or `draft_id`+`media_id` (per-usage state, provenance summary, review staleness via verdict `contentHash` vs draft `contentHash`, and `BOUND_MEDIA_*` publish blocking reasons; owner or active reviewer). Envelope states: `received`, `processing`, `ready_internal`, `attached`, `awaiting_review`, `stale`, `published`, `rejected_unsupported`, `unavailable_removed`, `expired`, `missing`. State reads include the per-usage short-lived access URL (`accessUrl`/`accessExpiresAt`) Lesser's draftReview projection mints for authorized callers (owner or active reviewer); it is re-minted per read and expires quickly. Use `media_read` for an explicit grant-scoped read of one exact asset. |
+| `media_read` | Read | Grant-scoped reviewer read: mint Lesser's short-lived exact-asset URL for one `media_id` bound to an authorized `draft_id` (owner or active reviewer). The URL expires at `expiresAt` and is per-request, not a stable cache-busting URL. |
+| `draft_media_attach` | Write | Bind one admitted asset to an owner-scoped draft with role `HERO`/`INLINE`/`SOCIAL_CARD` and optional per-usage caption/credit/alt/focus through Lesser's `setDraftEditorialMedia` contract (full-list replace; Body applies the delta and returns Lesser's resulting binding list). Re-attaching replaces the usage; a rejected/unavailable asset stays unattached. |
+| `draft_media_detach` | Write | Unbind one asset from an owner-scoped draft's ordered media association; detaching an unbound `media_id` is a no-op returning the unchanged list. |
+| `draft_media_reorder` | Write | Replace an owner-scoped draft's full ordered media association with `media_ids` in the requested order; `media_ids` must name exactly the currently bound assets, and INLINE usages are re-indexed to their position in the new order. |
+| `promo_compose` | Write | Create a promo package or replace its content through Lesser's `composePromoPackage` contract: outbound post text (public/unlisted only), a published-article reference, and an ORDERED set of PUBLISHED media asset IDs (attachment order). Every content change re-hashes the package and stales prior approvals, so release stays blocked until the changed package is re-reviewed and re-authorized. Compose only stages content — it never publishes. Operator content doctrine: no content shall be published by agents without principal approval; additional approvals, once requested, are also required. Lesser owns admission (published-article ref, notes size limit, PUBLISHED-only assets). |
+| `promo_review_share` | Write | Share a promo package with one reviewer through Lesser's `sharePromoPackageForReview` contract, creating or refreshing the revocable 7-day review grant. Once requested, the reviewer's approval is REQUIRED for release — revocation cannot delete a required approval. |
+| `promo_review_submit` | Write | Record a hash-bound reviewer verdict through Lesser's `submitPromoPackageReview` contract. `content_hash` is REQUIRED and must carry the contentHash the reviewer actually inspected (returned by `promo_state`/`promo_read`): a recomposed package (hash mismatch) rejects the submit with `promo_review_content_changed`/409 instead of blessing unseen content. `APPROVED` or `CHANGES_REQUESTED` are the only verdicts. |
+| `promo_state` | Read | Inspect one promo package's lifecycle state and approval matrix through Lesser's `promoPackage` query (owner or active reviewer grant). Envelope states: `draft`, `approved`, `releasing`, `released` (plus `unknown`); also surfaces status, contentHash, active reviewers, grants/verdicts, release eligibility, and the blocking reasons (`REVIEW_APPROVAL_REQUIRED` / `PRINCIPAL_APPROVAL_REQUIRED` / `PRINCIPAL_APPROVAL_UNAVAILABLE` / `ASSET_MISSING` / `ASSET_NOT_PUBLISHED` / `ASSET_DIGEST_CHANGED` / `PACKAGE_RELEASED` / `PACKAGE_RELEASING`). Lesser filters grants/verdicts owner-or-self for non-owners; Body transports that filtered surface verbatim. `PACKAGE_RELEASED` means the package is already released (the review projection is read-only post-release); `PACKAGE_RELEASING` means a release is mid-flight or crashed — operator reconciliation, never retry. |
+| `promo_release` | Write | Release an approved promo package through Lesser's `releasePromoPackage` contract: creates the outbound public/unlisted post with the exact approved PUBLISHED assets and AI-authorship disclosure intact. Release is blocked with explicit reasons until every required reviewer approval and (where required) the instance principal's approval are current for the exact reviewed content. A failed release never blindly retries: a surfaced status id means the post EXISTS (`promo_release_reconcile_required`/409, runbook cited, never retry-safe); `PACKAGE_RELEASING` likewise. |
+| `promo_read` | Read | Read a released promo package and its outbound post reference through Lesser's `promoPackage` query (owner or active reviewer grant): the full package (post text, visibility, contentHash, assets), the released status id (the outbound post created by the release transition), and the review surface. A package that is not yet released returns its current lifecycle state instead. Follow the released status id with `post_get` to expand the outbound post. |
 | `post_create` | Write | Create a new post. |
 | `post_boost` | Write | Boost/reblog a post. |
 | `post_favorite` | Write | Favorite a post. |
@@ -1544,6 +1583,16 @@ index/ref pages and expand only the items they need:
   editorial triage. Body keeps Lesser's depth-3 connection query at `edges.cursor`, then hydrates those cursor IDs in
   bounded depth-safe `draft(id:)` batches; call `article_draft_get({"id":"<draft-id>","view":"standard"})` only when
   an agent explicitly needs draft content or full metadata.
+- Editorial media upload (two-step presigned-companion contract): `upload_grant_mint({"content_type":"image/png","max_size_bytes":<cap>,"sha256":"<64-lowercase-hex>"})`
+  returns a presigned PUT URL, `grant.id`, and a prominent 15-minute `expiresAt`; the client PUTs the exact declared
+  bytes out-of-band, then `upload_finalize({"grant_id":"<grant-id>"})` (one-time) verifies digest/size and admits the
+  editorial media record. Expired or consumed grants require a fresh `upload_grant_mint`; digest failures consume the
+  grant to `FAILED_DIGEST`; the size-abort lane surfaces as `media_upload_not_finalized` with re-mint guidance.
+  Attach the admitted `media.mediaId` to a draft with `draft_media_attach` (role `HERO`/`INLINE`/`SOCIAL_CARD` plus
+  per-usage caption/credit/alt), inspect state and `BOUND_MEDIA_*` blocking reasons with
+  `media_state({"draft_id":...,"media_id":...})`, and mint the grant-scoped exact-asset URL for review with
+  `media_read({"draft_id":...,"media_id":...})`. `draft_media_detach` and `draft_media_reorder` maintain the ordered
+  association through Lesser's full-list `setDraftEditorialMedia` contract.
   `article_draft_create` and `article_draft_update` are write-scoped, return compact refs by default, and include
   `policy.autoPublishes=false` plus `policy.canonicalArticleId=not_promised_until_publish` so clients do not treat a
   draft id as a final published Article id. Authoring mutations and publish remain owner-scoped. In addition to
@@ -1714,9 +1763,171 @@ reviewer's current approval. Agent-generated drafts additionally require an acti
 principal. Grants are revocable, and a re-grant requires a fresh verdict. `article_draft_publish` delegates to the same
 Lesser publish mutation, so Body neither duplicates nor relaxes these gates.
 
+### Editorial media upload and binding workflow
+
+Body exposes Lesser's presigned-companion upload grants (M3) and editorial-media bindings (M1/M2) without computing
+admission, hashes, or publish decisions itself. The seven media tools forward the exact caller OAuth bearer to Lesser
+`POST /api/graphql`, are available in both drone and souled runtime profiles, and use structured-first responses with
+source `lesser_cms_graphql`.
+
+| Tool | Required input | Optional input | Success `structuredContent.data` |
+|---|---|---|---|
+| `upload_grant_mint` | `content_type: string` (`image/*`, canonical), `max_size_bytes: integer >= 1`, `sha256: string` (64 lowercase hex) | `max_output_bytes: integer >= 0` | `tool`, `operation:"minted"`, `source`, `grant` (id, `presignedUrl`, `mediaId`, `expiresAt`, …), `expiresInSeconds`, `guidance` |
+| `upload_finalize` | `grant_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"finalized"`, `source`, `grant` (status `USED`), `media` (`mediaId`, `contentType`, `size`, `contentHash`, `status`, `visibility`), `guidance` |
+| `media_state` | `grant_id: string` **or** `draft_id: string` + `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"state"`, `source`, `mode` (`upload_grant`/`draft_binding`), `state`, `grantState`/`usage` (including per-usage short-lived `accessUrl`/`accessExpiresAt` for authorized callers), plus verdicts, `contentHash`, `blockingReasons`, `activeReviewerIds` where present |
+| `media_read` | `draft_id: string`, `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"read"`, `source`, `access` (`mediaId`, `url`, `expiresAt`, `contentHash`), `guidance` |
+| `draft_media_attach` | `draft_id: string`, `media_id: string`, `role: HERO \| INLINE \| SOCIAL_CARD` | `inline_position`, `caption`, `credit`, `alt`, `focus`, `max_output_bytes` | `tool`, `operation:"attached"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+| `draft_media_detach` | `draft_id: string`, `media_id: string` | `max_output_bytes: integer >= 0` | `tool`, `operation:"detached"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+| `draft_media_reorder` | `draft_id: string`, `media_ids: string[]` (exactly the bound set, ordered) | `max_output_bytes: integer >= 0` | `tool`, `operation:"reordered"`, `source`, `draftId`, `contentHash`, `revision`, `editorialMedia`, `count` |
+
+All seven default to a 24,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted.
+
+1. Mint a one-time, hash-bound upload grant. Lesser owns admission: `image/*` only, canonical content type without
+   parameters, size cap, and the 64-lowercase-hex `sha256` of the exact intended bytes.
+
+   ```json
+   {"tool":"upload_grant_mint","arguments":{"content_type":"image/png","max_size_bytes":5242880,"sha256":"<64 lowercase hex>"}}
+   ```
+
+2. PUT the exact declared bytes to the returned `grant.presignedUrl` **out-of-band** (between the two calls). The
+   grant TTL is 15 minutes; the presigned URL is re-signed on each grant-state read while the grant is `MINTED`, so
+   clients must not cache-bust on the URL. An expired grant requires a fresh `upload_grant_mint`.
+
+3. Finalize once. Lesser verifies the stored object's digest, size cap, and SVG safety before any media record exists;
+   only finalize is one-time:
+
+   ```json
+   {"tool":"upload_finalize","arguments":{"grant_id":"<grant-id>"}}
+   ```
+
+   Success consumes the grant to `USED` and returns the admitted internal media record. Classified failure lanes:
+   `media_grant_expired`/410 (fresh mint), `media_digest_mismatch`/422 (consumed to `FAILED_DIGEST`; fresh mint),
+   `media_grant_not_minted`/409 (already consumed), and `media_upload_not_finalized`/409. Lesser reports the
+   over-cap/size-abort lane as an object-missing-class error (residual N1), so Body renders re-mint guidance for that
+   class instead of a missing-object retry loop.
+
+4. Attach the admitted asset to a draft with role and per-usage caption/credit/alt through Lesser's full-list
+   `setDraftEditorialMedia` contract; Body applies the delta:
+
+   ```json
+   {"tool":"draft_media_attach","arguments":{"draft_id":"draft-1","media_id":"<media-id>","role":"HERO","caption":"Launch artwork","alt":"A rocket leaving a violet planet"}}
+   ```
+
+   `draft_media_detach` removes an asset; `draft_media_reorder` replaces the full ordered association and re-indexes
+   INLINE usages. All three return Lesser's resulting binding list, `contentHash`, and `revision`.
+
+5. Inspect lifecycle state (owner or active reviewer) and mint the grant-scoped exact-asset URL for review:
+
+   ```json
+   {"tool":"media_state","arguments":{"draft_id":"draft-1","media_id":"<media-id>"}}
+   {"tool":"media_read","arguments":{"draft_id":"draft-1","media_id":"<media-id>"}}
+   ```
+
+   `media_state` surfaces the envelope state (`received`, `processing`, `ready_internal`, `attached`,
+   `awaiting_review`, `stale`, `published`, `rejected_unsupported`, `unavailable_removed`,
+   `expired`, `missing`), Lesser's provenance summary, review staleness (verdict `contentHash` vs draft `contentHash`),
+   and `BOUND_MEDIA_*` publish blocking reasons. State reads also carry the per-usage short-lived `accessUrl`/
+   `accessExpiresAt` that Lesser's draftReview projection mints for authorized callers (owner or active reviewer) —
+   re-minted per read and expiring quickly. `media_read` mints the short-lived exact-asset URL; it is per-request,
+   not a stable cache-busting URL.
+
 Grant creation is authorized by Lesser's `shareDraftForReview` contract. Body deliberately adds no local owner check:
 the CSR-010 `draftOwnedByAuthenticatedActor` post-response layer is intentionally not applied to
 `article_draft_review_submit`, unlike sibling draft tools, because Body must not re-derive Lesser's access decision.
+
+### Promo package workflow (M4)
+
+Body transports Lesser's M4 promo package contract: outbound post text plus an exact, ordered set of approved PUBLISHED
+media assets, promoting a published article through a public/unlisted post. The six promo tools forward the exact
+caller OAuth bearer to Lesser `POST /api/graphql`, are available in both drone and souled runtime profiles, and use
+structured-first responses with source `lesser_cms_graphql`. The operator content doctrine is binding: no content shall
+be published by agents without principal approval; additional approvals, once requested, are also required. Body
+transports the doctrine — Lesser enforces it at the release gate.
+
+| Tool | Required input | Optional input | Success `structuredContent.data` |
+|---|---|---|---|
+| `promo_compose` | `article_id: string`, `post_text: string` (≤ 5000 bytes), `visibility: public \| unlisted`, `asset_media_ids: string[]` (ordered, ≥ 1) | `package_id` (replace content), `max_output_bytes` | `tool`, `operation:"composed"`, `source`, `packageId`, `contentHash`, `package`, `guidance` |
+| `promo_review_share` | `package_id: string`, `reviewer: string` | `max_output_bytes` | `tool`, `operation:"shared"`, `source`, `packageId`, `review`, `guidance` |
+| `promo_review_submit` | `package_id: string`, `verdict: approved \| changes_requested`, `content_hash: string` (sha256 of the inspected content) | `notes`, `max_output_bytes` | `tool`, `operation:"verdict_submitted"`, `source`, `packageId`, `contentHash`, `review` |
+| `promo_state` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"state"`, `source`, `packageId`, `state`, `status`, `package`, `blockingReasons` where present, `guidance` |
+| `promo_release` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"released"`, `source`, `packageId`, `statusId`, `package`, `url` where present, `guidance` |
+| `promo_read` | `package_id: string` | `max_output_bytes` | `tool`, `operation:"read"`, `source`, `packageId`, `state`, `status`, `package`, `releasedStatusId`/`outboundPost` when released, `guidance` |
+
+All six default to a 24,000-byte final MCP-envelope budget when `max_output_bytes` is zero or omitted.
+
+Envelope states are derived strictly from Lesser-authoritative fields (pinned in `TestPromoEnvelopeStateMapping`):
+
+- `draft` — DRAFT with no current release eligibility (blocked approvals or assets).
+- `approved` — DRAFT whose every required approval and asset binding is current for the exact reviewed content.
+- `releasing` — the transient release reservation: a release is mid-flight or crashed between reservation and stamp.
+  Release and composition are refused; `PACKAGE_RELEASING` is surfaced as a blocking reason even when the review
+  projection omits it. This is operator reconciliation, NEVER retryable.
+- `released` — the outbound post exists (`releasedStatusId`).
+- `unknown` — an unrecognized Lesser status (fail-closed, not mapped to a permissive state).
+
+Error lanes (structured envelope, `details` always carries `source: "lesser_cms_graphql"`):
+
+- `promo_release_reconcile_required`/409 — the stamp failed after the post was created (a surfaced `details.statusId`
+  means the post EXISTS) or the `PACKAGE_RELEASING` reservation is held. `details.retryable: false`; `details.runbook`
+  cites the promo package release recovery runbook (`docs/operations/promo-package-release-recovery-runbook.md` in the
+  lesser repo, which owns the reconciliation writes). A retry would create a second public post.
+- `promo_release_approval_required`/409 — every required reviewer approval is not current; `details.blockingReasons`
+  carries the doctrine reasons; retryable after re-review.
+- `promo_release_principal_approval_required`/409 — a non-principal release needs an active current principal approval.
+- `promo_release_asset_unavailable`/409 — an asset can no longer serve the exact approved bytes
+  (`ASSET_MISSING`/`ASSET_NOT_PUBLISHED`/`ASSET_DIGEST_CHANGED`).
+- `promo_already_released`/409 — re-release is refused; read the package with `promo_read`.
+- `promo_review_content_changed`/409 — the submitted `content_hash` no longer matches (the package was recomposed after
+  inspection); re-read the current hash and re-inspect.
+- `promo_conflict`/409 — a concurrent change; retry after re-reading state.
+- `promo_owner_self_review`/422 — an owner cannot review their own package.
+- `promo_not_found`/404 — unknown or unauthorized package.
+- `promo_validation`/422 — Lesser rejected the request (published-article ref, notes size limit, visibility, asset set).
+
+Workflow:
+
+1. Compose the package. Every content change re-hashes the package and stales prior approvals:
+
+   ```json
+   {"tool":"promo_compose","arguments":{"article_id":"<canonical object URL>","post_text":"Launching!","visibility":"public","asset_media_ids":["<published media id>"]}}
+   ```
+
+   Keep the returned `contentHash`; it is the reviewed content's binding.
+
+2. Share with each reviewer (7-day bounded grant):
+
+   ```json
+   {"tool":"promo_review_share","arguments":{"package_id":"<package-id>","reviewer":"<reviewer username>"}}
+   ```
+
+   Once requested, the reviewer's approval is REQUIRED for release — revocation cannot delete a required approval.
+
+3. Reviewers inspect (`promo_state`/`promo_read`) and submit hash-bound verdicts carrying the hash they actually
+   inspected:
+
+   ```json
+   {"tool":"promo_review_submit","arguments":{"package_id":"<package-id>","verdict":"approved","content_hash":"<contentHash from promo_state>","notes":"Looks good"}}
+   ```
+
+   A recomposed package rejects the submit with `promo_review_content_changed`/409 instead of blessing unseen content.
+
+4. Re-read the approval matrix and confirm every required approval plus principal approval is current before releasing:
+
+   ```json
+   {"tool":"promo_state","arguments":{"package_id":"<package-id>"}}
+   ```
+
+   If a release is refused, `details.blockingReasons` names the doctrine reasons (`REVIEW_APPROVAL_REQUIRED` /
+   `PRINCIPAL_APPROVAL_REQUIRED` / `ASSET_*`).
+
+5. Release:
+
+   ```json
+   {"tool":"promo_release","arguments":{"package_id":"<package-id>"}}
+   ```
+
+   Success returns the created outbound post's `statusId`; expand it with `post_get`. A failed release never blindly
+   retries: a surfaced status id means the post EXISTS — reconcile per the runbook, never retry-safe.
 
 Omitted/default calls remain compatibility-oriented until a later, evidence-backed default migration. Do not infer
 private reachability from compact omissions: private email/phone reachability still fails closed with

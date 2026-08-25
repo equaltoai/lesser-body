@@ -1,6 +1,6 @@
 package mcpapp
 
-import apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+import apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 
 const sharedMcpMigrationIssueURL = "https://github.com/equaltoai/lesser-body/issues/58"
 

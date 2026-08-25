@@ -7,15 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
-	mcptestkit "github.com/theory-cloud/apptheory/v3/testkit/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
+	mcptestkit "github.com/theory-cloud/apptheory/v4/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
@@ -358,7 +359,7 @@ func TestMcpAuth_ExpiredJwtRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for expired token, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
 	}
 }
@@ -388,8 +389,26 @@ func TestMcpAuth_TokenAudienceMismatchRejected(t *testing.T) {
 	if resp.Status != 401 {
 		t.Fatalf("expected 401 for audience mismatch, got %d (%s)", resp.Status, string(resp.Body))
 	}
-	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
+	if got := firstHeader(resp.Headers, "www-authenticate"); got != `Bearer error="invalid_token", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp/agent1", scope="read write"` {
 		t.Fatalf("unexpected WWW-Authenticate header: %q", got)
+	}
+	var out struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		t.Fatalf("unmarshal audience-mismatch response: %v", err)
+	}
+	wantDetails := map[string]any{
+		"source":          "lesser_body",
+		"reauthorize":     true,
+		"authAction":      "reauthorize",
+		"refreshRequired": false,
+		"reason":          "audience_mismatch",
+	}
+	if !reflect.DeepEqual(out.Error.Details, wantDetails) {
+		t.Fatalf("audience-mismatch details = %#v, want %#v", out.Error.Details, wantDetails)
 	}
 }
 

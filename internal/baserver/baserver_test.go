@@ -17,7 +17,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/installpack"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/golang-jwt/jwt/v5"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 const testInstanceEndpoint = "https://api.dev.example.com/instance/{surface}/mcp"

@@ -11,8 +11,8 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/v3/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/v4/runtime/oauth"
 )
 
 const (
@@ -26,6 +26,15 @@ const (
 	PrincipalTypeOAuthToken  PrincipalType = "oauth_token"
 	PrincipalTypeInstanceKey PrincipalType = "instance_key"
 	PrincipalTypeX402Grant   PrincipalType = "x402_grant"
+)
+
+// BearerCredentialClass records whether a request supplied a syntactically
+// usable bearer credential. It deliberately does not validate the token.
+type BearerCredentialClass uint8
+
+const (
+	BearerCredentialAbsent BearerCredentialClass = iota
+	BearerCredentialPresented
 )
 
 const legacyInstanceKeyInboundAuthEnv = "MCP_ALLOW_LEGACY_INSTANCE_KEY"
@@ -139,6 +148,16 @@ func LegacyInstanceKeyInboundAuthEnabled() bool {
 // Hook or PrincipalFromContext.
 func BearerTokenFromRequest(ctx *apptheory.Context) (string, bool) {
 	return bearerToken(ctx)
+}
+
+// BearerCredentialClassFromRequest distinguishes OAuth discovery from a
+// rejected credential without inspecting validation error strings. Callers
+// should use this only after authentication has failed.
+func BearerCredentialClassFromRequest(ctx *apptheory.Context) BearerCredentialClass {
+	if _, ok := bearerToken(ctx); ok {
+		return BearerCredentialPresented
+	}
+	return BearerCredentialAbsent
 }
 
 func bearerToken(ctx *apptheory.Context) (string, bool) {

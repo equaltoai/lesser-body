@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/mcpserver"
 )
@@ -218,5 +218,41 @@ func assertNoUnsupportedSubCapabilities(t testing.TB, name string, raw any) {
 		if _, ok := capability[sub]; ok {
 			t.Fatalf("did not expect %s.%s overclaim: %+v", name, sub, capability)
 		}
+	}
+}
+
+// TestMCPServerMethodNotAllowedCarriesAllowHeader pins the AppTheory v4 wire
+// delta that MCP method-not-allowed responses carry the RFC 9110 Allow header.
+// body's app router only routes POST/GET/DELETE to the MCP handler, so this
+// asserts the server-level shape directly: an unsupported method reaching the
+// handler answers 405 with `Allow: DELETE, GET, POST`.
+func TestMCPServerMethodNotAllowedCarriesAllowHeader(t *testing.T) {
+	t.Setenv("MCP_SESSION_TABLE", "")
+
+	srv, err := mcpserver.New("test-server", "dev")
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	resp, handlerErr := srv.Handler()(&apptheory.Context{
+		Request: apptheory.Request{
+			Method:  "PUT",
+			Path:    "/mcp",
+			Headers: map[string][]string{"content-type": {"application/json"}},
+			Body:    []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
+		},
+	})
+	if handlerErr != nil {
+		t.Fatalf("handler error: %v", handlerErr)
+	}
+	if resp == nil || resp.Status != 405 {
+		t.Fatalf("expected 405 method not allowed, got %+v", resp)
+	}
+	allow := ""
+	if values := resp.Headers["allow"]; len(values) > 0 {
+		allow = values[0]
+	}
+	if allow != "DELETE, GET, POST" {
+		t.Fatalf("expected Allow: DELETE, GET, POST on the 405, got %q", allow)
 	}
 }

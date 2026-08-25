@@ -16,7 +16,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/memory"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 // Strict MCP clients validate tools/call structuredContent against the tool's
@@ -755,7 +755,139 @@ func kaOutputSchemaFixtures() map[string][]kaOutputSchemaFixture {
 		}))
 	})
 
+	// Editorial media tools: representative success results built through the
+	// same result builders the handlers use.
+	mediaGrant := func() *cmsapi.UploadGrant {
+		url := "https://presign.example.com/put/media-1.png"
+		mediaID := "media-1"
+		return &cmsapi.UploadGrant{
+			ID: "grant-1", OwnerID: "alice", ContentType: "image/png", MaxSizeBytes: 5 * 1024 * 1024,
+			DeclaredSHA256: strings.Repeat("a", 64), Status: cmsapi.UploadGrantStatusMinted,
+			PresignedURL: &url, MediaID: &mediaID,
+			GrantedAt: "2026-08-24T12:00:00Z", ExpiresAt: "2026-08-24T12:15:00Z",
+		}
+	}
+	add("upload_grant_mint", "minted", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaGrantMintResult(mediaGrant(), mediaDefaultBudgetBytes))
+	})
+	add("upload_finalize", "finalized", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaFinalizeResult(&cmsapi.UploadGrantFinalizeResult{
+			Grant: &cmsapi.UploadGrant{
+				ID: "grant-1", OwnerID: "alice", ContentType: "image/png", MaxSizeBytes: 5 * 1024 * 1024,
+				DeclaredSHA256: strings.Repeat("a", 64), Status: cmsapi.UploadGrantStatusUsed,
+				MediaID: stringPtr("media-1"), GrantedAt: "2026-08-24T12:00:00Z", ExpiresAt: "2026-08-24T12:15:00Z",
+				UsedAt: stringPtr("2026-08-24T12:05:00Z"),
+			},
+			Media: &cmsapi.UploadGrantMedia{
+				MediaID: "media-1", ContentType: "image/png", Size: 1024,
+				ContentHash: "sha256:" + strings.Repeat("a", 64), Status: "ready", Visibility: "internal",
+			},
+		}, mediaDefaultBudgetBytes))
+	})
+	add("media_state", "upload_grant", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaGrantStateResult(mediaGrant(), mediaDefaultBudgetBytes))
+	})
+	add("media_state", "draft_binding", func(t *testing.T) *mcpruntime.ToolResult {
+		usage := mediaFixtureUsage()
+		state := &cmsapi.DraftMediaState{
+			DraftID: "draft-1", ContentHash: "sha256:" + strings.Repeat("b", 64), Revision: 3,
+			EditorialMedia:     []cmsapi.EditorialMediaUsage{*usage},
+			PublishEligibility: cmsapi.DraftPublishEligibility{Eligible: true},
+		}
+		return mustKaToolResult(mediaBindingStateResult(state, usage.MediaID, mediaDefaultBudgetBytes))
+	})
+	add("media_read", "access", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaReadResult(&cmsapi.EditorialMediaAccess{
+			MediaID: "media-1", URL: "https://media.example.com/exact-asset.png?signature=review",
+			ExpiresAt: "2026-08-24T12:30:00Z", ContentHash: "sha256:" + strings.Repeat("a", 64),
+		}, mediaDefaultBudgetBytes))
+	})
+	add("draft_media_attach", "attached", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaBindingsResult("draft_media_attach", "attached", mediaFixtureDraftState(), mediaDefaultBudgetBytes))
+	})
+	add("draft_media_detach", "detached", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaBindingsResult("draft_media_detach", "detached", mediaFixtureDraftState(), mediaDefaultBudgetBytes))
+	})
+	add("draft_media_reorder", "reordered", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(mediaBindingsResult("draft_media_reorder", "reordered", mediaFixtureDraftState(), mediaDefaultBudgetBytes))
+	})
+	add("promo_compose", "composed", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoComposeResult(promoFixturePackage(cmsapi.PromoPackageStatusDraft, false, ""), promoDefaultBudgetBytes))
+	})
+	add("promo_review_share", "shared", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReviewShareResult(&cmsapi.PromoPackageReview{
+			PackageID:   "pkg-1",
+			ContentHash: promoContentHash("a"),
+		}, promoDefaultBudgetBytes))
+	})
+	add("promo_review_submit", "verdict_submitted", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReviewSubmitResult(&cmsapi.PromoPackageReview{
+			PackageID:   "pkg-1",
+			ContentHash: promoContentHash("a"),
+		}, promoDefaultBudgetBytes))
+	})
+	add("promo_state", "draft", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoStateResult(promoFixturePackage(cmsapi.PromoPackageStatusDraft, false, ""), promoDefaultBudgetBytes))
+	})
+	add("promo_state", "releasing", func(t *testing.T) *mcpruntime.ToolResult {
+		// The releasing reservation injects PACKAGE_RELEASING into blockingReasons
+		// even when the review projection omits it, so this fixture also exercises
+		// the blockingReasons/guidance members of the state schema.
+		pkg := promoFixturePackage(cmsapi.PromoPackageStatusReleasing, true, "")
+		pkg.Review.ReleaseBlockingReasons = nil
+		return mustKaToolResult(promoStateResult(pkg, promoDefaultBudgetBytes))
+	})
+	add("promo_state", "unknown_status", func(t *testing.T) *mcpruntime.ToolResult {
+		// Lesser's status is transported verbatim and can be a value outside the
+		// DRAFT/RELEASING/RELEASED enum (the envelope state mapping still fails
+		// closed to "unknown"). The status property must stay enum-free so a
+		// strict MCP client does not reject an unrecognized upstream status.
+		return mustKaToolResult(promoStateResult(promoFixturePackage("SOMETHING_NEW", false, ""), promoDefaultBudgetBytes))
+	})
+	add("promo_release", "released", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReleaseResult(&cmsapi.PromoPackageReleaseResult{
+			Package:  promoFixturePackage(cmsapi.PromoPackageStatusReleased, true, "status-1"),
+			StatusID: "status-1",
+			URL:      strPtr("status-1"),
+		}, promoDefaultBudgetBytes))
+	})
+	add("promo_read", "released", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReadResult(promoFixturePackage(cmsapi.PromoPackageStatusReleased, true, "status-1"), promoDefaultBudgetBytes))
+	})
+	add("promo_read", "unknown_status", func(t *testing.T) *mcpruntime.ToolResult {
+		return mustKaToolResult(promoReadResult(promoFixturePackage("SOMETHING_NEW", false, ""), promoDefaultBudgetBytes))
+	})
+
 	return fixtures
+}
+
+func mediaFixtureUsage() *cmsapi.EditorialMediaUsage {
+	caption := "Launch artwork"
+	credit := "Illustration by Alice"
+	alt := "A rocket leaving a violet planet"
+	contentHash := "sha256:" + strings.Repeat("a", 64)
+	return &cmsapi.EditorialMediaUsage{
+		MediaID: "media-1", Role: cmsapi.EditorialMediaRoleHero,
+		Caption: &caption, CreditLine: &credit, AltText: &alt, EffectiveAltText: &alt,
+		State: cmsapi.EditorialMediaStateReady, ContentHash: &contentHash,
+		Provenance: &cmsapi.EditorialMediaProvenance{
+			Origin: "ILLUSTRATED", ResponsibleActorID: "alice", SourceReferences: []string{},
+			RecordedAt: "2026-08-24T12:00:00Z", ContentIntegrity: contentHash,
+		},
+	}
+}
+
+func mediaFixtureDraftState() *cmsapi.DraftMediaState {
+	usage := mediaFixtureUsage()
+	return &cmsapi.DraftMediaState{
+		DraftID: "draft-1", ContentHash: "sha256:" + strings.Repeat("b", 64), Revision: 3,
+		EditorialMedia:     []cmsapi.EditorialMediaUsage{*usage},
+		PublishEligibility: cmsapi.DraftPublishEligibility{Eligible: true},
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func mustKaToolResult(result *mcpruntime.ToolResult, err error) *mcpruntime.ToolResult {

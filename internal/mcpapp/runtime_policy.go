@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func WithRuntimePolicy(next apptheory.Handler) apptheory.Handler {
@@ -20,7 +20,11 @@ func WithRuntimePolicy(next apptheory.Handler) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		resolved := runtimepolicy.ResolveForActor(contextForRuntimePolicy(ctx), actorFromRequestContext(ctx))
 		if ctx != nil {
-			setRequestContext(ctx, runtimepolicy.WithContext(ctx.Context(), resolved))
+			// Record the resolution on the apptheory request so the per-POST
+			// tool-context hook (ToolContextHook) folds it into the stdlib
+			// context handed to MCP method handlers. The former
+			// reflect+unsafe request-context override is gone.
+			ctx.Set(appTheoryContextKeyRuntimePolicy, resolved)
 		}
 
 		reqs, batch, err := parseMCPRequestsForRuntimePolicy(ctx)

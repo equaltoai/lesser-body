@@ -699,3 +699,278 @@ func mailboxMutationOutputSchema() json.RawMessage {
 		"additionalProperties":true
 	}`)
 }
+
+func uploadGrantMintOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"grant":{"type":"object","additionalProperties":true},
+					"expiresInSeconds":{"type":"integer"},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","grant"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func uploadFinalizeOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"grant":{"type":"object","additionalProperties":true},
+					"media":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","grant","media"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func mediaStateOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"mode":{"type":"string","enum":["upload_grant","draft_binding"]},
+					"state":{"type":"string","enum":["received","processing","ready_internal","attached","awaiting_review","stale","published","rejected_unsupported","unavailable_removed","expired","missing"]},
+					"grantState":{"type":"string","enum":["MINTED","USED","FAILED_DIGEST","EXPIRED"]},
+					"grant":{"type":"object","additionalProperties":true},
+					"draftId":{"type":"string"},
+					"mediaId":{"type":"string"},
+					"role":{"type":"string","enum":["HERO","INLINE","SOCIAL_CARD"]},
+					"usage":{"type":"object","additionalProperties":true},
+					"activeReviewerIds":{"type":"array","items":{"type":"string"}},
+					"verdicts":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"contentHash":{"type":"string"},
+					"blockingReasons":{"type":"array","items":{"type":"string"}},
+					"publishedUrl":{"type":"string"},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","mode","state"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func mediaReadOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"access":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","access"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func draftMediaBindingsOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"draftId":{"type":"string"},
+					"contentHash":{"type":"string"},
+					"revision":{"type":"integer"},
+					"editorialMedia":{"type":"array","items":{"type":"object","additionalProperties":true}},
+					"count":{"type":"integer"}
+				},
+				"required":["tool","operation","source","draftId","contentHash","revision","editorialMedia","count"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoComposeOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"contentHash":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","contentHash","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReviewShareOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"review":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","review"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReviewSubmitOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"contentHash":{"type":"string"},
+					"review":{"type":"object","additionalProperties":true}
+				},
+				"required":["tool","operation","source","packageId","contentHash","review"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoStateOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
+					"status":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"blockingReasons":{"type":"array","items":{"type":"string"}},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","state","status","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReleaseOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"statusId":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"url":{"type":"string"},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","statusId","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}
+
+func promoReadOutputSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"data":{
+				"type":"object",
+				"properties":{
+					"tool":{"type":"string"},
+					"operation":{"type":"string"},
+					"source":{"type":"string"},
+					"packageId":{"type":"string"},
+					"state":{"type":"string","enum":["draft","approved","releasing","released","unknown"]},
+					"status":{"type":"string"},
+					"package":{"type":"object","additionalProperties":true},
+					"releasedStatusId":{"type":"string"},
+					"outboundPost":{"type":"object","additionalProperties":true},
+					"guidance":{"type":"string"}
+				},
+				"required":["tool","operation","source","packageId","state","status","package"],
+				"additionalProperties":false
+			}
+		},
+		"required":["data"],
+		"additionalProperties":false
+	}`)
+}

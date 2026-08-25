@@ -2,37 +2,77 @@ package mcpapp
 
 import (
 	"context"
-	"reflect"
 	"strings"
-	"unsafe"
-
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
+	"github.com/equaltoai/lesser-body/internal/mcpserver"
+	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
-func WithToolContext(next apptheory.Handler) apptheory.Handler {
-	if next == nil {
-		return nil
+// appTheoryContextKeyRuntimePolicy carries the runtime-policy resolution
+// computed by WithRuntimePolicy from the apptheory request middleware into the
+// per-POST tool-context hook. The hook re-applies it onto the stdlib context
+// handed to MCP method handlers via runtimepolicy.WithContext.
+const appTheoryContextKeyRuntimePolicy = "lesser_body_runtime_policy"
+
+// ToolContextHook derives the stdlib context handed to MCP method handlers
+// (tools, resources, prompts, completions) from the request's
+// *apptheory.Context. It is registered on the MCP server through
+// mcpruntime.WithToolContextHook and runs once per POST request after origin
+// and header validation.
+//
+// This is the supported replacement for the former WithToolContext middleware,
+// which used reflect+unsafe to overwrite apptheory.Context's private request
+// context. Principal, bearer, request-id, and actor propagation are preserved;
+// middleware that previously overrode the request context now records values on
+// the apptheory.Context (WithRuntimePolicy, WithActorBinding) and the hook
+// folds them into the derived context.
+func ToolContextHook(c *apptheory.Context, ctx context.Context) context.Context {
+	if c == nil {
+		return ctx
 	}
 
-	return func(c *apptheory.Context) (*apptheory.Response, error) {
-		if c != nil {
-			principal := auth.PrincipalFromContext(c)
-			token := bearerTokenFromHeaders(c.Request.Headers)
-			requestID := strings.TrimSpace(c.RequestID)
-			actor := actorFromRequestContext(c)
+	principal := auth.PrincipalFromContext(c)
+	token := bearerTokenFromHeaders(c.Request.Headers)
+	requestID := strings.TrimSpace(c.RequestID)
+	actor := actorFromRequestContext(c)
 
-			if principal != nil || token != "" || requestID != "" || actor != "" {
-				ctx := auth.InjectToolContext(c.Context(), principal, token)
-				ctx = auth.WithToolRequestID(ctx, requestID)
-				ctx = auth.WithToolActor(ctx, actor)
-				setRequestContext(c, ctx)
-			}
-		}
-
-		return next(c)
+	if principal != nil || token != "" || requestID != "" || actor != "" {
+		ctx = auth.InjectToolContext(ctx, principal, token)
+		ctx = auth.WithToolRequestID(ctx, requestID)
+		ctx = auth.WithToolActor(ctx, actor)
 	}
+
+	if resolved, ok := runtimePolicyFromAppTheoryContext(c); ok {
+		ctx = runtimepolicy.WithContext(ctx, resolved)
+	}
+
+	if caller, ok := mcpserver.ShareCallerFromAppTheoryContext(c); ok {
+		ctx = mcpserver.WithShareCaller(ctx, caller)
+	}
+
+	return ctx
+}
+
+// RegisterToolContextHook applies mcpapp's tool-context derivation to a
+// pre-constructed MCP server. mcpruntime.ServerOption is a plain function
+// type, so applying the option directly is the supported way to install the
+// hook on a server built by another package (mcpserver cannot import mcpapp).
+func RegisterToolContextHook(srv *mcpruntime.Server) {
+	if srv == nil {
+		return
+	}
+	mcpruntime.WithToolContextHook(ToolContextHook)(srv)
+}
+
+func runtimePolicyFromAppTheoryContext(c *apptheory.Context) (runtimepolicy.Resolved, bool) {
+	if c == nil {
+		return runtimepolicy.Resolved{}, false
+	}
+	resolved, ok := c.Get(appTheoryContextKeyRuntimePolicy).(runtimepolicy.Resolved)
+	return resolved, ok
 }
 
 func bearerTokenFromHeaders(headers map[string][]string) string {
@@ -53,31 +93,4 @@ func bearerTokenFromHeaders(headers map[string][]string) string {
 		}
 	}
 	return ""
-}
-
-// setRequestContext overrides apptheory.Context's internal request context so
-// downstream handlers (including AppTheory's MCP server) pass it through to
-// tool/resource/prompt handlers.
-func setRequestContext(c *apptheory.Context, ctx context.Context) {
-	if c == nil {
-		return
-	}
-
-	v := reflect.ValueOf(c)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
-		return
-	}
-
-	elem := v.Elem()
-	if elem.Kind() != reflect.Struct {
-		return
-	}
-
-	field := elem.FieldByName("ctx")
-	if !field.IsValid() || !field.CanAddr() {
-		return
-	}
-
-	ptr := unsafe.Pointer(field.UnsafeAddr())
-	reflect.NewAt(field.Type(), ptr).Elem().Set(reflect.ValueOf(ctx))
 }

@@ -7,9 +7,38 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 type shareCallerContextKey struct{}
+
+// shareCallerAppTheoryContextKey carries the share-grant caller from the
+// actor-binding middleware to the per-POST tool-context hook through
+// apptheory.Context.Set/Get, replacing the former reflect+unsafe request-context
+// override.
+const shareCallerAppTheoryContextKey = "lesser_body_share_caller"
+
+// SetShareCallerOnAppTheoryContext records the normalized share-grant real
+// caller on the apptheory request. The actor-binding middleware calls this on
+// the grantee path; mcpapp.ToolContextHook reads it back and folds it into the
+// tool context via WithShareCaller.
+func SetShareCallerOnAppTheoryContext(c *apptheory.Context, caller string) {
+	caller = strings.TrimSpace(caller)
+	if c == nil || caller == "" {
+		return
+	}
+	c.Set(shareCallerAppTheoryContextKey, caller)
+}
+
+// ShareCallerFromAppTheoryContext returns the share-grant caller recorded by
+// SetShareCallerOnAppTheoryContext, or false when none is recorded.
+func ShareCallerFromAppTheoryContext(c *apptheory.Context) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	caller, ok := c.Get(shareCallerAppTheoryContextKey).(string)
+	return strings.TrimSpace(caller), ok
+}
 
 // WithShareCaller marks a tool context as admitted through the share-grant path
 // with the given normalized real-caller username. Only the actor-binding

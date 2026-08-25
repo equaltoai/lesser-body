@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"reflect"
 	"strings"
-	"unsafe"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
 	"github.com/equaltoai/lesser-body/internal/ptahserver"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 const (
@@ -66,14 +64,8 @@ func New(name, version string, custom ...Option) (*apptheory.App, error) {
 }
 
 func instanceMCPHandler(server *mcpruntime.Server, endpointTemplate string, surface string) apptheory.Handler {
-	runtimeHandler := mcpapp.WithOAuthSessionRecovery(
-		server.Handler(),
-		func(ctx *apptheory.Context) string {
-			return instanceProtectedResourceMetadataURLForRequest(ctx, endpointTemplate, surface)
-		},
-		mcpapp.MCPAuthorizationScopes,
-	)
-	return withInstanceMCPAuthorization(requireInstancePrincipal(withToolContext(runtimeHandler)), endpointTemplate, surface)
+	runtimeHandler := mcpapp.WithOAuthSessionRecovery(server.Handler())
+	return withInstanceMCPAuthorization(requireInstancePrincipal(runtimeHandler), endpointTemplate, surface)
 }
 
 func withInstanceMCPAuthorization(next apptheory.Handler, endpointTemplate string, surface string) apptheory.Handler {
@@ -108,32 +100,37 @@ func newPlaneServer(appName, version, surface string) *mcpruntime.Server {
 		appName+"-"+surface,
 		strings.TrimSpace(version),
 		mcpruntime.WithCapabilityConfig(capabilities),
+		// The per-POST tool-context hook derives the stdlib context handed to
+		// MCP method handlers from the request's *apptheory.Context. This is
+		// the supported replacement for the former withToolContext middleware,
+		// which used reflect+unsafe to overwrite apptheory.Context's private
+		// request context.
+		mcpruntime.WithToolContextHook(toolContextHook),
 	)
 }
 
-func withToolContext(next apptheory.Handler) apptheory.Handler {
-	if next == nil {
-		return nil
+// toolContextHook propagates the instance-plane principal, bearer, request-id,
+// and the sanitized-by-construction request snapshot into the stdlib context
+// handed to MCP method handlers. It mirrors the Ka-plane ToolContextHook but
+// additionally threads the full request snapshot, which instance-plane tools
+// use for the installer-grant and x402 seams.
+func toolContextHook(c *apptheory.Context, ctx context.Context) context.Context {
+	if c == nil {
+		return ctx
 	}
-
-	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		if ctx != nil {
-			principal := auth.PrincipalFromContext(ctx)
-			token := bearerTokenFromHeaders(ctx.Request.Headers)
-			requestID := strings.TrimSpace(ctx.RequestID)
-			if principal != nil || token != "" || requestID != "" {
-				toolCtx := auth.InjectToolContext(ctx.Context(), principal, token)
-				toolCtx = auth.WithToolRequestID(toolCtx, requestID)
-				toolCtx = auth.InjectToolRequestSnapshot(toolCtx, auth.ToolRequestSnapshot{
-					Headers: ctx.Request.Headers,
-					Body:    ctx.Request.Body,
-					Path:    ctx.Request.Path,
-				})
-				setRequestContext(ctx, toolCtx)
-			}
-		}
-		return next(ctx)
+	principal := auth.PrincipalFromContext(c)
+	token := bearerTokenFromHeaders(c.Request.Headers)
+	requestID := strings.TrimSpace(c.RequestID)
+	if principal != nil || token != "" || requestID != "" {
+		ctx = auth.InjectToolContext(ctx, principal, token)
+		ctx = auth.WithToolRequestID(ctx, requestID)
+		ctx = auth.InjectToolRequestSnapshot(ctx, auth.ToolRequestSnapshot{
+			Headers: c.Request.Headers,
+			Body:    c.Request.Body,
+			Path:    c.Request.Path,
+		})
 	}
+	return ctx
 }
 
 func bearerTokenFromHeaders(headers map[string][]string) string {
@@ -154,30 +151,6 @@ func bearerTokenFromHeaders(headers map[string][]string) string {
 		}
 	}
 	return ""
-}
-
-// setRequestContext overrides apptheory.Context's internal request context so
-// AppTheory's MCP server passes the authenticated principal into tool handlers.
-func setRequestContext(c *apptheory.Context, ctx context.Context) {
-	if c == nil {
-		return
-	}
-
-	v := reflect.ValueOf(c)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
-		return
-	}
-	elem := v.Elem()
-	if elem.Kind() != reflect.Struct {
-		return
-	}
-	field := elem.FieldByName("ctx")
-	if !field.IsValid() || !field.CanAddr() {
-		return
-	}
-
-	ptr := unsafe.Pointer(field.UnsafeAddr())
-	reflect.NewAt(field.Type(), ptr).Elem().Set(reflect.ValueOf(ctx))
 }
 
 func requireInstancePrincipal(next apptheory.Handler) apptheory.Handler {

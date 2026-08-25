@@ -15,12 +15,7 @@ added 10 packages, and audited 31 packages in 1s
 1 package is looking for funding
   run `npm fund` for details
 
-1 high severity vulnerability
-
-To address all issues, run:
-  npm audit fix
-
-Run `npm audit` for details.
+found 0 vulnerabilities
 
 > lesser-body-cdk@0.0.0 build
 > tsc
@@ -34,5 +29,5 @@ lesser-body-managed-live.template.json: OK
 deploy-lesser-body-from-release.sh: OK
 lesser-body-release.json: OK
 apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
-cdk-file-asset-f4958fee2deb3daf.zip: OK
+cdk-file-asset-a3d8c84aa02fb95e.zip: OK
 Verified release assets in dist/release-test

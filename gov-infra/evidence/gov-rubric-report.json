@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-14T15:50:29.345317Z",
+  "generated_at": "2026-08-24T18:41:39.587740Z",
   "git": {
-    "head": "e0b77498e303fa5f4b9f2d8023f33d4b697f16e0",
-    "head_tree": "c09d18c7a8833b8bb966ec7dfa7179920745d915",
-    "merge_base_origin_staging": "aee6a258f9e5eba3b8f4863bc50469f322d64175",
-    "ref": "codex/issue-568-article-get-not-found",
-    "working_tree_after_run": "5 changed paths after verifier run"
+    "head": "e53a596be3f0987f0a5ecb45cc18eb5670a4946d",
+    "head_tree": "368de0692ec348c3081a39200de4e7dc05d7e319",
+    "merge_base_origin_staging": "2949a6bd9c164bc219aaeaa3f9595d21e8f9742b",
+    "ref": "theorymcp/equaltoai/body/promo-package-tools-m4",
+    "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",

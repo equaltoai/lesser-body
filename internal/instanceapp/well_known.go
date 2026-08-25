@@ -10,8 +10,8 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/baserver"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/v3/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/v4/runtime/oauth"
 )
 
 const instanceSurfacePlaceholder = "{surface}"

@@ -22,9 +22,9 @@ import (
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 	"github.com/theory-cloud/tabletheory/v3"
 	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
@@ -884,10 +884,16 @@ func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 	for _, surface := range []string{instanceapp.SurfacePtah, instanceapp.SurfaceBa} {
 		path := "/instance/" + surface + "/mcp"
 		for _, tc := range []struct {
-			name    string
-			headers map[string][]string
+			name      string
+			headers   map[string][]string
+			wantError string
 		}{
 			{name: "missing bearer", headers: nil},
+			{
+				name:      "rejected bearer",
+				headers:   map[string][]string{"authorization": {"Bearer rejected-token"}},
+				wantError: `error="invalid_token", `,
+			},
 			{name: "x402 headers are not auth", headers: map[string][]string{
 				"lesser-x402-grant-id":   {"grant-123"},
 				"lesser-x402-grant":      {"grant-token"},
@@ -905,7 +911,7 @@ func TestInstancePlaneMCP_RejectsUnauthenticatedRequests(t *testing.T) {
 					t.Fatalf("status = %d, want 401; body = %s", resp.Status, string(resp.Body))
 				}
 				metadataURL := "https://api.example.com/.well-known/oauth-protected-resource/instance/" + surface + "/mcp"
-				wantChallenge := `Bearer resource_metadata="` + metadataURL + `", scope="read write"`
+				wantChallenge := `Bearer ` + tc.wantError + `resource_metadata="` + metadataURL + `", scope="read write"`
 				if got := firstHeader(resp.Headers, "www-authenticate"); got != wantChallenge {
 					t.Fatalf("WWW-Authenticate = %q, want %q", got, wantChallenge)
 				}

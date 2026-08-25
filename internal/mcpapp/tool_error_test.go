@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func requireToolErrorResult(t testing.TB, rpc *mcpruntime.Response) (*mcpruntime.ToolResult, map[string]any) {

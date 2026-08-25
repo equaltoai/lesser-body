@@ -19,8 +19,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/installpack"
 	"github.com/equaltoai/lesser-body/internal/instanceapp"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 const baPlanRegistryAgentID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
