@@ -16,12 +16,12 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-24T18:41:39.587740Z",
+  "generated_at": "2026-08-26T13:41:40.474837Z",
   "git": {
-    "head": "e53a596be3f0987f0a5ecb45cc18eb5670a4946d",
-    "head_tree": "368de0692ec348c3081a39200de4e7dc05d7e319",
-    "merge_base_origin_staging": "2949a6bd9c164bc219aaeaa3f9595d21e8f9742b",
-    "ref": "theorymcp/equaltoai/body/promo-package-tools-m4",
+    "head": "3cca58083ef967cde25de97c742be3a585569f26",
+    "head_tree": "4a4130ed3b18801b3865c08b573fb37294cd9647",
+    "merge_base_origin_staging": "05abd8ee69f75b83bd84a45bcd6b8472387b3785",
+    "ref": "HEAD",
     "working_tree_after_run": "6 changed paths after verifier run"
   },
   "namespace_genome": {

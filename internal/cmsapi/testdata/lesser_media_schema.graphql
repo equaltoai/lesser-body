@@ -1,0 +1,236 @@
+# Schema fixture for lesser-body cmsapi media selection-set conformance.
+#
+# Verbatim excerpt of the equaltoai/lesser GraphQL schema — the gqlgen schema
+# at graph/phase1.graphql + graph/core.graphql — pinned at lesser commit
+# a80f11682de1d41de197c164ee306f178cfe9826 (branch
+# theorymcp/equaltoai/lesser/media-act-as-1470), read 2026-08-26. Do not edit
+# field sets here by hand; when lesser's schema changes, re-excerpt from the
+# pinned source and update the pin.
+#
+# Purpose: gqlgen validates selection sets against this schema PRE-RESOLVER —
+# selecting a field that does not exist on the return type makes the whole
+# operation fail with HTTP 422 before any resolver runs (issue #589). The
+# cmsapi media queries are validated against this fixture in
+# media_schema_test.go so a mock fixture can never again hide a
+# schema-invalid selection set.
+#
+# Scope: only the types reachable from the media queries' selection sets
+# (draftReview, setDraftEditorialMedia) are included, plus the scalar/enum/input
+# definitions they reference. `type Actor` is trimmed to the fields those
+# selections reference (id, username); extend it when the media surface selects
+# more Actor fields. The Query/Mutation roots are excerpted from the schema's
+# `extend type Query`/`extend type Mutation` blocks and contain only the media
+# root fields. Everything else is copied verbatim from the pinned commit.
+
+scalar Time
+scalar Cursor
+scalar ID
+scalar String
+scalar Int
+scalar Boolean
+
+enum ObjectType {
+  NOTE
+  ARTICLE
+  IMAGE
+  VIDEO
+  QUESTION
+  EVENT
+  PAGE
+}
+
+enum ContentFormat {
+  HTML
+  MARKDOWN
+}
+
+enum DraftStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum EditorialMediaRole {
+  HERO
+  INLINE
+  SOCIAL_CARD
+}
+
+enum EditorialMediaOrigin {
+  AI_GENERATED
+  AI_EDITED
+  PHOTOGRAPHED
+  ILLUSTRATED
+  SUPPLIED
+}
+
+enum EditorialMediaState {
+  MISSING
+  PROCESSING
+  READY
+  REJECTED
+  WITHDRAWN
+  SUPERSEDED
+  UNAVAILABLE
+}
+
+enum DraftReviewVerdict {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum DraftReviewGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+# Trimmed to id/username (the only Actor fields the media selections reference).
+type Actor {
+  id: ID!
+  username: String!
+}
+
+type Draft {
+  id: ID!
+  authorId: ID!
+  author: Actor!
+  contentType: ObjectType!
+  title: String
+  slug: String
+  content: String!
+  contentFormat: ContentFormat!
+  status: DraftStatus!
+  scheduledAt: Time
+  objectId: ID
+  generatedBy: Actor
+  reviewedBy: Actor
+  actedBy: Actor
+  reviewVerdict: DraftReviewVerdict
+  editorialMedia: [EditorialMediaUsage!]!
+  contentHash: String!
+  revision: Int!
+  autosaveVersion: Int!
+  lastSavedAt: Time!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type DraftReviewGrant {
+  reviewerId: ID!
+  reviewer: Actor!
+  grantedAt: Time!
+  expiresAt: Time
+  status: DraftReviewGrantStatus!
+  revokedAt: Time
+}
+
+type DraftReviewVerdictRecord {
+  verdict: DraftReviewVerdict!
+  notes: String
+  contentHash: String
+  reviewerId: ID!
+  reviewer: Actor!
+  recordedAt: Time!
+  current: Boolean!
+  stale: Boolean!
+}
+
+type DraftPublishEligibility {
+  eligible: Boolean!
+  blockingReasons: [String!]!
+  reviewersApproved: Boolean!
+  principalApprovalRequired: Boolean!
+  principalApproved: Boolean!
+}
+
+type DraftReview {
+  draftId: ID!
+  ownerId: ID!
+  title: String
+  slug: String
+  content: String!
+  renderedHtml: String
+  renderErrors: [String!]!
+  subtitle: String
+  excerpt: String
+  contentFormat: ContentFormat!
+  status: DraftStatus!
+  scheduledAt: Time
+  updatedAt: Time!
+  createdAt: Time!
+  generatedBy: Actor
+  reviewedBy: Actor
+  reviewStatus: String
+  editorNotes: String
+  contentHash: String!
+  editorialMedia: [EditorialMediaUsage!]!
+  revision: Int!
+  activeReviewerIds: [ID!]!
+  publishEligible: Boolean!
+  publishBlockingReasons: [String!]!
+  reviewersApproved: Boolean!
+  principalApprovalRequired: Boolean!
+  principalApproved: Boolean!
+  grantCount: Int!
+  grantsTruncated: Boolean!
+  grants: [DraftReviewGrant!]!
+  grant: DraftReviewGrant
+  verdicts: [DraftReviewVerdictRecord!]!
+  publishEligibility: DraftPublishEligibility!
+}
+
+type EditorialMediaProvenance {
+  origin: EditorialMediaOrigin!
+  tool: String
+  responsibleActorId: ID!
+  responsibleActor: Actor
+  sourceReferences: [String!]!
+  rightsLicenseNotes: String
+  createdAt: Time
+  updatedAt: Time
+  recordedAt: Time!
+  contentIntegrity: String!
+}
+
+type EditorialMediaUsage {
+  mediaId: ID!
+  role: EditorialMediaRole!
+  inlinePosition: Int
+  caption: String
+  creditLine: String
+  altText: String
+  effectiveAltText: String
+  focus: String
+  state: EditorialMediaState!
+  width: Int
+  height: Int
+  mimeType: String
+  contentHash: String
+  publishedUrl: String
+  publishedAt: Time
+  accessUrl: String
+  accessExpiresAt: Time
+  provenance: EditorialMediaProvenance
+}
+
+input EditorialMediaUsageInput {
+  mediaId: ID!
+  role: EditorialMediaRole!
+  inlinePosition: Int
+  caption: String
+  creditLine: String
+  altText: String
+  focus: String
+}
+
+# Root fields used by the media queries (excerpted from the extend blocks).
+type Query {
+  draftReview(id: ID!, includeAccessUrls: Boolean = false): DraftReview
+}
+
+type Mutation {
+  setDraftEditorialMedia(draftId: ID!, media: [EditorialMediaUsageInput!]!): Draft!
+}

@@ -731,7 +731,7 @@ func TestDraftMediaAttachDetachReorder(t *testing.T) {
 	emptyList := `[]`
 	newMediaGraphQLStub(t, map[string]string{
 		"BodyDraftEditorialMedia":    `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":` + usageList + `,"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(usageList),
 	})
 
 	attach, err := handleDraftMediaAttach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-1","role":"HERO","caption":"Launch artwork","alt":"A rocket"}`))
@@ -747,7 +747,7 @@ func TestDraftMediaAttachDetachReorder(t *testing.T) {
 	// attached state and the set returns the reordered result.
 	newMediaGraphQLStub(t, map[string]string{
 		"BodyDraftEditorialMedia":    `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":` + usageList + `,"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":` + usageList + `,"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(usageList),
 	})
 	reorder, err := handleDraftMediaReorder(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_ids":["media-1"]}`))
 	if err != nil || reorder == nil || reorder.IsError {
@@ -761,7 +761,7 @@ func TestDraftMediaAttachDetachReorder(t *testing.T) {
 	// unchanged empty list through the full-list contract.
 	newMediaGraphQLStub(t, map[string]string{
 		"BodyDraftEditorialMedia":    `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":` + emptyList + `,"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(emptyList),
 	})
 	detach, err := handleDraftMediaDetach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-1"}`))
 	if err != nil || detach == nil || detach.IsError {
@@ -795,9 +795,8 @@ func TestDraftMediaAttachFillsFirstFreeInlinePositionAfterDetach(t *testing.T) {
 		"BodyDraftEditorialMedia": `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` +
 			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-2", 1) + `,` + mediaInlineUsageJSON("media-4", 2) +
 			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` +
-			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-4", 2) +
-			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(`[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-4", 2) + `]`),
 	})
 
 	// Detach the middle inline asset (media-2 at position 1), leaving positions
@@ -814,9 +813,8 @@ func TestDraftMediaAttachFillsFirstFreeInlinePositionAfterDetach(t *testing.T) {
 		"BodyDraftEditorialMedia": `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` +
 			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-4", 2) +
 			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` +
-			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-3", 1) + `,` + mediaInlineUsageJSON("media-4", 2) +
-			`],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(`[` +
+			mediaInlineUsageJSON("media-1", 0) + `,` + mediaInlineUsageJSON("media-3", 1) + `,` + mediaInlineUsageJSON("media-4", 2) + `]`),
 	})
 
 	attach, err := handleDraftMediaAttach(mediaTestContext(), json.RawMessage(`{"draft_id":"draft-1","media_id":"media-3","role":"INLINE"}`))
@@ -869,7 +867,7 @@ func mediaInlineUsageJSON(mediaID string, position int) string {
 func TestDraftMediaAttachRoleSwitchReplacesUsage(t *testing.T) {
 	stub := newMediaGraphQLStub(t, map[string]string{
 		"BodyDraftEditorialMedia":    `{"data":{"draftReview":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":3,"editorialMedia":[` + mediaFixtureUsageJSON() + `],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
-		"BodySetDraftEditorialMedia": `{"data":{"setDraftEditorialMedia":{"draftId":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":[` + mediaInlineUsageJSON("media-1", 0) + `],"activeReviewerIds":[],"verdicts":[],"publishEligibility":{"eligible":true,"blockingReasons":[],"reviewersApproved":true,"principalApprovalRequired":false,"principalApproved":false}}}}`,
+		"BodySetDraftEditorialMedia": mediaSetDraftEditorialMediaJSON(`[` + mediaInlineUsageJSON("media-1", 0) + `]`),
 	})
 
 	// media-1 is bound as HERO; re-attach it as INLINE.
@@ -912,6 +910,16 @@ func structuredData(t *testing.T, result *mcpruntime.ToolResult) map[string]any 
 		t.Fatalf("structuredContent.data missing: %s", encoded)
 	}
 	return data
+}
+
+// mediaSetDraftEditorialMediaJSON renders the honest setDraftEditorialMedia
+// response shape: the mutation returns Draft!, which exposes id (not draftId)
+// and carries no review-state fields (activeReviewerIds/verdicts/
+// publishEligibility exist only on DraftReview). Mock fixtures must echo this
+// exact wire shape — echoing the pre-fix invalid fields is what let issue #589
+// hide behind mock coverage.
+func mediaSetDraftEditorialMediaJSON(editorialMedia string) string {
+	return `{"data":{"setDraftEditorialMedia":{"id":"draft-1","contentHash":"sha256:` + strings.Repeat("b", 64) + `","revision":4,"editorialMedia":` + editorialMedia + `}}}`
 }
 
 func mediaFixtureUsageJSON() string {

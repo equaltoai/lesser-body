@@ -256,8 +256,21 @@ type draftMediaStateResponse struct {
 	DraftReview *DraftMediaState `json:"draftReview"`
 }
 
+// draftMediaMutationResult mirrors the Draft projection returned by
+// setDraftEditorialMedia. Lesser's setDraftEditorialMedia returns Draft!, which
+// exposes id (not draftId) and carries no review-state fields
+// (activeReviewerIds/verdicts/publishEligibility exist only on DraftReview), so
+// this result type is deliberately smaller than DraftMediaState. SetDraftEditorialMedia
+// maps it onto DraftMediaState for the media tools' binding projection.
+type draftMediaMutationResult struct {
+	ID             string                `json:"id"`
+	ContentHash    string                `json:"contentHash"`
+	Revision       int                   `json:"revision"`
+	EditorialMedia []EditorialMediaUsage `json:"editorialMedia"`
+}
+
 type setDraftEditorialMediaResponse struct {
-	SetDraftEditorialMedia *DraftMediaState `json:"setDraftEditorialMedia"`
+	SetDraftEditorialMedia *draftMediaMutationResult `json:"setDraftEditorialMedia"`
 }
 
 // MintUploadGrant requests a one-time, hash-bound, presigned-companion upload
@@ -380,11 +393,7 @@ func (c *Client) ReadDraftEditorialMedia(ctx context.Context, bearerToken, draft
 	if draftID == "" {
 		return nil, fmt.Errorf("draft id is required")
 	}
-	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyDraftEditorialMedia($id: ID!) { draftReview(id: $id, includeAccessUrls: true) { " + draftMediaStateFields() + " } }",
-		OperationName: "BodyDraftEditorialMedia",
-		Variables:     map[string]any{"id": draftID},
-	})
+	resp, err := c.Execute(ctx, bearerToken, buildDraftEditorialMediaOperation(draftID))
 	if err != nil {
 		return nil, err
 	}
@@ -432,6 +441,10 @@ func (c *Client) ReadDraftEditorialMediaAccess(ctx context.Context, bearerToken,
 // SetDraftEditorialMedia replaces the complete ordered editorial-media
 // association for a draft (Lesser's setDraftEditorialMedia contract). Lesser
 // validates ownership and per-usage roles; body always sends the full list.
+// The mutation returns Draft!, so the result is the Draft binding projection
+// (draftId/contentHash/revision/editorialMedia); review-state fields are not
+// available on this path — read them through ReadDraftEditorialMedia when the
+// caller is an owner or active reviewer.
 func (c *Client) SetDraftEditorialMedia(ctx context.Context, bearerToken, draftID string, usages []MediaUsageInput) (*DraftMediaState, error) {
 	draftID = strings.TrimSpace(draftID)
 	if draftID == "" {
@@ -460,11 +473,7 @@ func (c *Client) SetDraftEditorialMedia(ctx context.Context, bearerToken, draftI
 		}
 		inputs = append(inputs, input)
 	}
-	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "mutation BodySetDraftEditorialMedia($draftId: ID!, $media: [EditorialMediaUsageInput!]!) { setDraftEditorialMedia(draftId: $draftId, media: $media) { " + draftMediaStateFields() + " } }",
-		OperationName: "BodySetDraftEditorialMedia",
-		Variables:     map[string]any{"draftId": draftID, "media": inputs},
-	})
+	resp, err := c.Execute(ctx, bearerToken, buildSetDraftEditorialMediaOperation(draftID, inputs))
 	if err != nil {
 		return nil, err
 	}
@@ -475,8 +484,51 @@ func (c *Client) SetDraftEditorialMedia(ctx context.Context, bearerToken, draftI
 	if data.SetDraftEditorialMedia == nil {
 		return nil, &DraftReviewNotFoundError{Lookup: "id", Value: draftID}
 	}
-	normalizeDraftMediaState(data.SetDraftEditorialMedia)
-	return data.SetDraftEditorialMedia, nil
+	// Draft exposes id (not draftId); map it onto the media tools' binding
+	// projection so handlers keep rendering the draftId surface unchanged.
+	state := &DraftMediaState{
+		DraftID:        data.SetDraftEditorialMedia.ID,
+		ContentHash:    data.SetDraftEditorialMedia.ContentHash,
+		Revision:       data.SetDraftEditorialMedia.Revision,
+		EditorialMedia: data.SetDraftEditorialMedia.EditorialMedia,
+	}
+	normalizeDraftMediaState(state)
+	return state, nil
+}
+
+// GraphQL documents the media client sends, with %s holding the selection set
+// produced by the field builders below. They are named constants so the
+// schema-conformance test (media_schema_test.go) validates the EXACT documents
+// that go over the wire — a builder change or a template regression cannot
+// escape pre-resolver schema validation (issue #589).
+const (
+	bodyDraftEditorialMediaQueryTemplate    = "query BodyDraftEditorialMedia($id: ID!) { draftReview(id: $id, includeAccessUrls: true) { %s } }"
+	bodySetDraftEditorialMediaQueryTemplate = "mutation BodySetDraftEditorialMedia($draftId: ID!, $media: [EditorialMediaUsageInput!]!) { setDraftEditorialMedia(draftId: $draftId, media: $media) { %s } }"
+)
+
+// buildDraftEditorialMediaOperation assembles the media_state read operation.
+// It is the single assembly point for the operation the client sends, so the
+// schema-conformance test validates exactly what goes over the wire.
+func buildDraftEditorialMediaOperation(draftID string) Operation {
+	return Operation{
+		Query:         fmt.Sprintf(bodyDraftEditorialMediaQueryTemplate, draftMediaStateFields()),
+		OperationName: "BodyDraftEditorialMedia",
+		Variables:     map[string]any{"id": draftID},
+	}
+}
+
+// buildSetDraftEditorialMediaOperation assembles the attach/detach/reorder
+// mutation operation. setDraftEditorialMedia returns Draft!, so the selection
+// must be the Draft projection (draftBindingFields) — the DraftReview
+// projection (draftMediaStateFields) is schema-invalid on this path and made
+// every draft-media mutation 422 pre-resolver (issue #589). It is the single
+// assembly point for the operation the client sends.
+func buildSetDraftEditorialMediaOperation(draftID string, inputs []map[string]any) Operation {
+	return Operation{
+		Query:         fmt.Sprintf(bodySetDraftEditorialMediaQueryTemplate, draftBindingFields()),
+		OperationName: "BodySetDraftEditorialMedia",
+		Variables:     map[string]any{"draftId": draftID, "media": inputs},
+	}
 }
 
 func uploadGrantFields() string {
@@ -491,8 +543,24 @@ func editorialMediaUsageFields() string {
 	return "mediaId role inlinePosition caption creditLine altText effectiveAltText focus state width height mimeType contentHash publishedUrl publishedAt accessUrl accessExpiresAt provenance { origin tool responsibleActorId responsibleActor { id username } sourceReferences rightsLicenseNotes createdAt updatedAt recordedAt contentIntegrity }"
 }
 
+// draftMediaStateFields is the DraftReview projection used by the media_state
+// read path (draftReview returns DraftReview). It is NOT valid on Draft:
+// activeReviewerIds, verdicts, and publishEligibility exist only on
+// DraftReview, and the type exposes draftId (not id). Mutations that return
+// Draft must use draftBindingFields instead.
 func draftMediaStateFields() string {
 	return "draftId contentHash revision editorialMedia { " + editorialMediaUsageFields() + " } activeReviewerIds verdicts { verdict notes contentHash reviewerId reviewer { id username } recordedAt current stale } publishEligibility { eligible blockingReasons reviewersApproved principalApprovalRequired principalApproved }"
+}
+
+// draftBindingFields is the Draft projection for the setDraftEditorialMedia
+// mutation family. setDraftEditorialMedia returns Draft!, which exposes id
+// (not draftId) and carries no review-state fields; selecting
+// activeReviewerIds/verdicts/publishEligibility on Draft makes gqlgen reject
+// the whole mutation with HTTP 422 pre-resolver. The media tools render only
+// this binding projection (draftId/contentHash/revision/editorialMedia) from
+// the result.
+func draftBindingFields() string {
+	return "id contentHash revision editorialMedia { " + editorialMediaUsageFields() + " }"
 }
 
 func normalizeDraftMediaState(state *DraftMediaState) {
