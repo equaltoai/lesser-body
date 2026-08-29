@@ -1,11 +1,11 @@
 # Schema fixture for lesser-body cmsapi draft/article selection-set conformance.
 #
 # Verbatim excerpt of the equaltoai/lesser GraphQL schema — the gqlgen schema
-# at graph/phase1.graphql + graph/core.graphql — pinned at lesser staging read
-# 2026-08-29 (equaltoai/lesser#1513 not yet merged; Draft.editorialMedia and
-# Article.featuredImage are live in the schema). Do not edit field sets here by
-# hand; when lesser's schema changes, re-excerpt from the pinned source and
-# update the pin.
+# at graph/phase1.graphql + graph/core.graphql — pinned at lesser staging SHA
+# 932247f15 (read 2026-08-29; equaltoai/lesser#1513 not yet merged;
+# Draft.editorialMedia and Article.featuredImage are live in the schema). Do
+# not edit field sets here by hand; when lesser's schema changes, re-excerpt
+# from the pinned source and update the pin.
 #
 # Purpose: gqlgen validates selection sets against this schema PRE-RESOLVER —
 # selecting a field that does not exist on the return type makes the whole
