@@ -42,6 +42,11 @@ type Draft struct {
 	LastSavedAt     string  `json:"lastSavedAt,omitempty"`
 	CreatedAt       string  `json:"createdAt,omitempty"`
 	UpdatedAt       string  `json:"updatedAt,omitempty"`
+	// EditorialMedia is Lesser's authoritative ordered editorial-media binding
+	// projection for this draft. It is transported verbatim (same shape the
+	// media tools use) so draft reads expose bindings without a media_state
+	// side-channel (issue #593).
+	EditorialMedia []EditorialMediaUsage `json:"editorialMedia,omitempty"`
 }
 
 // DraftNotFoundError reports a missing ARTICLE draft lookup in a way the MCP
@@ -353,7 +358,7 @@ func normalizeContentFormat(value string) string {
 }
 
 func draftFields(includeContent bool) string {
-	fields := "id author { id username } actedBy { id username } contentType title slug contentFormat status scheduledAt objectId contentHash revision autosaveVersion lastSavedAt createdAt updatedAt"
+	fields := "id author { id username } actedBy { id username } contentType title slug contentFormat status scheduledAt objectId contentHash revision autosaveVersion lastSavedAt createdAt updatedAt editorialMedia { " + editorialMediaUsageFields() + " }"
 	if includeContent {
 		fields += " content"
 	}
