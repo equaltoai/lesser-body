@@ -1,26 +1,26 @@
 $ go test ./cmd/... ./internal/...
-?   	github.com/equaltoai/lesser-body/cmd/lesser-body	[no test files]
-?   	github.com/equaltoai/lesser-body/cmd/lesser-body-instance	[no test files]
-ok  	github.com/equaltoai/lesser-body/internal/actorendpoint	0.003s
-ok  	github.com/equaltoai/lesser-body/internal/agentcontent	0.010s
-ok  	github.com/equaltoai/lesser-body/internal/agentregistry	0.006s
-ok  	github.com/equaltoai/lesser-body/internal/agentshare	0.002s
-ok  	github.com/equaltoai/lesser-body/internal/auth	0.316s
-ok  	github.com/equaltoai/lesser-body/internal/baserver	0.005s
-ok  	github.com/equaltoai/lesser-body/internal/cmsapi	0.016s
-ok  	github.com/equaltoai/lesser-body/internal/downloadgrant	0.009s
-ok  	github.com/equaltoai/lesser-body/internal/hostapi	0.004s
-ok  	github.com/equaltoai/lesser-body/internal/installpack	0.003s
-ok  	github.com/equaltoai/lesser-body/internal/instanceapp	0.347s
-ok  	github.com/equaltoai/lesser-body/internal/instancex402	0.006s
-ok  	github.com/equaltoai/lesser-body/internal/lesserapi	0.013s
-ok  	github.com/equaltoai/lesser-body/internal/mcpapp	2.576s
-ok  	github.com/equaltoai/lesser-body/internal/mcpoutputschema	0.002s
-ok  	github.com/equaltoai/lesser-body/internal/mcpserver	0.102s
-?   	github.com/equaltoai/lesser-body/internal/memory	[no test files]
-ok  	github.com/equaltoai/lesser-body/internal/ptahserver	0.147s
-ok  	github.com/equaltoai/lesser-body/internal/recoverymaterial	0.003s
-?   	github.com/equaltoai/lesser-body/internal/runtimepolicy	[no test files]
-ok  	github.com/equaltoai/lesser-body/internal/soulapi	0.003s
-ok  	github.com/equaltoai/lesser-body/internal/soulbinding	0.002s
-ok  	github.com/equaltoai/lesser-body/internal/trustconfig	0.002s
+?	github.com/equaltoai/lesser-body/cmd/lesser-body	[no test files]
+?	github.com/equaltoai/lesser-body/cmd/lesser-body-instance	[no test files]
+ok  	github.com/equaltoai/lesser-body/internal/actorendpoint	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/agentcontent	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/agentregistry	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/agentshare	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/auth	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/baserver	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/cmsapi	0.013s
+ok  	github.com/equaltoai/lesser-body/internal/downloadgrant	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/hostapi	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/installpack	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/instanceapp	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/instancex402	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/lesserapi	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/mcpapp	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/mcpoutputschema	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/mcpserver	0.099s
+?	github.com/equaltoai/lesser-body/internal/memory	[no test files]
+ok  	github.com/equaltoai/lesser-body/internal/ptahserver	0.145s
+ok  	github.com/equaltoai/lesser-body/internal/recoverymaterial	(cached)
+?	github.com/equaltoai/lesser-body/internal/runtimepolicy	[no test files]
+ok  	github.com/equaltoai/lesser-body/internal/soulapi	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/soulbinding	(cached)
+ok  	github.com/equaltoai/lesser-body/internal/trustconfig	(cached)
