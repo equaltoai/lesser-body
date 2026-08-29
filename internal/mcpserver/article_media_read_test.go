@@ -316,7 +316,7 @@ func TestArticleDraftGetReviewerPathReturnsBindings(t *testing.T) {
 				"revision":          4,
 				"activeReviewerIds": []string{"reviewer"},
 				"editorialMedia":    []map[string]any{{"mediaId": "media-hero", "role": "HERO", "state": "READY"}},
-			}}}))
+			}}})
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
