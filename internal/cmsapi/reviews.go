@@ -36,6 +36,7 @@ type DraftReview struct {
 	EditorNotes               *string                    `json:"editorNotes,omitempty"`
 	ContentHash               string                     `json:"contentHash"`
 	Revision                  int                        `json:"revision"`
+	EditorialMedia            []EditorialMediaUsage      `json:"editorialMedia,omitempty"` // surfaced only on the article_draft_get reviewer projection (issue #593)
 	ActiveReviewerIDs         []string                   `json:"activeReviewerIds"`
 	PublishEligible           bool                       `json:"publishEligible"`
 	PublishBlockingReasons    []string                   `json:"publishBlockingReasons"`
@@ -164,9 +165,11 @@ func (c *Client) ReadArticleDraftReview(ctx context.Context, bearerToken, draftI
 // ReadArticleDraftReviewSource selects the caller-authorized draft projection
 // needed by article_draft_get without also transporting canonical rendering.
 // The source, owner, hash, revision, grant, and eligibility state still come
-// from one Lesser DraftReview snapshot.
+// from one Lesser DraftReview snapshot. Editorial media bindings ride along so
+// article_draft_get's reviewer path returns the same bindings as the owner
+// path (issue #593); no other review tool selects them.
 func (c *Client) ReadArticleDraftReviewSource(ctx context.Context, bearerToken, draftID string) (*DraftReview, error) {
-	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewSourceFields())
+	return c.readArticleDraftReview(ctx, bearerToken, draftID, draftReviewGetFields())
 }
 
 // ReadArticleDraftReviewStandard selects Lesser's complete caller-authorized
@@ -276,6 +279,14 @@ func draftReviewStandardFields() string {
 
 func draftReviewSourceFields() string {
 	return draftReviewFields() + " ownerId slug content"
+}
+
+// draftReviewGetFields is the article_draft_get reviewer projection: the source
+// snapshot plus the editorial-media bindings. It deliberately does not extend
+// draftReviewSourceFields (which also feeds ReadArticleDraftReviewStandard) so
+// the review tools' selection stays unchanged (issue #593 read-surface scope).
+func draftReviewGetFields() string {
+	return draftReviewSourceFields() + " editorialMedia { " + editorialMediaUsageFields() + " }"
 }
 
 func normalizeDraftReview(review *DraftReview) {

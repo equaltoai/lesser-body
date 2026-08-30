@@ -440,6 +440,10 @@ func articleDraftFromCallerAuthorizedReview(review *cmsapi.DraftReview) *cmsapi.
 		Revision:      review.Revision,
 		CreatedAt:     strings.TrimSpace(review.CreatedAt),
 		UpdatedAt:     strings.TrimSpace(review.UpdatedAt),
+		// The reviewer projection carries the same editorial-media bindings as
+		// the owner path so article_draft_get returns them regardless of the
+		// authorization lane (issue #593).
+		EditorialMedia: review.EditorialMedia,
 	}
 }
 
@@ -642,6 +646,12 @@ func compactArticleDraftPreview(preview *cmsapi.DraftPreview, params articleDraf
 		renderedPreview, truncated := compactStringWithTruncation(*preview.RenderedHTML, params.PreviewRunes)
 		putIfNotEmpty(out, "renderedHtmlPreview", renderedPreview)
 		out["renderedHtmlTruncated"] = truncated
+		// Image-presence note for compact previews: once lesser's sibling
+		// change (equaltoai/lesser#1513) composes bound media into rendered
+		// HTML, agents can see at a glance that a draft preview carries images
+		// without scanning the HTML. The rendered HTML itself is never altered
+		// by body (issue #593 preview passthrough).
+		out["renderedHtmlContainsImages"] = renderedHTMLHasImages(*preview.RenderedHTML)
 	}
 	return out
 }
@@ -711,6 +721,10 @@ func compactArticleDraftRef(draft *cmsapi.Draft, params articleDraftViewParams, 
 	if actedBy := cmsActorAttributionRef(draft.ActedBy); actedBy != nil {
 		out["actedBy"] = actedBy
 	}
+	if count := len(draft.EditorialMedia); count > 0 {
+		out["editorialMediaCount"] = count
+		out["editorialMediaRoles"] = editorialMediaRoles(draft.EditorialMedia)
+	}
 	content := draft.Content
 	if strings.TrimSpace(content) == "" && fallbackContent != nil {
 		content = *fallbackContent
@@ -744,7 +758,51 @@ func standardArticleDraft(draft *cmsapi.Draft) map[string]any {
 	if actedBy := cmsActorAttributionRef(draft.ActedBy); actedBy != nil {
 		out["actedBy"] = actedBy
 	}
+	// Editorial media bindings ride the same Draft projection the media tools
+	// use (issue #593): standard draft reads surface the exact ordered usage
+	// list so an agent never needs a media_state side-channel to know a draft
+	// has images.
+	media := draft.EditorialMedia
+	if media == nil {
+		media = []cmsapi.EditorialMediaUsage{}
+	}
+	out["editorialMedia"] = media
+	out["editorialMediaCount"] = len(media)
 	return out
+}
+
+// editorialMediaRoles returns the distinct editorial-media roles present in a
+// draft's bindings, in first-occurrence order. It drives the compact presence
+// note so agents can see which roles (HERO/INLINE/SOCIAL_CARD) a draft binds
+// without a full usage read.
+func editorialMediaRoles(usages []cmsapi.EditorialMediaUsage) []string {
+	if len(usages) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(usages))
+	roles := make([]string, 0, len(usages))
+	for _, usage := range usages {
+		role := strings.ToUpper(strings.TrimSpace(usage.Role))
+		if role == "" || seen[role] {
+			continue
+		}
+		seen[role] = true
+		roles = append(roles, role)
+	}
+	return roles
+}
+
+// renderedHTMLHasImages reports whether rendered HTML carries image elements
+// (<img>, <figure>, or <picture>). It is a bounded presence heuristic for the
+// compact preview note only — body never interprets or rewrites the HTML.
+func renderedHTMLHasImages(html string) bool {
+	lower := strings.ToLower(html)
+	for _, marker := range []string{"<img", "<figure", "<picture"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func stringPtrValue(value *string) string {

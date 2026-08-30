@@ -147,7 +147,7 @@ func TestArticleDraftPreviewOperationBuildsM45GraphQLContract(t *testing.T) {
 		t.Fatalf("operations = %d", len(operations))
 	}
 	query := operations[0].Query
-	for _, want := range []string{"draftPreview(id: $id)", "draftId", "success", "renderedHtml", "sourceFormat", "sourceBytes", "renderedBytes", "errors"} {
+	for _, want := range []string{"draftPreview(id: $id, includeAccessUrls: true)", "draftId", "success", "renderedHtml", "sourceFormat", "sourceBytes", "renderedBytes", "errors"} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("preview query missing %q: %s", want, query)
 		}
