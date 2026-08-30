@@ -93,6 +93,8 @@ func TestDraftArticleSelectionSetsValidateAgainstLesserSchema(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"data":{"updateArticle":%s}}`, articleJSON)
 		case "BodyArticleDraftReview":
 			_, _ = w.Write([]byte(reviewJSON))
+		case "BodyArticleDraftPreview":
+			_, _ = w.Write([]byte(`{"data":{"draftPreview":{"draftId":"draft-1","success":true,"renderedHtml":"<article><p>Body</p></article>","sourceFormat":"MARKDOWN","sourceBytes":12,"renderedBytes":42,"errors":[]}}}`))
 		default:
 			t.Fatalf("unexpected operation %q", op.OperationName)
 		}
@@ -149,9 +151,16 @@ func TestDraftArticleSelectionSetsValidateAgainstLesserSchema(t *testing.T) {
 	if len(review.EditorialMedia) != 1 || review.EditorialMedia[0].MediaID != "media-hero" {
 		t.Fatalf("reviewer source projection bindings did not decode: %+v", review.EditorialMedia)
 	}
+	preview, err := client.PreviewArticleDraft(ctx, token, "draft-1")
+	if err != nil {
+		t.Fatalf("PreviewArticleDraft: %v", err)
+	}
+	if preview == nil || preview.DraftID != "draft-1" || !preview.Success || preview.RenderedHTML == nil || *preview.RenderedHTML != "<article><p>Body</p></article>" {
+		t.Fatalf("draft preview did not decode: %+v", preview)
+	}
 
-	if len(operations) != 11 {
-		t.Fatalf("operations = %d, want 11", len(operations))
+	if len(operations) != 12 {
+		t.Fatalf("operations = %d, want 12", len(operations))
 	}
 
 	schema := loadDraftArticleSchemaFixture(t)
@@ -176,6 +185,12 @@ func TestDraftArticleSelectionSetsValidateAgainstLesserSchema(t *testing.T) {
 	}
 
 	for _, op := range operations {
+		// The preview read is the ONLY draft read that opts into access-URL
+		// minting (lesser's includeAccessUrls contract); every other read path
+		// keeps the no-minting default so no other document may carry the arg.
+		if op.OperationName != "BodyArticleDraftPreview" && strings.Contains(op.Query, "includeAccessUrls") {
+			t.Fatalf("%s must keep the no-minting default: %s", op.OperationName, op.Query)
+		}
 		switch op.OperationName {
 		case "BodyCreateArticleDraft", "BodyUpdateArticleDraft", "BodyArticleDraft", "BodyArticleDraftListDetails", "BodyArticleDraftReview":
 			if !strings.Contains(op.Query, "editorialMedia {") {
@@ -185,6 +200,10 @@ func TestDraftArticleSelectionSetsValidateAgainstLesserSchema(t *testing.T) {
 				if !strings.Contains(op.Query, want) {
 					t.Fatalf("%s editorialMedia selection missing usage field %q: %s", op.OperationName, want, op.Query)
 				}
+			}
+		case "BodyArticleDraftPreview":
+			if !strings.Contains(op.Query, "draftPreview(id: $id, includeAccessUrls: true)") {
+				t.Fatalf("preview query must opt into access-URL minting: %s", op.Query)
 			}
 		case "BodyArticle", "BodyArticleBySlug", "BodyArticles", "BodyPublishArticleDraft", "BodyUpdateArticle":
 			if !strings.Contains(op.Query, "featuredImage {") || !strings.Contains(op.Query, "ogImage") {
@@ -212,12 +231,12 @@ func TestDraftArticleSchemaFixtureIsInternallyConsistent(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"Draft", "Article", "Media", "DraftReview", "DraftConnection", "ArticleConnection", "Query", "Mutation", "EditorialMediaUsage"} {
+	for _, want := range []string{"Draft", "DraftPreview", "Article", "Media", "DraftReview", "DraftConnection", "ArticleConnection", "Query", "Mutation", "EditorialMediaUsage"} {
 		if schema.types[want] == nil {
 			t.Errorf("fixture is missing type %q", want)
 		}
 	}
-	for _, want := range []string{"draft", "myDrafts", "draftReview", "article", "articleBySlug", "articles"} {
+	for _, want := range []string{"draft", "draftPreview", "myDrafts", "draftReview", "article", "articleBySlug", "articles"} {
 		if schema.types["Query"][want] == "" {
 			t.Errorf("fixture Query is missing root field %q", want)
 		}

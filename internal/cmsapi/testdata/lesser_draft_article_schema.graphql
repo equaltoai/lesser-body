@@ -125,6 +125,20 @@ type Draft {
   updatedAt: Time!
 }
 
+# DraftPreview backs article_draft_preview's read; trimmed to the fields that
+# projection selects (the real type also exposes editorialMedia, which the
+# preview read does not select — lesser composes media into renderedHtml only
+# on includeAccessUrls: true opt-in).
+type DraftPreview {
+  draftId: ID!
+  success: Boolean!
+  renderedHtml: String
+  sourceFormat: String!
+  sourceBytes: Int!
+  renderedBytes: Int!
+  errors: [String!]!
+}
+
 type EditorialMediaProvenance {
   origin: EditorialMediaOrigin!
   tool: String
@@ -328,6 +342,7 @@ input UpdateArticleInput {
 # Root fields used by the draft/article queries (excerpted from the extend blocks).
 type Query {
   draft(id: ID!): Draft
+  draftPreview(id: ID!, includeAccessUrls: Boolean = false): DraftPreview!
   draftReview(id: ID!, includeAccessUrls: Boolean = false): DraftReview
   myDrafts(contentType: ObjectType, status: DraftStatus, first: Int, after: Cursor): DraftConnection!
   article(id: ID!): Article

@@ -275,6 +275,67 @@ func TestArticleDraftPreviewPassthroughKeepsRenderedHTML(t *testing.T) {
 	}
 }
 
+// TestArticleDraftPreviewOptsIntoAccessURLMinting pins the lesser access-URL
+// contract end-to-end at the tool surface: article_draft_preview is the ONLY
+// read that opts into minting (includeAccessUrls: true on draftPreview), while
+// the same handler's draftReview preflight keeps the no-minting default — so
+// composed media appears in renderedHtml once lesser#1514 deploys, and no other
+// read mints short-lived bearer URLs.
+func TestArticleDraftPreviewOptsIntoAccessURLMinting(t *testing.T) {
+	var operations []cmsapi.Operation
+	rendered := `<article><figure><img src="https://cdn.example.com/hero.jpg" alt="Hero"></figure></article>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var op cmsapi.Operation
+		if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
+			t.Fatalf("decode operation: %v", err)
+		}
+		operations = append(operations, op)
+		w.Header().Set("Content-Type", "application/json")
+		switch op.OperationName {
+		case "BodyArticleDraftReview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draftReview": map[string]any{
+				"draftId": "draft-1",
+				"status":  "DRAFT",
+			}}})
+		case "BodyArticleDraftPreview":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"draftPreview": map[string]any{
+				"draftId":       "draft-1",
+				"success":       true,
+				"renderedHtml":  rendered,
+				"sourceFormat":  "MARKDOWN",
+				"sourceBytes":   12,
+				"renderedBytes": len(rendered),
+				"errors":        []string{},
+			}}})
+		default:
+			t.Fatalf("unexpected operation %q", op.OperationName)
+		}
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		lesserapi.ResetForTests()
+	})
+	t.Setenv("LESSER_API_BASE_URL", server.URL)
+	lesserapi.ResetForTests()
+
+	result, err := handleArticleDraftPreview(articleDraftTestContext(), json.RawMessage(`{"id":"draft-1","view":"standard"}`))
+	if err != nil {
+		t.Fatalf("article_draft_preview: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("article_draft_preview result = %+v", result)
+	}
+	if len(operations) != 2 {
+		t.Fatalf("operations = %d, want 2 (review preflight + preview read)", len(operations))
+	}
+	if operations[0].OperationName != "BodyArticleDraftReview" || strings.Contains(operations[0].Query, "includeAccessUrls") {
+		t.Fatalf("review preflight must keep the no-minting default: %s", operations[0].Query)
+	}
+	if operations[1].OperationName != "BodyArticleDraftPreview" || !strings.Contains(operations[1].Query, "draftPreview(id: $id, includeAccessUrls: true)") {
+		t.Fatalf("preview read must opt into access-URL minting: %s", operations[1].Query)
+	}
+}
+
 func stringSliceFromAny(raw any) []string {
 	switch items := raw.(type) {
 	case []string:
