@@ -1,0 +1,358 @@
+# Schema fixture for lesser-body cmsapi draft/article selection-set conformance.
+#
+# Verbatim excerpt of the equaltoai/lesser GraphQL schema — the gqlgen schema
+# at graph/phase1.graphql + graph/core.graphql — pinned at lesser staging SHA
+# 932247f15 (read 2026-08-29; equaltoai/lesser#1513 not yet merged;
+# Draft.editorialMedia and Article.featuredImage are live in the schema). Do
+# not edit field sets here by hand; when lesser's schema changes, re-excerpt
+# from the pinned source and update the pin.
+#
+# Purpose: gqlgen validates selection sets against this schema PRE-RESOLVER —
+# selecting a field that does not exist on the return type makes the whole
+# operation fail with HTTP 422 before any resolver runs (issue #589). The
+# cmsapi draft/article queries are validated against this fixture in
+# draft_article_schema_test.go so a mock fixture can never again hide a
+# schema-invalid selection set.
+#
+# Scope: only the types reachable from the draft/article selection sets are
+# included, plus the scalar/enum/input definitions they reference. `type Actor`,
+# `type Article`, and `type Media` are trimmed to the fields those selections
+# reference; extend them when the surface selects more fields. The Query/Mutation
+# roots are excerpted from the schema's `extend type Query`/`extend type Mutation`
+# blocks and contain only the draft/article root fields (plus draftReview, which
+# article_draft_get's reviewer projection selects).
+
+scalar Time
+scalar Cursor
+scalar ID
+scalar String
+scalar Int
+scalar Boolean
+
+enum ObjectType {
+  NOTE
+  ARTICLE
+  IMAGE
+  VIDEO
+  QUESTION
+  EVENT
+  PAGE
+}
+
+enum ContentFormat {
+  HTML
+  MARKDOWN
+}
+
+enum DraftStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum EditorialMediaRole {
+  HERO
+  INLINE
+  SOCIAL_CARD
+}
+
+enum EditorialMediaOrigin {
+  AI_GENERATED
+  AI_EDITED
+  PHOTOGRAPHED
+  ILLUSTRATED
+  SUPPLIED
+}
+
+enum EditorialMediaState {
+  MISSING
+  PROCESSING
+  READY
+  REJECTED
+  WITHDRAWN
+  SUPERSEDED
+  UNAVAILABLE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  UNKNOWN
+}
+
+enum DraftReviewVerdict {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum DraftReviewGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+# Trimmed to id/username (the only Actor fields the draft/article selections reference).
+type Actor {
+  id: ID!
+  username: String!
+}
+
+type Draft {
+  id: ID!
+  authorId: ID!
+  author: Actor!
+  contentType: ObjectType!
+  title: String
+  slug: String
+  content: String!
+  contentFormat: ContentFormat!
+  status: DraftStatus!
+  scheduledAt: Time
+  objectId: ID
+  generatedBy: Actor
+  reviewedBy: Actor
+  actedBy: Actor
+  reviewVerdict: DraftReviewVerdict
+  editorialMedia: [EditorialMediaUsage!]!
+  contentHash: String!
+  revision: Int!
+  autosaveVersion: Int!
+  lastSavedAt: Time!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+# DraftPreview backs article_draft_preview's read; trimmed to the fields that
+# projection selects (the real type also exposes editorialMedia, which the
+# preview read does not select — lesser composes media into renderedHtml only
+# on includeAccessUrls: true opt-in).
+type DraftPreview {
+  draftId: ID!
+  success: Boolean!
+  renderedHtml: String
+  sourceFormat: String!
+  sourceBytes: Int!
+  renderedBytes: Int!
+  errors: [String!]!
+}
+
+type EditorialMediaProvenance {
+  origin: EditorialMediaOrigin!
+  tool: String
+  responsibleActorId: ID!
+  responsibleActor: Actor
+  sourceReferences: [String!]!
+  rightsLicenseNotes: String
+  createdAt: Time
+  updatedAt: Time
+  recordedAt: Time!
+  contentIntegrity: String!
+}
+
+type EditorialMediaUsage {
+  mediaId: ID!
+  role: EditorialMediaRole!
+  inlinePosition: Int
+  caption: String
+  creditLine: String
+  altText: String
+  effectiveAltText: String
+  focus: String
+  state: EditorialMediaState!
+  width: Int
+  height: Int
+  mimeType: String
+  contentHash: String
+  publishedUrl: String
+  publishedAt: Time
+  accessUrl: String
+  accessExpiresAt: Time
+  provenance: EditorialMediaProvenance
+}
+
+type DraftReviewGrant {
+  reviewerId: ID!
+  reviewer: Actor!
+  grantedAt: Time!
+  expiresAt: Time
+  status: DraftReviewGrantStatus!
+  revokedAt: Time
+}
+
+type DraftReviewVerdictRecord {
+  verdict: DraftReviewVerdict!
+  notes: String
+  contentHash: String
+  reviewerId: ID!
+  reviewer: Actor!
+  recordedAt: Time!
+  current: Boolean!
+  stale: Boolean!
+}
+
+type DraftPublishEligibility {
+  eligible: Boolean!
+  blockingReasons: [String!]!
+  reviewersApproved: Boolean!
+  principalApprovalRequired: Boolean!
+  principalApproved: Boolean!
+}
+
+# DraftReview is needed because article_draft_get's reviewer projection reads
+# through draftReview(id:) (draftReviewGetFields); only the fields that
+# projection selects must exist here.
+type DraftReview {
+  draftId: ID!
+  ownerId: ID!
+  title: String
+  slug: String
+  subtitle: String
+  excerpt: String
+  content: String!
+  contentFormat: ContentFormat!
+  status: DraftStatus!
+  scheduledAt: Time
+  updatedAt: Time!
+  createdAt: Time!
+  generatedBy: Actor
+  reviewedBy: Actor
+  reviewStatus: String
+  editorNotes: String
+  contentHash: String!
+  editorialMedia: [EditorialMediaUsage!]!
+  revision: Int!
+  activeReviewerIds: [ID!]!
+  publishEligible: Boolean!
+  publishBlockingReasons: [String!]!
+  reviewersApproved: Boolean!
+  principalApprovalRequired: Boolean!
+  principalApproved: Boolean!
+  grantCount: Int!
+  grantsTruncated: Boolean!
+  grants: [DraftReviewGrant!]!
+  grant: DraftReviewGrant
+  verdicts: [DraftReviewVerdictRecord!]!
+  publishEligibility: DraftPublishEligibility!
+}
+
+# Trimmed to the fields the article selection set references.
+type Article {
+  id: ID!
+  slug: String!
+  authorId: ID!
+  author: Actor!
+  title: String!
+  subtitle: String
+  excerpt: String
+  content: String!
+  contentFormat: ContentFormat!
+  featuredImage: Media
+  readingTimeMinutes: Int!
+  wordCount: Int!
+  seoTitle: String
+  seoDescription: String
+  canonicalUrl: String
+  ogImage: String
+  editorNotes: String
+  reviewStatus: String
+  actedBy: Actor
+  publishedAt: Time!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+# Trimmed to the fields the featuredImage selection references.
+type Media {
+  id: ID!
+  type: MediaType!
+  url: String!
+  description: String
+  width: Int
+  height: Int
+  mimeType: String!
+}
+
+type ArticleEdge {
+  node: Article!
+  cursor: Cursor!
+}
+
+type ArticleConnection {
+  edges: [ArticleEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type DraftEdge {
+  node: Draft!
+  cursor: Cursor!
+}
+
+type DraftConnection {
+  edges: [DraftEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: Cursor
+  endCursor: Cursor
+}
+
+input CreateDraftInput {
+  contentType: ObjectType! = ARTICLE
+  title: String
+  slug: String
+  content: String!
+  contentFormat: ContentFormat! = MARKDOWN
+  objectId: ID
+}
+
+input UpdateDraftInput {
+  title: String
+  slug: String
+  content: String
+  contentFormat: ContentFormat
+}
+
+input UpdateArticleInput {
+  slug: String
+  title: String
+  content: String
+  contentFormat: ContentFormat
+  subtitle: String
+  excerpt: String
+  featuredImageId: ID
+  seriesId: ID
+  seriesOrder: Int
+  categoryIds: [ID!]
+  seoTitle: String
+  seoDescription: String
+  canonicalUrl: String
+  ogImage: String
+  editorNotes: String
+  reviewStatus: String
+}
+
+# Root fields used by the draft/article queries (excerpted from the extend blocks).
+type Query {
+  draft(id: ID!): Draft
+  draftPreview(id: ID!, includeAccessUrls: Boolean = false): DraftPreview!
+  draftReview(id: ID!, includeAccessUrls: Boolean = false): DraftReview
+  myDrafts(contentType: ObjectType, status: DraftStatus, first: Int, after: Cursor): DraftConnection!
+  article(id: ID!): Article
+  articleBySlug(slug: String!): Article
+  articles(authorId: ID, seriesId: ID, categoryId: ID, search: String, first: Int, after: Cursor): ArticleConnection!
+}
+
+type Mutation {
+  createDraft(input: CreateDraftInput!): Draft!
+  updateDraft(id: ID!, input: UpdateDraftInput!): Draft!
+  publishDraft(id: ID!): Article!
+  updateArticle(id: ID!, input: UpdateArticleInput!): Article!
+}

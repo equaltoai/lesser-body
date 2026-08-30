@@ -6,6 +6,20 @@ import (
 	"strings"
 )
 
+// Media is Lesser's CMS Media type as consumed by body's published Article
+// tools. It models the bounded subset of lesser's Media fields that body
+// surfaces for the Article hero image (featuredImage); nested media surfaces
+// beyond the hero remain Lesser-owned.
+type Media struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type,omitempty"`
+	URL         string  `json:"url,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Width       *int    `json:"width,omitempty"`
+	Height      *int    `json:"height,omitempty"`
+	MimeType    *string `json:"mimeType,omitempty"`
+}
+
 // Article is Lesser's CMS Article type as consumed by body's published Article
 // tools. It intentionally models only scalar fields needed for bounded MCP
 // responses; nested author/media/series/category shapes remain Lesser-owned.
@@ -23,6 +37,7 @@ type Article struct {
 	SEOTitle           *string `json:"seoTitle,omitempty"`
 	SEODescription     *string `json:"seoDescription,omitempty"`
 	OGImage            *string `json:"ogImage,omitempty"`
+	FeaturedImage      *Media  `json:"featuredImage,omitempty"`
 	EditorNotes        *string `json:"editorNotes,omitempty"`
 	ReviewStatus       *string `json:"reviewStatus,omitempty"`
 	ActedBy            *Actor  `json:"actedBy,omitempty"` // Lesser share-grant act-as attribution; resolved only for article-author or instance-admin viewers, nil otherwise.
@@ -243,7 +258,7 @@ func updateArticleVariables(input UpdateArticleInput) map[string]any {
 }
 
 func articleFields(includeContent bool) string {
-	fields := "id slug title subtitle excerpt contentFormat readingTimeMinutes wordCount canonicalUrl seoTitle seoDescription ogImage editorNotes reviewStatus actedBy { id username } publishedAt createdAt updatedAt"
+	fields := "id slug title subtitle excerpt contentFormat readingTimeMinutes wordCount canonicalUrl seoTitle seoDescription ogImage featuredImage { id type url description width height mimeType } editorNotes reviewStatus actedBy { id username } publishedAt createdAt updatedAt"
 	if includeContent {
 		fields += " content"
 	}

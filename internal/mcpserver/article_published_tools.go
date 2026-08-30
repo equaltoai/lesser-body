@@ -422,6 +422,10 @@ func compactArticleRef(article *cmsapi.Article, params articleDraftViewParams, f
 	putIfNotEmpty(out, "slug", article.Slug)
 	putCompactArticleField(out, "subtitle", stringPtrValue(article.Subtitle), articleCompactSubtitleRunes)
 	putCompactArticleField(out, "excerpt", stringPtrValue(article.Excerpt), articleCompactExcerptRunes)
+	if featured := article.FeaturedImage; featured != nil {
+		out["featuredImagePresent"] = true
+		putIfNotEmpty(out, "featuredImageUrl", strings.TrimSpace(featured.URL))
+	}
 	putIfNotEmpty(out, "publishedAt", article.PublishedAt)
 	putIfNotEmpty(out, "createdAt", article.CreatedAt)
 	putIfNotEmpty(out, "updatedAt", article.UpdatedAt)
@@ -472,6 +476,9 @@ func standardArticle(article *cmsapi.Article) map[string]any {
 	putIfNotEmpty(out, "seoTitle", stringPtrValue(article.SEOTitle))
 	putIfNotEmpty(out, "seoDescription", stringPtrValue(article.SEODescription))
 	putIfNotEmpty(out, "ogImage", stringPtrValue(article.OGImage))
+	if featured := shapeFeaturedImage(article.FeaturedImage); featured != nil {
+		out["featuredImage"] = featured
+	}
 	// CSR-009: editorNotes and reviewStatus are internal CMS editorial
 	// metadata fields. They are not exposed through MCP article tools.
 	// The Article struct retains these fields for the CMS API layer
@@ -554,4 +561,29 @@ func canonicalArticleURL(article *cmsapi.Article) string {
 		return ""
 	}
 	return stringPtrValue(article.CanonicalURL)
+}
+
+// shapeFeaturedImage renders lesser's Media hero projection for MCP output. It
+// returns nil when Lesser returned no featured image, so owner-path responses
+// without a hero stay byte-identical.
+func shapeFeaturedImage(media *cmsapi.Media) map[string]any {
+	if media == nil {
+		return nil
+	}
+	out := map[string]any{}
+	putIfNotEmpty(out, "id", strings.TrimSpace(media.ID))
+	putIfNotEmpty(out, "type", strings.TrimSpace(media.Type))
+	putIfNotEmpty(out, "url", strings.TrimSpace(media.URL))
+	putIfNotEmpty(out, "description", stringPtrValue(media.Description))
+	if media.Width != nil {
+		out["width"] = *media.Width
+	}
+	if media.Height != nil {
+		out["height"] = *media.Height
+	}
+	putIfNotEmpty(out, "mimeType", stringPtrValue(media.MimeType))
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
