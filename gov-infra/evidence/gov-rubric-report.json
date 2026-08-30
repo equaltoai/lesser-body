@@ -16,10 +16,10 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-29T23:12:06.224353Z",
+  "generated_at": "2026-08-30T00:06:44.900576Z",
   "git": {
-    "head": "845540e5c577321ca1c871f3c28d7e3b78417313",
-    "head_tree": "064a3dd36ba5d9866b1883f4647d6bddca12df27",
+    "head": "a7223e95514ffca0285d25d91d3baa866e02b2da",
+    "head_tree": "1940d15b17eb450160dcd96800844e7d568c0647",
     "merge_base_origin_staging": "082b47ca8cdcc93c911ece6e7c21d42fcc4531de",
     "ref": "HEAD",
     "working_tree_after_run": "6 changed paths after verifier run"
