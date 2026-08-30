@@ -208,13 +208,17 @@ func (c *Client) GetArticleDraft(ctx context.Context, bearerToken string, id str
 // PreviewArticleDraft reads Lesser's canonical rendered/sanitized preview for a
 // single ARTICLE draft. Lesser resolves draftPreview through its
 // owner-or-active-reviewer authorization path before invoking the renderer.
+// The read opts into includeAccessUrls so the composed renderedHtml carries
+// short-lived media read URLs once lesser's sibling change (equaltoai/lesser#1514)
+// deploys; every other read path keeps lesser's no-minting default (access URLs
+// are minted only on explicit caller opt-in).
 func (c *Client) PreviewArticleDraft(ctx context.Context, bearerToken string, id string) (*DraftPreview, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, fmt.Errorf("draft id is required")
 	}
 	resp, err := c.Execute(ctx, bearerToken, Operation{
-		Query:         "query BodyArticleDraftPreview($id: ID!) { draftPreview(id: $id) { draftId success renderedHtml sourceFormat sourceBytes renderedBytes errors } }",
+		Query:         "query BodyArticleDraftPreview($id: ID!) { draftPreview(id: $id, includeAccessUrls: true) { draftId success renderedHtml sourceFormat sourceBytes renderedBytes errors } }",
 		OperationName: "BodyArticleDraftPreview",
 		Variables:     map[string]any{"id": id},
 	})

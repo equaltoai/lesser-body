@@ -322,8 +322,8 @@ func TestArticleDraftPreviewToolUsesLesserRendererContractAndControls(t *testing
 			t.Fatalf("unexpected operation %q", op["operationName"])
 		}
 		query, _ := op["query"].(string)
-		if !strings.Contains(query, "draftPreview(id: $id)") || strings.Contains(query, "draft(id:") {
-			t.Fatalf("preview tool must use Lesser draftPreview contract, got %s", query)
+		if !strings.Contains(query, "draftPreview(id: $id, includeAccessUrls: true)") || strings.Contains(query, "draft(id:") {
+			t.Fatalf("preview tool must use Lesser draftPreview contract with access-URL opt-in, got %s", query)
 		}
 
 		vars := op["variables"].(map[string]any)
