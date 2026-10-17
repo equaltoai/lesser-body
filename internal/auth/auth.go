@@ -11,8 +11,8 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/trustconfig"
 	"github.com/golang-jwt/jwt/v5"
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
-	oauthruntime "github.com/theory-cloud/apptheory/v4/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
 )
 
 const (

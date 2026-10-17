@@ -11,10 +11,10 @@ import (
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v4/testkit"
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v6/testkit"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 )
 
 func TestTaskRuntimeEnvEnablesSkillBundleGetTaskExecution(t *testing.T) {
@@ -90,7 +90,9 @@ func TestTaskRuntimeEnvEnablesSkillBundleGetTaskExecution(t *testing.T) {
 		t.Fatalf("tools/call task create error: %+v", createResp.Error)
 	}
 	created := decodeCreateTaskResult(t, createResp.Result)
-	if created.Task.TaskID == "" || created.Task.Status != mcpruntime.TaskStatusWorking {
+	// AppTheory v5+ runs the task body on the invoking goroutine, so the create
+	// response describes a task whose outcome is already recorded.
+	if created.Task.TaskID == "" || created.Task.Status != mcpruntime.TaskStatusCompleted {
 		t.Fatalf("unexpected created task: %+v", created.Task)
 	}
 	record := waitForTaskStatus(t, store, sessionID, created.Task.TaskID, mcpruntime.TaskStatusCompleted)
@@ -156,19 +158,16 @@ func TestTaskRuntimeEnvEnablesSkillBundleGetTaskExecution(t *testing.T) {
 	}
 }
 
-func TestTaskRuntimeCancelsInFlightSkillBundleGet(t *testing.T) {
+func TestTaskRuntimeCancelRejectsTerminalSkillBundleGet(t *testing.T) {
 	store := installMemoryTaskRuntimeForTest(t)
 	t.Setenv(envMcpSessionTable, "")
 	t.Setenv(envMcpStreamTable, "")
 	t.Setenv(envMcpTaskTable, "theory-dev-mcp-tasks")
 	t.Setenv("MCP_TASK_TTL_MINUTES", "10")
 
-	started := make(chan struct{})
-	canceled := make(chan struct{})
 	lesser := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		close(canceled)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"bundle":{"schema_version":"lesser.skill.bundle.v1","bundle_id":"skill:skill-a:revision:00000001","digests":{"bundle_digest":"sha256:bundle","publication_digest":"sha256:publication"},"files":[{"path":"SKILL.md","digest":"sha256:file","content_included":false}]}}`))
 	}))
 	defer lesser.Close()
 	t.Setenv("LESSER_API_BASE_URL", lesser.URL)
@@ -195,7 +194,7 @@ func TestTaskRuntimeCancelsInFlightSkillBundleGet(t *testing.T) {
 		Method:  "tools/call",
 		Params: mustJSONRaw(t, map[string]any{
 			"name":      "skill_bundle_get",
-			"arguments": map[string]any{"skill_id": "slow", "revision_number": 1},
+			"arguments": map[string]any{"skill_id": "skill-a", "revision_number": 1},
 			"task":      map[string]any{},
 		}),
 	})
@@ -203,30 +202,18 @@ func TestTaskRuntimeCancelsInFlightSkillBundleGet(t *testing.T) {
 		t.Fatalf("tools/call task create error: %+v", createResp.Error)
 	}
 	created := decodeCreateTaskResult(t, createResp.Result)
-
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("skill_bundle_get task did not start Lesser request")
+	if created.Task.Status != mcpruntime.TaskStatusCompleted {
+		t.Fatalf("expected the task body to run inside the creating invocation, got %+v", created.Task)
 	}
 
 	cancelResp, _ := invokeTaskRPC(t, ctx, env, app, sessionID, taskRequest("cancel-task", "tasks/cancel", created.Task.TaskID))
-	if cancelResp.Error != nil {
-		t.Fatalf("tasks/cancel error: %+v", cancelResp.Error)
-	}
-	canceledTask := decodeTask(t, cancelResp.Result)
-	if canceledTask.Status != mcpruntime.TaskStatusCanceled {
-		t.Fatalf("expected canceled task status, got %+v", canceledTask)
+	if cancelResp.Error == nil || cancelResp.Error.Code != mcpruntime.CodeInvalidParams || !strings.Contains(cancelResp.Error.Message, "terminal") {
+		t.Fatalf("expected tasks/cancel on a completed task to fail closed, got %+v", cancelResp.Error)
 	}
 
-	select {
-	case <-canceled:
-	case <-time.After(time.Second):
-		t.Fatal("skill_bundle_get request context was not canceled")
-	}
-	stored := waitForTaskStatus(t, store, sessionID, created.Task.TaskID, mcpruntime.TaskStatusCanceled)
-	if stored.Task.Status != mcpruntime.TaskStatusCanceled {
-		t.Fatalf("expected stored task to remain canceled, got %+v", stored.Task)
+	stored := waitForTaskStatus(t, store, sessionID, created.Task.TaskID, mcpruntime.TaskStatusCompleted)
+	if len(stored.Result) == 0 {
+		t.Fatalf("cancel after completion must not clear the stored result, got %+v", stored)
 	}
 }
 

@@ -3,7 +3,7 @@ package mcpserver
 import (
 	"sync"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
 )
 
 // Scope names carried in a caller's JWT claims.

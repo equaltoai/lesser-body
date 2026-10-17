@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
-	"github.com/theory-cloud/tabletheory/v3"
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
-	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/tabletheory/v6"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	"github.com/theory-cloud/tabletheory/v6/pkg/session"
 )
 
 const (

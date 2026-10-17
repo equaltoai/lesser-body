@@ -12,8 +12,8 @@ import (
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
 )
 
 const (

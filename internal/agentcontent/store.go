@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/theory-cloud/tabletheory/v3"
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
-	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	"github.com/theory-cloud/tabletheory/v6"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
+	"github.com/theory-cloud/tabletheory/v6/pkg/session"
 )
 
 const (

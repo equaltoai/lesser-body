@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 )

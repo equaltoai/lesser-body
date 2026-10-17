@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/tabletheory/v3"
-	"github.com/theory-cloud/tabletheory/v3/pkg/session"
-	"github.com/theory-cloud/tabletheory/v3/pkg/testing/fakedb"
+	"github.com/theory-cloud/tabletheory/v6"
+	"github.com/theory-cloud/tabletheory/v6/pkg/session"
+	"github.com/theory-cloud/tabletheory/v6/pkg/testing/fakedb"
 )
 
 func TestUpsertCreateUpdateGetFlow(t *testing.T) {
