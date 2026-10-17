@@ -7,23 +7,135 @@ $ cd cdk && npm test
 > lesser-body-cdk@0.0.0 build
 > tsc
 
-✔ secret read policy includes legacy and managed instance-key patterns (688.994762ms)
-✔ managed template supports an exact lesser-host instance key ARN (143.737632ms)
-✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite (97.460448ms)
-✔ managed template requires app-scoped Lesser parameter paths (99.467114ms)
-✔ lesser table policy uses least-privilege primary table access (81.122678ms)
-✔ managed template pins MCP table logical IDs (96.03659ms)
-✔ every MCP-serving lambda uses the 24-hour session TTL (171.400111ms)
-✔ runtime stack uses AppTheory durable stream table schema (77.465346ms)
-✔ runtime stack provisions internal MCP task storage without SSM export (73.138856ms)
-✔ remote MCP server uses actor-path wiring (74.836981ms)
-✔ runtime stack preserves named MCP table fingerprints (74.233115ms)
-✔ stream table export name stays stable across baseline reset (70.620146ms)
-✔ runtime stack provisions instance-plane lambda with owned tables (74.535503ms)
-✔ Ka self-recovery receives only the Body content and registry tables (72.034739ms)
-✔ instance-plane lambda receives managed Lesser/Host genesis configuration (90.338047ms)
-✔ instance-plane Lesser table read includes binding lookup without memory access (87.578996ms)
-✔ runtime stack publishes additive instance-plane SSM exports (77.699987ms)
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-mOOu28/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-xcxiaQ/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-il0SWq/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-zZFwyh/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-br0srk/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-UeXwGA/validation-report.json
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/test/lesser-body-stack.test.js:489:19
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   TestStack aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/lesser-body-cdk-test-ykPLVC/validation-report.json
+✔ secret read policy includes legacy and managed instance-key patterns (418.024737ms)
+✔ managed template supports an exact lesser-host instance key ARN (55.803564ms)
+✔ managed template declares the Ptah and Ba soul-binding bearer prerequisite (47.932781ms)
+✔ managed template requires app-scoped Lesser parameter paths (47.551071ms)
+✔ lesser table policy uses least-privilege primary table access (37.044298ms)
+✔ managed template pins MCP table logical IDs (40.618509ms)
+✔ every MCP-serving lambda uses the 24-hour session TTL (74.866664ms)
+✔ runtime stack uses AppTheory durable stream table schema (30.367768ms)
+✔ runtime stack provisions internal MCP task storage without SSM export (32.503566ms)
+✔ remote MCP server uses actor-path wiring (29.163296ms)
+✔ runtime stack preserves named MCP table fingerprints (33.12621ms)
+✔ stream table export name stays stable across baseline reset (29.633483ms)
+✔ runtime stack provisions instance-plane lambda with owned tables (29.793104ms)
+✔ Ka self-recovery receives only the Body content and registry tables (30.601498ms)
+✔ instance-plane lambda receives managed Lesser/Host genesis configuration (38.690092ms)
+✔ instance-plane Lesser table read includes binding lookup without memory access (41.755302ms)
+✔ runtime stack publishes additive instance-plane SSM exports (29.075722ms)
 ℹ tests 17
 ℹ suites 0
 ℹ pass 17
@@ -31,4 +143,4 @@ $ cd cdk && npm test
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 2213.304517
+ℹ duration_ms 1121.519798

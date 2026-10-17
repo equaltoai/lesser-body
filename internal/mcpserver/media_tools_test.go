@@ -14,7 +14,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/cmsapi"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
 )
 
 // mediaTestContext returns a tool context carrying an OAuth bearer; tests

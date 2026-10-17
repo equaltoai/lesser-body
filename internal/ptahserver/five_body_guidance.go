@@ -10,7 +10,7 @@ import (
 
 	"embed"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
 )
 
 const (

@@ -15,7 +15,7 @@ import (
 	"github.com/equaltoai/lesser-body/internal/runtimepolicy"
 	"github.com/equaltoai/lesser-body/internal/soulapi"
 	"github.com/equaltoai/lesser-body/internal/soulbinding"
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 )
 
 type fakeTableTheoryDB struct {

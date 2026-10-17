@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 // The tool-context hook replaces the former WithToolContext middleware

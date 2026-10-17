@@ -20,6 +20,54 @@ found 0 vulnerabilities
 > lesser-body-cdk@0.0.0 build
 > tsc
 
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/tmp.PiR4gARHg6/dev/validation-report.json
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/tmp.PiR4gARHg6/staging/validation-report.json
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+dist/bin/release-template.js:58:1
+WARNING Parameters/JWTSecretArnParamPath: Parameter 'JWTSecretArnParamPath' appears to be a password but does not have NoEcho set to true (CloudFormation Validate)
+   LesserBodyManagedTemplate aws-cdk-lib.Stack
+   Acknowledge with 'CloudFormation-Validate::W2509'
+
+A copy of this report can be found in: /tmp/tmp.PiR4gARHg6/live/validation-report.json
 Wrote release assets to dist/release-test
 lesser-body.zip: OK
 lesser-body-deploy.json: OK
@@ -29,5 +77,5 @@ lesser-body-managed-live.template.json: OK
 deploy-lesser-body-from-release.sh: OK
 lesser-body-release.json: OK
 apptheory-s3-auto-delete-objects-provider-faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip: OK
-cdk-file-asset-175068eeffc14dc3.zip: OK
+cdk-file-asset-c916640c498d79f8.zip: OK
 Verified release assets in dist/release-test

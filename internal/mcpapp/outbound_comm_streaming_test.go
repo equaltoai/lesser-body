@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v4/testkit"
-	mcptestkit "github.com/theory-cloud/apptheory/v4/testkit/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v6/testkit"
+	mcptestkit "github.com/theory-cloud/apptheory/v6/testkit/mcp"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/lesserapi"

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v4/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 
 	"github.com/equaltoai/lesser-body/internal/auth"
 	"github.com/equaltoai/lesser-body/internal/mcpapp"
