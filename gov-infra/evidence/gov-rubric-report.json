@@ -16,13 +16,13 @@
     "reject_relationship": "abandoned_sibling_or_non_ancestor",
     "required_relationship_to_review_head": "ancestor_or_equal"
   },
-  "generated_at": "2026-08-30T00:06:44.900576Z",
+  "generated_at": "2026-10-17T17:37:59.446461Z",
   "git": {
-    "head": "a7223e95514ffca0285d25d91d3baa866e02b2da",
-    "head_tree": "1940d15b17eb450160dcd96800844e7d568c0647",
-    "merge_base_origin_staging": "082b47ca8cdcc93c911ece6e7c21d42fcc4531de",
-    "ref": "HEAD",
-    "working_tree_after_run": "6 changed paths after verifier run"
+    "head": "597729ad10f1eea6824349b147bb01cb29dd4900",
+    "head_tree": "61a9f340e372d2556983f6190f65847512839706",
+    "merge_base_origin_staging": "34828ee89768c336e57f0712e5ebdea2559df8da",
+    "ref": "theorymcp/equaltoai/body/issue-596-framework-v6-dependabot",
+    "working_tree_after_run": "7 changed paths after verifier run"
   },
   "namespace_genome": {
     "checksum_verification": "not_applicable_no_checksum_bearing_genome_was_provided",
