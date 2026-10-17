@@ -2,8 +2,8 @@
   "schema": 1,
   "frameworks": {
     "apptheory": {
-      "module": "github.com/theory-cloud/apptheory/v4",
-      "version": "v4.0.0",
+      "module": "github.com/theory-cloud/apptheory/v6",
+      "version": "v6.2.0",
       "docs": [
         "docs/getting-started.md",
         "docs/integrations/agentcore-mcp.md",
@@ -13,8 +13,8 @@
       ]
     },
     "tabletheory": {
-      "module": "github.com/theory-cloud/tabletheory/v3",
-      "version": "v3.0.6",
+      "module": "github.com/theory-cloud/tabletheory/v6",
+      "version": "v6.0.0",
       "docs": [
         "docs/getting-started.md",
         "docs/api-reference.md",
